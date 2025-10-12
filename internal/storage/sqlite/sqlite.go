@@ -74,11 +74,34 @@ func getNextID(db *sql.DB) int {
 		SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 2) AS INTEGER))
 		FROM issues
 		WHERE id LIKE ? || '-%'
-		AND SUBSTR(id, 1, LENGTH(?)) = ?
 	`
-	err = db.QueryRow(query, prefix, prefix, prefix, prefix).Scan(&maxNum)
+	err = db.QueryRow(query, prefix, prefix).Scan(&maxNum)
 	if err != nil || !maxNum.Valid {
 		return 1 // Start from 1 if table is empty or no matching IDs
+	}
+
+	// Check for malformed IDs (non-numeric suffixes) and warn
+	// These are silently ignored by CAST but indicate data quality issues
+	malformedQuery := `
+		SELECT id FROM issues
+		WHERE id LIKE ? || '-%'
+		AND CAST(SUBSTR(id, LENGTH(?) + 2) AS INTEGER) IS NULL
+	`
+	rows, err := db.Query(malformedQuery, prefix, prefix)
+	if err == nil {
+		defer rows.Close()
+		var malformedIDs []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err == nil {
+				malformedIDs = append(malformedIDs, id)
+			}
+		}
+		if len(malformedIDs) > 0 {
+			fmt.Fprintf(os.Stderr, "Warning: Found %d malformed issue IDs with non-numeric suffixes: %v\n",
+				len(malformedIDs), malformedIDs)
+			fmt.Fprintf(os.Stderr, "These IDs are being ignored for ID generation. Consider fixing them.\n")
+		}
 	}
 
 	return int(maxNum.Int64) + 1

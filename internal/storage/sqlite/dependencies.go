@@ -210,6 +210,39 @@ func (s *SQLiteStorage) GetDependencyRecords(ctx context.Context, issueID string
 	return deps, nil
 }
 
+// GetAllDependencyRecords returns all dependency records grouped by issue ID
+// This is optimized for bulk export operations to avoid N+1 queries
+func (s *SQLiteStorage) GetAllDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT issue_id, depends_on_id, type, created_at, created_by
+		FROM dependencies
+		ORDER BY issue_id, created_at ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all dependency records: %w", err)
+	}
+	defer rows.Close()
+
+	// Group dependencies by issue ID
+	depsMap := make(map[string][]*types.Dependency)
+	for rows.Next() {
+		var dep types.Dependency
+		err := rows.Scan(
+			&dep.IssueID,
+			&dep.DependsOnID,
+			&dep.Type,
+			&dep.CreatedAt,
+			&dep.CreatedBy,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan dependency: %w", err)
+		}
+		depsMap[dep.IssueID] = append(depsMap[dep.IssueID], &dep)
+	}
+
+	return depsMap, nil
+}
+
 // GetDependencyTree returns the full dependency tree
 func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, maxDepth int) ([]*types.TreeNode, error) {
 	if maxDepth <= 0 {

@@ -25,6 +25,7 @@ Behavior:
 	Run: func(cmd *cobra.Command, args []string) {
 		input, _ := cmd.Flags().GetString("input")
 		skipUpdate, _ := cmd.Flags().GetBool("skip-existing")
+		strict, _ := cmd.Flags().GetBool("strict")
 
 		// Open input
 		in := os.Stdin
@@ -59,7 +60,14 @@ Behavior:
 				continue
 			}
 
-			// Parse JSON
+			// Parse JSON - first into a map to detect which fields are present
+			var rawData map[string]interface{}
+			if err := json.Unmarshal([]byte(line), &rawData); err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing line %d: %v\n", lineNum, err)
+				os.Exit(1)
+			}
+
+			// Then parse into the Issue struct
 			var issue types.Issue
 			if err := json.Unmarshal([]byte(line), &issue); err != nil {
 				fmt.Fprintf(os.Stderr, "Error parsing line %d: %v\n", lineNum, err)
@@ -81,28 +89,41 @@ Behavior:
 					skipped++
 					continue
 				}
-				// Update existing issue - convert to updates map
+				// Update existing issue - only update fields that are present in JSON
 				updates := make(map[string]interface{})
-				if issue.Title != "" {
+				if _, ok := rawData["title"]; ok {
 					updates["title"] = issue.Title
 				}
-				if issue.Description != "" {
+				if _, ok := rawData["description"]; ok {
 					updates["description"] = issue.Description
 				}
-				if issue.Status != "" {
+				if _, ok := rawData["design"]; ok {
+					updates["design"] = issue.Design
+				}
+				if _, ok := rawData["acceptance_criteria"]; ok {
+					updates["acceptance_criteria"] = issue.AcceptanceCriteria
+				}
+				if _, ok := rawData["notes"]; ok {
+					updates["notes"] = issue.Notes
+				}
+				if _, ok := rawData["status"]; ok {
 					updates["status"] = issue.Status
 				}
-				if issue.Priority != 0 {
+				if _, ok := rawData["priority"]; ok {
 					updates["priority"] = issue.Priority
 				}
-				if issue.IssueType != "" {
+				if _, ok := rawData["issue_type"]; ok {
 					updates["issue_type"] = issue.IssueType
 				}
-				if issue.Assignee != "" {
+				if _, ok := rawData["assignee"]; ok {
 					updates["assignee"] = issue.Assignee
 				}
-				if issue.EstimatedMinutes != nil {
-					updates["estimated_minutes"] = *issue.EstimatedMinutes
+				if _, ok := rawData["estimated_minutes"]; ok {
+					if issue.EstimatedMinutes != nil {
+						updates["estimated_minutes"] = *issue.EstimatedMinutes
+					} else {
+						updates["estimated_minutes"] = nil
+					}
 				}
 
 				if err := store.UpdateIssue(ctx, issue.ID, updates, "import"); err != nil {
@@ -157,7 +178,14 @@ Behavior:
 
 				// Add dependency
 				if err := store.AddDependency(ctx, dep, "import"); err != nil {
-					// Ignore errors for missing target issues or cycles
+					if strict {
+						// In strict mode, fail on any dependency error
+						fmt.Fprintf(os.Stderr, "Error: could not add dependency %s → %s: %v\n",
+							dep.IssueID, dep.DependsOnID, err)
+						fmt.Fprintf(os.Stderr, "Use --strict=false to treat dependency errors as warnings\n")
+						os.Exit(1)
+					}
+					// In non-strict mode, ignore errors for missing target issues or cycles
 					// This can happen if dependencies reference issues not in the import
 					fmt.Fprintf(os.Stderr, "Warning: could not add dependency %s → %s: %v\n",
 						dep.IssueID, dep.DependsOnID, err)
@@ -185,5 +213,6 @@ Behavior:
 func init() {
 	importCmd.Flags().StringP("input", "i", "", "Input file (default: stdin)")
 	importCmd.Flags().BoolP("skip-existing", "s", false, "Skip existing issues instead of updating them")
+	importCmd.Flags().Bool("strict", false, "Fail on dependency errors instead of treating them as warnings")
 	rootCmd.AddCommand(importCmd)
 }

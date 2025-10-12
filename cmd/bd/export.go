@@ -48,14 +48,14 @@ Output to stdout by default, or use -o flag for file output.`,
 			return issues[i].ID < issues[j].ID
 		})
 
-		// Populate dependencies for each issue
+		// Populate dependencies for all issues in one query (avoids N+1 problem)
+		allDeps, err := store.GetAllDependencyRecords(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting dependencies: %v\n", err)
+			os.Exit(1)
+		}
 		for _, issue := range issues {
-			deps, err := store.GetDependencyRecords(ctx, issue.ID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting dependencies for %s: %v\n", issue.ID, err)
-				os.Exit(1)
-			}
-			issue.Dependencies = deps
+			issue.Dependencies = allDeps[issue.ID]
 		}
 
 		// Open output
