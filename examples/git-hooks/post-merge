@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+#
+# Beads post-merge hook
+# Automatically imports JSONL to SQLite database after pulling/merging
+#
+# Install: cp examples/git-hooks/post-merge .git/hooks/post-merge && chmod +x .git/hooks/post-merge
+
+set -e
+
+# Check if bd is installed
+if ! command -v bd &> /dev/null; then
+    echo "Warning: bd not found in PATH, skipping import"
+    exit 0
+fi
+
+# Check if issues.jsonl exists
+if [[ ! -f .beads/issues.jsonl ]]; then
+    # No JSONL file, nothing to import
+    exit 0
+fi
+
+# Import issues from JSONL
+echo "🔗 Importing beads issues from JSONL..."
+
+if bd import -i .beads/issues.jsonl 2>/dev/null; then
+    echo "✓ Beads issues imported successfully"
+else
+    echo "Warning: bd import failed"
+    echo "You may need to resolve conflicts manually"
+    exit 1
+fi
+
+exit 0
