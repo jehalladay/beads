@@ -32,28 +32,54 @@ go build -o bd ./cmd/bd
 
 ## Quick Start
 
+### For Humans
+
+Beads is designed for **AI coding agents** to use on your behalf. As a human, you typically just:
+
 ```bash
-# Initialize bd in your project
+# 1. Initialize beads in your project
 bd init
 
-# Or with custom prefix
-bd init --prefix myapp
+# 2. Add a note to your agent instructions (CLAUDE.md, AGENTS.md, etc.)
+echo "We track work in Beads instead of Markdown. Run \`bd quickstart\` to see how." >> CLAUDE.md
 
-# See the quickstart guide
+# 3. Let agents handle the rest!
+```
+
+Most tasks will be created and managed by agents during conversations. You can check on things with:
+
+```bash
+bd list                  # See what's being tracked
+bd show <issue-id>       # Review a specific issue
+bd ready                 # See what's ready to work on
+bd dep tree <issue-id>   # Visualize dependencies
+```
+
+### For AI Agents
+
+Run the interactive guide to learn the full workflow:
+
+```bash
 bd quickstart
+```
 
-# Create your first issue (will be myapp-1)
-bd create "Build login page" -d "Need user authentication" -p 1 -t feature
+Quick reference for agent workflows:
 
-# Create another issue that depends on it
-bd create "Add OAuth support" -p 2
-bd dep add myapp-2 myapp-1  # myapp-2 depends on myapp-1
+```bash
+# Find ready work
+bd ready --json | jq '.[0]'
 
-# See what's ready to work on
-bd ready
+# Create issues during work
+bd create "Discovered bug" -t bug -p 0 --json
 
-# Show dependency tree
-bd dep tree myapp-2
+# Link discovered work back to parent
+bd dep add <new-id> <parent-id> --type discovered-from
+
+# Update status
+bd update <issue-id> --status in_progress --json
+
+# Complete work
+bd close <issue-id> --reason "Implemented" --json
 ```
 
 ## Usage
@@ -310,15 +336,21 @@ This pattern enables powerful integrations while keeping bd simple and focused.
 
 ## Why bd?
 
-bd is built for AI-supervised coding workflows where:
-- **Agents need to discover work** - `bd ready --json` gives agents unblocked tasks
-- **Dependencies matter** - Agents shouldn't duplicate effort or work on blocked tasks
-- **Discovery happens during execution** - Use `discovered-from` to track new work found during implementation
-- **Git-native storage** - JSONL format enables AI-powered conflict resolution
-- **Integration is easy** - Extend the SQLite database with your own orchestration tables
-- **Setup is instant** - `bd init` and you're tracking issues
+**bd is designed for AI coding agents, not humans.**
 
-Traditional issue trackers were built for human project managers. bd is built for agent colonies.
+Traditional issue trackers (Jira, GitHub Issues, Linear) assume humans are the primary users. Humans click through web UIs, drag cards on boards, and manually update status.
+
+bd assumes **AI agents are the primary users**, with humans supervising:
+
+- **Agents discover work** - `bd ready --json` gives agents unblocked tasks to execute
+- **Dependencies prevent wasted work** - Agents don't duplicate effort or work on blocked tasks
+- **Discovery during execution** - Agents create issues for work they discover while executing, linked with `discovered-from`
+- **Agents lose focus** - Long-running conversations can forget tasks; bd remembers everything
+- **Humans supervise** - Check on progress with `bd list` and `bd dep tree`, but don't micromanage
+
+In human-managed workflows, issues are planning artifacts. In agent-managed workflows, **issues are memory** - preventing agents from forgetting tasks during long coding sessions.
+
+Traditional issue trackers were built for human project managers. bd is built for autonomous agents.
 
 ## Architecture: JSONL + SQLite
 
