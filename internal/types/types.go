@@ -1,3 +1,4 @@
+// Package types defines core data structures for the bd issue tracker.
 package types
 
 import (
@@ -49,6 +50,7 @@ func (i *Issue) Validate() error {
 // Status represents the current state of an issue
 type Status string
 
+// Issue status constants
 const (
 	StatusOpen       Status = "open"
 	StatusInProgress Status = "in_progress"
@@ -68,6 +70,7 @@ func (s Status) IsValid() bool {
 // IssueType categorizes the kind of work
 type IssueType string
 
+// Issue type constants
 const (
 	TypeBug     IssueType = "bug"
 	TypeFeature IssueType = "feature"
@@ -97,6 +100,7 @@ type Dependency struct {
 // DependencyType categorizes the relationship
 type DependencyType string
 
+// Dependency type constants
 const (
 	DepBlocks         DependencyType = "blocks"
 	DepRelated        DependencyType = "related"
@@ -134,6 +138,7 @@ type Event struct {
 // EventType categorizes audit trail events
 type EventType string
 
+// Event type constants for audit trail
 const (
 	EventCreated           EventType = "created"
 	EventUpdated           EventType = "updated"

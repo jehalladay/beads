@@ -6,33 +6,33 @@ Get up and running with Beads in 2 minutes.
 
 ```bash
 cd ~/src/beads
-go build -o beads ./cmd/beads
-./beads --help
+go build -o bd ./cmd/bd
+./bd --help
 ```
 
 ## Your First Issues
 
 ```bash
 # Create a few issues
-./beads create "Set up database" -p 1 -t task
-./beads create "Create API" -p 2 -t feature
-./beads create "Add authentication" -p 2 -t feature
+./bd create "Set up database" -p 1 -t task
+./bd create "Create API" -p 2 -t feature
+./bd create "Add authentication" -p 2 -t feature
 
 # List them
-./beads list
+./bd list
 ```
 
 ## Add Dependencies
 
 ```bash
 # API depends on database
-./beads dep add bd-2 bd-1
+./bd dep add bd-2 bd-1
 
 # Auth depends on API
-./beads dep add bd-3 bd-2
+./bd dep add bd-3 bd-2
 
 # View the tree
-./beads dep tree bd-3
+./bd dep tree bd-3
 ```
 
 Output:
@@ -47,7 +47,7 @@ Output:
 ## Find Ready Work
 
 ```bash
-./beads ready
+./bd ready
 ```
 
 Output:
@@ -63,13 +63,13 @@ Only bd-1 is ready because bd-2 and bd-3 are blocked!
 
 ```bash
 # Start working on bd-1
-./beads update bd-1 --status in_progress
+./bd update bd-1 --status in_progress
 
 # Complete it
-./beads close bd-1 --reason "Database setup complete"
+./bd close bd-1 --reason "Database setup complete"
 
 # Check ready work again
-./beads ready
+./bd ready
 ```
 
 Now bd-2 is ready! 🎉
@@ -78,27 +78,27 @@ Now bd-2 is ready! 🎉
 
 ```bash
 # See blocked issues
-./beads blocked
+./bd blocked
 
 # View statistics
-./beads stats
+./bd stats
 ```
 
 ## Database Location
 
-By default: `~/.beads/beads.db`
+By default: `~/.beads/default.db`
 
 You can use project-specific databases:
 
 ```bash
-./beads --db ./my-project.db create "Task"
+./bd --db ./my-project.db create "Task"
 ```
 
 ## Next Steps
 
-- Add labels: `./beads create "Task" -l "backend,urgent"`
-- Filter ready work: `./beads ready --priority 1`
-- Search issues: `./beads list --status open`
-- Detect cycles: `./beads dep cycles`
+- Add labels: `./bd create "Task" -l "backend,urgent"`
+- Filter ready work: `./bd ready --priority 1`
+- Search issues: `./bd list --status open`
+- Detect cycles: `./bd dep cycles`
 
 See [README.md](README.md) for full documentation.

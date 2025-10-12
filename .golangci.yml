@@ -1,0 +1,75 @@
+# golangci-lint configuration for beads
+# See https://golangci-lint.run/usage/configuration/
+
+version: 2
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    # Core linters (always available)
+    - errcheck      # Check for unchecked errors
+    - govet         # Go vet
+    - ineffassign   # Detect ineffectual assignments
+    - staticcheck   # Static analysis
+    - unused        # Find unused code
+
+    # Additional linters
+    - revive        # Fast, configurable, extensible linter
+    - misspell      # Fix commonly misspelled English words
+    - unconvert     # Remove unnecessary type conversions
+    - unparam       # Find unused function parameters
+    - goconst       # Find repeated strings that could be constants
+    - gocyclo       # Check cyclomatic complexity
+    - dupl          # Find duplicated code
+    - gosec         # Security-focused linter
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: false
+    exclude-functions:
+      - (*database/sql.DB).Close
+      - (*database/sql.Rows).Close
+      - (*database/sql.Tx).Rollback
+
+  gocyclo:
+    min-complexity: 15
+
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+
+  dupl:
+    threshold: 100
+
+  misspell:
+    locale: US
+
+  revive:
+    rules:
+      - name: var-naming
+      - name: exported
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  # Exclude some linters from running on tests
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - dupl
+        - gosec
+        - goconst
+        - errcheck  # Defer/cleanup in tests is often acceptable
+
+    # Cobra command handlers often don't use cmd/args parameters
+    - text: "unused-parameter.*cmd.*cobra\\.Command"
+      linters:
+        - revive
+    - text: "unused-parameter.*args.*string"
+      linters:
+        - revive

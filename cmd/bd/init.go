@@ -47,11 +47,13 @@ and database file. Optionally specify a custom issue prefix.`,
 		ctx := context.Background()
 		if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to set issue prefix: %v\n", err)
-			store.Close()
+			_ = store.Close()
 			os.Exit(1)
 		}
 
-		store.Close()
+		if err := store.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close database: %v\n", err)
+		}
 
 		green := color.New(color.FgGreen).SprintFunc()
 		cyan := color.New(color.FgCyan).SprintFunc()

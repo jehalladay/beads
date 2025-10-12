@@ -56,7 +56,11 @@ Output to stdout by default, or use -o flag for file output.`,
 				fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
 				os.Exit(1)
 			}
-			defer f.Close()
+			defer func() {
+				if err := f.Close(); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to close output file: %v\n", err)
+				}
+			}()
 			out = f
 		}
 

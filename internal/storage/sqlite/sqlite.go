@@ -1,3 +1,4 @@
+// Package sqlite implements the storage interface using SQLite.
 package sqlite
 
 import (
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	// Import SQLite driver
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -404,38 +406,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	}
 	defer rows.Close()
 
-	var issues []*types.Issue
-	for rows.Next() {
-		var issue types.Issue
-		var closedAt sql.NullTime
-		var estimatedMinutes sql.NullInt64
-		var assignee sql.NullString
-
-		err := rows.Scan(
-			&issue.ID, &issue.Title, &issue.Description, &issue.Design,
-			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
-			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&issue.CreatedAt, &issue.UpdatedAt, &closedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan issue: %w", err)
-		}
-
-		if closedAt.Valid {
-			issue.ClosedAt = &closedAt.Time
-		}
-		if estimatedMinutes.Valid {
-			mins := int(estimatedMinutes.Int64)
-			issue.EstimatedMinutes = &mins
-		}
-		if assignee.Valid {
-			issue.Assignee = assignee.String
-		}
-
-		issues = append(issues, &issue)
-	}
-
-	return issues, nil
+	return scanIssues(rows)
 }
 
 // SetConfig sets a configuration value

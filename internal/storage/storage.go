@@ -1,3 +1,4 @@
+// Package storage defines the interface for issue storage backends.
 package storage
 
 import (

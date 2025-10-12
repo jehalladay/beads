@@ -34,7 +34,11 @@ Behavior:
 				fmt.Fprintf(os.Stderr, "Error opening input file: %v\n", err)
 				os.Exit(1)
 			}
-			defer f.Close()
+			defer func() {
+				if err := f.Close(); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to close input file: %v\n", err)
+				}
+			}()
 			in = f
 		}
 

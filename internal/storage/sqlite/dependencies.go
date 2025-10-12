@@ -1,3 +1,4 @@
+// Package sqlite implements dependency management for the SQLite storage backend.
 package sqlite
 
 import (
