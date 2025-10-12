@@ -59,28 +59,29 @@ func New(path string) (*SQLiteStorage, error) {
 
 // getNextID determines the next issue ID to use
 func getNextID(db *sql.DB) int {
-	var maxID sql.NullString
-	err := db.QueryRow("SELECT MAX(id) FROM issues").Scan(&maxID)
-	if err != nil {
-		return 1 // Start from 1 if table is empty
+	// Get prefix from config, default to "bd"
+	var prefix string
+	err := db.QueryRow("SELECT value FROM config WHERE key = 'issue_prefix'").Scan(&prefix)
+	if err != nil || prefix == "" {
+		prefix = "bd"
 	}
 
-	if !maxID.Valid || maxID.String == "" {
-		return 1
+	// Find the maximum numeric ID for this prefix
+	// Use SUBSTR to extract numeric part after prefix and hyphen, then CAST to INTEGER
+	// This ensures we get numerical max, not alphabetical (bd-10 > bd-9, not bd-9 > bd-10)
+	var maxNum sql.NullInt64
+	query := `
+		SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 2) AS INTEGER))
+		FROM issues
+		WHERE id LIKE ? || '-%'
+		AND SUBSTR(id, 1, LENGTH(?)) = ?
+	`
+	err = db.QueryRow(query, prefix, prefix, prefix, prefix).Scan(&maxNum)
+	if err != nil || !maxNum.Valid {
+		return 1 // Start from 1 if table is empty or no matching IDs
 	}
 
-	// Parse "bd-123" to get 123
-	parts := strings.Split(maxID.String, "-")
-	if len(parts) != 2 {
-		return 1
-	}
-
-	var num int
-	if _, err := fmt.Sscanf(parts[1], "%d", &num); err != nil {
-		return 1
-	}
-
-	return num + 1
+	return int(maxNum.Int64) + 1
 }
 
 // CreateIssue creates a new issue
