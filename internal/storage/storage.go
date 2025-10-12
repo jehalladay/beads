@@ -3,7 +3,7 @@ package storage
 import (
 	"context"
 
-	"github.com/steveyackey/beads/internal/types"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // Storage defines the interface for issue storage backends

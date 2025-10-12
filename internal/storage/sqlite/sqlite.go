@@ -12,7 +12,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/steveyackey/beads/internal/types"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // SQLiteStorage implements the Storage interface using SQLite
@@ -94,7 +94,14 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	// Generate ID if not set (thread-safe)
 	if issue.ID == "" {
 		s.idMu.Lock()
-		issue.ID = fmt.Sprintf("bd-%d", s.nextID)
+
+		// Get prefix from config, default to "bd"
+		prefix, err := s.GetConfig(ctx, "issue_prefix")
+		if err != nil || prefix == "" {
+			prefix = "bd"
+		}
+
+		issue.ID = fmt.Sprintf("%s-%d", prefix, s.nextID)
 		s.nextID++
 		s.idMu.Unlock()
 	}
@@ -129,7 +136,11 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	}
 
 	// Record creation event
-	eventData, _ := json.Marshal(issue)
+	eventData, err := json.Marshal(issue)
+	if err != nil {
+		// Fall back to minimal description if marshaling fails
+		eventData = []byte(fmt.Sprintf(`{"id":"%s","title":"%s"}`, issue.ID, issue.Title))
+	}
 	eventDataStr := string(eventData)
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO events (issue_id, event_type, actor, new_value)
@@ -272,8 +283,16 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 	}
 
 	// Record event
-	oldData, _ := json.Marshal(oldIssue)
-	newData, _ := json.Marshal(updates)
+	oldData, err := json.Marshal(oldIssue)
+	if err != nil {
+		// Fall back to minimal description if marshaling fails
+		oldData = []byte(fmt.Sprintf(`{"id":"%s"}`, id))
+	}
+	newData, err := json.Marshal(updates)
+	if err != nil {
+		// Fall back to minimal description if marshaling fails
+		newData = []byte(`{}`)
+	}
 	oldDataStr := string(oldData)
 	newDataStr := string(newData)
 
@@ -365,7 +384,8 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 
 	limitSQL := ""
 	if filter.Limit > 0 {
-		limitSQL = fmt.Sprintf(" LIMIT %d", filter.Limit)
+		limitSQL = " LIMIT ?"
+		args = append(args, filter.Limit)
 	}
 
 	querySQL := fmt.Sprintf(`
@@ -416,6 +436,25 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	}
 
 	return issues, nil
+}
+
+// SetConfig sets a configuration value
+func (s *SQLiteStorage) SetConfig(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO config (key, value) VALUES (?, ?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value
+	`, key, value)
+	return err
+}
+
+// GetConfig gets a configuration value
+func (s *SQLiteStorage) GetConfig(ctx context.Context, key string) (string, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return value, err
 }
 
 // Close closes the database connection

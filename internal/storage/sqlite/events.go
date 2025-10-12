@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/steveyackey/beads/internal/types"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // AddComment adds a comment to an issue
@@ -31,9 +31,11 @@ func (s *SQLiteStorage) AddComment(ctx context.Context, issueID, actor, comment 
 
 // GetEvents returns the event history for an issue
 func (s *SQLiteStorage) GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error) {
+	args := []interface{}{issueID}
 	limitSQL := ""
 	if limit > 0 {
-		limitSQL = fmt.Sprintf(" LIMIT %d", limit)
+		limitSQL = " LIMIT ?"
+		args = append(args, limit)
 	}
 
 	query := fmt.Sprintf(`
@@ -44,7 +46,7 @@ func (s *SQLiteStorage) GetEvents(ctx context.Context, issueID string, limit int
 		%s
 	`, limitSQL)
 
-	rows, err := s.db.QueryContext(ctx, query, issueID)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get events: %w", err)
 	}

@@ -7,7 +7,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
-	"github.com/steveyackey/beads/internal/types"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 var readyCmd = &cobra.Command{
@@ -35,6 +35,15 @@ var readyCmd = &cobra.Command{
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
+		}
+
+		if jsonOutput {
+			// Always output array, even if empty
+			if issues == nil {
+				issues = []*types.Issue{}
+			}
+			outputJSON(issues)
+			return
 		}
 
 		if len(issues) == 0 {
@@ -71,6 +80,15 @@ var blockedCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		if jsonOutput {
+			// Always output array, even if empty
+			if blocked == nil {
+				blocked = []*types.BlockedIssue{}
+			}
+			outputJSON(blocked)
+			return
+		}
+
 		if len(blocked) == 0 {
 			green := color.New(color.FgGreen).SprintFunc()
 			fmt.Printf("\n%s No blocked issues\n\n", green("✨"))
@@ -98,6 +116,11 @@ var statsCmd = &cobra.Command{
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
+		}
+
+		if jsonOutput {
+			outputJSON(stats)
+			return
 		}
 
 		cyan := color.New(color.FgCyan).SprintFunc()

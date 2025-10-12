@@ -65,6 +65,12 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_issue ON events(issue_id);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
 
+-- Config table (for storing settings like issue prefix)
+CREATE TABLE IF NOT EXISTS config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- Ready work view
 CREATE VIEW IF NOT EXISTS ready_issues AS
 SELECT i.*

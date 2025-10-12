@@ -7,11 +7,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyackey/beads/internal/types"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // AddDependency adds a dependency between issues with cycle prevention
 func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
+	// Validate dependency type
+	if !dep.Type.IsValid() {
+		return fmt.Errorf("invalid dependency type: %s (must be blocks, related, parent-child, or discovered-from)", dep.Type)
+	}
+
 	// Validate that both issues exist
 	issueExists, err := s.GetIssue(ctx, dep.IssueID)
 	if err != nil {

@@ -2,32 +2,49 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
-	"github.com/steveyackey/beads/internal/storage"
-	"github.com/steveyackey/beads/internal/storage/sqlite"
-	"github.com/steveyackey/beads/internal/types"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 var (
-	dbPath string
-	actor  string
-	store  storage.Storage
+	dbPath     string
+	actor      string
+	store      storage.Storage
+	jsonOutput bool
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "beads",
-	Short: "Beads - Dependency-aware issue tracker",
+	Use:   "bd",
+	Short: "bd - Dependency-aware issue tracker",
 	Long:  `Issues chained together like beads. A lightweight issue tracker with first-class dependency support.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Skip database initialization for init command
+		if cmd.Name() == "init" {
+			return
+		}
+
 		// Initialize storage
 		if dbPath == "" {
-			home, _ := os.UserHomeDir()
-			dbPath = filepath.Join(home, ".beads", "beads.db")
+			// Try to find database in order:
+			// 1. $BEADS_DB environment variable
+			// 2. .beads/*.db in current directory or ancestors
+			// 3. ~/.beads/default.db
+			if envDB := os.Getenv("BEADS_DB"); envDB != "" {
+				dbPath = envDB
+			} else if foundDB := findDatabase(); foundDB != "" {
+				dbPath = foundDB
+			} else {
+				home, _ := os.UserHomeDir()
+				dbPath = filepath.Join(home, ".beads", "default.db")
+			}
 		}
 
 		var err error
@@ -52,9 +69,51 @@ var rootCmd = &cobra.Command{
 	},
 }
 
+// findDatabase searches for .beads/*.db in current directory and ancestors
+func findDatabase() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	// Walk up directory tree looking for .beads/ directory
+	for {
+		beadsDir := filepath.Join(dir, ".beads")
+		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
+			// Found .beads/ directory, look for *.db files
+			matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
+			if err == nil && len(matches) > 0 {
+				// Return first .db file found
+				return matches[0]
+			}
+		}
+
+		// Move up one directory
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached filesystem root
+			break
+		}
+		dir = parent
+	}
+
+	return ""
+}
+
+// outputJSON outputs data as pretty-printed JSON
+func outputJSON(v interface{}) {
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(v); err != nil {
+		fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 func init() {
-	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "Database path (default: ~/.beads/beads.db)")
+	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "Database path (default: auto-discover .beads/*.db or ~/.beads/default.db)")
 	rootCmd.PersistentFlags().StringVar(&actor, "actor", "", "Actor name for audit trail (default: $USER)")
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 }
 
 var createCmd = &cobra.Command{
@@ -95,11 +154,15 @@ var createCmd = &cobra.Command{
 			}
 		}
 
-		green := color.New(color.FgGreen).SprintFunc()
-		fmt.Printf("%s Created issue: %s\n", green("✓"), issue.ID)
-		fmt.Printf("  Title: %s\n", issue.Title)
-		fmt.Printf("  Priority: P%d\n", issue.Priority)
-		fmt.Printf("  Status: %s\n", issue.Status)
+		if jsonOutput {
+			outputJSON(issue)
+		} else {
+			green := color.New(color.FgGreen).SprintFunc()
+			fmt.Printf("%s Created issue: %s\n", green("✓"), issue.ID)
+			fmt.Printf("  Title: %s\n", issue.Title)
+			fmt.Printf("  Priority: P%d\n", issue.Priority)
+			fmt.Printf("  Status: %s\n", issue.Status)
+		}
 	},
 }
 
@@ -128,6 +191,22 @@ var showCmd = &cobra.Command{
 		if issue == nil {
 			fmt.Fprintf(os.Stderr, "Issue %s not found\n", args[0])
 			os.Exit(1)
+		}
+
+		if jsonOutput {
+			// Include labels and dependencies in JSON output
+			type IssueDetails struct {
+				*types.Issue
+				Labels      []string       `json:"labels,omitempty"`
+				Dependencies []*types.Issue `json:"dependencies,omitempty"`
+				Dependents   []*types.Issue `json:"dependents,omitempty"`
+			}
+			details := &IssueDetails{Issue: issue}
+			details.Labels, _ = store.GetLabels(ctx, issue.ID)
+			details.Dependencies, _ = store.GetDependencies(ctx, issue.ID)
+			details.Dependents, _ = store.GetDependents(ctx, issue.ID)
+			outputJSON(details)
+			return
 		}
 
 		cyan := color.New(color.FgCyan).SprintFunc()
@@ -222,6 +301,11 @@ var listCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		if jsonOutput {
+			outputJSON(issues)
+			return
+		}
+
 		fmt.Printf("\nFound %d issues:\n\n", len(issues))
 		for _, issue := range issues {
 			fmt.Printf("%s [P%d] %s\n", issue.ID, issue.Priority, issue.Status)
@@ -278,8 +362,14 @@ var updateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		green := color.New(color.FgGreen).SprintFunc()
-		fmt.Printf("%s Updated issue: %s\n", green("✓"), args[0])
+		if jsonOutput {
+			// Fetch updated issue and output
+			issue, _ := store.GetIssue(ctx, args[0])
+			outputJSON(issue)
+		} else {
+			green := color.New(color.FgGreen).SprintFunc()
+			fmt.Printf("%s Updated issue: %s\n", green("✓"), args[0])
+		}
 	},
 }
 
@@ -302,13 +392,24 @@ var closeCmd = &cobra.Command{
 		}
 
 		ctx := context.Background()
+		closedIssues := []*types.Issue{}
 		for _, id := range args {
 			if err := store.CloseIssue(ctx, id, reason, actor); err != nil {
 				fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
 				continue
 			}
-			green := color.New(color.FgGreen).SprintFunc()
-			fmt.Printf("%s Closed %s: %s\n", green("✓"), id, reason)
+			if jsonOutput {
+				issue, _ := store.GetIssue(ctx, id)
+				if issue != nil {
+					closedIssues = append(closedIssues, issue)
+				}
+			} else {
+				green := color.New(color.FgGreen).SprintFunc()
+				fmt.Printf("%s Closed %s: %s\n", green("✓"), id, reason)
+			}
+		}
+		if jsonOutput && len(closedIssues) > 0 {
+			outputJSON(closedIssues)
 		}
 	},
 }

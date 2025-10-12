@@ -7,7 +7,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
-	"github.com/steveyackey/beads/internal/types"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 var depCmd = &cobra.Command{
@@ -34,6 +34,16 @@ var depAddCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"status":       "added",
+				"issue_id":     args[0],
+				"depends_on_id": args[1],
+				"type":         depType,
+			})
+			return
+		}
+
 		green := color.New(color.FgGreen).SprintFunc()
 		fmt.Printf("%s Added dependency: %s depends on %s (%s)\n",
 			green("✓"), args[0], args[1], depType)
@@ -49,6 +59,15 @@ var depRemoveCmd = &cobra.Command{
 		if err := store.RemoveDependency(ctx, args[0], args[1], actor); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
+		}
+
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"status":       "removed",
+				"issue_id":     args[0],
+				"depends_on_id": args[1],
+			})
+			return
 		}
 
 		green := color.New(color.FgGreen).SprintFunc()
@@ -67,6 +86,15 @@ var depTreeCmd = &cobra.Command{
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
+		}
+
+		if jsonOutput {
+			// Always output array, even if empty
+			if tree == nil {
+				tree = []*types.TreeNode{}
+			}
+			outputJSON(tree)
+			return
 		}
 
 		if len(tree) == 0 {
@@ -110,6 +138,15 @@ var depCyclesCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		if jsonOutput {
+			// Always output array, even if empty
+			if cycles == nil {
+				cycles = [][]*types.Issue{}
+			}
+			outputJSON(cycles)
+			return
+		}
+
 		if len(cycles) == 0 {
 			green := color.New(color.FgGreen).SprintFunc()
 			fmt.Printf("\n%s No dependency cycles detected\n\n", green("✓"))
@@ -129,7 +166,7 @@ var depCyclesCmd = &cobra.Command{
 }
 
 func init() {
-	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks|related|parent-child)")
+	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks|related|parent-child|discovered-from)")
 	depCmd.AddCommand(depAddCmd)
 	depCmd.AddCommand(depRemoveCmd)
 	depCmd.AddCommand(depTreeCmd)

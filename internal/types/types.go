@@ -98,15 +98,16 @@ type Dependency struct {
 type DependencyType string
 
 const (
-	DepBlocks      DependencyType = "blocks"
-	DepRelated     DependencyType = "related"
-	DepParentChild DependencyType = "parent-child"
+	DepBlocks         DependencyType = "blocks"
+	DepRelated        DependencyType = "related"
+	DepParentChild    DependencyType = "parent-child"
+	DepDiscoveredFrom DependencyType = "discovered-from"
 )
 
 // IsValid checks if the dependency type value is valid
 func (d DependencyType) IsValid() bool {
 	switch d {
-	case DepBlocks, DepRelated, DepParentChild:
+	case DepBlocks, DepRelated, DepParentChild, DepDiscoveredFrom:
 		return true
 	}
 	return false

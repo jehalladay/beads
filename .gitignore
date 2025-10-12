@@ -1,5 +1,6 @@
-# Binaries (but not the cmd/beads directory)
+# Binaries
 /beads
+/bd
 *.exe
 *.dll
 *.so
@@ -19,5 +20,15 @@ go.work
 *.swo
 *~
 
-# Database (if you want to exclude)
-# *.db
+# OS
+.DS_Store
+Thumbs.db
+
+# SQLite databases (now using JSONL as source of truth)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Keep JSONL exports (source of truth for git)
+!.beads/*.jsonl
