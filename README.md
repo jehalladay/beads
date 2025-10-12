@@ -10,6 +10,8 @@ A lightweight, dependency-aware issue tracker designed for AI-supervised coding 
 - 🔗 **Dependency tracking** - Four dependency types (blocks, related, parent-child, discovered-from)
 - 📋 **Ready work detection** - Automatically finds issues with no open blockers
 - 🤖 **Agent-friendly** - `--json` flags for programmatic integration
+- 📦 **Git-versioned** - JSONL records stored in git, synced across machines
+- 🌍 **Distributed by design** - Agents on multiple machines share one logical database via git
 - 🏗️ **Extensible** - Add your own tables to the SQLite database
 - 🔍 **Project-aware** - Auto-discovers database in `.beads/` directory
 - 🌲 **Dependency trees** - Visualize full dependency graphs
@@ -81,6 +83,28 @@ bd update <issue-id> --status in_progress --json
 # Complete work
 bd close <issue-id> --reason "Implemented" --json
 ```
+
+## The Magic: Distributed Database via Git
+
+Here's the crazy part: **bd acts like a centralized database, but it's actually distributed via git.**
+
+When you install bd on any machine with your project repo, you get:
+- ✅ Full query capabilities (dependencies, ready work, etc.)
+- ✅ Fast local operations (<100ms via SQLite)
+- ✅ Shared state across all machines (via git)
+- ✅ No server, no daemon, no configuration
+- ✅ AI-assisted merge conflict resolution
+
+**How it works:**
+1. Each machine has a local SQLite cache (`.beads/*.db`) - gitignored
+2. Source of truth is JSONL (`.beads/issues.jsonl`) - committed to git
+3. `bd export` syncs SQLite → JSONL before commits
+4. `bd import` syncs JSONL → SQLite after pulls
+5. Git handles distribution; AI handles merge conflicts
+
+**The result:** Agents on your laptop, your desktop, and your coworker's machine all query and update what *feels* like a single shared database, but it's really just git doing what git does best - syncing text files across machines.
+
+No PostgreSQL instance. No MySQL server. No hosted service. Just install bd, clone the repo, and you're connected to the "database."
 
 ## Usage
 
@@ -328,11 +352,11 @@ This pattern enables powerful integrations while keeping bd simple and focused.
 | Dependency tracking | ✅ | ⚠️ | ✅ | ✅ |
 | Ready work detection | ✅ | ❌ | ❌ | ❌ |
 | Agent-friendly (JSON) | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| Git-native storage | ✅ (JSONL) | ❌ | ❌ | ❌ |
+| Distributed via git | ✅ | ❌ | ❌ | ❌ |
+| Works offline | ✅ | ❌ | ❌ | ❌ |
 | AI-resolvable conflicts | ✅ | ❌ | ❌ | ❌ |
 | Extensible database | ✅ | ❌ | ❌ | ❌ |
-| Offline first | ✅ | ❌ | ❌ | ❌ |
-| Self-hosted | ✅ | ⚠️ | ⚠️ | ❌ |
+| No server required | ✅ | ❌ | ❌ | ❌ |
 
 ## Why bd?
 
