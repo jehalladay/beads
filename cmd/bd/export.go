@@ -48,6 +48,16 @@ Output to stdout by default, or use -o flag for file output.`,
 			return issues[i].ID < issues[j].ID
 		})
 
+		// Populate dependencies for each issue
+		for _, issue := range issues {
+			deps, err := store.GetDependencyRecords(ctx, issue.ID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error getting dependencies for %s: %v\n", issue.ID, err)
+				os.Exit(1)
+			}
+			issue.Dependencies = deps
+		}
+
 		// Open output
 		out := os.Stdout
 		if output != "" {

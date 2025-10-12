@@ -47,6 +47,7 @@ Behavior:
 		scanner := bufio.NewScanner(in)
 
 		var created, updated, skipped int
+		var allIssues []*types.Issue // Store all issues for dependency processing
 		lineNum := 0
 
 		for scanner.Scan() {
@@ -64,6 +65,9 @@ Behavior:
 				fmt.Fprintf(os.Stderr, "Error parsing line %d: %v\n", lineNum, err)
 				os.Exit(1)
 			}
+
+			// Store for dependency processing later
+			allIssues = append(allIssues, &issue)
 
 			// Check if issue exists
 			existing, err := store.GetIssue(ctx, issue.ID)
@@ -121,10 +125,58 @@ Behavior:
 			os.Exit(1)
 		}
 
+		// Second pass: Process dependencies
+		// Do this after all issues are created to handle forward references
+		var depsCreated, depsSkipped int
+		for _, issue := range allIssues {
+			if len(issue.Dependencies) == 0 {
+				continue
+			}
+
+			for _, dep := range issue.Dependencies {
+				// Check if dependency already exists
+				existingDeps, err := store.GetDependencyRecords(ctx, dep.IssueID)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error checking dependencies for %s: %v\n", dep.IssueID, err)
+					os.Exit(1)
+				}
+
+				// Skip if this exact dependency already exists
+				exists := false
+				for _, existing := range existingDeps {
+					if existing.DependsOnID == dep.DependsOnID && existing.Type == dep.Type {
+						exists = true
+						break
+					}
+				}
+
+				if exists {
+					depsSkipped++
+					continue
+				}
+
+				// Add dependency
+				if err := store.AddDependency(ctx, dep, "import"); err != nil {
+					// Ignore errors for missing target issues or cycles
+					// This can happen if dependencies reference issues not in the import
+					fmt.Fprintf(os.Stderr, "Warning: could not add dependency %s → %s: %v\n",
+						dep.IssueID, dep.DependsOnID, err)
+					continue
+				}
+				depsCreated++
+			}
+		}
+
 		// Print summary
 		fmt.Fprintf(os.Stderr, "Import complete: %d created, %d updated", created, updated)
 		if skipped > 0 {
 			fmt.Fprintf(os.Stderr, ", %d skipped", skipped)
+		}
+		if depsCreated > 0 || depsSkipped > 0 {
+			fmt.Fprintf(os.Stderr, ", %d dependencies added", depsCreated)
+			if depsSkipped > 0 {
+				fmt.Fprintf(os.Stderr, " (%d already existed)", depsSkipped)
+			}
 		}
 		fmt.Fprintf(os.Stderr, "\n")
 	},
