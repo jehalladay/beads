@@ -30,7 +30,7 @@ and database file. Optionally specify a custom issue prefix.`,
 
 		// Create .beads directory
 		beadsDir := ".beads"
-		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		if err := os.MkdirAll(beadsDir, 0750); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to create %s directory: %v\n", beadsDir, err)
 			os.Exit(1)
 		}

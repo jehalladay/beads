@@ -1,3 +1,4 @@
+// Package main implements the bd CLI dependency management commands.
 package main
 
 import (

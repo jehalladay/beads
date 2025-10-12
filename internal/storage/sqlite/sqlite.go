@@ -49,10 +49,7 @@ func New(path string) (*SQLiteStorage, error) {
 	}
 
 	// Get next ID
-	nextID, err := getNextID(db)
-	if err != nil {
-		return nil, err
-	}
+	nextID := getNextID(db)
 
 	return &SQLiteStorage{
 		db:     db,
@@ -61,29 +58,29 @@ func New(path string) (*SQLiteStorage, error) {
 }
 
 // getNextID determines the next issue ID to use
-func getNextID(db *sql.DB) (int, error) {
+func getNextID(db *sql.DB) int {
 	var maxID sql.NullString
 	err := db.QueryRow("SELECT MAX(id) FROM issues").Scan(&maxID)
 	if err != nil {
-		return 1, nil // Start from 1 if table is empty
+		return 1 // Start from 1 if table is empty
 	}
 
 	if !maxID.Valid || maxID.String == "" {
-		return 1, nil
+		return 1
 	}
 
 	// Parse "bd-123" to get 123
 	parts := strings.Split(maxID.String, "-")
 	if len(parts) != 2 {
-		return 1, nil
+		return 1
 	}
 
 	var num int
 	if _, err := fmt.Sscanf(parts[1], "%d", &num); err != nil {
-		return 1, nil
+		return 1
 	}
 
-	return num + 1, nil
+	return num + 1
 }
 
 // CreateIssue creates a new issue
