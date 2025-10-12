@@ -1,5 +1,5 @@
-# Binaries
-beads
+# Binaries (but not the cmd/beads directory)
+/beads
 *.exe
 *.dll
 *.so
