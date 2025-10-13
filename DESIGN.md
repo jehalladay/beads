@@ -27,35 +27,38 @@ graph TB
     end
 
     subgraph "Storage Interface"
-        Storage[Storage Interface]
-        Factory[Backend Factory]
+        Storage[Storage Interface<br/>Ready for multiple backends]
     end
 
-    subgraph "Backend Implementations"
-        SQLite[SQLite Storage]
-        Postgres[PostgreSQL Storage]
+    subgraph "Current Implementation"
+        SQLite[SQLite Storage<br/>✅ Implemented]
+    end
+
+    subgraph "Planned Future"
+        Postgres[PostgreSQL Storage<br/>📋 Planned Phase 3]
     end
 
     subgraph "Data Layer"
         DB1[(SQLite DB<br/>~/.beads/beads.db)]
-        DB2[(PostgreSQL)]
+        DB2[(PostgreSQL<br/>Not yet implemented)]
     end
 
     CLI --> Cobra
     Cobra --> Storage
-    Storage --> Factory
-    Factory --> SQLite
-    Factory --> Postgres
+    Storage --> SQLite
+    Storage -.future.-> Postgres
     SQLite --> DB1
-    Postgres --> DB2
+    Postgres -.-> DB2
 
     style CLI fill:#e1f5ff
     style Storage fill:#fff4e1
-    style SQLite fill:#e8f5e9
-    style Postgres fill:#e8f5e9
-    style DB1 fill:#f3e5f5
-    style DB2 fill:#f3e5f5
+    style SQLite fill:#4caf50,color:#fff
+    style Postgres fill:#bdbdbd,color:#fff
+    style DB1 fill:#e8f5e9
+    style DB2 fill:#f5f5f5
 ```
+
+**Current Status:** Only SQLite is implemented. PostgreSQL support is designed and planned for Phase 3 (see Implementation Roadmap below).
 
 ### Entity Relationship Diagram
 
@@ -220,6 +223,93 @@ sequenceDiagram
     Storage-->>CLI: [bd-5, bd-12, ...]
     CLI-->>User: Display ready work
 ```
+
+### Collaborative Workflow: Humans + AI Agents + Git
+
+```mermaid
+graph TB
+    subgraph "Human Developer"
+        Human[👤 Human<br/>Developer]
+    end
+
+    subgraph "AI Worker Agents"
+        Agent1[🤖 Agent 1<br/>Feature Dev]
+        Agent2[🤖 Agent 2<br/>Bug Fixing]
+        Agent3[🤖 Agent 3<br/>Testing]
+    end
+
+    subgraph "Shared Project Repository"
+        Git[(🗂️ Git Repository)]
+        BeadsDB[(.beads/issues.jsonl)]
+        Code[(Source Code)]
+    end
+
+    subgraph "Local Workspaces"
+        HumanDB[(SQLite DB)]
+        Agent1DB[(SQLite DB)]
+        Agent2DB[(SQLite DB)]
+    end
+
+    Human -->|bd ready| HumanDB
+    Human -->|bd create/update| HumanDB
+    Human -->|bd export| BeadsDB
+    Human -->|git commit/push| Git
+
+    Agent1 -->|bd ready --json| Agent1DB
+    Agent1 -->|bd update status| Agent1DB
+    Agent1 -->|discovers bugs| Agent1DB
+    Agent1 -->|bd export| BeadsDB
+
+    Agent2 -->|bd ready --json| Agent2DB
+    Agent2 -->|bd close issue| Agent2DB
+    Agent2 -->|bd export| BeadsDB
+
+    Agent3 -->|bd create test task| Agent3DB
+    Agent3 -->|bd dep add| Agent3DB
+    Agent3 -->|bd export| BeadsDB
+
+    Git -->|git pull| Human
+    Git -->|git pull| Agent1
+    Git -->|git pull| Agent2
+
+    BeadsDB -->|bd import| HumanDB
+    BeadsDB -->|bd import| Agent1DB
+    BeadsDB -->|bd import| Agent2DB
+
+    Agent1 -->|git push| Git
+    Agent2 -->|git push| Git
+    Agent3 -->|git push| Git
+
+    Code -.lives alongside.-> BeadsDB
+
+    style Human fill:#64b5f6,color:#fff
+    style Agent1 fill:#81c784,color:#fff
+    style Agent2 fill:#81c784,color:#fff
+    style Agent3 fill:#81c784,color:#fff
+    style Git fill:#f06292,color:#fff
+    style BeadsDB fill:#ffd54f,color:#000
+    style HumanDB fill:#e0e0e0
+    style Agent1DB fill:#e0e0e0
+    style Agent2DB fill:#e0e0e0
+```
+
+**Workflow Steps:**
+
+1. **Pull** - Everyone pulls latest code + `.beads/issues.jsonl` from git
+2. **Import** - Run `bd import -i .beads/issues.jsonl` to sync local SQLite cache
+3. **Query** - Run `bd ready` to find unblocked work
+4. **Work** - Update issues as work progresses (`bd update`, `bd create`, `bd close`)
+5. **Discover** - Agents create new issues when they find bugs/TODOs
+6. **Export** - Run `bd export -o .beads/issues.jsonl` before committing
+7. **Push** - Commit both code changes and `.beads/issues.jsonl` together
+8. **Merge** - On conflicts, use `bd import --resolve-collisions` to auto-resolve
+
+**Benefits:**
+- Single source of truth (`.beads/issues.jsonl` in git)
+- Fast local queries (SQLite cache)
+- Offline work supported
+- Automatic collision resolution on merge
+- Full audit trail preserved
 
 ---
 
