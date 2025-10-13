@@ -7,15 +7,18 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-func TestAddDependency(t *testing.T) {
+// Helper function to test adding a dependency with a specific type
+func testAddDependencyWithType(t *testing.T, depType types.DependencyType, title1, title2 string) {
+	t.Helper()
+
 	store, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 
 	// Create two issues
-	issue1 := &types.Issue{Title: "First", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	issue2 := &types.Issue{Title: "Second", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue1 := &types.Issue{Title: title1, Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue2 := &types.Issue{Title: title2, Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
 
 	store.CreateIssue(ctx, issue1, "test-user")
 	store.CreateIssue(ctx, issue2, "test-user")
@@ -24,7 +27,7 @@ func TestAddDependency(t *testing.T) {
 	dep := &types.Dependency{
 		IssueID:     issue2.ID,
 		DependsOnID: issue1.ID,
-		Type:        types.DepBlocks,
+		Type:        depType,
 	}
 
 	err := store.AddDependency(ctx, dep, "test-user")
@@ -47,44 +50,12 @@ func TestAddDependency(t *testing.T) {
 	}
 }
 
+func TestAddDependency(t *testing.T) {
+	testAddDependencyWithType(t, types.DepBlocks, "First", "Second")
+}
+
 func TestAddDependencyDiscoveredFrom(t *testing.T) {
-	store, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	// Create two issues
-	parent := &types.Issue{Title: "Parent task", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	discovered := &types.Issue{Title: "Bug found during work", Status: types.StatusOpen, Priority: 0, IssueType: types.TypeBug}
-
-	store.CreateIssue(ctx, parent, "test-user")
-	store.CreateIssue(ctx, discovered, "test-user")
-
-	// Add discovered-from dependency
-	dep := &types.Dependency{
-		IssueID:     discovered.ID,
-		DependsOnID: parent.ID,
-		Type:        types.DepDiscoveredFrom,
-	}
-
-	err := store.AddDependency(ctx, dep, "test-user")
-	if err != nil {
-		t.Fatalf("AddDependency with discovered-from failed: %v", err)
-	}
-
-	// Verify dependency was added
-	deps, err := store.GetDependencies(ctx, discovered.ID)
-	if err != nil {
-		t.Fatalf("GetDependencies failed: %v", err)
-	}
-
-	if len(deps) != 1 {
-		t.Fatalf("Expected 1 dependency, got %d", len(deps))
-	}
-
-	if deps[0].ID != parent.ID {
-		t.Errorf("Expected dependency on %s, got %s", parent.ID, deps[0].ID)
-	}
+	testAddDependencyWithType(t, types.DepDiscoveredFrom, "Parent task", "Bug found during work")
 }
 
 func TestRemoveDependency(t *testing.T) {

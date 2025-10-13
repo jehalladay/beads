@@ -20,7 +20,11 @@ func TestExportImport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Warning: cleanup failed: %v", err)
+		}
+	}()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -219,7 +223,11 @@ func TestExportEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Warning: cleanup failed: %v", err)
+		}
+	}()
 
 	dbPath := filepath.Join(tmpDir, "empty.db")
 	store, err := sqlite.New(dbPath)
@@ -263,7 +271,11 @@ func TestRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Warning: cleanup failed: %v", err)
+		}
+	}()
 
 	dbPath := filepath.Join(tmpDir, "original.db")
 	store, err := sqlite.New(dbPath)

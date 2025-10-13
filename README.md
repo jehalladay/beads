@@ -2,6 +2,8 @@
 
 **Issues chained together like beads.**
 
+> **⚠️ Alpha Status**: This project is in active development. The core features work well, but expect API changes before 1.0. Use for development/internal projects first.
+
 A lightweight, dependency-aware issue tracker designed for AI-supervised coding workflows. Track dependencies, find ready work, and let agents chain together tasks automatically.
 
 ## The Problem
@@ -720,13 +722,28 @@ See [examples/](examples/) for scripting patterns. Contributions welcome!
 
 ### Is this production-ready?
 
-bd is in active development and used for real projects. The core functionality (create, update, dependencies, ready work) is stable. However:
-- No 1.0 release yet
-- API may change before 1.0
-- Use for development/internal projects first
-- Expect rapid iteration
+**Current status: Alpha (v0.9.0)**
 
-Follow the repo for updates!
+bd is in active development and being dogfooded on real projects. The core functionality (create, update, dependencies, ready work, collision resolution) is stable and well-tested. However:
+
+- ⚠️ **Alpha software** - No 1.0 release yet
+- ⚠️ **API may change** - Command flags and JSONL format may evolve before 1.0
+- ✅ **Safe for development** - Use for development/internal projects
+- ✅ **Data is portable** - JSONL format is human-readable and easy to migrate
+- 📈 **Rapid iteration** - Expect frequent updates and improvements
+
+**When to use bd:**
+- ✅ AI-assisted development workflows
+- ✅ Internal team projects
+- ✅ Personal productivity with dependency tracking
+- ✅ Experimenting with agent-first tools
+
+**When to wait:**
+- ❌ Mission-critical production systems (wait for 1.0)
+- ❌ Large enterprise deployments (wait for stability guarantees)
+- ❌ Long-term archival (though JSONL makes migration easy)
+
+Follow the repo for updates and the path to 1.0!
 
 ### How does bd handle scale?
 

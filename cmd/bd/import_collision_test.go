@@ -20,14 +20,22 @@ func TestImportSimpleCollision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Warning: cleanup failed: %v", err)
+		}
+	}()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	testStore, err := sqlite.New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer testStore.Close()
+	defer func() {
+		if err := testStore.Close(); err != nil {
+			t.Logf("Warning: failed to close store: %v", err)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -124,14 +132,22 @@ func TestImportMultipleCollisions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Warning: cleanup failed: %v", err)
+		}
+	}()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	testStore, err := sqlite.New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer testStore.Close()
+	defer func() {
+		if err := testStore.Close(); err != nil {
+			t.Logf("Warning: failed to close store: %v", err)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -225,14 +241,22 @@ func TestImportDependencyUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Warning: cleanup failed: %v", err)
+		}
+	}()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	testStore, err := sqlite.New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer testStore.Close()
+	defer func() {
+		if err := testStore.Close(); err != nil {
+			t.Logf("Warning: failed to close store: %v", err)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -363,14 +387,22 @@ func TestImportTextReferenceUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Warning: cleanup failed: %v", err)
+		}
+	}()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	testStore, err := sqlite.New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer testStore.Close()
+	defer func() {
+		if err := testStore.Close(); err != nil {
+			t.Logf("Warning: failed to close store: %v", err)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -499,14 +531,22 @@ func TestImportChainDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Warning: cleanup failed: %v", err)
+		}
+	}()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	testStore, err := sqlite.New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer testStore.Close()
+	defer func() {
+		if err := testStore.Close(); err != nil {
+			t.Logf("Warning: failed to close store: %v", err)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -593,14 +633,22 @@ func TestImportPartialIDMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Warning: cleanup failed: %v", err)
+		}
+	}()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	testStore, err := sqlite.New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer testStore.Close()
+	defer func() {
+		if err := testStore.Close(); err != nil {
+			t.Logf("Warning: failed to close store: %v", err)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -708,14 +756,22 @@ func TestImportExactMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Warning: cleanup failed: %v", err)
+		}
+	}()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	testStore, err := sqlite.New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer testStore.Close()
+	defer func() {
+		if err := testStore.Close(); err != nil {
+			t.Logf("Warning: failed to close store: %v", err)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -765,14 +821,22 @@ func TestImportMixedScenario(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Warning: cleanup failed: %v", err)
+		}
+	}()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	testStore, err := sqlite.New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer testStore.Close()
+	defer func() {
+		if err := testStore.Close(); err != nil {
+			t.Logf("Warning: failed to close store: %v", err)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -843,14 +907,22 @@ func TestImportWithDependenciesInJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Warning: cleanup failed: %v", err)
+		}
+	}()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	testStore, err := sqlite.New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer testStore.Close()
+	defer func() {
+		if err := testStore.Close(); err != nil {
+			t.Logf("Warning: failed to close store: %v", err)
+		}
+	}()
 
 	ctx := context.Background()
 

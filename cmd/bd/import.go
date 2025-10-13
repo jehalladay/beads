@@ -182,7 +182,10 @@ Behavior:
 				// Parse raw JSON to detect which fields are present
 				var rawData map[string]interface{}
 				jsonBytes, _ := json.Marshal(issue)
-				json.Unmarshal(jsonBytes, &rawData)
+				if err := json.Unmarshal(jsonBytes, &rawData); err != nil {
+					// If unmarshaling fails, treat all fields as present
+					rawData = make(map[string]interface{})
+				}
 
 				updates := make(map[string]interface{})
 				if _, ok := rawData["title"]; ok {
