@@ -4,15 +4,17 @@
 
 > **⚠️ Alpha Status**: This project is in active development. The core features work well, but expect API changes before 1.0. Use for development/internal projects first.
 
-Beads is a lightweight memory system for coding agents, using a graph-based issue tracker. Four kinds of dependencies chain issues together like beads, making them easy for agents to follow for long distances.
+Beads is a lightweight memory system for coding agents, using a graph-based issue tracker. Four kinds of dependencies let you chain issues together like beads, making them easy for agents to follow for long distances, and reliably perform complex task streams in the right order.
 
-Drop Beads into any project where you're using a coding agent, and you'll enjoy an instant upgrade in organization, focus, and your agent's ability to handle long-horizon tasks over multiple sessions. The agent will use issue tracking instead of creating a swamp of rotten half-implemented markdown plans. 
+Drop Beads into any project where you're using a coding agent, and you'll enjoy an instant upgrade in organization, focus, and your agent's ability to handle long-horizon tasks over multiple compaction sessions. Your agents will use issue tracking instead of creating a swamp of rotten half-implemented markdown plans. 
 
-Beads gives agents long-term planning, solving their amnesia getting lost in nested markdown plans. And they will no longer silently pass over issues due to lack of context space -- they will file issues for newly-discovered work as they go. No more lost work, ever.
+Beads gives agents unprecedented long-term planning capability, solving their amnesia when dealing with complex nested plans. And agents using Beads will no longer silently pass over problems they notice due to lack of context space -- instead, they will automatically file issues for newly-discovered work as they go. No more lost work, ever.
 
 Beads issues are backed by git, but through a clever design it manages to act like a managed, centrally hosted SQL database shared by all of the agents working on a project (repo), even across machines.
 
-Agents report that they enjoy working with Beads, and they will use it spontaneously for both recording new work and reasoning about your project in novel ways. As a human, you'll have more fun and less stress with agentic coding.
+Agents report that they enjoy working with Beads, and they will use it spontaneously for both recording new work and reasoning about your project in novel ways. Whether you are a human or an AI, Beads lets you have more fun and less stress with agentic coding.
+
+The rest of this README is written by AI. We embrace AI 'round these parts. We also welcome AI-generated PRs.
 
 ## The Problem Beads Solves
 
