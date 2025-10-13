@@ -33,7 +33,7 @@ This is the reality of AI-assisted development:
 - 📦 **Git-versioned** - JSONL records stored in git, synced across machines
 - 🌍 **Distributed by design** - Agents on multiple machines share one logical database via git
 - 🏗️ **Extensible** - Add your own tables to the SQLite database
-- 🔍 **Project-aware** - Auto-discovers database in `.beads/` directory
+- 🔍 **Multi-project isolation** - Each project gets its own database, auto-discovered by directory
 - 🌲 **Dependency trees** - Visualize full dependency graphs
 - 🎨 **Beautiful CLI** - Colored output for humans, JSON for bots
 - 💾 **Full audit trail** - Every change is logged
@@ -703,13 +703,31 @@ The hooks automatically export before commits and import after pulls/merges/chec
 
 ### Can I track issues for multiple projects?
 
-Yes! bd uses project-local databases:
+**Yes! Each project is completely isolated.** bd uses project-local databases:
 ```bash
 cd ~/project1 && bd init --prefix proj1
 cd ~/project2 && bd init --prefix proj2
 ```
 
 Each project gets its own `.beads/` directory with its own database and JSONL file. bd auto-discovers the correct database based on your current directory (walks up like git).
+
+**Multi-project scenarios work seamlessly:**
+- Multiple agents working on different projects simultaneously → No conflicts
+- Same machine, different repos → Each finds its own `.beads/*.db` automatically
+- Agents in subdirectories → bd walks up to find the project root (like git)
+
+**Limitation:** Issues cannot reference issues in other projects. Each database is isolated by design. If you need cross-project tracking, initialize bd in a parent directory that contains both projects.
+
+**Example:** Multiple agents, multiple projects, same machine:
+```bash
+# Agent 1 working on web app
+cd ~/work/webapp && bd ready --json    # Uses ~/work/webapp/.beads/webapp.db
+
+# Agent 2 working on API
+cd ~/work/api && bd ready --json       # Uses ~/work/api/.beads/api.db
+
+# No conflicts! Completely isolated databases.
+```
 
 ### How do I migrate from GitHub Issues / Jira / Linear?
 
