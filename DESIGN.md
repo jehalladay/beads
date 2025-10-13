@@ -15,6 +15,214 @@ A lightweight, standalone issue tracker that makes dependency graphs first-class
 
 ---
 
+## Architecture Diagrams
+
+### System Architecture
+
+```mermaid
+graph TB
+    subgraph "CLI Layer"
+        CLI[bd CLI Commands]
+        Cobra[Cobra Framework]
+    end
+
+    subgraph "Storage Interface"
+        Storage[Storage Interface]
+        Factory[Backend Factory]
+    end
+
+    subgraph "Backend Implementations"
+        SQLite[SQLite Storage]
+        Postgres[PostgreSQL Storage]
+    end
+
+    subgraph "Data Layer"
+        DB1[(SQLite DB<br/>~/.beads/beads.db)]
+        DB2[(PostgreSQL)]
+    end
+
+    CLI --> Cobra
+    Cobra --> Storage
+    Storage --> Factory
+    Factory --> SQLite
+    Factory --> Postgres
+    SQLite --> DB1
+    Postgres --> DB2
+
+    style CLI fill:#e1f5ff
+    style Storage fill:#fff4e1
+    style SQLite fill:#e8f5e9
+    style Postgres fill:#e8f5e9
+    style DB1 fill:#f3e5f5
+    style DB2 fill:#f3e5f5
+```
+
+### Entity Relationship Diagram
+
+```mermaid
+erDiagram
+    ISSUES ||--o{ DEPENDENCIES : "depends on"
+    ISSUES ||--o{ LABELS : "tagged with"
+    ISSUES ||--o{ EVENTS : "has history"
+
+    ISSUES {
+        string id PK "bd-1, bd-2, ..."
+        string title "max 500 chars"
+        string description
+        string design
+        string acceptance_criteria
+        string notes
+        string status "open|in_progress|blocked|closed"
+        int priority "0-4"
+        string issue_type "bug|feature|task|epic|chore"
+        string assignee
+        int estimated_minutes
+        datetime created_at
+        datetime updated_at
+        datetime closed_at
+    }
+
+    DEPENDENCIES {
+        string issue_id FK
+        string depends_on_id FK
+        string type "blocks|related|parent-child|discovered-from"
+        datetime created_at
+        string created_by
+    }
+
+    LABELS {
+        string issue_id FK
+        string label
+    }
+
+    EVENTS {
+        int64 id PK
+        string issue_id FK
+        string event_type
+        string actor
+        string old_value
+        string new_value
+        string comment
+        datetime created_at
+    }
+```
+
+### Dependency Flow & Ready Work Calculation
+
+```mermaid
+graph LR
+    subgraph "Issue States"
+        Open[Open Issues]
+        InProgress[In Progress]
+        Blocked[Blocked]
+        Closed[Closed]
+    end
+
+    subgraph "Dependency Analysis"
+        Check{Has open<br/>blockers?}
+        Ready[Ready Work<br/>bd ready]
+        NotReady[Not Ready<br/>Dependencies exist]
+    end
+
+    Open --> Check
+    Check -->|No blockers| Ready
+    Check -->|Has blockers| NotReady
+    NotReady -.depends on.-> InProgress
+    NotReady -.depends on.-> Open
+    NotReady -.depends on.-> Blocked
+
+    Closed -->|Unblocks| Open
+
+    style Ready fill:#4caf50,color:#fff
+    style NotReady fill:#ff9800,color:#fff
+    style Blocked fill:#f44336,color:#fff
+    style Closed fill:#9e9e9e,color:#fff
+```
+
+### CLI Command Structure
+
+```mermaid
+graph TB
+    BD[bd]
+
+    BD --> Init[init]
+    BD --> Create[create]
+    BD --> Update[update]
+    BD --> Show[show]
+    BD --> List[list]
+    BD --> Search[search]
+    BD --> Close[close]
+    BD --> Reopen[reopen]
+    BD --> Comment[comment]
+
+    BD --> Dep[dep]
+    Dep --> DepAdd[dep add]
+    Dep --> DepRemove[dep remove]
+    Dep --> DepTree[dep tree]
+    Dep --> DepCycles[dep cycles]
+
+    BD --> Label[label]
+    Label --> LabelAdd[label add]
+    Label --> LabelRemove[label remove]
+    Label --> LabelList[label list]
+    Label --> LabelIssues[label issues]
+
+    BD --> Ready[ready]
+    BD --> Blocked[blocked]
+    BD --> Stats[stats]
+
+    BD --> Config[config]
+    BD --> Export[export]
+    BD --> Import[import]
+
+    style BD fill:#2196f3,color:#fff
+    style Dep fill:#ff9800,color:#fff
+    style Label fill:#9c27b0,color:#fff
+    style Ready fill:#4caf50,color:#fff
+    style Export fill:#00bcd4,color:#fff
+    style Import fill:#00bcd4,color:#fff
+```
+
+### Data Flow: Creating an Issue with Dependencies
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant CLI
+    participant Storage
+    participant SQLite
+    participant Events
+
+    User->>CLI: bd create "Fix bug"
+    CLI->>Storage: CreateIssue(issue, actor)
+    Storage->>SQLite: BEGIN TRANSACTION
+    Storage->>SQLite: INSERT INTO issues
+    Storage->>Events: INSERT event (created)
+    Storage->>SQLite: COMMIT
+    SQLite-->>Storage: issue ID (bd-42)
+    Storage-->>CLI: Success
+    CLI-->>User: Created bd-42
+
+    User->>CLI: bd dep add bd-42 bd-10
+    CLI->>Storage: AddDependency(bd-42, bd-10)
+    Storage->>SQLite: BEGIN TRANSACTION
+    Storage->>SQLite: INSERT INTO dependencies
+    Storage->>SQLite: Check for cycles
+    Storage->>Events: INSERT event (dep_added)
+    Storage->>SQLite: COMMIT
+    Storage-->>CLI: Success
+    CLI-->>User: Added dependency
+
+    User->>CLI: bd ready
+    CLI->>Storage: GetReadyWork()
+    Storage->>SQLite: Query ready_issues view
+    SQLite-->>Storage: Issues with no blockers
+    Storage-->>CLI: [bd-5, bd-12, ...]
+    CLI-->>User: Display ready work
+```
+
+---
+
 ## Core Data Model
 
 ### Issues
