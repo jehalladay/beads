@@ -229,6 +229,9 @@ var showCmd = &cobra.Command{
 		if issue.Design != "" {
 			fmt.Printf("\nDesign:\n%s\n", issue.Design)
 		}
+		if issue.Notes != "" {
+			fmt.Printf("\nNotes:\n%s\n", issue.Notes)
+		}
 		if issue.AcceptanceCriteria != "" {
 			fmt.Printf("\nAcceptance Criteria:\n%s\n", issue.AcceptanceCriteria)
 		}
@@ -350,6 +353,18 @@ var updateCmd = &cobra.Command{
 			assignee, _ := cmd.Flags().GetString("assignee")
 			updates["assignee"] = assignee
 		}
+		if cmd.Flags().Changed("design") {
+			design, _ := cmd.Flags().GetString("design")
+			updates["design"] = design
+		}
+		if cmd.Flags().Changed("notes") {
+			notes, _ := cmd.Flags().GetString("notes")
+			updates["notes"] = notes
+		}
+		if cmd.Flags().Changed("acceptance-criteria") {
+			acceptanceCriteria, _ := cmd.Flags().GetString("acceptance-criteria")
+			updates["acceptance_criteria"] = acceptanceCriteria
+		}
 
 		if len(updates) == 0 {
 			fmt.Println("No updates specified")
@@ -378,6 +393,9 @@ func init() {
 	updateCmd.Flags().IntP("priority", "p", 0, "New priority")
 	updateCmd.Flags().String("title", "", "New title")
 	updateCmd.Flags().StringP("assignee", "a", "", "New assignee")
+	updateCmd.Flags().String("design", "", "Design notes")
+	updateCmd.Flags().String("notes", "", "Additional notes")
+	updateCmd.Flags().String("acceptance-criteria", "", "Acceptance criteria")
 	rootCmd.AddCommand(updateCmd)
 }
 

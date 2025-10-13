@@ -462,6 +462,115 @@ Import behavior:
 - New issues are **created**
 - All imports are atomic (all or nothing)
 
+### Handling ID Collisions
+
+When importing issues, bd detects three types of situations:
+1. **Exact matches** - Same ID, same content (idempotent, no action needed)
+2. **New issues** - ID doesn't exist in database yet
+3. **Collisions** - Same ID but different content (requires resolution)
+
+**Collision detection:**
+```bash
+# Preview collisions without making changes
+bd import -i issues.jsonl --dry-run
+
+# Output shows:
+# === Collision Detection Report ===
+# Exact matches (idempotent): 5
+# New issues: 3
+# COLLISIONS DETECTED: 2
+#
+# Colliding issues:
+#   bd-10: Fix authentication bug
+#     Conflicting fields: [title, priority, status]
+#   bd-15: Add dashboard widget
+#     Conflicting fields: [description, assignee]
+```
+
+**Resolution strategies:**
+
+**Option 1: Automatic remapping (recommended for branch merges)**
+```bash
+# Automatically resolve collisions by renumbering incoming issues
+bd import -i issues.jsonl --resolve-collisions
+
+# bd will:
+# 1. Keep existing issues unchanged
+# 2. Assign new IDs to colliding incoming issues (bd-25, bd-26, etc.)
+# 3. Update ALL text references and dependencies to use new IDs
+# 4. Report the remapping:
+#
+# === Remapping Report ===
+# Issues remapped: 2
+#
+# Remappings (sorted by reference count):
+#   bd-10 → bd-25 (refs: 3)
+#   bd-15 → bd-26 (refs: 7)
+#
+# All text and dependency references have been updated.
+```
+
+**Option 2: Manual resolution**
+```bash
+# 1. Check for collisions first
+bd import -i branch-issues.jsonl --dry-run
+
+# 2. Edit JSONL to resolve manually:
+#    - Rename IDs in the JSONL file
+#    - Or merge content into existing issues
+#    - Or skip colliding issues
+
+# 3. Import after manual fixes
+bd import -i branch-issues.jsonl
+```
+
+**The collision resolution algorithm:**
+
+When using `--resolve-collisions`, bd intelligently remaps colliding issues to minimize updates:
+
+1. **Detects collisions** - Compares ID and content (title, description, status, priority, etc.)
+2. **Scores references** - Counts how many times each ID is referenced in:
+   - Text fields (description, design, notes, acceptance criteria)
+   - Dependency records (both as source and target)
+3. **Renumbers by score** - Issues with fewer references are remapped first
+4. **Updates all references** - Uses word-boundary regex to replace old IDs:
+   - Text fields: "See bd-10 for details" → "See bd-25 for details"
+   - Dependencies: bd-5 → bd-10 becomes bd-5 → bd-25
+   - Handles edge cases: Distinguishes bd-10 from bd-100, bd-1000, etc.
+
+**Branch merge workflow:**
+
+This is particularly useful when merging branches where both sides created issues with the same IDs:
+
+```bash
+# On main branch: bd-1 through bd-20 exist
+git checkout main
+bd export -o .beads/issues.jsonl
+
+# On feature branch: Also has bd-1 through bd-20 (diverged)
+git checkout feature-branch
+bd export -o .beads/issues.jsonl
+
+# Merge branches
+git checkout main
+git merge feature-branch
+# Git shows conflict in .beads/issues.jsonl
+
+# Resolve the conflict in Git (keep both sides for different issues, etc.)
+# Then import with collision resolution:
+bd import -i .beads/issues.jsonl --resolve-collisions
+
+# Result: Issues from feature-branch get new IDs (bd-21+)
+# All cross-references are automatically updated
+```
+
+**Important notes:**
+- Collisions are **safe by default** - import fails unless you use `--resolve-collisions`
+- Use `--dry-run` to preview changes before applying
+- The algorithm preserves the existing database (existing issues are never renumbered)
+- All text mentions and dependency links are updated automatically
+- Word-boundary matching prevents false replacements (bd-10 won't match bd-100)
+
 ### JSONL Format
 
 Each line is a complete JSON issue object:
@@ -550,6 +659,7 @@ Check out the **[examples/](examples/)** directory for:
 - **[Python agent](examples/python-agent/)** - Full agent implementation in Python
 - **[Bash agent](examples/bash-agent/)** - Shell script agent example
 - **[Git hooks](examples/git-hooks/)** - Automatic export/import on git operations
+- **[Branch merge workflow](examples/branch-merge/)** - Handle ID collisions when merging branches
 - **[Claude Desktop MCP](examples/claude-desktop-mcp/)** - MCP server integration (coming soon)
 
 ## FAQ

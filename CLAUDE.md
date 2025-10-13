@@ -31,6 +31,10 @@ bd dep tree <id>
 
 # Get issue details
 bd show <id> --json
+
+# Import with collision detection
+bd import -i .beads/issues.jsonl --dry-run             # Preview only
+bd import -i .beads/issues.jsonl --resolve-collisions  # Auto-resolve
 ```
 
 ### Workflow
@@ -119,6 +123,43 @@ bd import -i .beads/issues.jsonl  # Sync SQLite cache
 
 Or use the git hooks in `examples/git-hooks/` for automation.
 
+### Handling Import Collisions
+
+When merging branches or pulling changes, you may encounter ID collisions (same ID, different content). bd detects and safely handles these:
+
+**Check for collisions after merge:**
+```bash
+# After git merge or pull
+bd import -i .beads/issues.jsonl --dry-run
+
+# Output shows:
+# === Collision Detection Report ===
+# Exact matches (idempotent): 15
+# New issues: 5
+# COLLISIONS DETECTED: 3
+#
+# Colliding issues:
+#   bd-10: Fix authentication (conflicting fields: [title, priority])
+#   bd-12: Add feature (conflicting fields: [description, status])
+```
+
+**Resolve collisions automatically:**
+```bash
+# Let bd resolve collisions by remapping incoming issues to new IDs
+bd import -i .beads/issues.jsonl --resolve-collisions
+
+# bd will:
+# - Keep existing issues unchanged
+# - Assign new IDs to colliding issues (bd-25, bd-26, etc.)
+# - Update ALL text references and dependencies automatically
+# - Report the remapping with reference counts
+```
+
+**Important**: The `--resolve-collisions` flag is safe and recommended for branch merges. It preserves the existing database and only renumbers the incoming colliding issues. All text mentions like "see bd-10" and dependency links are automatically updated to use the new IDs.
+
+**Manual resolution** (alternative):
+If you prefer manual control, resolve the Git conflict in `.beads/issues.jsonl` directly, then import normally without `--resolve-collisions`.
+
 ## Current Project Status
 
 Run `bd stats` to see overall progress.
@@ -189,6 +230,9 @@ bd dep tree bd-8  # Show 1.0 epic dependencies
 - Export to JSONL before committing (or use git hooks)
 - Use `bd dep tree` to understand complex dependencies
 - Priority 0-1 issues are usually more important than 2-4
+- Use `--dry-run` to preview import collisions before resolving
+- Use `--resolve-collisions` for safe automatic branch merges
+- After resolving collisions, run `bd export` to save the updated state
 
 ## Building and Testing
 

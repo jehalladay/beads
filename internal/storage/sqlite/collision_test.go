@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -225,9 +226,9 @@ func TestDetectCollisions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := detectCollisions(ctx, store, tt.incomingIssues)
+			result, err := DetectCollisions(ctx, store, tt.incomingIssues)
 			if err != nil {
-				t.Fatalf("detectCollisions failed: %v", err)
+				t.Fatalf("DetectCollisions failed: %v", err)
 			}
 
 			if len(result.ExactMatches) != tt.expectedExact {
@@ -622,9 +623,9 @@ func TestScoreCollisions(t *testing.T) {
 	allIssues := []*types.Issue{issue1, issue2, issue3, issue4}
 
 	// Score the collisions
-	err = scoreCollisions(ctx, store, collisions, allIssues)
+	err = ScoreCollisions(ctx, store, collisions, allIssues)
 	if err != nil {
-		t.Fatalf("scoreCollisions failed: %v", err)
+		t.Fatalf("ScoreCollisions failed: %v", err)
 	}
 
 	// Verify scores were calculated
@@ -717,5 +718,312 @@ func TestCountReferencesWordBoundary(t *testing.T) {
 				t.Errorf("expected count %d, got %d", expected, count)
 			}
 		})
+	}
+}
+
+func TestReplaceIDReferences(t *testing.T) {
+	tests := []struct {
+		name      string
+		text      string
+		idMapping map[string]string
+		expected  string
+	}{
+		{
+			name: "single replacement",
+			text: "This references bd-1 in the description",
+			idMapping: map[string]string{
+				"bd-1": "bd-100",
+			},
+			expected: "This references bd-100 in the description",
+		},
+		{
+			name: "multiple replacements",
+			text: "bd-1 depends on bd-2 and bd-3",
+			idMapping: map[string]string{
+				"bd-1": "bd-100",
+				"bd-2": "bd-101",
+				"bd-3": "bd-102",
+			},
+			expected: "bd-100 depends on bd-101 and bd-102",
+		},
+		{
+			name: "word boundary - don't replace partial matches",
+			text: "bd-10 and bd-100 and bd-1",
+			idMapping: map[string]string{
+				"bd-1": "bd-200",
+			},
+			expected: "bd-10 and bd-100 and bd-200",
+		},
+		{
+			name: "no replacements needed",
+			text: "This has no matching IDs",
+			idMapping: map[string]string{
+				"bd-1": "bd-100",
+			},
+			expected: "This has no matching IDs",
+		},
+		{
+			name: "replace same ID multiple times",
+			text: "bd-1 is mentioned twice: bd-1",
+			idMapping: map[string]string{
+				"bd-1": "bd-100",
+			},
+			expected: "bd-100 is mentioned twice: bd-100",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := replaceIDReferences(tt.text, tt.idMapping)
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestRemapCollisions(t *testing.T) {
+	// Create temporary database
+	tmpDir, err := os.MkdirTemp("", "remap-collision-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Setup: Create an existing issue in the database with a high ID number
+	// This ensures that when we remap bd-2 and bd-3, they get new IDs that don't conflict
+	existingIssue := &types.Issue{
+		ID:          "bd-10",
+		Title:       "Existing issue",
+		Description: "This mentions bd-2 and bd-3",
+		Notes:       "Also bd-2 here",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeTask,
+	}
+
+	if err := store.CreateIssue(ctx, existingIssue, "test"); err != nil {
+		t.Fatalf("failed to create existing issue: %v", err)
+	}
+
+	// Create collisions (incoming issues with same IDs as DB but different content)
+	collision1 := &CollisionDetail{
+		ID: "bd-2",
+		IncomingIssue: &types.Issue{
+			ID:          "bd-2",
+			Title:       "Collision 2 (has fewer references)",
+			Description: "This is different content",
+			Status:      types.StatusOpen,
+			Priority:    1,
+			IssueType:   types.TypeTask,
+		},
+		ReferenceScore: 2, // Fewer references
+	}
+
+	collision2 := &CollisionDetail{
+		ID: "bd-3",
+		IncomingIssue: &types.Issue{
+			ID:          "bd-3",
+			Title:       "Collision 3 (has more references)",
+			Description: "Different content for bd-3",
+			Status:      types.StatusOpen,
+			Priority:    1,
+			IssueType:   types.TypeTask,
+		},
+		ReferenceScore: 5, // More references
+	}
+
+	collisions := []*CollisionDetail{collision1, collision2}
+	allIssues := []*types.Issue{existingIssue, collision1.IncomingIssue, collision2.IncomingIssue}
+
+	// Remap collisions
+	idMapping, err := RemapCollisions(ctx, store, collisions, allIssues)
+	if err != nil {
+		t.Fatalf("RemapCollisions failed: %v", err)
+	}
+
+	// Verify ID mapping was created
+	if len(idMapping) != 2 {
+		t.Errorf("expected 2 ID mappings, got %d", len(idMapping))
+	}
+
+	newID2, ok := idMapping["bd-2"]
+	if !ok {
+		t.Fatal("bd-2 was not remapped")
+	}
+	newID3, ok := idMapping["bd-3"]
+	if !ok {
+		t.Fatal("bd-3 was not remapped")
+	}
+
+	// Verify new issues were created with new IDs
+	remappedIssue2, err := store.GetIssue(ctx, newID2)
+	if err != nil {
+		t.Fatalf("failed to get remapped issue %s: %v", newID2, err)
+	}
+	if remappedIssue2 == nil {
+		t.Fatalf("remapped issue %s not found", newID2)
+	}
+	if remappedIssue2.Title != "Collision 2 (has fewer references)" {
+		t.Errorf("unexpected title for remapped issue: %s", remappedIssue2.Title)
+	}
+
+	// Verify references in existing issue were updated
+	updatedExisting, err := store.GetIssue(ctx, "bd-10")
+	if err != nil {
+		t.Fatalf("failed to get updated existing issue: %v", err)
+	}
+
+	// Check that description was updated
+	if updatedExisting.Description != fmt.Sprintf("This mentions %s and %s", newID2, newID3) {
+		t.Errorf("description was not updated correctly. Got: %q", updatedExisting.Description)
+	}
+
+	// Check that notes were updated
+	if updatedExisting.Notes != fmt.Sprintf("Also %s here", newID2) {
+		t.Errorf("notes were not updated correctly. Got: %q", updatedExisting.Notes)
+	}
+}
+
+func TestUpdateDependencyReferences(t *testing.T) {
+	// Create temporary database
+	tmpDir, err := os.MkdirTemp("", "dep-remap-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create issues
+	issue1 := &types.Issue{
+		ID:          "bd-1",
+		Title:       "Issue 1",
+		Description: "First issue",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeTask,
+	}
+
+	issue2 := &types.Issue{
+		ID:          "bd-2",
+		Title:       "Issue 2",
+		Description: "Second issue",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeTask,
+	}
+
+	issue3 := &types.Issue{
+		ID:          "bd-3",
+		Title:       "Issue 3",
+		Description: "Third issue",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeTask,
+	}
+
+	// Create the new (remapped) issue
+	issue100 := &types.Issue{
+		ID:          "bd-100",
+		Title:       "Remapped Issue (was bd-2)",
+		Description: "This is the remapped version",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeTask,
+	}
+
+	if err := store.CreateIssue(ctx, issue1, "test"); err != nil {
+		t.Fatalf("failed to create issue1: %v", err)
+	}
+	if err := store.CreateIssue(ctx, issue2, "test"); err != nil {
+		t.Fatalf("failed to create issue2: %v", err)
+	}
+	if err := store.CreateIssue(ctx, issue3, "test"); err != nil {
+		t.Fatalf("failed to create issue3: %v", err)
+	}
+	if err := store.CreateIssue(ctx, issue100, "test"); err != nil {
+		t.Fatalf("failed to create issue100: %v", err)
+	}
+
+	// Add dependencies
+	// bd-1 depends on bd-2
+	dep1 := &types.Dependency{
+		IssueID:     "bd-1",
+		DependsOnID: "bd-2",
+		Type:        types.DepBlocks,
+	}
+	// bd-3 depends on bd-2
+	dep2 := &types.Dependency{
+		IssueID:     "bd-3",
+		DependsOnID: "bd-2",
+		Type:        types.DepBlocks,
+	}
+
+	if err := store.AddDependency(ctx, dep1, "test"); err != nil {
+		t.Fatalf("failed to add dep1: %v", err)
+	}
+	if err := store.AddDependency(ctx, dep2, "test"); err != nil {
+		t.Fatalf("failed to add dep2: %v", err)
+	}
+
+	// Create ID mapping (bd-2 was remapped to bd-100)
+	idMapping := map[string]string{
+		"bd-2": "bd-100",
+	}
+
+	// Update dependency references
+	if err := updateDependencyReferences(ctx, store, idMapping); err != nil {
+		t.Fatalf("updateDependencyReferences failed: %v", err)
+	}
+
+	// Verify dependencies were updated
+	// bd-1 should now depend on bd-100
+	deps1, err := store.GetDependencyRecords(ctx, "bd-1")
+	if err != nil {
+		t.Fatalf("failed to get deps for bd-1: %v", err)
+	}
+	if len(deps1) != 1 {
+		t.Fatalf("expected 1 dependency for bd-1, got %d", len(deps1))
+	}
+	if deps1[0].DependsOnID != "bd-100" {
+		t.Errorf("expected bd-1 to depend on bd-100, got %s", deps1[0].DependsOnID)
+	}
+
+	// bd-3 should now depend on bd-100
+	deps3, err := store.GetDependencyRecords(ctx, "bd-3")
+	if err != nil {
+		t.Fatalf("failed to get deps for bd-3: %v", err)
+	}
+	if len(deps3) != 1 {
+		t.Fatalf("expected 1 dependency for bd-3, got %d", len(deps3))
+	}
+	if deps3[0].DependsOnID != "bd-100" {
+		t.Errorf("expected bd-3 to depend on bd-100, got %s", deps3[0].DependsOnID)
+	}
+
+	// Old dependency bd-2 should not have any dependencies anymore
+	deps2, err := store.GetDependencyRecords(ctx, "bd-2")
+	if err != nil {
+		t.Fatalf("failed to get deps for bd-2: %v", err)
+	}
+	if len(deps2) != 0 {
+		t.Errorf("expected 0 dependencies for bd-2, got %d", len(deps2))
 	}
 }
