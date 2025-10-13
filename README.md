@@ -4,33 +4,19 @@
 
 > **⚠️ Alpha Status**: This project is in active development. The core features work well, but expect API changes before 1.0. Use for development/internal projects first.
 
-Beads is a lightweight memory system for coding agents, using a graph-based issue tracker. Four kinds of dependencies let you chain issues together like beads, making them easy for agents to follow for long distances, and reliably perform complex task streams in the right order.
+Beads is a lightweight memory system for coding agents, using a graph-based issue tracker. Four kinds of dependencies work to chain your issues together like beads, making them easy for agents to follow for long distances, and reliably perform complex task streams in the right order.
 
-Drop Beads into any project where you're using a coding agent, and you'll enjoy an instant upgrade in organization, focus, and your agent's ability to handle long-horizon tasks over multiple compaction sessions. Your agents will use issue tracking instead of creating a swamp of rotten half-implemented markdown plans. 
+Drop Beads into any project where you're using a coding agent, and you'll enjoy an instant upgrade in organization, focus, and your agent's ability to handle long-horizon tasks over multiple compaction sessions. Your agents will use issue tracking with proper epics, rather than creating a swamp of rotten half-implemented markdown plans.
 
-Beads gives agents unprecedented long-term planning capability, solving their amnesia when dealing with complex nested plans. And agents using Beads will no longer silently pass over problems they notice due to lack of context space -- instead, they will automatically file issues for newly-discovered work as they go. No more lost work, ever.
+You don't use Beads directly as a human. Your coding agent will file and manage issues on your behalf. You can ask it to file issues, and it will also file them automatically when it notices problems.
+
+Beads gives agents unprecedented long-term planning capability, solving their amnesia when dealing with complex nested plans. They can trivially query the ready work, orient themselves, and land on their feet as soon as they boot up.
+
+Agents using Beads will no longer silently pass over problems they notice due to lack of context space -- instead, they will automatically file issues for newly-discovered work as they go. No more lost work, ever.
 
 Beads issues are backed by git, but through a clever design it manages to act like a managed, centrally hosted SQL database shared by all of the agents working on a project (repo), even across machines.
 
 Agents report that they enjoy working with Beads, and they will use it spontaneously for both recording new work and reasoning about your project in novel ways. Whether you are a human or an AI, Beads lets you have more fun and less stress with agentic coding.
-
-The rest of this README is written by AI. We embrace AI 'round these parts. We also welcome AI-generated PRs.
-
-## The Problem Beads Solves
-
-You're 200 messages deep in a coding session with your AI agent. You've discovered 12 bugs, planned 8 features, debated 3 architectural changes. The agent asks: **"What should I work on next?"**
-
-You scroll up. Your `TODO.md` has 47 unchecked boxes. Half are blocked by other tasks. Some are duplicates. You have no idea what's actually ready to work on.
-
-**The agent has forgotten. You've lost track. Work is being duplicated.**
-
-This is the reality of AI-assisted development:
-- **Agents hit context limits** - Long conversations lose early tasks
-- **TODOs don't track dependencies** - No way to know what's blocked
-- **Markdown doesn't scale** - Finding ready work means manual scanning
-- **No shared state** - Agent on your laptop, agent on your desktop, both out of sync
-
-**Agents need external memory. You need dependency tracking. Both of you need to know what's ready to work on.**
 
 ![AI Agent using Beads](https://raw.githubusercontent.com/steveyegge/beads/main/.github/images/agent-using-beads.jpg)
 
