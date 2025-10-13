@@ -24,13 +24,15 @@ Agents using Beads will no longer silently pass over problems they notice due to
 
 Beads issues are backed by git, but through a clever design it manages to act like a managed, centrally hosted SQL database shared by all of the agents working on a project (repo), even across machines.
 
+Beads even improves work auditability. The issue tracker has a sophisticated audit trail, which agents can use to reconstruct complex operations that may have spanned multiple sessions.
+
 Agents report that they enjoy working with Beads, and they will use it spontaneously for both recording new work and reasoning about your project in novel ways. Whether you are a human or an AI, Beads lets you have more fun and less stress with agentic coding.
 
 ![AI Agent using Beads](https://raw.githubusercontent.com/steveyegge/beads/main/.github/images/agent-using-beads.jpg)
 
 ## Features
 
-- ✨ **Zero setup** - `bd init` creates project-local database
+- ✨ **Zero setup** - `bd init` creates project-local database (and your agent will do it)
 - 🔗 **Dependency tracking** - Four dependency types (blocks, related, parent-child, discovered-from)
 - 📋 **Ready work detection** - Automatically finds issues with no open blockers
 - 🤖 **Agent-friendly** - `--json` flags for programmatic integration
