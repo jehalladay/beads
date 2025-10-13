@@ -8,6 +8,14 @@ Beads is a lightweight memory system for coding agents, using a graph-based issu
 
 Drop Beads into any project where you're using a coding agent, and you'll enjoy an instant upgrade in organization, focus, and your agent's ability to handle long-horizon tasks over multiple compaction sessions. Your agents will use issue tracking with proper epics, rather than creating a swamp of rotten half-implemented markdown plans.
 
+Instant start:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/install.sh | bash
+```
+
+Then tell your coding agent to start using the bd tool for all new work. That's all there is to it!
+
 You don't use Beads directly as a human. Your coding agent will file and manage issues on your behalf. You can ask it to file issues, and it will also file them automatically when it notices problems.
 
 Beads gives agents unprecedented long-term planning capability, solving their amnesia when dealing with complex nested plans. They can trivially query the ready work, orient themselves, and land on their feet as soon as they boot up.
