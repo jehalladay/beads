@@ -14,9 +14,9 @@ Instant start:
 curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/install.sh | bash
 ```
 
-Then tell your coding agent to start using the bd tool for all new work. That's all there is to it!
+Then tell your coding agent to start using the `bd` tool instead of markdown for all new work, somewhere in your `AGENTS.md` or `CLAUDE.md`. That's all there is to it!
 
-You don't use Beads directly as a human. Your coding agent will file and manage issues on your behalf. You can ask it to file issues, and it will also file them automatically when it notices problems.
+You don't use Beads directly as a human. Your coding agent will file and manage issues on your behalf. They'll file things they notice automatically, and you can ask them at any time to add or update issues for you.
 
 Beads gives agents unprecedented long-term planning capability, solving their amnesia when dealing with complex nested plans. They can trivially query the ready work, orient themselves, and land on their feet as soon as they boot up.
 
