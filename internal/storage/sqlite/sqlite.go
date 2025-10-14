@@ -60,6 +60,11 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to migrate external_ref column: %w", err)
 	}
 
+	// Migrate existing databases to add composite index on dependencies
+	if err := migrateCompositeIndexes(db); err != nil {
+		return nil, fmt.Errorf("failed to migrate composite indexes: %w", err)
+	}
+
 	return &SQLiteStorage{
 		db: db,
 	}, nil
@@ -198,6 +203,36 @@ func migrateExternalRefColumn(db *sql.DB) error {
 		}
 	}
 
+	return nil
+}
+
+// migrateCompositeIndexes checks if composite indexes exist and creates them if missing.
+// This ensures existing databases get performance optimizations from new indexes.
+func migrateCompositeIndexes(db *sql.DB) error {
+	// Check if idx_dependencies_depends_on_type exists
+	var indexName string
+	err := db.QueryRow(`
+		SELECT name FROM sqlite_master
+		WHERE type='index' AND name='idx_dependencies_depends_on_type'
+	`).Scan(&indexName)
+
+	if err == sql.ErrNoRows {
+		// Index doesn't exist, create it
+		_, err := db.Exec(`
+			CREATE INDEX idx_dependencies_depends_on_type ON dependencies(depends_on_id, type)
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to create composite index idx_dependencies_depends_on_type: %w", err)
+		}
+		// Index created successfully
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to check for composite index: %w", err)
+	}
+
+	// Index exists, no migration needed
 	return nil
 }
 

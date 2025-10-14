@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS dependencies (
 
 CREATE INDEX IF NOT EXISTS idx_dependencies_issue ON dependencies(issue_id);
 CREATE INDEX IF NOT EXISTS idx_dependencies_depends_on ON dependencies(depends_on_id);
+CREATE INDEX IF NOT EXISTS idx_dependencies_depends_on_type ON dependencies(depends_on_id, type);
 
 -- Labels table
 CREATE TABLE IF NOT EXISTS labels (
