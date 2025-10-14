@@ -936,7 +936,7 @@ See [examples/](examples/) for scripting patterns. Contributions welcome!
 
 ### Is this production-ready?
 
-**Current status: Alpha (v0.9.0)**
+**Current status: Alpha (v0.9.2)**
 
 bd is in active development and being dogfooded on real projects. The core functionality (create, update, dependencies, ready work, collision resolution) is stable and well-tested. However:
 

@@ -277,6 +277,7 @@ This will show:
 ### Version Numbering
 
 Beads follows semantic versioning. The plugin version tracks the bd CLI version:
+- Plugin 0.9.2 requires bd CLI 0.9.2+
 - Plugin 0.9.x requires bd CLI 0.9.0+
 - Major version bumps may introduce breaking changes
 - Check CHANGELOG.md for release notes
