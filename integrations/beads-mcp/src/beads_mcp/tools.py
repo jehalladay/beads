@@ -22,21 +22,33 @@ from .models import (
 
 # Global client instance - initialized on first use
 _client: BdClient | None = None
+_version_checked: bool = False
 
 # Default constants
 DEFAULT_ISSUE_TYPE: IssueType = "task"
 DEFAULT_DEPENDENCY_TYPE: DependencyType = "blocks"
 
 
-def _get_client() -> BdClient:
+async def _get_client() -> BdClient:
     """Get a BdClient instance, creating it on first use.
+
+    Performs version check on first initialization.
 
     Returns:
         Configured BdClient instance (config loaded automatically)
+
+    Raises:
+        BdError: If bd is not installed or version is incompatible
     """
-    global _client
+    global _client, _version_checked
     if _client is None:
         _client = BdClient()
+
+    # Check version once per server lifetime
+    if not _version_checked:
+        await _client._check_version()
+        _version_checked = True
+
     return _client
 
 
@@ -50,7 +62,7 @@ async def beads_ready_work(
     Ready work = status is 'open' AND no blocking dependencies.
     Perfect for agents to claim next work!
     """
-    client = _get_client()
+    client = await _get_client()
     params = ReadyWorkParams(limit=limit, priority=priority, assignee=assignee)
     return await client.ready(params)
 
@@ -67,7 +79,7 @@ async def beads_list_issues(
     limit: Annotated[int, "Maximum number of issues to return (1-1000)"] = 50,
 ) -> list[Issue]:
     """List all issues with optional filters."""
-    client = _get_client()
+    client = await _get_client()
 
     params = ListIssuesParams(
         status=status,
@@ -86,7 +98,7 @@ async def beads_show_issue(
 
     Includes full description, dependencies, and dependents.
     """
-    client = _get_client()
+    client = await _get_client()
     params = ShowIssueParams(issue_id=issue_id)
     return await client.show(params)
 
@@ -111,7 +123,7 @@ async def beads_create_issue(
     Use this when you discover new work during your session.
     Link it back with beads_add_dependency using 'discovered-from' type.
     """
-    client = _get_client()
+    client = await _get_client()
     params = CreateIssueParams(
         title=title,
         description=description,
@@ -143,7 +155,7 @@ async def beads_update_issue(
 
     Claim work by setting status to 'in_progress'.
     """
-    client = _get_client()
+    client = await _get_client()
     params = UpdateIssueParams(
         issue_id=issue_id,
         status=status,
@@ -166,7 +178,7 @@ async def beads_close_issue(
 
     Mark work as done when you've finished implementing/fixing it.
     """
-    client = _get_client()
+    client = await _get_client()
     params = CloseIssueParams(issue_id=issue_id, reason=reason)
     return await client.close(params)
 
@@ -189,7 +201,7 @@ async def beads_add_dependency(
 
     Use 'discovered-from' when you find new work during your session.
     """
-    client = _get_client()
+    client = await _get_client()
     params = AddDependencyParams(
         from_id=from_id,
         to_id=to_id,
@@ -207,7 +219,7 @@ async def beads_quickstart() -> str:
 
     Read this first to understand how to use beads (bd) commands.
     """
-    client = _get_client()
+    client = await _get_client()
     return await client.quickstart()
 
 
@@ -217,7 +229,7 @@ async def beads_stats() -> Stats:
     Returns total issues, open, in_progress, closed, blocked, ready issues,
     and average lead time in hours.
     """
-    client = _get_client()
+    client = await _get_client()
     return await client.stats()
 
 
@@ -226,7 +238,7 @@ async def beads_blocked() -> list[BlockedIssue]:
 
     Returns issues that have blocking dependencies, showing what blocks them.
     """
-    client = _get_client()
+    client = await _get_client()
     return await client.blocked()
 
 
@@ -239,6 +251,6 @@ async def beads_init(
 
     Creates .beads/ directory and database file with optional custom prefix.
     """
-    client = _get_client()
+    client = await _get_client()
     params = InitParams(prefix=prefix)
     return await client.init(params)

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 
 from .config import load_config
 from .models import (
@@ -41,6 +42,12 @@ class BdCommandError(BdError):
         super().__init__(message)
         self.stderr = stderr
         self.returncode = returncode
+
+
+class BdVersionError(BdError):
+    """Raised when bd version is incompatible with MCP server."""
+
+    pass
 
 
 class BdClient:
@@ -143,6 +150,57 @@ class BdClient:
                 f"Failed to parse bd JSON output: {e}",
                 stderr=stdout_str,
             ) from e
+
+    async def _check_version(self) -> None:
+        """Check that bd CLI version meets minimum requirements.
+
+        Raises:
+            BdVersionError: If bd version is incompatible
+            BdNotFoundError: If bd command not found
+        """
+        # Minimum required version
+        min_version = (0, 9, 0)
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                self.bd_path,
+                "version",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await process.communicate()
+        except FileNotFoundError as e:
+            raise BdNotFoundError(
+                f"bd command not found at '{self.bd_path}'. "
+                f"Install bd from: https://github.com/steveyegge/beads"
+            ) from e
+
+        if process.returncode != 0:
+            raise BdCommandError(
+                f"bd version failed: {stderr.decode()}",
+                stderr=stderr.decode(),
+                returncode=process.returncode or 1,
+            )
+
+        # Parse version from output like "bd version 0.9.2"
+        version_output = stdout.decode().strip()
+        match = re.search(r"(\d+)\.(\d+)\.(\d+)", version_output)
+        if not match:
+            raise BdVersionError(
+                f"Could not parse bd version from: {version_output}"
+            )
+
+        version = tuple(int(x) for x in match.groups())
+
+        if version < min_version:
+            min_ver_str = ".".join(str(x) for x in min_version)
+            cur_ver_str = ".".join(str(x) for x in version)
+            install_cmd = "curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/install.sh | bash"
+            raise BdVersionError(
+                f"bd version {cur_ver_str} is too old. "
+                f"This MCP server requires bd >= {min_ver_str}. "
+                f"Update with: {install_cmd}"
+            )
 
     async def ready(self, params: ReadyWorkParams | None = None) -> list[Issue]:
         """Get ready work (issues with no blocking dependencies).

@@ -256,7 +256,9 @@ go install github.com/steveyegge/beads/cmd/bd@latest
 
 ### 3. Version Compatibility
 
-Check version compatibility:
+The MCP server **automatically checks** bd CLI version on startup and will fail with a clear error if your version is too old.
+
+Check version compatibility manually:
 ```bash
 /bd-version
 ```
@@ -277,8 +279,7 @@ This will show:
 ### Version Numbering
 
 Beads follows semantic versioning. The plugin version tracks the bd CLI version:
-- Plugin 0.9.2 requires bd CLI 0.9.2+
-- Plugin 0.9.x requires bd CLI 0.9.0+
+- Plugin 0.9.2 requires bd CLI >= 0.9.0 (checked automatically at startup)
 - Major version bumps may introduce breaking changes
 - Check CHANGELOG.md for release notes
 
