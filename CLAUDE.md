@@ -20,6 +20,9 @@ bd create "Issue title" -t bug|feature|task -p 0-4 -d "Description" --json
 # Create with explicit ID (for parallel workers)
 bd create "Issue title" --id worker1-100 -p 1 --json
 
+# Create multiple issues from markdown file
+bd create -f feature-plan.md --json
+
 # Update issue status
 bd update <id> --status in_progress --json
 
