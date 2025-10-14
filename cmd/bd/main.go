@@ -102,11 +102,6 @@ var rootCmd = &cobra.Command{
 		}
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
-		// Signal that store is closing (prevents background flush from accessing closed store)
-		storeMutex.Lock()
-		storeActive = false
-		storeMutex.Unlock()
-
 		// Flush any pending changes before closing
 		flushMutex.Lock()
 		needsFlush := isDirty && autoFlushEnabled
@@ -116,7 +111,7 @@ var rootCmd = &cobra.Command{
 				flushTimer.Stop()
 				flushTimer = nil
 			}
-			isDirty = false
+			// Don't clear isDirty here - let flushToJSONL do it
 		}
 		flushMutex.Unlock()
 
@@ -124,6 +119,11 @@ var rootCmd = &cobra.Command{
 			// Call the shared flush function (no code duplication)
 			flushToJSONL()
 		}
+
+		// Signal that store is closing (prevents background flush from accessing closed store)
+		storeMutex.Lock()
+		storeActive = false
+		storeMutex.Unlock()
 
 		if store != nil {
 			_ = store.Close()

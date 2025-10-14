@@ -71,6 +71,17 @@ go build -o bd ./cmd/bd
 sudo mv bd /usr/local/bin/  # or anywhere in your PATH
 ```
 
+#### Arch Linux
+
+```bash
+# Install from AUR
+yay -S beads-git
+# or
+paru -S beads-git
+```
+
+Thanks to [@v4rgas](https://github.com/v4rgas) for maintaining the AUR package!
+
 #### Windows 11
 For Windows you must build from source.
 Assumes git, go-lang and mingw-64 installed and in path.
