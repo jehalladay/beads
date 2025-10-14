@@ -1,6 +1,7 @@
 """Configuration for beads MCP server."""
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -11,9 +12,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 def _default_beads_path() -> str:
     """Get default bd executable path.
 
+    First tries to find bd in PATH, falls back to ~/.local/bin/bd.
+
     Returns:
-        Default path to bd executable (~/.local/bin/bd)
+        Default path to bd executable
     """
+    # Try to find bd in PATH first
+    bd_in_path = shutil.which("bd")
+    if bd_in_path:
+        return bd_in_path
+
+    # Fall back to common install location
     return str(Path.home() / ".local" / "bin" / "bd")
 
 
@@ -84,6 +93,12 @@ class Config(BaseSettings):
         return v
 
 
+class ConfigError(Exception):
+    """Configuration error with helpful message."""
+
+    pass
+
+
 def load_config() -> Config:
     """Load and validate configuration from environment variables.
 
@@ -91,13 +106,13 @@ def load_config() -> Config:
         Validated configuration
 
     Raises:
-        SystemExit: If configuration is invalid
+        ConfigError: If configuration is invalid
     """
     try:
         return Config()
     except Exception as e:
         default_path = _default_beads_path()
-        print(
+        error_msg = (
             f"Configuration Error: {e}\n\n"
             + "Environment variables:\n"
             + f"  BEADS_PATH            - Path to bd executable (default: {default_path})\n"
@@ -105,7 +120,7 @@ def load_config() -> Config:
             + "  BEADS_ACTOR           - Actor name for audit trail (default: $USER)\n"
             + "  BEADS_NO_AUTO_FLUSH   - Disable automatic JSONL sync (default: false)\n"
             + "  BEADS_NO_AUTO_IMPORT  - Disable automatic JSONL import (default: false)\n\n"
-            + "Make sure bd is installed and the path is correct.",
-            file=sys.stderr,
+            + "Make sure bd is installed and the path is correct."
         )
-        sys.exit(1)
+        print(error_msg, file=sys.stderr)
+        raise ConfigError(error_msg) from e
