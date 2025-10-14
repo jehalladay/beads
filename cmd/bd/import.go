@@ -287,6 +287,9 @@ Behavior:
 			}
 		}
 
+		// Schedule auto-flush after import completes
+		markDirtyAndScheduleFlush()
+
 		// Print summary
 		fmt.Fprintf(os.Stderr, "Import complete: %d created, %d updated", created, updated)
 		if skipped > 0 {

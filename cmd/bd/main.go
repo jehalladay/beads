@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"sync"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -19,6 +22,15 @@ var (
 	actor      string
 	store      storage.Storage
 	jsonOutput bool
+
+	// Auto-flush state
+	autoFlushEnabled = true // Can be disabled with --no-auto-flush
+	isDirty          = false
+	flushMutex       sync.Mutex
+	flushTimer       *time.Timer
+	flushDebounce    = 5 * time.Second
+	storeMutex       sync.Mutex // Protects store access from background goroutine
+	storeActive      = false    // Tracks if store is available
 )
 
 var rootCmd = &cobra.Command{
@@ -30,6 +42,9 @@ var rootCmd = &cobra.Command{
 		if cmd.Name() == "init" {
 			return
 		}
+
+		// Set auto-flush based on flag (invert no-auto-flush)
+		autoFlushEnabled = !noAutoFlush
 
 		// Initialize storage
 		if dbPath == "" {
@@ -54,6 +69,11 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Mark store as active for flush goroutine safety
+		storeMutex.Lock()
+		storeActive = true
+		storeMutex.Unlock()
+
 		// Set actor from env or default
 		if actor == "" {
 			actor = os.Getenv("USER")
@@ -63,6 +83,60 @@ var rootCmd = &cobra.Command{
 		}
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
+		// Signal that store is closing (prevents background flush from accessing closed store)
+		storeMutex.Lock()
+		storeActive = false
+		storeMutex.Unlock()
+
+		// Flush any pending changes before closing
+		flushMutex.Lock()
+		needsFlush := isDirty && autoFlushEnabled
+		if needsFlush {
+			// Cancel timer and flush immediately
+			if flushTimer != nil {
+				flushTimer.Stop()
+				flushTimer = nil
+			}
+			isDirty = false
+		}
+		flushMutex.Unlock()
+
+		if needsFlush {
+			// Flush without checking isDirty again (we already cleared it)
+			jsonlPath := findJSONLPath()
+			ctx := context.Background()
+			issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+			if err == nil {
+				sort.Slice(issues, func(i, j int) bool {
+					return issues[i].ID < issues[j].ID
+				})
+				allDeps, err := store.GetAllDependencyRecords(ctx)
+				if err == nil {
+					for _, issue := range issues {
+						issue.Dependencies = allDeps[issue.ID]
+					}
+					tempPath := jsonlPath + ".tmp"
+					f, err := os.Create(tempPath)
+					if err == nil {
+						encoder := json.NewEncoder(f)
+						hasError := false
+						for _, issue := range issues {
+							if err := encoder.Encode(issue); err != nil {
+								hasError = true
+								break
+							}
+						}
+						f.Close()
+						if !hasError {
+							os.Rename(tempPath, jsonlPath)
+						} else {
+							os.Remove(tempPath)
+						}
+					}
+				}
+			}
+		}
+
 		if store != nil {
 			_ = store.Close()
 		}
@@ -110,10 +184,136 @@ func outputJSON(v interface{}) {
 	}
 }
 
+// findJSONLPath finds the JSONL file path for the current database
+func findJSONLPath() string {
+	// Get the directory containing the database
+	dbDir := filepath.Dir(dbPath)
+
+	// Look for existing .jsonl files in the .beads directory
+	pattern := filepath.Join(dbDir, "*.jsonl")
+	matches, err := filepath.Glob(pattern)
+	if err == nil && len(matches) > 0 {
+		// Return the first .jsonl file found
+		return matches[0]
+	}
+
+	// Default to issues.jsonl
+	return filepath.Join(dbDir, "issues.jsonl")
+}
+
+// markDirtyAndScheduleFlush marks the database as dirty and schedules a flush
+func markDirtyAndScheduleFlush() {
+	if !autoFlushEnabled {
+		return
+	}
+
+	flushMutex.Lock()
+	defer flushMutex.Unlock()
+
+	isDirty = true
+
+	// Cancel existing timer if any
+	if flushTimer != nil {
+		flushTimer.Stop()
+		flushTimer = nil
+	}
+
+	// Schedule new flush
+	flushTimer = time.AfterFunc(flushDebounce, func() {
+		flushToJSONL()
+	})
+}
+
+// flushToJSONL exports all issues to JSONL if dirty
+func flushToJSONL() {
+	// Check if store is still active (not closed)
+	storeMutex.Lock()
+	if !storeActive {
+		storeMutex.Unlock()
+		return
+	}
+	storeMutex.Unlock()
+
+	flushMutex.Lock()
+	if !isDirty {
+		flushMutex.Unlock()
+		return
+	}
+	isDirty = false
+	flushMutex.Unlock()
+
+	jsonlPath := findJSONLPath()
+
+	// Double-check store is still active before accessing
+	storeMutex.Lock()
+	if !storeActive {
+		storeMutex.Unlock()
+		return
+	}
+	storeMutex.Unlock()
+
+	// Get all issues
+	ctx := context.Background()
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to get issues: %v\n", err)
+		return
+	}
+
+	// Sort by ID for consistent output
+	sort.Slice(issues, func(i, j int) bool {
+		return issues[i].ID < issues[j].ID
+	})
+
+	// Populate dependencies for all issues
+	allDeps, err := store.GetAllDependencyRecords(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to get dependencies: %v\n", err)
+		return
+	}
+	for _, issue := range issues {
+		issue.Dependencies = allDeps[issue.ID]
+	}
+
+	// Write to temp file first, then rename (atomic)
+	tempPath := jsonlPath + ".tmp"
+	f, err := os.Create(tempPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to create temp file: %v\n", err)
+		return
+	}
+
+	encoder := json.NewEncoder(f)
+	for _, issue := range issues {
+		if err := encoder.Encode(issue); err != nil {
+			f.Close()
+			os.Remove(tempPath)
+			fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to encode issue %s: %v\n", issue.ID, err)
+			return
+		}
+	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(tempPath)
+		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to close temp file: %v\n", err)
+		return
+	}
+
+	// Atomic rename
+	if err := os.Rename(tempPath, jsonlPath); err != nil {
+		os.Remove(tempPath)
+		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to rename file: %v\n", err)
+		return
+	}
+}
+
+var noAutoFlush bool
+
 func init() {
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "Database path (default: auto-discover .beads/*.db or ~/.beads/default.db)")
 	rootCmd.PersistentFlags().StringVar(&actor, "actor", "", "Actor name for audit trail (default: $USER)")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	rootCmd.PersistentFlags().BoolVar(&noAutoFlush, "no-auto-flush", false, "Disable automatic JSONL sync after CRUD operations")
 }
 
 var createCmd = &cobra.Command{
@@ -153,6 +353,9 @@ var createCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Warning: failed to add label %s: %v\n", label, err)
 			}
 		}
+
+		// Schedule auto-flush
+		markDirtyAndScheduleFlush()
 
 		if jsonOutput {
 			outputJSON(issue)
@@ -377,6 +580,9 @@ var updateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Schedule auto-flush
+		markDirtyAndScheduleFlush()
+
 		if jsonOutput {
 			// Fetch updated issue and output
 			issue, _ := store.GetIssue(ctx, args[0])
@@ -426,6 +632,12 @@ var closeCmd = &cobra.Command{
 				fmt.Printf("%s Closed %s: %s\n", green("✓"), id, reason)
 			}
 		}
+
+		// Schedule auto-flush if any issues were closed
+		if len(args) > 0 {
+			markDirtyAndScheduleFlush()
+		}
+
 		if jsonOutput && len(closedIssues) > 0 {
 			outputJSON(closedIssues)
 		}
