@@ -1120,7 +1120,13 @@ go build -o bd ./cmd/bd
 
 # Run
 ./bd create "Test issue"
+
+# Bump version
+./scripts/bump-version.sh 0.9.3           # Update all versions, show diff
+./scripts/bump-version.sh 0.9.3 --commit  # Update and auto-commit
 ```
+
+See [scripts/README.md](scripts/README.md) for more development scripts.
 
 ## License
 
