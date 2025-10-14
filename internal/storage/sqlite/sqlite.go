@@ -48,6 +48,11 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
+	// Migrate existing databases to add dirty_issues table if missing
+	if err := migrateDirtyIssuesTable(db); err != nil {
+		return nil, fmt.Errorf("failed to migrate dirty_issues table: %w", err)
+	}
+
 	// Get next ID
 	nextID := getNextID(db)
 
@@ -55,6 +60,41 @@ func New(path string) (*SQLiteStorage, error) {
 		db:     db,
 		nextID: nextID,
 	}, nil
+}
+
+// migrateDirtyIssuesTable checks if the dirty_issues table exists and creates it if missing.
+// This ensures existing databases created before the incremental export feature get migrated automatically.
+func migrateDirtyIssuesTable(db *sql.DB) error {
+	// Check if dirty_issues table exists
+	var tableName string
+	err := db.QueryRow(`
+		SELECT name FROM sqlite_master
+		WHERE type='table' AND name='dirty_issues'
+	`).Scan(&tableName)
+
+	if err == sql.ErrNoRows {
+		// Table doesn't exist, create it
+		_, err := db.Exec(`
+			CREATE TABLE dirty_issues (
+				issue_id TEXT PRIMARY KEY,
+				marked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+			);
+			CREATE INDEX idx_dirty_issues_marked_at ON dirty_issues(marked_at);
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to create dirty_issues table: %w", err)
+		}
+		// Table created successfully - no need to log, happens silently
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to check for dirty_issues table: %w", err)
+	}
+
+	// Table exists, no migration needed
+	return nil
 }
 
 // getNextID determines the next issue ID to use
