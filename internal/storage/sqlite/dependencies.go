@@ -110,6 +110,26 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		return fmt.Errorf("failed to record event: %w", err)
 	}
 
+	// Mark both issues as dirty for incremental export
+	// (dependencies are exported with each issue, so both need updating)
+	now := time.Now()
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO dirty_issues (issue_id, marked_at)
+		VALUES (?, ?)
+		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare dirty statement: %w", err)
+	}
+	defer stmt.Close()
+
+	if _, err := stmt.ExecContext(ctx, dep.IssueID, now); err != nil {
+		return fmt.Errorf("failed to mark issue dirty: %w", err)
+	}
+	if _, err := stmt.ExecContext(ctx, dep.DependsOnID, now); err != nil {
+		return fmt.Errorf("failed to mark dependency target dirty: %w", err)
+	}
+
 	return tx.Commit()
 }
 
@@ -135,6 +155,25 @@ func (s *SQLiteStorage) RemoveDependency(ctx context.Context, issueID, dependsOn
 		fmt.Sprintf("Removed dependency on %s", dependsOnID))
 	if err != nil {
 		return fmt.Errorf("failed to record event: %w", err)
+	}
+
+	// Mark both issues as dirty for incremental export
+	now := time.Now()
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO dirty_issues (issue_id, marked_at)
+		VALUES (?, ?)
+		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare dirty statement: %w", err)
+	}
+	defer stmt.Close()
+
+	if _, err := stmt.ExecContext(ctx, issueID, now); err != nil {
+		return fmt.Errorf("failed to mark issue dirty: %w", err)
+	}
+	if _, err := stmt.ExecContext(ctx, dependsOnID, now); err != nil {
+		return fmt.Errorf("failed to mark dependency target dirty: %w", err)
 	}
 
 	return tx.Commit()

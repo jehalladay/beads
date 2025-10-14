@@ -118,39 +118,8 @@ var rootCmd = &cobra.Command{
 		flushMutex.Unlock()
 
 		if needsFlush {
-			// Flush without checking isDirty again (we already cleared it)
-			jsonlPath := findJSONLPath()
-			ctx := context.Background()
-			issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
-			if err == nil {
-				sort.Slice(issues, func(i, j int) bool {
-					return issues[i].ID < issues[j].ID
-				})
-				allDeps, err := store.GetAllDependencyRecords(ctx)
-				if err == nil {
-					for _, issue := range issues {
-						issue.Dependencies = allDeps[issue.ID]
-					}
-					tempPath := jsonlPath + ".tmp"
-					f, err := os.Create(tempPath)
-					if err == nil {
-						encoder := json.NewEncoder(f)
-						hasError := false
-						for _, issue := range issues {
-							if err := encoder.Encode(issue); err != nil {
-								hasError = true
-								break
-							}
-						}
-						f.Close()
-						if !hasError {
-							os.Rename(tempPath, jsonlPath)
-						} else {
-							os.Remove(tempPath)
-						}
-					}
-				}
-			}
+			// Call the shared flush function (no code duplication)
+			flushToJSONL()
 		}
 
 		if store != nil {
@@ -233,6 +202,9 @@ func autoImportIfNewer() {
 	jsonlInfo, err := os.Stat(jsonlPath)
 	if err != nil {
 		// JSONL doesn't exist or can't be accessed, skip import
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: auto-import skipped, JSONL not found: %v\n", err)
+		}
 		return
 	}
 
@@ -240,6 +212,9 @@ func autoImportIfNewer() {
 	dbInfo, err := os.Stat(dbPath)
 	if err != nil {
 		// DB doesn't exist (new init?), skip import
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: auto-import skipped, DB not found: %v\n", err)
+		}
 		return
 	}
 
@@ -383,7 +358,7 @@ func clearAutoFlushState() {
 	lastFlushError = nil
 }
 
-// flushToJSONL exports all issues to JSONL if dirty
+// flushToJSONL exports dirty issues to JSONL using incremental updates
 func flushToJSONL() {
 	// Check if store is still active (not closed)
 	storeMutex.Lock()
@@ -439,28 +414,76 @@ func flushToJSONL() {
 		flushMutex.Unlock()
 	}
 
-	// Get all issues
 	ctx := context.Background()
-	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+
+	// Get dirty issue IDs (bd-39: incremental export optimization)
+	dirtyIDs, err := store.GetDirtyIssues(ctx)
 	if err != nil {
-		recordFailure(fmt.Errorf("failed to get issues: %w", err))
+		recordFailure(fmt.Errorf("failed to get dirty issues: %w", err))
 		return
 	}
 
-	// Sort by ID for consistent output
+	// No dirty issues? Nothing to do!
+	if len(dirtyIDs) == 0 {
+		recordSuccess()
+		return
+	}
+
+	// Read existing JSONL into a map
+	issueMap := make(map[string]*types.Issue)
+	if existingFile, err := os.Open(jsonlPath); err == nil {
+		scanner := bufio.NewScanner(existingFile)
+		lineNum := 0
+		for scanner.Scan() {
+			lineNum++
+			line := scanner.Text()
+			if line == "" {
+				continue
+			}
+			var issue types.Issue
+			if err := json.Unmarshal([]byte(line), &issue); err == nil {
+				issueMap[issue.ID] = &issue
+			} else {
+				// Warn about malformed JSONL lines
+				fmt.Fprintf(os.Stderr, "Warning: skipping malformed JSONL line %d: %v\n", lineNum, err)
+			}
+		}
+		existingFile.Close()
+	}
+
+	// Fetch only dirty issues from DB
+	for _, issueID := range dirtyIDs {
+		issue, err := store.GetIssue(ctx, issueID)
+		if err != nil {
+			recordFailure(fmt.Errorf("failed to get issue %s: %w", issueID, err))
+			return
+		}
+		if issue == nil {
+			// Issue was deleted, remove from map
+			delete(issueMap, issueID)
+			continue
+		}
+
+		// Get dependencies for this issue
+		deps, err := store.GetDependencyRecords(ctx, issueID)
+		if err != nil {
+			recordFailure(fmt.Errorf("failed to get dependencies for %s: %w", issueID, err))
+			return
+		}
+		issue.Dependencies = deps
+
+		// Update map
+		issueMap[issueID] = issue
+	}
+
+	// Convert map to sorted slice
+	issues := make([]*types.Issue, 0, len(issueMap))
+	for _, issue := range issueMap {
+		issues = append(issues, issue)
+	}
 	sort.Slice(issues, func(i, j int) bool {
 		return issues[i].ID < issues[j].ID
 	})
-
-	// Populate dependencies for all issues
-	allDeps, err := store.GetAllDependencyRecords(ctx)
-	if err != nil {
-		recordFailure(fmt.Errorf("failed to get dependencies: %w", err))
-		return
-	}
-	for _, issue := range issues {
-		issue.Dependencies = allDeps[issue.ID]
-	}
 
 	// Write to temp file first, then rename (atomic)
 	tempPath := jsonlPath + ".tmp"
@@ -491,6 +514,12 @@ func flushToJSONL() {
 		os.Remove(tempPath)
 		recordFailure(fmt.Errorf("failed to rename file: %w", err))
 		return
+	}
+
+	// Clear dirty issues after successful export
+	if err := store.ClearDirtyIssues(ctx); err != nil {
+		// Don't fail the whole flush for this, but warn
+		fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty issues: %v\n", err)
 	}
 
 	// Success!

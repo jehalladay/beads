@@ -83,9 +83,18 @@ Output to stdout by default, or use -o flag for file output.`,
 			}
 		}
 
-		// Clear auto-flush state since we just manually exported
-		// This cancels any pending auto-flush timer and marks DB as clean
-		clearAutoFlushState()
+		// Only clear dirty issues and auto-flush state if exporting to the default JSONL path
+		// This prevents clearing dirty flags when exporting to custom paths (e.g., bd export -o backup.jsonl)
+		if output == "" || output == findJSONLPath() {
+			// Clear dirty issues since we just exported to the canonical JSONL file
+			if err := store.ClearDirtyIssues(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty issues: %v\n", err)
+			}
+
+			// Clear auto-flush state since we just manually exported
+			// This cancels any pending auto-flush timer and marks DB as clean
+			clearAutoFlushState()
+		}
 	},
 }
 
