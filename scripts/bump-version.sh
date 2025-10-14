@@ -122,13 +122,19 @@ main() {
         "version = \"$CURRENT_VERSION\"" \
         "version = \"$NEW_VERSION\""
 
-    # 5. Update README.md
+    # 5. Update integrations/beads-mcp/src/beads_mcp/__init__.py
+    echo "  • integrations/beads-mcp/src/beads_mcp/__init__.py"
+    update_file "integrations/beads-mcp/src/beads_mcp/__init__.py" \
+        "__version__ = \"$CURRENT_VERSION\"" \
+        "__version__ = \"$NEW_VERSION\""
+
+    # 6. Update README.md
     echo "  • README.md"
     update_file "README.md" \
         "Alpha (v$CURRENT_VERSION)" \
         "Alpha (v$NEW_VERSION)"
 
-    # 6. Update PLUGIN.md version requirements
+    # 7. Update PLUGIN.md version requirements
     echo "  • PLUGIN.md"
     update_file "PLUGIN.md" \
         "Plugin $CURRENT_VERSION requires bd CLI $CURRENT_VERSION+" \
@@ -150,6 +156,7 @@ main() {
         "$(jq -r '.version' .claude-plugin/plugin.json)"
         "$(jq -r '.plugins[0].version' .claude-plugin/marketplace.json)"
         "$(grep 'version = ' integrations/beads-mcp/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
+        "$(grep '__version__ = ' integrations/beads-mcp/src/beads_mcp/__init__.py | sed 's/.*"\(.*\)".*/\1/')"
     )
 
     ALL_MATCH=true
@@ -177,6 +184,7 @@ main() {
                 .claude-plugin/plugin.json \
                 .claude-plugin/marketplace.json \
                 integrations/beads-mcp/pyproject.toml \
+                integrations/beads-mcp/src/beads_mcp/__init__.py \
                 README.md \
                 PLUGIN.md
 
