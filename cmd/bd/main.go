@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -31,6 +32,9 @@ var (
 	flushDebounce    = 5 * time.Second
 	storeMutex       sync.Mutex // Protects store access from background goroutine
 	storeActive      = false    // Tracks if store is available
+
+	// Auto-import state
+	autoImportEnabled = true // Can be disabled with --no-auto-import
 )
 
 var rootCmd = &cobra.Command{
@@ -45,6 +49,9 @@ var rootCmd = &cobra.Command{
 
 		// Set auto-flush based on flag (invert no-auto-flush)
 		autoFlushEnabled = !noAutoFlush
+
+		// Set auto-import based on flag (invert no-auto-import)
+		autoImportEnabled = !noAutoImport
 
 		// Initialize storage
 		if dbPath == "" {
@@ -80,6 +87,12 @@ var rootCmd = &cobra.Command{
 			if actor == "" {
 				actor = "unknown"
 			}
+		}
+
+		// Auto-import if JSONL is newer than DB (e.g., after git pull)
+		// Skip for import command itself to avoid recursion
+		if cmd.Name() != "import" && autoImportEnabled {
+			autoImportIfNewer()
 		}
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
@@ -201,6 +214,123 @@ func findJSONLPath() string {
 	return filepath.Join(dbDir, "issues.jsonl")
 }
 
+// autoImportIfNewer checks if JSONL is newer than DB and imports if so
+func autoImportIfNewer() {
+	// Find JSONL path
+	jsonlPath := findJSONLPath()
+
+	// Check if JSONL exists
+	jsonlInfo, err := os.Stat(jsonlPath)
+	if err != nil {
+		// JSONL doesn't exist or can't be accessed, skip import
+		return
+	}
+
+	// Check if DB exists
+	dbInfo, err := os.Stat(dbPath)
+	if err != nil {
+		// DB doesn't exist (new init?), skip import
+		return
+	}
+
+	// Compare modification times
+	if !jsonlInfo.ModTime().After(dbInfo.ModTime()) {
+		// JSONL is not newer than DB, skip import
+		return
+	}
+
+	// JSONL is newer, perform silent import
+	ctx := context.Background()
+
+	// Read and parse JSONL
+	f, err := os.Open(jsonlPath)
+	if err != nil {
+		// Can't open JSONL, skip import
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	var allIssues []*types.Issue
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var issue types.Issue
+		if err := json.Unmarshal([]byte(line), &issue); err != nil {
+			// Parse error, skip this import
+			return
+		}
+
+		allIssues = append(allIssues, &issue)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return
+	}
+
+	// Import issues (create new, update existing)
+	for _, issue := range allIssues {
+		existing, err := store.GetIssue(ctx, issue.ID)
+		if err != nil {
+			continue
+		}
+
+		if existing != nil {
+			// Update existing issue
+			updates := make(map[string]interface{})
+			updates["title"] = issue.Title
+			updates["description"] = issue.Description
+			updates["design"] = issue.Design
+			updates["acceptance_criteria"] = issue.AcceptanceCriteria
+			updates["notes"] = issue.Notes
+			updates["status"] = issue.Status
+			updates["priority"] = issue.Priority
+			updates["issue_type"] = issue.IssueType
+			updates["assignee"] = issue.Assignee
+			if issue.EstimatedMinutes != nil {
+				updates["estimated_minutes"] = *issue.EstimatedMinutes
+			}
+
+			_ = store.UpdateIssue(ctx, issue.ID, updates, "auto-import")
+		} else {
+			// Create new issue
+			_ = store.CreateIssue(ctx, issue, "auto-import")
+		}
+	}
+
+	// Import dependencies
+	for _, issue := range allIssues {
+		if len(issue.Dependencies) == 0 {
+			continue
+		}
+
+		// Get existing dependencies
+		existingDeps, err := store.GetDependencyRecords(ctx, issue.ID)
+		if err != nil {
+			continue
+		}
+
+		// Add missing dependencies
+		for _, dep := range issue.Dependencies {
+			exists := false
+			for _, existing := range existingDeps {
+				if existing.DependsOnID == dep.DependsOnID && existing.Type == dep.Type {
+					exists = true
+					break
+				}
+			}
+
+			if !exists {
+				_ = store.AddDependency(ctx, dep, "auto-import")
+			}
+		}
+	}
+}
+
 // markDirtyAndScheduleFlush marks the database as dirty and schedules a flush
 func markDirtyAndScheduleFlush() {
 	if !autoFlushEnabled {
@@ -307,13 +437,17 @@ func flushToJSONL() {
 	}
 }
 
-var noAutoFlush bool
+var (
+	noAutoFlush  bool
+	noAutoImport bool
+)
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "Database path (default: auto-discover .beads/*.db or ~/.beads/default.db)")
 	rootCmd.PersistentFlags().StringVar(&actor, "actor", "", "Actor name for audit trail (default: $USER)")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	rootCmd.PersistentFlags().BoolVar(&noAutoFlush, "no-auto-flush", false, "Disable automatic JSONL sync after CRUD operations")
+	rootCmd.PersistentFlags().BoolVar(&noAutoImport, "no-auto-import", false, "Disable automatic JSONL import when newer than DB")
 }
 
 var createCmd = &cobra.Command{

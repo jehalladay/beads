@@ -137,11 +137,11 @@ When you install bd on any machine with your project repo, you get:
 **How it works:**
 1. Each machine has a local SQLite cache (`.beads/*.db`) - gitignored
 2. Source of truth is JSONL (`.beads/issues.jsonl`) - committed to git
-3. `bd export` syncs SQLite → JSONL before commits
-4. `bd import` syncs JSONL → SQLite after pulls
+3. Auto-export syncs SQLite → JSONL after CRUD operations (5-second debounce)
+4. Auto-import syncs JSONL → SQLite when JSONL is newer (e.g., after `git pull`)
 5. Git handles distribution; AI handles merge conflicts
 
-**The result:** Agents on your laptop, your desktop, and your coworker's machine all query and update what *feels* like a single shared database, but it's really just git doing what git does best - syncing text files across machines.
+**The result:** Agents on your laptop, your desktop, and your coworker's machine all query and update what *feels* like a single shared database, but it's really just git doing what git does best - syncing text files across machines. No manual export/import needed!
 
 No PostgreSQL instance. No MySQL server. No hosted service. Just install bd, clone the repo, and you're connected to the "database."
 
@@ -428,10 +428,10 @@ bd uses a dual-storage approach:
 This gives you:
 - ✅ **Git-friendly storage** - Text diffs, AI-resolvable conflicts
 - ✅ **Fast queries** - SQLite indexes for dependency graphs
-- ✅ **Simple workflow** - Export before commit, import after pull
+- ✅ **Automatic sync** - Auto-export after CRUD ops, auto-import after pulls
 - ✅ **No daemon required** - In-process SQLite, ~10-100ms per command
 
-When you run `bd create`, it writes to SQLite. Before committing to git, run `bd export` to sync to JSONL. After pulling, run `bd import` to sync back to SQLite. Git hooks can automate this.
+When you run `bd create`, it writes to SQLite. After 5 seconds of inactivity, changes automatically export to JSONL. After `git pull`, the next bd command automatically imports if JSONL is newer. No manual steps needed!
 
 ## Export/Import (JSONL Format)
 
@@ -590,7 +590,9 @@ Each line is a complete JSON issue object:
 
 ## Git Workflow
 
-**Recommended approach**: Use JSONL export as source of truth, SQLite database as ephemeral cache (not committed to git).
+**Automatic sync by default!** bd now automatically syncs between SQLite and JSONL:
+- **Auto-export**: After CRUD operations, changes flush to JSONL after 5 seconds of inactivity
+- **Auto-import**: When JSONL is newer than DB (e.g., after `git pull`), next bd command imports automatically
 
 ### Setup
 
@@ -608,18 +610,21 @@ Add to git:
 ### Workflow
 
 ```bash
-# Export before committing
-bd export -o .beads/issues.jsonl
-git add .beads/issues.jsonl
+# Create/update issues - they auto-export after 5 seconds
+bd create "Fix bug" -p 1
+bd update bd-42 --status in_progress
+
+# Commit (JSONL is already up-to-date)
+git add .
 git commit -m "Update issues"
 git push
 
-# Import after pulling
+# Pull and use - auto-imports if JSONL is newer
 git pull
-bd import -i .beads/issues.jsonl
+bd ready  # Automatically imports first, then shows ready work
 ```
 
-### Automated with Git Hooks
+### Optional: Git Hooks for Immediate Sync
 
 Create `.git/hooks/pre-commit`:
 ```bash
@@ -700,12 +705,22 @@ For true multi-agent coordination, you'd need additional tooling (like locks or 
 
 ### Do I need to run export/import manually?
 
-No! Install the git hooks from [examples/git-hooks/](examples/git-hooks/):
+**No! Sync is automatic by default.**
+
+bd automatically:
+- **Exports** to JSONL after CRUD operations (5-second debounce)
+- **Imports** from JSONL when it's newer than DB (after `git pull`)
+
+**Optional**: For immediate export (no 5-second wait) and guaranteed import after git operations, install the git hooks:
 ```bash
 cd examples/git-hooks && ./install.sh
 ```
 
-The hooks automatically export before commits and import after pulls/merges/checkouts. Set it up once, forget about it.
+**Disable auto-sync** if needed:
+```bash
+bd --no-auto-flush create "Issue"   # Disable auto-export
+bd --no-auto-import list            # Disable auto-import
+```
 
 ### Can I track issues for multiple projects?
 

@@ -46,7 +46,7 @@ bd import -i .beads/issues.jsonl --resolve-collisions  # Auto-resolve
    - `bd create "Found bug in auth" -t bug -p 1 --json`
    - Link it: `bd dep add <new-id> <current-id> --type discovered-from`
 5. **Complete**: `bd close <id> --reason "Implemented"`
-6. **Export**: Run `bd export -o .beads/issues.jsonl` before committing
+6. **Export**: Changes auto-sync to `.beads/issues.jsonl` (5-second debounce)
 
 ### Issue Types
 
@@ -99,29 +99,32 @@ beads/
 
 1. **Run tests**: `go test ./...`
 2. **Run linter**: `golangci-lint run ./...` (ignore baseline warnings)
-3. **Export issues**: `bd export -o .beads/issues.jsonl`
-4. **Update docs**: If you changed behavior, update README.md or other docs
-5. **Git add both**: `git add .beads/issues.jsonl <your-changes>`
+3. **Update docs**: If you changed behavior, update README.md or other docs
+4. **Commit**: Issues auto-sync to `.beads/issues.jsonl` and import after pull
 
 ### Git Workflow
 
+**Auto-sync is now automatic!** bd automatically:
+- **Exports** to JSONL after any CRUD operation (5-second debounce)
+- **Imports** from JSONL when it's newer than DB (e.g., after `git pull`)
+
 ```bash
-# Make changes
-git add <files>
+# Make changes and create/update issues
+bd create "Fix bug" -p 1
+bd update bd-42 --status in_progress
 
-# Export beads issues
-bd export -o .beads/issues.jsonl
-git add .beads/issues.jsonl
+# JSONL is automatically updated after 5 seconds
 
-# Commit
+# Commit (JSONL is already up-to-date)
+git add .
 git commit -m "Your message"
 
-# After pull
-git pull
-bd import -i .beads/issues.jsonl  # Sync SQLite cache
+# After pull - JSONL is automatically imported
+git pull  # bd commands will auto-import the updated JSONL
+bd ready  # Fresh data from git!
 ```
 
-Or use the git hooks in `examples/git-hooks/` for automation.
+**Optional**: Use the git hooks in `examples/git-hooks/` for immediate export (no 5-second wait) and guaranteed import after git operations. Not required with auto-sync enabled.
 
 ### Handling Import Collisions
 
@@ -227,12 +230,12 @@ bd dep tree bd-8  # Show 1.0 epic dependencies
 - Always use `--json` flags for programmatic use
 - Link discoveries with `discovered-from` to maintain context
 - Check `bd ready` before asking "what next?"
-- Export to JSONL before committing (or use git hooks)
+- Auto-sync is automatic! JSONL updates after CRUD ops, imports after git pull
+- Use `--no-auto-flush` or `--no-auto-import` to disable automatic sync if needed
 - Use `bd dep tree` to understand complex dependencies
 - Priority 0-1 issues are usually more important than 2-4
 - Use `--dry-run` to preview import collisions before resolving
 - Use `--resolve-collisions` for safe automatic branch merges
-- After resolving collisions, run `bd export` to save the updated state
 
 ## Building and Testing
 
