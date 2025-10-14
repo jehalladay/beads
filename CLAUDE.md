@@ -181,7 +181,7 @@ Run `bd stats` to see overall progress.
 - **Core CLI**: Mature, but always room for polish
 - **Examples**: Growing collection of agent integrations
 - **Documentation**: Comprehensive but can always improve
-- **MCP Server**: Planned (see bd-5)
+- **MCP Server**: Implemented at `integrations/beads-mcp/` with Claude Code plugin
 - **Migration Tools**: Planned (see bd-6)
 
 ### 1.0 Milestone
