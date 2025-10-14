@@ -588,6 +588,12 @@ var createCmd = &cobra.Command{
 
 		// Add dependencies if specified (format: type:id or just id for default "blocks" type)
 		for _, depSpec := range deps {
+			// Skip empty specs (e.g., from trailing commas)
+			depSpec = strings.TrimSpace(depSpec)
+			if depSpec == "" {
+				continue
+			}
+
 			var depType types.DependencyType
 			var dependsOnID string
 
@@ -598,8 +604,8 @@ var createCmd = &cobra.Command{
 					fmt.Fprintf(os.Stderr, "Warning: invalid dependency format '%s', expected 'type:id' or 'id'\n", depSpec)
 					continue
 				}
-				depType = types.DependencyType(parts[0])
-				dependsOnID = parts[1]
+				depType = types.DependencyType(strings.TrimSpace(parts[0]))
+				dependsOnID = strings.TrimSpace(parts[1])
 			} else {
 				// Default to "blocks" if no type specified
 				depType = types.DepBlocks
