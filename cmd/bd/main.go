@@ -202,6 +202,13 @@ func findJSONLPath() string {
 	// Get the directory containing the database
 	dbDir := filepath.Dir(dbPath)
 
+	// Ensure the directory exists (important for new databases)
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		// If we can't create the directory, return default path anyway
+		// (the subsequent write will fail with a clearer error)
+		return filepath.Join(dbDir, "issues.jsonl")
+	}
+
 	// Look for existing .jsonl files in the .beads directory
 	pattern := filepath.Join(dbDir, "*.jsonl")
 	matches, err := filepath.Glob(pattern)
