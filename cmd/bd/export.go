@@ -82,6 +82,10 @@ Output to stdout by default, or use -o flag for file output.`,
 				os.Exit(1)
 			}
 		}
+
+		// Clear auto-flush state since we just manually exported
+		// This cancels any pending auto-flush timer and marks DB as clean
+		clearAutoFlushState()
 	},
 }
 

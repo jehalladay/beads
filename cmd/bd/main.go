@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,13 +26,15 @@ var (
 	jsonOutput bool
 
 	// Auto-flush state
-	autoFlushEnabled = true // Can be disabled with --no-auto-flush
-	isDirty          = false
-	flushMutex       sync.Mutex
-	flushTimer       *time.Timer
-	flushDebounce    = 5 * time.Second
-	storeMutex       sync.Mutex // Protects store access from background goroutine
-	storeActive      = false    // Tracks if store is available
+	autoFlushEnabled  = true // Can be disabled with --no-auto-flush
+	isDirty           = false
+	flushMutex        sync.Mutex
+	flushTimer        *time.Timer
+	flushDebounce     = 5 * time.Second
+	storeMutex        sync.Mutex // Protects store access from background goroutine
+	storeActive       = false    // Tracks if store is available
+	flushFailureCount = 0        // Consecutive flush failures
+	lastFlushError    error      // Last flush error for debugging
 
 	// Auto-import state
 	autoImportEnabled = true // Can be disabled with --no-auto-import
@@ -361,6 +364,25 @@ func markDirtyAndScheduleFlush() {
 	})
 }
 
+// clearAutoFlushState cancels pending flush and marks DB as clean (after manual export)
+func clearAutoFlushState() {
+	flushMutex.Lock()
+	defer flushMutex.Unlock()
+
+	// Cancel pending timer
+	if flushTimer != nil {
+		flushTimer.Stop()
+		flushTimer = nil
+	}
+
+	// Clear dirty flag
+	isDirty = false
+
+	// Reset failure counter (manual export succeeded)
+	flushFailureCount = 0
+	lastFlushError = nil
+}
+
 // flushToJSONL exports all issues to JSONL if dirty
 func flushToJSONL() {
 	// Check if store is still active (not closed)
@@ -389,11 +411,39 @@ func flushToJSONL() {
 	}
 	storeMutex.Unlock()
 
+	// Helper to record failure
+	recordFailure := func(err error) {
+		flushMutex.Lock()
+		flushFailureCount++
+		lastFlushError = err
+		failCount := flushFailureCount
+		flushMutex.Unlock()
+
+		// Always show the immediate warning
+		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed: %v\n", err)
+
+		// Show prominent warning after 3+ consecutive failures
+		if failCount >= 3 {
+			red := color.New(color.FgRed, color.Bold).SprintFunc()
+			fmt.Fprintf(os.Stderr, "\n%s\n", red("⚠️  CRITICAL: Auto-flush has failed "+fmt.Sprint(failCount)+" times consecutively!"))
+			fmt.Fprintf(os.Stderr, "%s\n", red("⚠️  Your JSONL file may be out of sync with the database."))
+			fmt.Fprintf(os.Stderr, "%s\n\n", red("⚠️  Run 'bd export -o .beads/issues.jsonl' manually to fix."))
+		}
+	}
+
+	// Helper to record success
+	recordSuccess := func() {
+		flushMutex.Lock()
+		flushFailureCount = 0
+		lastFlushError = nil
+		flushMutex.Unlock()
+	}
+
 	// Get all issues
 	ctx := context.Background()
 	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to get issues: %v\n", err)
+		recordFailure(fmt.Errorf("failed to get issues: %w", err))
 		return
 	}
 
@@ -405,7 +455,7 @@ func flushToJSONL() {
 	// Populate dependencies for all issues
 	allDeps, err := store.GetAllDependencyRecords(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to get dependencies: %v\n", err)
+		recordFailure(fmt.Errorf("failed to get dependencies: %w", err))
 		return
 	}
 	for _, issue := range issues {
@@ -416,7 +466,7 @@ func flushToJSONL() {
 	tempPath := jsonlPath + ".tmp"
 	f, err := os.Create(tempPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to create temp file: %v\n", err)
+		recordFailure(fmt.Errorf("failed to create temp file: %w", err))
 		return
 	}
 
@@ -425,23 +475,26 @@ func flushToJSONL() {
 		if err := encoder.Encode(issue); err != nil {
 			f.Close()
 			os.Remove(tempPath)
-			fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to encode issue %s: %v\n", issue.ID, err)
+			recordFailure(fmt.Errorf("failed to encode issue %s: %w", issue.ID, err))
 			return
 		}
 	}
 
 	if err := f.Close(); err != nil {
 		os.Remove(tempPath)
-		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to close temp file: %v\n", err)
+		recordFailure(fmt.Errorf("failed to close temp file: %w", err))
 		return
 	}
 
 	// Atomic rename
 	if err := os.Rename(tempPath, jsonlPath); err != nil {
 		os.Remove(tempPath)
-		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to rename file: %v\n", err)
+		recordFailure(fmt.Errorf("failed to rename file: %w", err))
 		return
 	}
+
+	// Success!
+	recordSuccess()
 }
 
 var (
@@ -470,8 +523,25 @@ var createCmd = &cobra.Command{
 		issueType, _ := cmd.Flags().GetString("type")
 		assignee, _ := cmd.Flags().GetString("assignee")
 		labels, _ := cmd.Flags().GetStringSlice("labels")
+		explicitID, _ := cmd.Flags().GetString("id")
+
+		// Validate explicit ID format if provided (prefix-number)
+		if explicitID != "" {
+			// Check format: must contain hyphen and have numeric suffix
+			parts := strings.Split(explicitID, "-")
+			if len(parts) != 2 {
+				fmt.Fprintf(os.Stderr, "Error: invalid ID format '%s' (expected format: prefix-number, e.g., 'bd-42')\n", explicitID)
+				os.Exit(1)
+			}
+			// Validate numeric suffix
+			if _, err := fmt.Sscanf(parts[1], "%d", new(int)); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: invalid ID format '%s' (numeric suffix required, e.g., 'bd-42')\n", explicitID)
+				os.Exit(1)
+			}
+		}
 
 		issue := &types.Issue{
+			ID:                 explicitID, // Set explicit ID if provided (empty string if not)
 			Title:              title,
 			Description:        description,
 			Design:             design,
@@ -518,6 +588,7 @@ func init() {
 	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore)")
 	createCmd.Flags().StringP("assignee", "a", "", "Assignee")
 	createCmd.Flags().StringSliceP("labels", "l", []string{}, "Labels (comma-separated)")
+	createCmd.Flags().String("id", "", "Explicit issue ID (e.g., 'bd-42' for partitioning)")
 	rootCmd.AddCommand(createCmd)
 }
 
