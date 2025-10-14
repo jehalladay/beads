@@ -71,6 +71,25 @@ go build -o bd ./cmd/bd
 sudo mv bd /usr/local/bin/  # or anywhere in your PATH
 ```
 
+#### Windows 11
+For Windows you must build from source.
+Assumes git, go-lang and mingw-64 installed and in path.
+
+```pwsh
+git clone https://github.com/steveyegge/beads
+cd beads
+$env:CGO_ENABLED=1
+go build -o bd.exe ./cmd/bd
+mv bd.exe $env:USERPROFILE/.local/bin/ # or anywhere in your PATH
+```
+
+Tested with mingw64 from https://github.com/niXman/mingw-builds-binaries
+- version: `1.5.20`
+- architecture: `64 bit`
+- thread model: `posix`
+- C runtime: `ucrt`
+
+
 ## Quick Start
 
 ### For Humans
