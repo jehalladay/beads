@@ -6,10 +6,7 @@
     "name": "Steve Yegge",
     "url": "https://github.com/steveyegge"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/steveyegge/beads"
-  },
+  "repository": "https://github.com/steveyegge/beads",
   "license": "MIT",
   "homepage": "https://github.com/steveyegge/beads",
   "keywords": [
