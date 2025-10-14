@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -152,13 +154,14 @@ func findJSONLPath() string {
 	return jsonlPath
 }
 
-// autoImportIfNewer checks if JSONL is newer than DB and imports if so
+// autoImportIfNewer checks if JSONL content changed (via hash) and imports if so
+// Fixes bd-84: Hash-based comparison is git-proof (mtime comparison fails after git pull)
 func autoImportIfNewer() {
 	// Find JSONL path
 	jsonlPath := findJSONLPath()
 
-	// Check if JSONL exists
-	jsonlInfo, err := os.Stat(jsonlPath)
+	// Read JSONL file
+	jsonlData, err := os.ReadFile(jsonlPath)
 	if err != nil {
 		// JSONL doesn't exist or can't be accessed, skip import
 		if os.Getenv("BD_DEBUG") != "" {
@@ -167,34 +170,38 @@ func autoImportIfNewer() {
 		return
 	}
 
-	// Check if DB exists
-	dbInfo, err := os.Stat(dbPath)
+	// Compute current JSONL hash
+	hasher := sha256.New()
+	hasher.Write(jsonlData)
+	currentHash := hex.EncodeToString(hasher.Sum(nil))
+
+	// Get last import hash from DB metadata
+	ctx := context.Background()
+	lastHash, err := store.GetMetadata(ctx, "last_import_hash")
 	if err != nil {
-		// DB doesn't exist (new init?), skip import
+		// Metadata not supported or error reading - this shouldn't happen
+		// since we added metadata table, but be defensive
 		if os.Getenv("BD_DEBUG") != "" {
-			fmt.Fprintf(os.Stderr, "Debug: auto-import skipped, DB not found: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Debug: auto-import skipped, metadata error: %v\n", err)
 		}
 		return
 	}
 
-	// Compare modification times
-	if !jsonlInfo.ModTime().After(dbInfo.ModTime()) {
-		// JSONL is not newer than DB, skip import
+	// Compare hashes
+	if currentHash == lastHash {
+		// Content unchanged, skip import
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: auto-import skipped, JSONL unchanged (hash match)\n")
+		}
 		return
 	}
 
-	// JSONL is newer, perform silent import
-	ctx := context.Background()
-
-	// Read and parse JSONL
-	f, err := os.Open(jsonlPath)
-	if err != nil {
-		// Can't open JSONL, skip import
-		return
+	if os.Getenv("BD_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "Debug: auto-import triggered (hash changed)\n")
 	}
-	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
+	// Content changed - perform silent import
+	scanner := bufio.NewScanner(strings.NewReader(string(jsonlData)))
 	var allIssues []*types.Issue
 
 	for scanner.Scan() {
@@ -206,6 +213,9 @@ func autoImportIfNewer() {
 		var issue types.Issue
 		if err := json.Unmarshal([]byte(line), &issue); err != nil {
 			// Parse error, skip this import
+			if os.Getenv("BD_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "Debug: auto-import skipped, parse error: %v\n", err)
+			}
 			return
 		}
 
@@ -276,6 +286,9 @@ func autoImportIfNewer() {
 			}
 		}
 	}
+
+	// Store new hash after successful import
+	_ = store.SetMetadata(ctx, "last_import_hash", currentHash)
 }
 
 // markDirtyAndScheduleFlush marks the database as dirty and schedules a flush
@@ -482,6 +495,15 @@ func flushToJSONL() {
 	if err := store.ClearDirtyIssuesByID(ctx, dirtyIDs); err != nil {
 		// Don't fail the whole flush for this, but warn
 		fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty issues: %v\n", err)
+	}
+
+	// Store hash of exported JSONL (fixes bd-84: enables hash-based auto-import)
+	jsonlData, err := os.ReadFile(jsonlPath)
+	if err == nil {
+		hasher := sha256.New()
+		hasher.Write(jsonlData)
+		exportedHash := hex.EncodeToString(hasher.Sum(nil))
+		_ = store.SetMetadata(ctx, "last_import_hash", exportedHash)
 	}
 
 	// Success!
