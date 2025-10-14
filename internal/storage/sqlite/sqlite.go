@@ -662,6 +662,25 @@ func (s *SQLiteStorage) GetConfig(ctx context.Context, key string) (string, erro
 	return value, err
 }
 
+// SetMetadata sets a metadata value (for internal state like import hashes)
+func (s *SQLiteStorage) SetMetadata(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO metadata (key, value) VALUES (?, ?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value
+	`, key, value)
+	return err
+}
+
+// GetMetadata gets a metadata value (for internal state like import hashes)
+func (s *SQLiteStorage) GetMetadata(ctx context.Context, key string) (string, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key = ?`, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return value, err
+}
+
 // Close closes the database connection
 func (s *SQLiteStorage) Close() error {
 	return s.db.Close()

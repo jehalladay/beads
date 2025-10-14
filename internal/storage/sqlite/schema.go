@@ -72,6 +72,12 @@ CREATE TABLE IF NOT EXISTS config (
     value TEXT NOT NULL
 );
 
+-- Metadata table (for storing internal state like import hashes)
+CREATE TABLE IF NOT EXISTS metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- Dirty issues table (for incremental JSONL export)
 -- Tracks which issues have changed since last export
 CREATE TABLE IF NOT EXISTS dirty_issues (
