@@ -76,18 +76,20 @@ Output to stdout by default, or use -o flag for file output.`,
 
 		// Write JSONL
 		encoder := json.NewEncoder(out)
+		exportedIDs := make([]string, 0, len(issues))
 		for _, issue := range issues {
 			if err := encoder.Encode(issue); err != nil {
 				fmt.Fprintf(os.Stderr, "Error encoding issue %s: %v\n", issue.ID, err)
 				os.Exit(1)
 			}
+			exportedIDs = append(exportedIDs, issue.ID)
 		}
 
 		// Only clear dirty issues and auto-flush state if exporting to the default JSONL path
 		// This prevents clearing dirty flags when exporting to custom paths (e.g., bd export -o backup.jsonl)
 		if output == "" || output == findJSONLPath() {
-			// Clear dirty issues since we just exported to the canonical JSONL file
-			if err := store.ClearDirtyIssues(ctx); err != nil {
+			// Clear only the issues that were actually exported (fixes bd-52 race condition)
+			if err := store.ClearDirtyIssuesByID(ctx, exportedIDs); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty issues: %v\n", err)
 			}
 

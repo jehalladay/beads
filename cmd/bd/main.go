@@ -516,8 +516,8 @@ func flushToJSONL() {
 		return
 	}
 
-	// Clear dirty issues after successful export
-	if err := store.ClearDirtyIssues(ctx); err != nil {
+	// Clear only the dirty issues that were actually exported (fixes bd-52 race condition)
+	if err := store.ClearDirtyIssuesByID(ctx, dirtyIDs); err != nil {
 		// Don't fail the whole flush for this, but warn
 		fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty issues: %v\n", err)
 	}
