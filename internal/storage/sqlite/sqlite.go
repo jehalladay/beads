@@ -50,6 +50,11 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to migrate dirty_issues table: %w", err)
 	}
 
+	// Migrate existing databases to add issue_counters table if missing
+	if err := migrateIssueCountersTable(db); err != nil {
+		return nil, fmt.Errorf("failed to migrate issue_counters table: %w", err)
+	}
+
 	return &SQLiteStorage{
 		db: db,
 	}, nil
@@ -90,6 +95,66 @@ func migrateDirtyIssuesTable(db *sql.DB) error {
 	return nil
 }
 
+// migrateIssueCountersTable checks if the issue_counters table needs initialization.
+// This ensures existing databases created before the atomic counter feature get migrated automatically.
+// The table may already exist (created by schema), but be empty - in that case we still need to sync.
+func migrateIssueCountersTable(db *sql.DB) error {
+	// Check if the table exists (it should, created by schema)
+	var tableName string
+	err := db.QueryRow(`
+		SELECT name FROM sqlite_master
+		WHERE type='table' AND name='issue_counters'
+	`).Scan(&tableName)
+
+	tableExists := err == nil
+
+	if !tableExists {
+		if err != sql.ErrNoRows {
+			return fmt.Errorf("failed to check for issue_counters table: %w", err)
+		}
+		// Table doesn't exist, create it (shouldn't happen with schema, but handle it)
+		_, err := db.Exec(`
+			CREATE TABLE issue_counters (
+				prefix TEXT PRIMARY KEY,
+				last_id INTEGER NOT NULL DEFAULT 0
+			)
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to create issue_counters table: %w", err)
+		}
+	}
+
+	// Check if table is empty - if so, we need to sync from existing issues
+	var count int
+	err = db.QueryRow(`SELECT COUNT(*) FROM issue_counters`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to count issue_counters: %w", err)
+	}
+
+	if count == 0 {
+		// Table is empty, sync counters from existing issues to prevent ID collisions
+		// This is safe to do during migration since it's a one-time operation
+		_, err = db.Exec(`
+			INSERT INTO issue_counters (prefix, last_id)
+			SELECT
+				substr(id, 1, instr(id, '-') - 1) as prefix,
+				MAX(CAST(substr(id, instr(id, '-') + 1) AS INTEGER)) as max_id
+			FROM issues
+			WHERE instr(id, '-') > 0
+			  AND substr(id, instr(id, '-') + 1) GLOB '[0-9]*'
+			GROUP BY prefix
+			ON CONFLICT(prefix) DO UPDATE SET
+				last_id = MAX(last_id, excluded.last_id)
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to sync counters during migration: %w", err)
+		}
+	}
+
+	// Table exists and is initialized (either was already populated, or we just synced it)
+	return nil
+}
+
 // getNextIDForPrefix atomically generates the next ID for a given prefix
 // Uses the issue_counters table for atomic, cross-process ID generation
 func (s *SQLiteStorage) getNextIDForPrefix(ctx context.Context, prefix string) (int, error) {
@@ -105,6 +170,43 @@ func (s *SQLiteStorage) getNextIDForPrefix(ctx context.Context, prefix string) (
 		return 0, fmt.Errorf("failed to generate next ID for prefix %s: %w", prefix, err)
 	}
 	return nextID, nil
+}
+
+// ensureCounterInitialized checks if a counter exists for the given prefix,
+// and initializes it from existing issues if needed. This is lazy initialization
+// to avoid scanning the entire issues table on every CreateIssue call.
+func (s *SQLiteStorage) ensureCounterInitialized(ctx context.Context, prefix string) error {
+	// Check if counter already exists for this prefix
+	var exists int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM issue_counters WHERE prefix = ?`, prefix).Scan(&exists)
+
+	if err == nil {
+		// Counter exists, we're good
+		return nil
+	}
+
+	if err != sql.ErrNoRows {
+		// Unexpected error
+		return fmt.Errorf("failed to check counter existence: %w", err)
+	}
+
+	// Counter doesn't exist, initialize it from existing issues with this prefix
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO issue_counters (prefix, last_id)
+		SELECT ?, COALESCE(MAX(CAST(substr(id, LENGTH(?) + 2) AS INTEGER)), 0)
+		FROM issues
+		WHERE id LIKE ? || '-%'
+		  AND substr(id, LENGTH(?) + 2) GLOB '[0-9]*'
+		ON CONFLICT(prefix) DO UPDATE SET
+			last_id = MAX(last_id, excluded.last_id)
+	`, prefix, prefix, prefix, prefix)
+
+	if err != nil {
+		return fmt.Errorf("failed to initialize counter for prefix %s: %w", prefix, err)
+	}
+
+	return nil
 }
 
 // SyncAllCounters synchronizes all ID counters based on existing issues in the database
@@ -137,17 +239,16 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 
 	// Generate ID if not set (using atomic counter table)
 	if issue.ID == "" {
-		// Sync all counters first to ensure we don't collide with existing issues
-		// This handles the case where the database was created before this fix
-		// or issues were imported without syncing counters
-		if err := s.SyncAllCounters(ctx); err != nil {
-			return fmt.Errorf("failed to sync counters: %w", err)
-		}
-
 		// Get prefix from config, default to "bd"
 		prefix, err := s.GetConfig(ctx, "issue_prefix")
 		if err != nil || prefix == "" {
 			prefix = "bd"
+		}
+
+		// Ensure counter is initialized for this prefix (lazy initialization)
+		// Only scans issues with this prefix on first use, not the entire table
+		if err := s.ensureCounterInitialized(ctx, prefix); err != nil {
+			return fmt.Errorf("failed to initialize counter: %w", err)
 		}
 
 		// Atomically get next ID from counter table

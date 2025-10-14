@@ -240,9 +240,11 @@ Behavior:
 
 		// Phase 5: Sync ID counters after importing issues with explicit IDs
 		// This prevents ID collisions with subsequently auto-generated issues
+		// CRITICAL: If this fails, subsequent auto-generated IDs WILL collide with imported issues
 		if err := sqliteStore.SyncAllCounters(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to sync ID counters: %v\n", err)
-			// Don't exit - this is not fatal, just a warning
+			fmt.Fprintf(os.Stderr, "Error: failed to sync ID counters: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Cannot proceed - auto-generated IDs would collide with imported issues.\n")
+			os.Exit(1)
 		}
 
 		// Phase 6: Process dependencies

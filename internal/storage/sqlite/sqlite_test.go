@@ -460,9 +460,9 @@ func TestMultiProcessIDGeneration(t *testing.T) {
 		ids[res.id] = true
 	}
 
-	// With the bug, we expect UNIQUE constraint errors
+	// After the fix (atomic counter), all operations should succeed without errors
 	if len(errors) > 0 {
-		t.Logf("Got %d errors (expected with current implementation):", len(errors))
+		t.Errorf("Expected no errors with atomic counter fix, got %d:", len(errors))
 		for _, err := range errors {
 			t.Logf("  - %v", err)
 		}
@@ -470,13 +470,9 @@ func TestMultiProcessIDGeneration(t *testing.T) {
 
 	t.Logf("Successfully created %d unique issues out of %d attempts", len(ids), numProcesses)
 
-	// After the fix, all should succeed
+	// All issues should be created successfully with unique IDs
 	if len(ids) != numProcesses {
 		t.Errorf("Expected %d unique IDs, got %d", numProcesses, len(ids))
-	}
-
-	if len(errors) > 0 {
-		t.Errorf("Expected no errors, got %d", len(errors))
 	}
 }
 
