@@ -95,17 +95,36 @@ CREATE TABLE IF NOT EXISTS issue_counters (
     last_id INTEGER NOT NULL DEFAULT 0
 );
 
--- Ready work view
+-- Ready work view (with hierarchical blocking)
+-- Uses recursive CTE to propagate blocking through parent-child hierarchy
 CREATE VIEW IF NOT EXISTS ready_issues AS
+WITH RECURSIVE
+  -- Find issues blocked directly by dependencies
+  blocked_directly AS (
+    SELECT DISTINCT d.issue_id
+    FROM dependencies d
+    JOIN issues blocker ON d.depends_on_id = blocker.id
+    WHERE d.type = 'blocks'
+      AND blocker.status IN ('open', 'in_progress', 'blocked')
+  ),
+  -- Propagate blockage to all descendants via parent-child
+  blocked_transitively AS (
+    -- Base case: directly blocked issues
+    SELECT issue_id, 0 as depth
+    FROM blocked_directly
+    UNION ALL
+    -- Recursive case: children of blocked issues inherit blockage
+    SELECT d.issue_id, bt.depth + 1
+    FROM blocked_transitively bt
+    JOIN dependencies d ON d.depends_on_id = bt.issue_id
+    WHERE d.type = 'parent-child'
+      AND bt.depth < 50
+  )
 SELECT i.*
 FROM issues i
 WHERE i.status = 'open'
   AND NOT EXISTS (
-    SELECT 1 FROM dependencies d
-    JOIN issues blocked ON d.depends_on_id = blocked.id
-    WHERE d.issue_id = i.id
-      AND d.type = 'blocks'
-      AND blocked.status IN ('open', 'in_progress', 'blocked')
+    SELECT 1 FROM blocked_transitively WHERE issue_id = i.id
   );
 
 -- Blocked issues view
