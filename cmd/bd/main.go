@@ -538,6 +538,7 @@ var createCmd = &cobra.Command{
 		labels, _ := cmd.Flags().GetStringSlice("labels")
 		explicitID, _ := cmd.Flags().GetString("id")
 		externalRef, _ := cmd.Flags().GetString("external-ref")
+		deps, _ := cmd.Flags().GetStringSlice("deps")
 
 		// Validate explicit ID format if provided (prefix-number)
 		if explicitID != "" {
@@ -585,6 +586,43 @@ var createCmd = &cobra.Command{
 			}
 		}
 
+		// Add dependencies if specified (format: type:id or just id for default "blocks" type)
+		for _, depSpec := range deps {
+			var depType types.DependencyType
+			var dependsOnID string
+
+			// Parse format: "type:id" or just "id" (defaults to "blocks")
+			if strings.Contains(depSpec, ":") {
+				parts := strings.SplitN(depSpec, ":", 2)
+				if len(parts) != 2 {
+					fmt.Fprintf(os.Stderr, "Warning: invalid dependency format '%s', expected 'type:id' or 'id'\n", depSpec)
+					continue
+				}
+				depType = types.DependencyType(parts[0])
+				dependsOnID = parts[1]
+			} else {
+				// Default to "blocks" if no type specified
+				depType = types.DepBlocks
+				dependsOnID = depSpec
+			}
+
+			// Validate dependency type
+			if !depType.IsValid() {
+				fmt.Fprintf(os.Stderr, "Warning: invalid dependency type '%s' (valid: blocks, related, parent-child, discovered-from)\n", depType)
+				continue
+			}
+
+			// Add the dependency
+			dep := &types.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: dependsOnID,
+				Type:        depType,
+			}
+			if err := store.AddDependency(ctx, dep, actor); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s: %v\n", issue.ID, dependsOnID, err)
+			}
+		}
+
 		// Schedule auto-flush
 		markDirtyAndScheduleFlush()
 
@@ -610,6 +648,7 @@ func init() {
 	createCmd.Flags().StringSliceP("labels", "l", []string{}, "Labels (comma-separated)")
 	createCmd.Flags().String("id", "", "Explicit issue ID (e.g., 'bd-42' for partitioning)")
 	createCmd.Flags().String("external-ref", "", "External reference (e.g., 'gh-9', 'jira-ABC')")
+	createCmd.Flags().StringSlice("deps", []string{}, "Dependencies in format 'type:id' or 'id' (e.g., 'discovered-from:bd-20,blocks:bd-15' or 'bd-20')")
 	rootCmd.AddCommand(createCmd)
 }
 

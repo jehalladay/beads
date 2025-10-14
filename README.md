@@ -313,8 +313,12 @@ Only `blocks` dependencies affect the ready work queue.
 - **discovered-from**: Use when you discover new work while working on an issue
   ```bash
   # While working on bd-20, you discover a bug
+  # Old way (two commands):
   bd create "Fix edge case bug" -t bug -p 1
   bd dep add bd-21 bd-20 --type discovered-from  # bd-21 discovered from bd-20
+
+  # New way (single command with --deps):
+  bd create "Fix edge case bug" -t bug -p 1 --deps discovered-from:bd-20
   ```
 
 The `discovered-from` type is particularly useful for AI-supervised workflows, where the AI can automatically create issues for discovered work and link them back to the parent task.

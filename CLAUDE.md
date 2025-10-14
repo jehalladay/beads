@@ -23,8 +23,11 @@ bd create "Issue title" --id worker1-100 -p 1 --json
 # Update issue status
 bd update <id> --status in_progress --json
 
-# Link discovered work
+# Link discovered work (old way)
 bd dep add <discovered-id> <parent-id> --type discovered-from
+
+# Create and link in one command (new way)
+bd create "Issue title" -t bug -p 1 --deps discovered-from:<parent-id> --json
 
 # Complete work
 bd close <id> --reason "Done" --json
@@ -46,8 +49,8 @@ bd import -i .beads/issues.jsonl --resolve-collisions  # Auto-resolve
 2. **Claim your task**: `bd update <id> --status in_progress`
 3. **Work on it**: Implement, test, document
 4. **Discover new work**: If you find bugs or TODOs, create issues:
-   - `bd create "Found bug in auth" -t bug -p 1 --json`
-   - Link it: `bd dep add <new-id> <current-id> --type discovered-from`
+   - Old way (two commands): `bd create "Found bug in auth" -t bug -p 1 --json` then `bd dep add <new-id> <current-id> --type discovered-from`
+   - New way (one command): `bd create "Found bug in auth" -t bug -p 1 --deps discovered-from:<current-id> --json`
 5. **Complete**: `bd close <id> --reason "Implemented"`
 6. **Export**: Changes auto-sync to `.beads/issues.jsonl` (5-second debounce)
 
