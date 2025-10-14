@@ -125,3 +125,30 @@ func (s *SQLiteStorage) GetDirtyIssueCount(ctx context.Context) (int, error) {
 	}
 	return count, nil
 }
+
+// markIssuesDirtyTx marks multiple issues as dirty within an existing transaction
+// This is a helper for operations that need to mark issues dirty as part of a larger transaction
+func markIssuesDirtyTx(ctx context.Context, tx *sql.Tx, issueIDs []string) error {
+	if len(issueIDs) == 0 {
+		return nil
+	}
+
+	now := time.Now()
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO dirty_issues (issue_id, marked_at)
+		VALUES (?, ?)
+		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare dirty statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, issueID := range issueIDs {
+		if _, err := stmt.ExecContext(ctx, issueID, now); err != nil {
+			return fmt.Errorf("failed to mark issue %s dirty: %w", issueID, err)
+		}
+	}
+
+	return nil
+}
