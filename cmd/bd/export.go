@@ -5,11 +5,45 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// validateExportPath checks if the output path is safe to write to
+func validateExportPath(path string) error {
+	// Get absolute path to normalize it
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("invalid path: %v", err)
+	}
+
+	// Convert to lowercase for case-insensitive comparison on Windows
+	absPathLower := strings.ToLower(absPath)
+
+	// List of sensitive system directories to avoid
+	sensitiveDirs := []string{
+		"c:\\windows",
+		"c:\\program files",
+		"c:\\program files (x86)",
+		"c:\\programdata",
+		"c:\\system volume information",
+		"c:\\$recycle.bin",
+		"c:\\boot",
+		"c:\\recovery",
+	}
+
+	for _, dir := range sensitiveDirs {
+		if strings.HasPrefix(absPathLower, strings.ToLower(dir)) {
+			return fmt.Errorf("cannot write to sensitive system directory: %s", dir)
+		}
+	}
+
+	return nil
+}
 
 var exportCmd = &cobra.Command{
 	Use:   "export",
@@ -60,18 +94,37 @@ Output to stdout by default, or use -o flag for file output.`,
 
 		// Open output
 		out := os.Stdout
+		var tempFile *os.File
+		var tempPath string
+		var finalPath string
 		if output != "" {
-			f, err := os.Create(output)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
+			// Validate output path before creating files
+			if err := validateExportPath(output); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
+
+			// Create temporary file in same directory for atomic rename
+			dir := filepath.Dir(output)
+			base := filepath.Base(output)
+			var err error
+			tempFile, err = os.CreateTemp(dir, base+".tmp.*")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating temporary file: %v\n", err)
+				os.Exit(1)
+			}
+			tempPath = tempFile.Name()
+			finalPath = output
+
+			// Ensure cleanup on failure
 			defer func() {
-				if err := f.Close(); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to close output file: %v\n", err)
+				if tempFile != nil {
+					tempFile.Close()
+					os.Remove(tempPath) // Clean up temp file if we haven't renamed it
 				}
 			}()
-			out = f
+
+			out = tempFile
 		}
 
 		// Write JSONL
@@ -80,6 +133,27 @@ Output to stdout by default, or use -o flag for file output.`,
 			if err := encoder.Encode(issue); err != nil {
 				fmt.Fprintf(os.Stderr, "Error encoding issue %s: %v\n", issue.ID, err)
 				os.Exit(1)
+			}
+		}
+
+		// If writing to file, atomically replace the target file
+		if tempFile != nil {
+			// Close the temp file before renaming
+			if err := tempFile.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to close temporary file: %v\n", err)
+			}
+			tempFile = nil // Prevent cleanup
+
+			// Atomically replace the target file
+			if err := os.Rename(tempPath, finalPath); err != nil {
+				os.Remove(tempPath) // Clean up on failure
+				fmt.Fprintf(os.Stderr, "Error replacing output file: %v\n", err)
+				os.Exit(1)
+			}
+
+			// Set appropriate file permissions (0644: rw-r--r--)
+			if err := os.Chmod(finalPath, 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to set file permissions: %v\n", err)
 			}
 		}
 	},
