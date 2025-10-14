@@ -207,9 +207,13 @@ bd create "Worker task" --id worker1-100 -p 1
 
 # Get JSON output for programmatic use
 bd create "Fix bug" -d "Description" --json
+
+# Create multiple issues from a markdown file
+bd create -f feature-plan.md
 ```
 
 Options:
+- `-f, --file` - Create multiple issues from markdown file
 - `-d, --description` - Issue description
 - `-p, --priority` - Priority (0-4, 0=highest)
 - `-t, --type` - Type (bug|feature|task|epic|chore)
@@ -217,6 +221,90 @@ Options:
 - `-l, --labels` - Comma-separated labels
 - `--id` - Explicit issue ID (e.g., `worker1-100` for ID space partitioning)
 - `--json` - Output in JSON format
+
+#### Creating Issues from Markdown
+
+You can draft multiple issues in a markdown file and create them all at once. This is useful for planning features or converting written notes into tracked work.
+
+Markdown format:
+```markdown
+## Issue Title
+
+Optional description text here.
+
+### Priority
+1
+
+### Type
+feature
+
+### Description
+More detailed description (overrides text after title).
+
+### Design
+Design notes and implementation details.
+
+### Acceptance Criteria
+- Must do this
+- Must do that
+
+### Assignee
+username
+
+### Labels
+label1, label2, label3
+
+### Dependencies
+bd-10, bd-20
+```
+
+Example markdown file (`auth-improvements.md`):
+```markdown
+## Add OAuth2 support
+
+We need to support OAuth2 authentication.
+
+### Priority
+1
+
+### Type
+feature
+
+### Assignee
+alice
+
+### Labels
+auth, high-priority
+
+## Add rate limiting
+
+### Priority
+0
+
+### Type
+bug
+
+### Description
+Auth endpoints are vulnerable to brute force attacks.
+
+### Labels
+security, urgent
+```
+
+Create all issues:
+```bash
+bd create -f auth-improvements.md
+# ✓ Created 2 issues from auth-improvements.md:
+#   bd-42: Add OAuth2 support [P1, feature]
+#   bd-43: Add rate limiting [P0, bug]
+```
+
+**Notes:**
+- Each `## Heading` creates a new issue
+- Sections (`### Priority`, `### Type`, etc.) are optional
+- Defaults: Priority=2, Type=task
+- Text immediately after the title becomes the description (unless overridden by `### Description`)
+- All standard issue fields are supported
 
 ### Viewing Issues
 

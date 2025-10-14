@@ -527,11 +527,140 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noAutoImport, "no-auto-import", false, "Disable automatic JSONL import when newer than DB")
 }
 
+// createIssuesFromMarkdown parses a markdown file and creates multiple issues
+func createIssuesFromMarkdown(cmd *cobra.Command, filepath string) {
+	// Parse markdown file
+	templates, err := parseMarkdownFile(filepath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing markdown file: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(templates) == 0 {
+		fmt.Fprintf(os.Stderr, "No issues found in markdown file\n")
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	createdIssues := []*types.Issue{}
+	failedIssues := []string{}
+
+	// Create each issue
+	for _, template := range templates {
+		issue := &types.Issue{
+			Title:              template.Title,
+			Description:        template.Description,
+			Design:             template.Design,
+			AcceptanceCriteria: template.AcceptanceCriteria,
+			Status:             types.StatusOpen,
+			Priority:           template.Priority,
+			IssueType:          template.IssueType,
+			Assignee:           template.Assignee,
+		}
+
+		if err := store.CreateIssue(ctx, issue, actor); err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating issue '%s': %v\n", template.Title, err)
+			failedIssues = append(failedIssues, template.Title)
+			continue
+		}
+
+		// Add labels
+		for _, label := range template.Labels {
+			if err := store.AddLabel(ctx, issue.ID, label, actor); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to add label %s to %s: %v\n", label, issue.ID, err)
+			}
+		}
+
+		// Add dependencies
+		for _, depSpec := range template.Dependencies {
+			depSpec = strings.TrimSpace(depSpec)
+			if depSpec == "" {
+				continue
+			}
+
+			var depType types.DependencyType
+			var dependsOnID string
+
+			// Parse format: "type:id" or just "id" (defaults to "blocks")
+			if strings.Contains(depSpec, ":") {
+				parts := strings.SplitN(depSpec, ":", 2)
+				if len(parts) != 2 {
+					fmt.Fprintf(os.Stderr, "Warning: invalid dependency format '%s' for %s\n", depSpec, issue.ID)
+					continue
+				}
+				depType = types.DependencyType(strings.TrimSpace(parts[0]))
+				dependsOnID = strings.TrimSpace(parts[1])
+			} else {
+				depType = types.DepBlocks
+				dependsOnID = depSpec
+			}
+
+			if !depType.IsValid() {
+				fmt.Fprintf(os.Stderr, "Warning: invalid dependency type '%s' for %s\n", depType, issue.ID)
+				continue
+			}
+
+			dep := &types.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: dependsOnID,
+				Type:        depType,
+			}
+			if err := store.AddDependency(ctx, dep, actor); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s: %v\n", issue.ID, dependsOnID, err)
+			}
+		}
+
+		createdIssues = append(createdIssues, issue)
+	}
+
+	// Schedule auto-flush
+	if len(createdIssues) > 0 {
+		markDirtyAndScheduleFlush()
+	}
+
+	// Report failures if any
+	if len(failedIssues) > 0 {
+		red := color.New(color.FgRed).SprintFunc()
+		fmt.Fprintf(os.Stderr, "\n%s Failed to create %d issues:\n", red("✗"), len(failedIssues))
+		for _, title := range failedIssues {
+			fmt.Fprintf(os.Stderr, "  - %s\n", title)
+		}
+	}
+
+	if jsonOutput {
+		outputJSON(createdIssues)
+	} else {
+		green := color.New(color.FgGreen).SprintFunc()
+		fmt.Printf("%s Created %d issues from %s:\n", green("✓"), len(createdIssues), filepath)
+		for _, issue := range createdIssues {
+			fmt.Printf("  %s: %s [P%d, %s]\n", issue.ID, issue.Title, issue.Priority, issue.IssueType)
+		}
+	}
+}
+
 var createCmd = &cobra.Command{
 	Use:   "create [title]",
-	Short: "Create a new issue",
-	Args:  cobra.MinimumNArgs(1),
+	Short: "Create a new issue (or multiple issues from markdown file)",
+	Args:  cobra.MinimumNArgs(0), // Changed to allow no args when using -f
 	Run: func(cmd *cobra.Command, args []string) {
+		file, _ := cmd.Flags().GetString("file")
+
+		// If file flag is provided, parse markdown and create multiple issues
+		if file != "" {
+			if len(args) > 0 {
+				fmt.Fprintf(os.Stderr, "Error: cannot specify both title and --file flag\n")
+				os.Exit(1)
+			}
+			createIssuesFromMarkdown(cmd, file)
+			return
+		}
+
+		// Original single-issue creation logic
+		if len(args) == 0 {
+			fmt.Fprintf(os.Stderr, "Error: title required (or use --file to create from markdown)\n")
+			os.Exit(1)
+		}
+
 		title := args[0]
 		description, _ := cmd.Flags().GetString("description")
 		design, _ := cmd.Flags().GetString("design")
@@ -649,6 +778,7 @@ var createCmd = &cobra.Command{
 }
 
 func init() {
+	createCmd.Flags().StringP("file", "f", "", "Create multiple issues from markdown file")
 	createCmd.Flags().StringP("description", "d", "", "Issue description")
 	createCmd.Flags().String("design", "", "Design notes")
 	createCmd.Flags().String("acceptance", "", "Acceptance criteria")
