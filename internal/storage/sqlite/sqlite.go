@@ -121,13 +121,15 @@ func getNextID(db *sql.DB) int {
 	}
 
 	// Check for malformed IDs (non-numeric suffixes) and warn
-	// These are silently ignored by CAST but indicate data quality issues
+	// SQLite's CAST returns 0 for invalid integers, never NULL
+	// So we detect malformed IDs by checking if CAST returns 0 AND suffix doesn't start with '0'
 	malformedQuery := `
 		SELECT id FROM issues
 		WHERE id LIKE ? || '-%'
-		AND CAST(SUBSTR(id, LENGTH(?) + 2) AS INTEGER) IS NULL
+		AND CAST(SUBSTR(id, LENGTH(?) + 2) AS INTEGER) = 0
+		AND SUBSTR(id, LENGTH(?) + 2, 1) != '0'
 	`
-	rows, err := db.Query(malformedQuery, prefix, prefix)
+	rows, err := db.Query(malformedQuery, prefix, prefix, prefix)
 	if err == nil {
 		defer rows.Close()
 		var malformedIDs []string
