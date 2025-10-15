@@ -499,3 +499,104 @@ func TestParallelIssueCreation(t *testing.T) {
 		}
 	}
 }
+
+func TestSetAndGetMetadata(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Set metadata
+	err := store.SetMetadata(ctx, "import_hash", "abc123def456")
+	if err != nil {
+		t.Fatalf("SetMetadata failed: %v", err)
+	}
+
+	// Get metadata
+	value, err := store.GetMetadata(ctx, "import_hash")
+	if err != nil {
+		t.Fatalf("GetMetadata failed: %v", err)
+	}
+
+	if value != "abc123def456" {
+		t.Errorf("Expected 'abc123def456', got '%s'", value)
+	}
+}
+
+func TestGetMetadataNotFound(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Get non-existent metadata
+	value, err := store.GetMetadata(ctx, "nonexistent")
+	if err != nil {
+		t.Fatalf("GetMetadata failed: %v", err)
+	}
+
+	if value != "" {
+		t.Errorf("Expected empty string for non-existent key, got '%s'", value)
+	}
+}
+
+func TestSetMetadataUpdate(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Set initial value
+	err := store.SetMetadata(ctx, "test_key", "initial_value")
+	if err != nil {
+		t.Fatalf("SetMetadata failed: %v", err)
+	}
+
+	// Update value
+	err = store.SetMetadata(ctx, "test_key", "updated_value")
+	if err != nil {
+		t.Fatalf("SetMetadata update failed: %v", err)
+	}
+
+	// Verify updated value
+	value, err := store.GetMetadata(ctx, "test_key")
+	if err != nil {
+		t.Fatalf("GetMetadata failed: %v", err)
+	}
+
+	if value != "updated_value" {
+		t.Errorf("Expected 'updated_value', got '%s'", value)
+	}
+}
+
+func TestMetadataMultipleKeys(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Set multiple metadata keys
+	keys := map[string]string{
+		"key1": "value1",
+		"key2": "value2",
+		"key3": "value3",
+	}
+
+	for key, value := range keys {
+		err := store.SetMetadata(ctx, key, value)
+		if err != nil {
+			t.Fatalf("SetMetadata failed for %s: %v", key, err)
+		}
+	}
+
+	// Verify all keys
+	for key, expectedValue := range keys {
+		value, err := store.GetMetadata(ctx, key)
+		if err != nil {
+			t.Fatalf("GetMetadata failed for %s: %v", key, err)
+		}
+		if value != expectedValue {
+			t.Errorf("For key %s, expected '%s', got '%s'", key, expectedValue, value)
+		}
+	}
+}
