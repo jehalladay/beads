@@ -68,7 +68,7 @@ async def test_run_command_not_found(bd_client):
     """Test command execution when bd executable not found."""
     with (
         patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError()),
-        pytest.raises(BdNotFoundError, match="bd command not found"),
+        pytest.raises(BdNotFoundError, match="bd CLI not found"),
     ):
         await bd_client._run_command("show", "bd-1")
 
@@ -471,7 +471,7 @@ async def test_add_dependency_not_found(bd_client):
     """Test add_dependency when bd executable not found."""
     with (
         patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError()),
-        pytest.raises(BdNotFoundError, match="bd command not found"),
+        pytest.raises(BdNotFoundError, match="bd CLI not found"),
     ):
         params = AddDependencyParams(from_id="bd-2", to_id="bd-1", dep_type="blocks")
         await bd_client.add_dependency(params)
@@ -507,7 +507,7 @@ async def test_quickstart_not_found(bd_client):
     """Test quickstart when bd executable not found."""
     with (
         patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError()),
-        pytest.raises(BdNotFoundError, match="bd command not found"),
+        pytest.raises(BdNotFoundError, match="bd CLI not found"),
     ):
         await bd_client.quickstart()
 

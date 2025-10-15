@@ -61,8 +61,12 @@ class Config(BaseSettings):
                 path = Path(v)
             else:
                 raise ValueError(
-                    f"bd executable not found at: {v}\n"
-                    + "Please verify BEADS_PATH points to a valid bd executable."
+                    f"bd executable not found at: {v}\n\n"
+                    + "The beads Claude Code plugin requires the bd CLI to be installed.\n\n"
+                    + "Install bd CLI:\n"
+                    + "  curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/install.sh | bash\n\n"
+                    + "Or visit: https://github.com/steveyegge/beads#installation\n\n"
+                    + "After installation, restart Claude Code to reload the MCP server."
                 )
 
         if not os.access(v, os.X_OK):
@@ -119,14 +123,18 @@ def load_config() -> Config:
     except Exception as e:
         default_path = _default_beads_path()
         error_msg = (
-            f"Configuration Error: {e}\n\n"
-            + "Environment variables:\n"
+            f"Beads MCP Server Configuration Error\n\n"
+            + f"{e}\n\n"
+            + "Common fix: Install the bd CLI first:\n"
+            + "  curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/install.sh | bash\n\n"
+            + "Or visit: https://github.com/steveyegge/beads#installation\n\n"
+            + "After installation, restart Claude Code.\n\n"
+            + "Advanced configuration (optional):\n"
             + f"  BEADS_PATH            - Path to bd executable (default: {default_path})\n"
-            + "  BEADS_DB              - Optional path to beads database file\n"
+            + "  BEADS_DB              - Path to beads database file (default: auto-discover)\n"
             + "  BEADS_ACTOR           - Actor name for audit trail (default: $USER)\n"
             + "  BEADS_NO_AUTO_FLUSH   - Disable automatic JSONL sync (default: false)\n"
-            + "  BEADS_NO_AUTO_IMPORT  - Disable automatic JSONL import (default: false)\n\n"
-            + "Make sure bd is installed and the path is correct."
+            + "  BEADS_NO_AUTO_IMPORT  - Disable automatic JSONL import (default: false)"
         )
         print(error_msg, file=sys.stderr)
         raise ConfigError(error_msg) from e

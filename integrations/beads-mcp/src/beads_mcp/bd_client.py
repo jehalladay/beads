@@ -30,7 +30,24 @@ class BdError(Exception):
 class BdNotFoundError(BdError):
     """Raised when bd command is not found."""
 
-    pass
+    @staticmethod
+    def installation_message(attempted_path: str) -> str:
+        """Get helpful installation message.
+
+        Args:
+            attempted_path: Path where we tried to find bd
+
+        Returns:
+            Formatted error message with installation instructions
+        """
+        return (
+            f"bd CLI not found at: {attempted_path}\n\n"
+            "The beads Claude Code plugin requires the bd CLI to be installed separately.\n\n"
+            "Install bd CLI:\n"
+            "  curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/install.sh | bash\n\n"
+            "Or visit: https://github.com/steveyegge/beads#installation\n\n"
+            "After installation, restart Claude Code to reload the MCP server."
+        )
 
 
 class BdCommandError(BdError):
@@ -130,7 +147,7 @@ class BdClient:
             stdout, stderr = await process.communicate()
         except FileNotFoundError as e:
             raise BdNotFoundError(
-                f"bd command not found at '{self.bd_path}'. Make sure bd is installed and in PATH."
+                BdNotFoundError.installation_message(self.bd_path)
             ) from e
 
         if process.returncode != 0:
@@ -174,8 +191,7 @@ class BdClient:
             stdout, stderr = await process.communicate()
         except FileNotFoundError as e:
             raise BdNotFoundError(
-                f"bd command not found at '{self.bd_path}'. "
-                f"Install bd from: https://github.com/steveyegge/beads"
+                BdNotFoundError.installation_message(self.bd_path)
             ) from e
 
         if process.returncode != 0:
@@ -388,7 +404,7 @@ class BdClient:
             _stdout, stderr = await process.communicate()
         except FileNotFoundError as e:
             raise BdNotFoundError(
-                f"bd command not found at '{self.bd_path}'. Make sure bd is installed and in PATH."
+                BdNotFoundError.installation_message(self.bd_path)
             ) from e
 
         if process.returncode != 0:
@@ -416,7 +432,7 @@ class BdClient:
             stdout, stderr = await process.communicate()
         except FileNotFoundError as e:
             raise BdNotFoundError(
-                f"bd command not found at '{self.bd_path}'. Make sure bd is installed and in PATH."
+                BdNotFoundError.installation_message(self.bd_path)
             ) from e
 
         if process.returncode != 0:
@@ -483,7 +499,7 @@ class BdClient:
             stdout, stderr = await process.communicate()
         except FileNotFoundError as e:
             raise BdNotFoundError(
-                f"bd command not found at '{self.bd_path}'. Make sure bd is installed and in PATH."
+                BdNotFoundError.installation_message(self.bd_path)
             ) from e
 
         if process.returncode != 0:
