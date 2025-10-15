@@ -1,18 +1,52 @@
 # Claude Desktop MCP Server for Beads
 
-> **Note**: This is a reference implementation showing how to integrate bd with Claude Desktop via MCP (Model Context Protocol).
+> **Note**: The beads MCP server is now fully implemented! See [integrations/beads-mcp](../../integrations/beads-mcp/) for the production implementation.
 
 ## What This Provides
 
-An MCP server that exposes bd functionality to Claude Desktop, allowing Claude to:
+An MCP server that exposes bd functionality to Claude Desktop and other MCP clients, allowing Claude to:
 - Query ready work
 - Create and update issues
 - Manage dependencies
 - Track discovered work
 
-## Implementation Status
+## Quick Start
 
-This is a **documentation stub** showing the intended integration pattern. Full implementation coming soon!
+Install the beads MCP server:
+
+```bash
+# Using uv (recommended)
+uv tool install beads-mcp
+
+# Or using pip
+pip install beads-mcp
+```
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "beads": {
+      "command": "beads-mcp"
+    }
+  }
+}
+```
+
+Restart Claude Desktop and you're done! Claude can now manage your beads issues.
+
+## Full Documentation
+
+See the [beads-mcp README](../../integrations/beads-mcp/README.md) for:
+- Installation instructions
+- Configuration options
+- Environment variables
+- Development guide
+
+---
+
+## Original Design Documentation (Historical)
 
 ## Planned Features
 

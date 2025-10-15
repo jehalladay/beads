@@ -5,13 +5,39 @@ Enables AI agents to manage tasks using bd CLI through Model Context Protocol.
 
 ## Installing
 
+Install from PyPI:
+
+```bash
+# Using uv (recommended)
+uv tool install beads-mcp
+
+# Or using pip
+pip install beads-mcp
+```
+
+Add to your Claude Desktop config:
+
+```json
+{
+  "mcpServers": {
+    "beads": {
+      "command": "beads-mcp"
+    }
+  }
+}
+```
+
+### Development Installation
+
+For development, clone the repository:
+
 ```bash
 git clone https://github.com/steveyegge/beads
 cd beads/integrations/beads-mcp
 uv sync
 ```
 
-Add to your Claude Desktop config:
+Then use in Claude Desktop config:
 
 ```json
 {
@@ -23,10 +49,7 @@ Add to your Claude Desktop config:
         "/path/to/beads-mcp",
         "run",
         "beads-mcp"
-      ],
-      "env": {
-        "BEADS_PATH": "/home/user/.local/bin/bd",
-      }
+      ]
     }
   }
 }
