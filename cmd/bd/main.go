@@ -251,6 +251,9 @@ func autoImportIfNewer() {
 		return
 	}
 
+	// Track colliding IDs (used later to skip their dependencies too)
+	collidingIDs := make(map[string]bool)
+
 	// If collisions detected, warn user and skip colliding issues
 	if len(collisionResult.Collisions) > 0 {
 		fmt.Fprintf(os.Stderr, "\nWarning: Auto-import detected %d issue collision(s)\n", len(collisionResult.Collisions))
@@ -258,16 +261,13 @@ func autoImportIfNewer() {
 		for _, collision := range collisionResult.Collisions {
 			fmt.Fprintf(os.Stderr, "  %s: %s\n", collision.ID, collision.IncomingIssue.Title)
 			fmt.Fprintf(os.Stderr, "    Conflicting fields: %v\n", collision.ConflictingFields)
+			collidingIDs[collision.ID] = true
 		}
 		fmt.Fprintf(os.Stderr, "\nTo merge these changes, run:\n")
 		fmt.Fprintf(os.Stderr, "  bd import -i %s --resolve-collisions\n\n", jsonlPath)
 
 		// Remove colliding issues from the import list
 		safeIssues := make([]*types.Issue, 0)
-		collidingIDs := make(map[string]bool)
-		for _, collision := range collisionResult.Collisions {
-			collidingIDs[collision.ID] = true
-		}
 		for _, issue := range allIssues {
 			if !collidingIDs[issue.ID] {
 				safeIssues = append(safeIssues, issue)
@@ -309,8 +309,13 @@ func autoImportIfNewer() {
 		}
 	}
 
-	// Import dependencies
+	// Import dependencies (skip colliding issues to maintain consistency)
 	for _, issue := range allIssues {
+		// Skip if this issue was filtered out due to collision
+		if collidingIDs[issue.ID] {
+			continue
+		}
+
 		if len(issue.Dependencies) == 0 {
 			continue
 		}

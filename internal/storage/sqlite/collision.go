@@ -112,11 +112,27 @@ func compareIssues(existing, incoming *types.Issue) []string {
 		conflicts = append(conflicts, "estimated_minutes")
 	}
 
+	// Compare ExternalRef (handle nil cases)
+	if !equalStringPtr(existing.ExternalRef, incoming.ExternalRef) {
+		conflicts = append(conflicts, "external_ref")
+	}
+
 	return conflicts
 }
 
 // equalIntPtr compares two *int pointers for equality
 func equalIntPtr(a, b *int) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+// equalStringPtr compares two *string pointers for equality
+func equalStringPtr(a, b *string) bool {
 	if a == nil && b == nil {
 		return true
 	}
