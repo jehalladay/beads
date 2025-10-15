@@ -58,7 +58,7 @@ graph TB
     style DB2 fill:#f5f5f5
 ```
 
-**Current Status:** Only SQLite is implemented. PostgreSQL support is designed and planned for Phase 3 (see Implementation Roadmap below).
+**Current Status:** Only SQLite is implemented. PostgreSQL support is tracked as bd-181 (storage driver interface).
 
 ### Entity Relationship Diagram
 
@@ -874,40 +874,14 @@ actor: $USER
 
 ---
 
-## Implementation Roadmap
+## Current Status & Roadmap
 
-### Phase 1: Core Foundation
-- [ ] Project setup (go.mod, directory structure)
-- [ ] Data model (types, interfaces)
-- [ ] SQLite storage implementation
-- [ ] Basic CLI (create, list, show, update, close)
-- [ ] Dependency management (add, remove, tree)
-- [ ] Ready work detection
-- [ ] Tests
+We dogfood beads for all project tracking! For current work and roadmap, see:
+- `bd list` - All tracked issues
+- `bd ready` - Available work
+- `.beads/issues.jsonl` - Full issue database
 
-### Phase 2: Polish & Features
-- [ ] Labels support
-- [ ] Comments and events
-- [ ] Full-text search
-- [ ] Cycle detection
-- [ ] Statistics
-- [ ] Colored CLI output
-- [ ] JSON/YAML output formats
-
-### Phase 3: PostgreSQL
-- [ ] PostgreSQL storage implementation
-- [ ] Config file support
-- [ ] Backend switching
-- [ ] Migration utilities
-- [ ] Performance optimization
-
-### Phase 4: Advanced
-- [ ] Export/import
-- [ ] GitHub/GitLab/Jira migration tools
-- [ ] TUI (bubble tea?)
-- [ ] Web UI (templ?)
-- [ ] API server mode
-- [ ] Multi-user workflows
+The project is mature and feature-complete for 1.0. Most core features are implemented.
 
 ---
 
@@ -1076,17 +1050,3 @@ Beads is successful if:
 4. **Portability**: Database file can be moved between machines, checked into git
 5. **Adoption**: Used by at least 3 other developers/teams within 6 months
 
----
-
-## Next Steps
-
-1. Create `~/src/beads` directory structure
-2. Initialize Go module
-3. Implement core types (Issue, Dependency, Storage interface)
-4. Build SQLite storage implementation
-5. Build basic CLI (create, show, list)
-6. Test with VibeCoder's issue data (export and import)
-7. Iterate toward parity with scripts/issue.ts
-8. Release v0.1.0
-
-Let's build something beautiful. 🔗✨
