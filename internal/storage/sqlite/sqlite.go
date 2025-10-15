@@ -30,8 +30,9 @@ func New(path string) (*SQLiteStorage, error) {
 	}
 
 	// Open database with WAL mode for better concurrency and busy timeout for parallel writes
-	// _pragma=busy_timeout(10000) means wait up to 10 seconds for locks instead of failing immediately
-	db, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_foreign_keys=ON&_pragma=busy_timeout(10000)")
+	// _pragma=busy_timeout(30000) means wait up to 30 seconds for locks instead of failing immediately
+	// Higher timeout helps with parallel issue creation from multiple processes
+	db, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_foreign_keys=ON&_pragma=busy_timeout(30000)")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -323,19 +324,40 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	issue.CreatedAt = now
 	issue.UpdatedAt = now
 
-	// Start transaction BEFORE ID generation to prevent race conditions
-	// This ensures ID generation and issue insertion are atomic
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Acquire a dedicated connection for the transaction.
+	// This is necessary because we need to execute raw SQL ("BEGIN IMMEDIATE", "COMMIT")
+	// on the same connection, and database/sql's connection pool would otherwise
+	// use different connections for different queries.
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return fmt.Errorf("failed to acquire connection: %w", err)
 	}
-	defer tx.Rollback()
+	defer conn.Close()
+
+	// Start IMMEDIATE transaction to acquire write lock early and prevent race conditions.
+	// IMMEDIATE acquires a RESERVED lock immediately, preventing other IMMEDIATE or EXCLUSIVE
+	// transactions from starting. This serializes ID generation across concurrent writers.
+	//
+	// We use raw Exec instead of BeginTx because database/sql doesn't support transaction
+	// modes in BeginTx, and modernc.org/sqlite's BeginTx always uses DEFERRED mode.
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("failed to begin immediate transaction: %w", err)
+	}
+
+	// Track commit state for defer cleanup
+	// Use context.Background() for ROLLBACK to ensure cleanup happens even if ctx is cancelled
+	committed := false
+	defer func() {
+		if !committed {
+			conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
 
 	// Generate ID if not set (inside transaction to prevent race conditions)
 	if issue.ID == "" {
 		// Get prefix from config, default to "bd"
 		var prefix string
-		err := tx.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&prefix)
+		err := conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&prefix)
 		if err == sql.ErrNoRows || prefix == "" {
 			prefix = "bd"
 		} else if err != nil {
@@ -343,29 +365,22 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		}
 
 		// Ensure counter is initialized for this prefix (lazy initialization within transaction)
-		var exists int
-		err = tx.QueryRowContext(ctx, `SELECT 1 FROM issue_counters WHERE prefix = ?`, prefix).Scan(&exists)
-		if err == sql.ErrNoRows {
-			// Counter doesn't exist, initialize it from existing issues
-			_, err = tx.ExecContext(ctx, `
-				INSERT INTO issue_counters (prefix, last_id)
-				SELECT ?, COALESCE(MAX(CAST(substr(id, LENGTH(?) + 2) AS INTEGER)), 0)
-				FROM issues
-				WHERE id LIKE ? || '-%'
-				  AND substr(id, LENGTH(?) + 2) GLOB '[0-9]*'
-				ON CONFLICT(prefix) DO UPDATE SET
-					last_id = MAX(last_id, excluded.last_id)
-			`, prefix, prefix, prefix, prefix)
-			if err != nil {
-				return fmt.Errorf("failed to initialize counter for prefix %s: %w", prefix, err)
-			}
-		} else if err != nil {
-			return fmt.Errorf("failed to check counter existence: %w", err)
+		// Use INSERT OR IGNORE to make this idempotent and avoid race conditions
+		// This will safely initialize the counter if it doesn't exist, or do nothing if it does
+		_, err = conn.ExecContext(ctx, `
+			INSERT OR IGNORE INTO issue_counters (prefix, last_id)
+			SELECT ?, COALESCE(MAX(CAST(substr(id, LENGTH(?) + 2) AS INTEGER)), 0)
+			FROM issues
+			WHERE id LIKE ? || '-%'
+			  AND substr(id, LENGTH(?) + 2) GLOB '[0-9]*'
+		`, prefix, prefix, prefix, prefix)
+		if err != nil {
+			return fmt.Errorf("failed to initialize counter for prefix %s: %w", prefix, err)
 		}
 
 		// Atomically get next ID from counter table (within transaction)
 		var nextID int
-		err = tx.QueryRowContext(ctx, `
+		err = conn.QueryRowContext(ctx, `
 			INSERT INTO issue_counters (prefix, last_id)
 			VALUES (?, 1)
 			ON CONFLICT(prefix) DO UPDATE SET
@@ -380,7 +395,7 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	}
 
 	// Insert issue
-	_, err = tx.ExecContext(ctx, `
+	_, err = conn.ExecContext(ctx, `
 		INSERT INTO issues (
 			id, title, description, design, acceptance_criteria, notes,
 			status, priority, issue_type, assignee, estimated_minutes,
@@ -404,7 +419,7 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		eventData = []byte(fmt.Sprintf(`{"id":"%s","title":"%s"}`, issue.ID, issue.Title))
 	}
 	eventDataStr := string(eventData)
-	_, err = tx.ExecContext(ctx, `
+	_, err = conn.ExecContext(ctx, `
 		INSERT INTO events (issue_id, event_type, actor, new_value)
 		VALUES (?, ?, ?, ?)
 	`, issue.ID, types.EventCreated, actor, eventDataStr)
@@ -413,7 +428,7 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	}
 
 	// Mark issue as dirty for incremental export
-	_, err = tx.ExecContext(ctx, `
+	_, err = conn.ExecContext(ctx, `
 		INSERT INTO dirty_issues (issue_id, marked_at)
 		VALUES (?, ?)
 		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
@@ -422,7 +437,12 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		return fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 
-	return tx.Commit()
+	// Commit the transaction
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 // GetIssue retrieves an issue by ID

@@ -421,3 +421,81 @@ func TestGetStatistics(t *testing.T) {
 // parallel load (100+ simultaneous operations). This is a known limitation and
 // does not affect normal usage where WAL mode handles typical concurrent operations.
 // For very high concurrency needs, consider using CGO-enabled sqlite3 driver or PostgreSQL.
+
+// TestParallelIssueCreation verifies that parallel issue creation doesn't cause ID collisions
+// This is a regression test for bd-89 (GH-6) where race conditions in ID generation caused
+// UNIQUE constraint failures when creating issues rapidly in parallel.
+func TestParallelIssueCreation(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	const numIssues = 20
+
+	// Create issues in parallel using goroutines
+	errors := make(chan error, numIssues)
+	ids := make(chan string, numIssues)
+
+	for i := 0; i < numIssues; i++ {
+		go func(num int) {
+			issue := &types.Issue{
+				Title:     "Parallel test issue",
+				Status:    types.StatusOpen,
+				Priority:  2,
+				IssueType: types.TypeTask,
+			}
+			err := store.CreateIssue(ctx, issue, "test-user")
+			if err != nil {
+				errors <- err
+				return
+			}
+			ids <- issue.ID
+			errors <- nil
+		}(i)
+	}
+
+	// Collect results
+	var collectedIDs []string
+	var failureCount int
+	for i := 0; i < numIssues; i++ {
+		if err := <-errors; err != nil {
+			t.Errorf("CreateIssue failed in parallel test: %v", err)
+			failureCount++
+		}
+	}
+
+	close(ids)
+	for id := range ids {
+		collectedIDs = append(collectedIDs, id)
+	}
+
+	// Verify no failures occurred
+	if failureCount > 0 {
+		t.Fatalf("Expected 0 failures, got %d", failureCount)
+	}
+
+	// Verify we got the expected number of IDs
+	if len(collectedIDs) != numIssues {
+		t.Fatalf("Expected %d IDs, got %d", numIssues, len(collectedIDs))
+	}
+
+	// Verify all IDs are unique (no duplicates from race conditions)
+	seen := make(map[string]bool)
+	for _, id := range collectedIDs {
+		if seen[id] {
+			t.Errorf("Duplicate ID detected: %s", id)
+		}
+		seen[id] = true
+	}
+
+	// Verify all issues can be retrieved (they actually exist in the database)
+	for _, id := range collectedIDs {
+		issue, err := store.GetIssue(ctx, id)
+		if err != nil {
+			t.Errorf("Failed to retrieve issue %s: %v", id, err)
+		}
+		if issue == nil {
+			t.Errorf("Issue %s not found in database", id)
+		}
+	}
+}
