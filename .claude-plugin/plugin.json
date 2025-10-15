@@ -25,10 +25,7 @@
         "run",
         "beads-mcp"
       ],
-      "env": {
-        "BEADS_ACTOR": "${USER}",
-        "BEADS_WORKING_DIR": "${PWD}"
-      }
+      "env": {}
     }
   }
 }
