@@ -4,8 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from beads_mcp.bd_client import BdClient
-from beads_mcp.models import BlockedIssue, Issue, IssueStatus, IssueType, Stats
+from beads_mcp.models import BlockedIssue, Issue, Stats
 from beads_mcp.tools import (
     beads_add_dependency,
     beads_blocked,

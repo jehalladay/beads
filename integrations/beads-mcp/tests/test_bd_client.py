@@ -1,18 +1,15 @@
 """Unit tests for BdClient."""
 
-import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from beads_mcp.bd_client import BdClient, BdCommandError, BdNotFoundError
 from beads_mcp.models import (
     AddDependencyParams,
     CloseIssueParams,
     CreateIssueParams,
-    DependencyType,
-    IssueStatus,
-    IssueType,
     ListIssuesParams,
     ReadyWorkParams,
     ShowIssueParams,
