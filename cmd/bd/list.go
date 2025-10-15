@@ -98,12 +98,32 @@ func outputDotFormat(ctx context.Context, store storage.Storage, issues []*types
 		issueMap[issue.ID] = issue
 	}
 
-	// Output nodes with labels
+	// Output nodes with labels including ID, type, priority, and status
 	for _, issue := range issues {
-		// Escape quotes in title
-		title := issue.Title
-		title = fmt.Sprintf("%q", title) // Go's %q handles escaping
-		fmt.Printf("  %q [label=%s];\n", issue.ID, title)
+		// Build label with ID, type, priority, and title (using actual newlines)
+		label := fmt.Sprintf("%s\n[%s P%d]\n%s\n(%s)",
+			issue.ID,
+			issue.IssueType,
+			issue.Priority,
+			issue.Title,
+			issue.Status)
+
+		// Color by status only - keep it simple
+		fillColor := "white"
+		fontColor := "black"
+
+		switch issue.Status {
+		case "closed":
+			fillColor = "lightgray"
+			fontColor = "dimgray"
+		case "in_progress":
+			fillColor = "lightyellow"
+		case "blocked":
+			fillColor = "lightcoral"
+		}
+
+		fmt.Printf("  %q [label=%q, style=\"rounded,filled\", fillcolor=%q, fontcolor=%q];\n",
+			issue.ID, label, fillColor, fontColor)
 	}
 	fmt.Println()
 
