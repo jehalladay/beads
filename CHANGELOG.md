@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Nix Flake Support**: Declarative builds and installation via Nix
+  - Multi-platform support (x86_64/aarch64 for Linux and macOS)
+  - `nix build` to build the bd binary
+  - `nix run` support for running bd directly without installation
+  - Example flake input: `inputs.beads.url = "github:steveyegge/beads"`
+  - Example usage: `nix run github:steveyegge/beads -- ready --json`
+
 ## [0.9.2] - 2025-10-14
 
 ### Added
