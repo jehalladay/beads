@@ -7,14 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from beads_mcp.bd_client import BdClient, BdCommandError, BdNotFoundError
+from beads_mcp.bd_client import BdClient, BdCommandError
 from beads_mcp.models import (
     AddDependencyParams,
     CloseIssueParams,
     CreateIssueParams,
-    DependencyType,
-    IssueStatus,
-    IssueType,
     ListIssuesParams,
     ReadyWorkParams,
     ShowIssueParams,
@@ -358,7 +355,6 @@ async def test_init_creates_beads_directory(bd_executable):
     This is a critical test for the bug where init was using --db flag
     and creating the database in the wrong location.
     """
-    import asyncio
     from beads_mcp.bd_client import BdClient
     from beads_mcp.models import InitParams
 
@@ -379,7 +375,7 @@ async def test_init_creates_beads_directory(bd_executable):
 
         # Verify .beads directory was created in temp directory
         assert beads_dir.exists(), f".beads directory not created in {temp_dir}"
-        assert beads_dir.is_dir(), f".beads exists but is not a directory"
+        assert beads_dir.is_dir(), ".beads exists but is not a directory"
 
         # Verify database file was created with correct prefix
         db_files = list(beads_dir.glob("*.db"))
