@@ -29,8 +29,9 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Open database with WAL mode for better concurrency
-	db, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_foreign_keys=ON")
+	// Open database with WAL mode for better concurrency and busy timeout for parallel writes
+	// _pragma=busy_timeout(10000) means wait up to 10 seconds for locks instead of failing immediately
+	db, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_foreign_keys=ON&_pragma=busy_timeout(10000)")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -317,40 +318,66 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Generate ID if not set (using atomic counter table)
-	if issue.ID == "" {
-		// Get prefix from config, default to "bd"
-		prefix, err := s.GetConfig(ctx, "issue_prefix")
-		if err != nil || prefix == "" {
-			prefix = "bd"
-		}
-
-		// Ensure counter is initialized for this prefix (lazy initialization)
-		// Only scans issues with this prefix on first use, not the entire table
-		if err := s.ensureCounterInitialized(ctx, prefix); err != nil {
-			return fmt.Errorf("failed to initialize counter: %w", err)
-		}
-
-		// Atomically get next ID from counter table
-		nextID, err := s.getNextIDForPrefix(ctx, prefix)
-		if err != nil {
-			return err
-		}
-
-		issue.ID = fmt.Sprintf("%s-%d", prefix, nextID)
-	}
-
 	// Set timestamps
 	now := time.Now()
 	issue.CreatedAt = now
 	issue.UpdatedAt = now
 
-	// Start transaction
+	// Start transaction BEFORE ID generation to prevent race conditions
+	// This ensures ID generation and issue insertion are atomic
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Generate ID if not set (inside transaction to prevent race conditions)
+	if issue.ID == "" {
+		// Get prefix from config, default to "bd"
+		var prefix string
+		err := tx.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&prefix)
+		if err == sql.ErrNoRows || prefix == "" {
+			prefix = "bd"
+		} else if err != nil {
+			return fmt.Errorf("failed to get config: %w", err)
+		}
+
+		// Ensure counter is initialized for this prefix (lazy initialization within transaction)
+		var exists int
+		err = tx.QueryRowContext(ctx, `SELECT 1 FROM issue_counters WHERE prefix = ?`, prefix).Scan(&exists)
+		if err == sql.ErrNoRows {
+			// Counter doesn't exist, initialize it from existing issues
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO issue_counters (prefix, last_id)
+				SELECT ?, COALESCE(MAX(CAST(substr(id, LENGTH(?) + 2) AS INTEGER)), 0)
+				FROM issues
+				WHERE id LIKE ? || '-%'
+				  AND substr(id, LENGTH(?) + 2) GLOB '[0-9]*'
+				ON CONFLICT(prefix) DO UPDATE SET
+					last_id = MAX(last_id, excluded.last_id)
+			`, prefix, prefix, prefix, prefix)
+			if err != nil {
+				return fmt.Errorf("failed to initialize counter for prefix %s: %w", prefix, err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("failed to check counter existence: %w", err)
+		}
+
+		// Atomically get next ID from counter table (within transaction)
+		var nextID int
+		err = tx.QueryRowContext(ctx, `
+			INSERT INTO issue_counters (prefix, last_id)
+			VALUES (?, 1)
+			ON CONFLICT(prefix) DO UPDATE SET
+				last_id = last_id + 1
+			RETURNING last_id
+		`, prefix).Scan(&nextID)
+		if err != nil {
+			return fmt.Errorf("failed to generate next ID for prefix %s: %w", prefix, err)
+		}
+
+		issue.ID = fmt.Sprintf("%s-%d", prefix, nextID)
+	}
 
 	// Insert issue
 	_, err = tx.ExecContext(ctx, `
