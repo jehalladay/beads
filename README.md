@@ -6,7 +6,7 @@
 
 > **✅ Critical Fix (v0.9.6) - Testing Phase**
 >
-> Fixed auto-import bug (bd-228) that silently overwrote local changes. Collision detection is now enabled. **Field testing in progress** - please report any issues with multi-machine workflows or agent swarms. See [LOST_ISSUES_RECOVERY.md](LOST_ISSUES_RECOVERY.md) for recovery details.
+> Fixed auto-import bug (bd-228) that silently overwrote local changes. Collision detection is now enabled. **Field testing in progress** - please report any issues with multi-machine workflows or agent swarms.
 
 Beads is a lightweight memory system for coding agents, using a graph-based issue tracker. Four kinds of dependencies work to chain your issues together like beads, making them easy for agents to follow for long distances, and reliably perform complex task streams in the right order.
 
