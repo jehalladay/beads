@@ -95,6 +95,9 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
+		// Check for version mismatch (warn if binary is older than DB)
+		checkVersionMismatch()
+
 		// Auto-import if JSONL is newer than DB (e.g., after git pull)
 		// Skip for import command itself to avoid recursion
 		if cmd.Name() != "import" && autoImportEnabled {
@@ -293,6 +296,52 @@ func autoImportIfNewer() {
 
 	// Store new hash after successful import
 	_ = store.SetMetadata(ctx, "last_import_hash", currentHash)
+}
+
+// checkVersionMismatch checks if the binary version matches the database version
+// and warns the user if they're running an outdated binary
+func checkVersionMismatch() {
+	ctx := context.Background()
+
+	// Get the database version (version that last wrote to this DB)
+	dbVersion, err := store.GetMetadata(ctx, "bd_version")
+	if err != nil {
+		// Metadata error - skip check (shouldn't happen, but be defensive)
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: version check skipped, metadata error: %v\n", err)
+		}
+		return
+	}
+
+	// If no version stored, this is an old database - store current version and continue
+	if dbVersion == "" {
+		_ = store.SetMetadata(ctx, "bd_version", Version)
+		return
+	}
+
+	// Compare versions: warn if binary is older than database
+	if dbVersion != Version {
+		// Simple string comparison is sufficient for detecting version mismatch
+		// We're not trying to parse semantic versions, just detect "different"
+		yellow := color.New(color.FgYellow, color.Bold).SprintFunc()
+		fmt.Fprintf(os.Stderr, "\n%s\n", yellow("⚠️  WARNING: Version mismatch detected!"))
+		fmt.Fprintf(os.Stderr, "%s\n", yellow(fmt.Sprintf("⚠️  Your bd binary (v%s) differs from the database version (v%s)", Version, dbVersion)))
+
+		// Determine if binary is likely older (heuristic: lower version number)
+		if Version < dbVersion {
+			fmt.Fprintf(os.Stderr, "%s\n", yellow("⚠️  Your binary appears to be OUTDATED."))
+			fmt.Fprintf(os.Stderr, "%s\n\n", yellow("⚠️  Some features may not work correctly. Rebuild: go build -o bd ./cmd/bd"))
+		} else {
+			fmt.Fprintf(os.Stderr, "%s\n", yellow("⚠️  Your binary appears NEWER than the database."))
+			fmt.Fprintf(os.Stderr, "%s\n\n", yellow("⚠️  The database will be upgraded automatically."))
+			// Update stored version to current
+			_ = store.SetMetadata(ctx, "bd_version", Version)
+		}
+	}
+
+	// Always update the version metadata to track last-used version
+	// This is safe even if versions match (idempotent operation)
+	_ = store.SetMetadata(ctx, "bd_version", Version)
 }
 
 // markDirtyAndScheduleFlush marks the database as dirty and schedules a flush

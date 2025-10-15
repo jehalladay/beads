@@ -56,6 +56,12 @@ and database file. Optionally specify a custom issue prefix.`,
 			os.Exit(1)
 		}
 
+		// Store the bd version in metadata (for version mismatch detection)
+		if err := store.SetMetadata(ctx, "bd_version", Version); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to store version metadata: %v\n", err)
+			// Non-fatal - continue anyway
+		}
+
 		if err := store.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to close database: %v\n", err)
 		}
