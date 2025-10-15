@@ -37,6 +37,11 @@
             maintainers = [ ];
           };
         };
+
+        apps.default = {
+          type = "app";
+          program = "${self.packages.${system}.default}/bin/bd";
+        };
       }
     );
 }
