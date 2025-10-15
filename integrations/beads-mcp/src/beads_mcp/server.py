@@ -1,5 +1,7 @@
 """FastMCP server for beads issue tracker."""
 
+import os
+
 from fastmcp import FastMCP
 
 from beads_mcp.models import BlockedIssue, DependencyType, Issue, IssueStatus, IssueType, Stats
@@ -195,6 +197,28 @@ database with optional custom prefix for issue IDs.""",
 async def init(prefix: str | None = None) -> str:
     """Initialize bd in current directory."""
     return await beads_init(prefix=prefix)
+
+
+@mcp.tool(
+    name="debug_env",
+    description="Debug tool: Show environment and working directory information",
+)
+async def debug_env() -> str:
+    """Debug tool to check working directory and environment variables."""
+    info = []
+    info.append("=== Working Directory Debug Info ===\n")
+    info.append(f"os.getcwd(): {os.getcwd()}\n")
+    info.append(f"PWD env var: {os.environ.get('PWD', 'NOT SET')}\n")
+    info.append(f"BEADS_WORKING_DIR env var: {os.environ.get('BEADS_WORKING_DIR', 'NOT SET')}\n")
+    info.append(f"BEADS_PATH env var: {os.environ.get('BEADS_PATH', 'NOT SET')}\n")
+    info.append(f"BEADS_DB env var: {os.environ.get('BEADS_DB', 'NOT SET')}\n")
+    info.append(f"HOME: {os.environ.get('HOME', 'NOT SET')}\n")
+    info.append(f"USER: {os.environ.get('USER', 'NOT SET')}\n")
+    info.append("\n=== All Environment Variables ===\n")
+    for key, value in sorted(os.environ.items()):
+        if not key.startswith('_'):  # Skip internal vars
+            info.append(f"{key}={value}\n")
+    return "".join(info)
 
 
 def main() -> None:
