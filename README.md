@@ -97,19 +97,23 @@ Thanks to [@v4rgas](https://github.com/v4rgas) for maintaining the AUR package!
 
 ### Claude Code Plugin
 
-Prefer a one-command installation in Claude Code? Install the beads plugin for instant access via slash commands and MCP tools:
+For Claude Code users, the beads plugin provides slash commands and MCP tools.
+
+**Prerequisites:**
+1. First, install the bd CLI (see Quick Install Script above)
+2. Then install the plugin:
 
 ```bash
 # In Claude Code
 /plugin marketplace add steveyegge/beads
 /plugin install beads
+# Restart Claude Code
 ```
 
 The plugin includes:
 - Slash commands: `/bd-ready`, `/bd-create`, `/bd-show`, `/bd-update`, `/bd-close`, etc.
 - Full MCP server with all bd tools
 - Task agent for autonomous execution
-- Auto-configured for instant use
 
 See [PLUGIN.md](PLUGIN.md) for complete plugin documentation.
 
