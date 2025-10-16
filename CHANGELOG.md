@@ -81,8 +81,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Community
 - Merged PR #31: Windows Defender mitigation for export
+- Merged PR #37: Fix NULL handling in statistics
 - Merged PR #38: Nix flake for declarative builds
 - Merged PR #40: MCP integration test fixes
+- Merged PR #45: Label and title filtering for bd list
 - Merged PR #46: Add --format flag to bd list
 - Merged PR #47: Error handling consistency
 - Merged PR #48: Cyclomatic complexity reduction

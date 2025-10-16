@@ -281,87 +281,7 @@ Options:
 
 #### Creating Issues from Markdown
 
-You can draft multiple issues in a markdown file and create them all at once. This is useful for planning features or converting written notes into tracked work.
-
-Markdown format:
-```markdown
-## Issue Title
-
-Optional description text here.
-
-### Priority
-1
-
-### Type
-feature
-
-### Description
-More detailed description (overrides text after title).
-
-### Design
-Design notes and implementation details.
-
-### Acceptance Criteria
-- Must do this
-- Must do that
-
-### Assignee
-username
-
-### Labels
-label1, label2, label3
-
-### Dependencies
-bd-10, bd-20
-```
-
-Example markdown file (`auth-improvements.md`):
-```markdown
-## Add OAuth2 support
-
-We need to support OAuth2 authentication.
-
-### Priority
-1
-
-### Type
-feature
-
-### Assignee
-alice
-
-### Labels
-auth, high-priority
-
-## Add rate limiting
-
-### Priority
-0
-
-### Type
-bug
-
-### Description
-Auth endpoints are vulnerable to brute force attacks.
-
-### Labels
-security, urgent
-```
-
-Create all issues:
-```bash
-bd create -f auth-improvements.md
-# ✓ Created 2 issues from auth-improvements.md:
-#   bd-42: Add OAuth2 support [P1, feature]
-#   bd-43: Add rate limiting [P0, bug]
-```
-
-**Notes:**
-- Each `## Heading` creates a new issue
-- Sections (`### Priority`, `### Type`, etc.) are optional
-- Defaults: Priority=2, Type=task
-- Text immediately after the title becomes the description (unless overridden by `### Description`)
-- All standard issue fields are supported
+Draft multiple issues in a markdown file with `bd create -f file.md`. Format: `## Issue Title` creates new issue, optional sections: `### Priority`, `### Type`, `### Description`, `### Assignee`, `### Labels`, `### Dependencies`. Defaults: Priority=2, Type=task
 
 ### Viewing Issues
 
@@ -419,26 +339,7 @@ bd dep cycles
 
 #### Cycle Prevention
 
-beads maintains a directed acyclic graph (DAG) of dependencies and prevents cycles across **all** dependency types. This ensures:
-
-- **Ready work is accurate**: Cycles can hide issues from `bd ready` by making them appear blocked when they're actually part of a circular dependency
-- **Dependencies are clear**: Circular dependencies are semantically confusing (if A depends on B and B depends on A, which should be done first?)
-- **Traversals work correctly**: Commands like `bd dep tree` rely on DAG structure
-
-**Example - Prevented Cycle:**
-```bash
-bd dep add bd-1 bd-2           # bd-1 blocks on bd-2 ✓
-bd dep add bd-2 bd-3           # bd-2 blocks on bd-3 ✓
-bd dep add bd-3 bd-1           # ERROR: would create cycle bd-3 → bd-1 → bd-2 → bd-3 ✗
-```
-
-Cross-type cycles are also prevented:
-```bash
-bd dep add bd-1 bd-2 --type blocks           # bd-1 blocks on bd-2 ✓
-bd dep add bd-2 bd-1 --type parent-child     # ERROR: would create cycle ✗
-```
-
-If you try to add a dependency that creates a cycle, you'll get a clear error message. After successfully adding dependencies, beads will warn you if any cycles are detected elsewhere in the graph.
+Beads maintains a DAG and prevents cycles across all dependency types. Cycles break ready work detection and tree traversals. Attempting to add a cycle-creating dependency returns an error
 
 ### Finding Work
 
@@ -461,44 +362,26 @@ bd ready --json
 
 ### Compaction (Memory Decay)
 
-Beads can semantically compress old closed issues to keep the database lightweight. This is agentic memory decay - the database naturally forgets details over time while preserving essential context.
+Beads uses AI to compress old closed issues, keeping databases lightweight as they age. This is agentic memory decay - your database naturally forgets fine-grained details while preserving essential context agents need.
 
 ```bash
-# Preview what would be compacted
-bd compact --dry-run --all
-
-# Show compaction statistics
-bd compact --stats
-
-# Compact all eligible issues (30+ days closed, no open dependents)
-bd compact --all
-
-# Compact specific issue
-bd compact --id bd-42
-
-# Force compact (bypass eligibility checks)
-bd compact --id bd-42 --force
-
-# Tier 2 ultra-compression (90+ days, 95% reduction)
-bd compact --tier 2 --all
+bd compact --dry-run --all  # Preview candidates
+bd compact --stats          # Show statistics  
+bd compact --all            # Compact eligible issues (30+ days closed)
+bd compact --tier 2 --all   # Ultra-compress (90+ days, rarely referenced)
 ```
 
-Compaction uses Claude Haiku to semantically summarize issues:
-- **Tier 1**: 70-80% space reduction (30+ days closed)
-- **Tier 2**: 90-95% space reduction (90+ days closed, rarely referenced)
+Uses Claude Haiku for semantic summarization. **Tier 1** (30+ days): 70-80% reduction. **Tier 2** (90+ days, low references): 90-95% reduction. Requires `ANTHROPIC_API_KEY`. Cost: ~$1 per 1,000 issues.
 
-**Requirements:**
-- Set `ANTHROPIC_API_KEY` environment variable
-- Cost: ~$1 per 1,000 issues compacted (Haiku pricing)
+Eligibility: Must be closed with no open dependents. Tier 2 requires low reference frequency (<5 commits or <3 issues in last 90 days).
 
-**Eligibility:**
-- Status: closed
-- Tier 1: 30+ days since closed, no open dependents
-- Tier 2: 90+ days since closed, rarely referenced in commits/issues
+**Permanent:** Original content is discarded. Recover old versions from git history if needed.
 
-**Note:** Compaction is permanent graceful decay - original content is discarded to save space. Use git history to recover old versions if needed.
-
-See [COMPACTION.md](COMPACTION.md) for detailed documentation, cost analysis, and automation examples.
+**Automation:**
+```bash
+# Monthly cron
+0 0 1 * * bd compact --all && git add .beads && git commit -m "Monthly compaction"
+```
 
 ## Database Discovery
 
@@ -602,49 +485,15 @@ The `discovered-from` type is particularly useful for AI-supervised workflows, w
 
 ## AI Agent Integration
 
-bd is designed to work seamlessly with AI coding agents:
-
-```bash
-# Agent discovers ready work
-WORK=$(bd ready --limit 1 --json)
-ISSUE_ID=$(echo $WORK | jq -r '.[0].id')
-
-# Agent claims and starts work
-bd update $ISSUE_ID --status in_progress --json
-
-# Agent discovers new work while executing
-bd create "Fix bug found in testing" -t bug -p 0 --json > new_issue.json
-NEW_ID=$(cat new_issue.json | jq -r '.id')
-bd dep add $NEW_ID $ISSUE_ID --type discovered-from
-
-# Agent completes work
-bd close $ISSUE_ID --reason "Implemented and tested" --json
-```
-
-The `--json` flag on every command makes bd perfect for programmatic workflows.
+All commands support `--json` for programmatic use. Typical agent workflow: `bd ready --json` → `bd update --status in_progress` → `bd create` (discovered work) → `bd close`
 
 ## Ready Work Algorithm
 
-An issue is "ready" if:
-- Status is `open`
-- It has NO open `blocks` dependencies
-- All blockers are either closed or non-existent
-
-Example:
-```
-bd-1 [open] ← blocks ← bd-2 [open] ← blocks ← bd-3 [open]
-```
-
-Ready work: `[bd-1]`
-Blocked: `[bd-2, bd-3]`
+Issue is "ready" if status is `open` and it has no open `blocks` dependencies.
 
 ## Issue Lifecycle
 
-```
-open → in_progress → closed
-       ↓
-     blocked (manually set, or has open blockers)
-```
+`open → in_progress → closed` (or `blocked` if has open blockers)
 
 ## Architecture
 
@@ -706,36 +555,11 @@ This pattern enables powerful integrations while keeping bd simple and focused.
 
 ## Why bd?
 
-**bd is designed for AI coding agents, not humans.**
-
-Traditional issue trackers (Jira, GitHub Issues, Linear) assume humans are the primary users. Humans click through web UIs, drag cards on boards, and manually update status.
-
-bd assumes **AI agents are the primary users**, with humans supervising:
-
-- **Agents discover work** - `bd ready --json` gives agents unblocked tasks to execute
-- **Dependencies prevent wasted work** - Agents don't duplicate effort or work on blocked tasks
-- **Discovery during execution** - Agents create issues for work they discover while executing, linked with `discovered-from`
-- **Agents lose focus** - Long-running conversations can forget tasks; bd remembers everything
-- **Humans supervise** - Check on progress with `bd list` and `bd dep tree`, but don't micromanage
-
-In human-managed workflows, issues are planning artifacts. In agent-managed workflows, **issues are memory** - preventing agents from forgetting tasks during long coding sessions.
-
-Traditional issue trackers were built for human project managers. bd is built for autonomous agents.
+**bd is designed for AI agents**, not humans. Traditional trackers (Jira, GitHub) require web UIs. bd provides `--json` on all commands, explicit dependency types, and `bd ready` for unblocked work detection. In agent workflows, issues are **memory** - preventing agents from forgetting tasks during long sessions
 
 ## Architecture: JSONL + SQLite
 
-bd uses a dual-storage approach:
-
-- **JSONL files** (`.beads/issues.jsonl`) - Source of truth, committed to git
-- **SQLite database** (`.beads/*.db`) - Ephemeral cache for fast queries, gitignored
-
-This gives you:
-- ✅ **Git-friendly storage** - Text diffs, AI-resolvable conflicts
-- ✅ **Fast queries** - SQLite indexes for dependency graphs
-- ✅ **Automatic sync** - Auto-export after CRUD ops, auto-import after pulls
-- ✅ **No daemon required** - In-process SQLite, ~10-100ms per command
-
-When you run `bd create`, it writes to SQLite. After 5 seconds of inactivity, changes automatically export to JSONL. After `git pull`, the next bd command automatically imports if JSONL is newer. No manual steps needed!
+**JSONL** (`.beads/issues.jsonl`) is source of truth, committed to git. **SQLite** (`.beads/*.db`) is ephemeral cache for fast queries, gitignored. Auto-export after CRUD (5s debounce), auto-import after `git pull`. No manual sync needed
 
 ## Export/Import (JSONL Format)
 
