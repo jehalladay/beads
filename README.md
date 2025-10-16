@@ -447,9 +447,6 @@ bd compact --id bd-42
 # Force compact (bypass eligibility checks)
 bd compact --id bd-42 --force
 
-# Restore from snapshot (full recovery)
-bd compact --restore bd-42
-
 # Tier 2 ultra-compression (90+ days, 95% reduction)
 bd compact --tier 2 --all
 ```
@@ -467,7 +464,7 @@ Compaction uses Claude Haiku to semantically summarize issues:
 - Tier 1: 30+ days since closed, no open dependents
 - Tier 2: 90+ days since closed, rarely referenced in commits/issues
 
-**Safety:** Full snapshots are kept - you can restore any compacted issue to its original state.
+**Note:** Compaction is permanent graceful decay - original content is discarded to save space. Use git history to recover old versions if needed.
 
 See [COMPACTION.md](COMPACTION.md) for detailed documentation, cost analysis, and automation examples.
 

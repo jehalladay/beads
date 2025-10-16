@@ -8,8 +8,8 @@ Beads compaction is **agentic memory decay** - your database naturally forgets f
 
 - **Semantic compression**: Claude Haiku summarizes issues intelligently, preserving decisions and outcomes
 - **Two-tier system**: Gradual decay from full detail → summary → ultra-brief
-- **Full recovery**: Snapshots enable complete restoration if needed
-- **Safe by design**: Dry-run preview, eligibility checks, snapshot verification
+- **Permanent decay**: Original content is discarded to save space (not reversible)
+- **Safe by design**: Dry-run preview, eligibility checks, git history preserves old versions
 
 ## How It Works
 
@@ -19,10 +19,9 @@ Beads compaction is **agentic memory decay** - your database naturally forgets f
 
 **Process**:
 1. Check eligibility (closed, 30+ days, no blockers)
-2. Create snapshot (full JSON backup)
-3. Send to Claude Haiku for summarization
-4. Replace verbose fields with concise summary
-5. Store original size for statistics
+2. Send to Claude Haiku for summarization
+3. Replace verbose fields with concise summary
+4. Store original size for statistics
 
 **Result**: 70-80% space reduction
 
@@ -55,9 +54,8 @@ Resolution: Deployed in v1.2.3.
 **Process**:
 1. Verify existing Tier 1 compaction
 2. Check reference frequency (git commits, other issues)
-3. Create Tier 2 snapshot
-4. Ultra-compress to single paragraph
-5. Optionally prune events (keep created/closed only)
+3. Ultra-compress to single paragraph
+4. Optionally prune events (keep created/closed only)
 
 **Result**: 90-95% space reduction
 
@@ -115,16 +113,6 @@ bd compact --stats
 #   Tier 2: 35 issues
 # Space saved: 1.2 MB (68% reduction)
 # Estimated cost: $0.85
-```
-
-### Restore from Snapshot
-
-```bash
-# Restore compacted issue to original state
-bd compact --restore bd-42
-
-# Show the issue to verify
-bd show bd-42
 ```
 
 ## Eligibility Rules
@@ -314,28 +302,19 @@ fi
 
 ## Safety & Recovery
 
-### Snapshots
+### Git History
 
-Every compaction creates a snapshot in the `compaction_snapshots` table:
-
-```sql
-CREATE TABLE compaction_snapshots (
-    id INTEGER PRIMARY KEY,
-    issue_id TEXT NOT NULL,
-    tier INTEGER NOT NULL,
-    snapshot_data TEXT NOT NULL,  -- Full JSON of original issue
-    created_at DATETIME NOT NULL
-);
-```
-
-### Restore Process
+Compaction is permanent - the original content is discarded to save space. However, you can recover old versions from git history:
 
 ```bash
-# Restore single issue
-bd compact --restore bd-42
+# View issue before compaction
+git log -p -- .beads/issues.jsonl | grep -A 50 "bd-42"
 
-# Verify restoration
-bd show bd-42  # Should show original content
+# Checkout old version
+git checkout <commit-hash> -- .beads/issues.jsonl
+
+# Or use git show
+git show <commit-hash>:.beads/issues.jsonl | grep -A 50 "bd-42"
 ```
 
 ### Verification
@@ -348,9 +327,6 @@ bd compact --stats
 
 # Spot-check compacted issues
 bd show bd-42
-
-# Verify snapshots exist
-sqlite3 issues.db "SELECT COUNT(*) FROM compaction_snapshots;"
 ```
 
 ## Troubleshooting
@@ -383,14 +359,6 @@ Force compact (if you know what you're doing):
 bd compact --id bd-42 --force
 ```
 
-### Restore Failed
-
-Snapshots are stored in SQLite. If restore fails, manually query:
-
-```bash
-sqlite3 issues.db "SELECT snapshot_data FROM compaction_snapshots WHERE issue_id='bd-42' ORDER BY created_at DESC LIMIT 1;"
-```
-
 ## FAQ
 
 ### When should I compact?
@@ -400,9 +368,12 @@ sqlite3 issues.db "SELECT snapshot_data FROM compaction_snapshots WHERE issue_id
 - **Large projects (5000+ issues)**: Monthly or quarterly
 - **High-velocity teams**: Set up automated monthly compaction
 
-### Can I restore compacted issues?
+### Can I recover compacted issues?
 
-**Yes!** Full snapshots are stored. Use `bd compact --restore <id>` anytime.
+Compaction is permanent, but you can recover from git history:
+```bash
+git log -p -- .beads/issues.jsonl | grep -A 50 "bd-42"
+```
 
 ### What happens to dependencies?
 
@@ -424,7 +395,7 @@ git push
 
 ### What if my team disagrees on compaction frequency?
 
-Use `bd compact --dry-run` to preview. Discuss the candidates before running. You can always restore if someone needs the original.
+Use `bd compact --dry-run` to preview. Discuss the candidates before running. Since compaction is permanent, get team consensus first.
 
 ### Can I compact open issues?
 
@@ -452,9 +423,8 @@ Not yet, but it's planned (bd-264). The current prompt is optimized for preservi
 2. **Compact regularly**: Monthly or quarterly depending on project size
 3. **Monitor costs**: Use `bd compact --stats` to track savings
 4. **Automate it**: Set up cron jobs for hands-off maintenance
-5. **Check snapshots**: Periodically verify snapshots are being created
-6. **Commit results**: Always commit and push after compaction
-7. **Team communication**: Let team know before large compaction runs
+5. **Commit results**: Always commit and push after compaction
+6. **Team communication**: Let team know before large compaction runs (it's permanent!)
 
 ## Examples
 
