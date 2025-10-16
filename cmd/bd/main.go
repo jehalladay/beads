@@ -277,52 +277,69 @@ func autoImportIfNewer() {
 		return
 	}
 
-	// Track colliding IDs (used later to skip their dependencies too)
-	collidingIDs := make(map[string]bool)
-
-	// If collisions detected, warn user and skip colliding issues
+	// If collisions detected, auto-resolve them by remapping to new IDs
 	if len(collisionResult.Collisions) > 0 {
+		// Get all existing issues for scoring
+		allExistingIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Auto-import failed: error getting existing issues: %v\n", err)
+			return
+		}
+
+		// Score collisions
+		if err := sqlite.ScoreCollisions(ctx, sqliteStore, collisionResult.Collisions, allExistingIssues); err != nil {
+			fmt.Fprintf(os.Stderr, "Auto-import failed: error scoring collisions: %v\n", err)
+			return
+		}
+
+		// Remap collisions
+		idMapping, err := sqlite.RemapCollisions(ctx, sqliteStore, collisionResult.Collisions, allExistingIssues)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Auto-import failed: error remapping collisions: %v\n", err)
+			return
+		}
+		
+		// Show concise notification
+		maxShow := 10
+		numRemapped := len(idMapping)
+		if numRemapped < maxShow {
+			maxShow = numRemapped
+		}
+		
+		fmt.Fprintf(os.Stderr, "\nAuto-import: remapped %d colliding issue(s) to new IDs:\n", numRemapped)
+		i := 0
+		for oldID, newID := range idMapping {
+			if i >= maxShow {
+				break
+			}
+			// Find the collision detail to get title
+			var title string
+			for _, collision := range collisionResult.Collisions {
+				if collision.ID == oldID {
+					title = collision.IncomingIssue.Title
+					break
+				}
+			}
+			fmt.Fprintf(os.Stderr, "  %s → %s (%s)\n", oldID, newID, title)
+			i++
+		}
+		if numRemapped > maxShow {
+			fmt.Fprintf(os.Stderr, "  ... and %d more\n", numRemapped-maxShow)
+		}
+		fmt.Fprintf(os.Stderr, "\n")
+		
+		// Remove colliding issues from allIssues (they were already created with new IDs by RemapCollisions)
+		collidingIDs := make(map[string]bool)
 		for _, collision := range collisionResult.Collisions {
 			collidingIDs[collision.ID] = true
 		}
-		
-		// Concise warning: show first 10 collisions
-		maxShow := 10
-		if len(collisionResult.Collisions) < maxShow {
-			maxShow = len(collisionResult.Collisions)
-		}
-		
-		fmt.Fprintf(os.Stderr, "\nAuto-import: skipped %d issue(s) due to local edits.\n", len(collisionResult.Collisions))
-		fmt.Fprintf(os.Stderr, "Conflicting issues (showing first %d): ", maxShow)
-		for i := 0; i < maxShow; i++ {
-			if i > 0 {
-				fmt.Fprintf(os.Stderr, ", ")
-			}
-			fmt.Fprintf(os.Stderr, "%s", collisionResult.Collisions[i].ID)
-		}
-		if len(collisionResult.Collisions) > maxShow {
-			fmt.Fprintf(os.Stderr, " ... and %d more", len(collisionResult.Collisions)-maxShow)
-		}
-		fmt.Fprintf(os.Stderr, "\n")
-		fmt.Fprintf(os.Stderr, "To merge these changes, run: bd import -i %s --resolve-collisions\n\n", jsonlPath)
-		
-		// Full details under BD_DEBUG
-		if os.Getenv("BD_DEBUG") != "" {
-			fmt.Fprintf(os.Stderr, "Debug: Full collision details:\n")
-			for _, collision := range collisionResult.Collisions {
-				fmt.Fprintf(os.Stderr, "  %s: %s\n", collision.ID, collision.IncomingIssue.Title)
-				fmt.Fprintf(os.Stderr, "    Conflicting fields: %v\n", collision.ConflictingFields)
-			}
-		}
-
-		// Remove colliding issues from the import list
-		safeIssues := make([]*types.Issue, 0)
+		filteredIssues := make([]*types.Issue, 0)
 		for _, issue := range allIssues {
 			if !collidingIDs[issue.ID] {
-				safeIssues = append(safeIssues, issue)
+				filteredIssues = append(filteredIssues, issue)
 			}
 		}
-		allIssues = safeIssues
+		allIssues = filteredIssues
 	}
 
 	// Import non-colliding issues (exact matches + new issues)
@@ -381,13 +398,8 @@ func autoImportIfNewer() {
 		}
 	}
 
-	// Import dependencies (skip colliding issues to maintain consistency)
+	// Import dependencies
 	for _, issue := range allIssues {
-		// Skip if this issue was filtered out due to collision
-		if collidingIDs[issue.ID] {
-			continue
-		}
-
 		if len(issue.Dependencies) == 0 {
 			continue
 		}

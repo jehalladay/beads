@@ -271,11 +271,63 @@ func (s *SQLiteStorage) RemoveDependency(ctx context.Context, issueID, dependsOn
 	}
 	defer tx.Rollback()
 
-	_, err = tx.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
 	`, issueID, dependsOnID)
 	if err != nil {
 		return fmt.Errorf("failed to remove dependency: %w", err)
+	}
+
+	// Check if dependency existed
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("dependency from %s to %s does not exist", issueID, dependsOnID)
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO events (issue_id, event_type, actor, comment)
+		VALUES (?, ?, ?, ?)
+	`, issueID, types.EventDependencyRemoved, actor,
+		fmt.Sprintf("Removed dependency on %s", dependsOnID))
+	if err != nil {
+		return fmt.Errorf("failed to record event: %w", err)
+	}
+
+	// Mark both issues as dirty for incremental export
+	if err := markIssuesDirtyTx(ctx, tx, []string{issueID, dependsOnID}); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// removeDependencyIfExists removes a dependency, returning nil if it doesn't exist
+// This is useful during remapping where dependencies may have been already removed
+func (s *SQLiteStorage) removeDependencyIfExists(ctx context.Context, issueID, dependsOnID string, actor string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
+		DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
+	`, issueID, dependsOnID)
+	if err != nil {
+		return fmt.Errorf("failed to remove dependency: %w", err)
+	}
+
+	// Check if dependency existed - if not, that's okay, just skip the event
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		// Dependency didn't exist, nothing to do
+		return nil
 	}
 
 	_, err = tx.ExecContext(ctx, `

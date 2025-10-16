@@ -19,6 +19,8 @@ var initCmd = &cobra.Command{
 and database file. Optionally specify a custom issue prefix.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		prefix, _ := cmd.Flags().GetString("prefix")
+		quiet, _ := cmd.Flags().GetBool("quiet")
+		
 		if prefix == "" {
 			// Auto-detect from directory name
 			cwd, err := os.Getwd()
@@ -66,6 +68,11 @@ and database file. Optionally specify a custom issue prefix.`,
 			fmt.Fprintf(os.Stderr, "Warning: failed to close database: %v\n", err)
 		}
 
+		// Skip output if quiet mode
+		if quiet {
+			return
+		}
+
 		green := color.New(color.FgGreen).SprintFunc()
 		cyan := color.New(color.FgCyan).SprintFunc()
 
@@ -79,5 +86,6 @@ and database file. Optionally specify a custom issue prefix.`,
 
 func init() {
 	initCmd.Flags().StringP("prefix", "p", "", "Issue prefix (default: current directory name)")
+	initCmd.Flags().BoolP("quiet", "q", false, "Suppress output (quiet mode)")
 	rootCmd.AddCommand(initCmd)
 }

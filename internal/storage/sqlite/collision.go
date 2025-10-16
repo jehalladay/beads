@@ -466,11 +466,10 @@ func updateDependencyReferences(ctx context.Context, s *SQLiteStorage, idMapping
 
 	// Phase 2: Apply all collected changes
 	for _, update := range updates {
-		// Remove old dependency
-		if err := s.RemoveDependency(ctx, update.oldIssueID, update.oldDependsOnID, "import-remap"); err != nil {
-			// If the dependency doesn't exist (e.g., already removed), that's okay
-			// This can happen if both IssueID and DependsOnID were remapped
-			continue
+		// Remove old dependency - use RemoveDependencyIfExists which doesn't error on missing deps
+		if err := s.removeDependencyIfExists(ctx, update.oldIssueID, update.oldDependsOnID, "import-remap"); err != nil {
+			return fmt.Errorf("failed to remove old dependency %s -> %s: %w",
+				update.oldIssueID, update.oldDependsOnID, err)
 		}
 
 		// Add new dependency with updated IDs
