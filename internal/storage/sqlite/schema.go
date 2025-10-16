@@ -128,6 +128,18 @@ CREATE TABLE IF NOT EXISTS issue_snapshots (
 CREATE INDEX IF NOT EXISTS idx_snapshots_issue ON issue_snapshots(issue_id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_level ON issue_snapshots(compaction_level);
 
+-- Compaction snapshots table (for restoration)
+CREATE TABLE IF NOT EXISTS compaction_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    issue_id TEXT NOT NULL,
+    compaction_level INTEGER NOT NULL,
+    snapshot_json BLOB NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_comp_snap_issue_level_created ON compaction_snapshots(issue_id, compaction_level, created_at DESC);
+
 -- Ready work view (with hierarchical blocking)
 -- Uses recursive CTE to propagate blocking through parent-child hierarchy
 CREATE VIEW IF NOT EXISTS ready_issues AS
