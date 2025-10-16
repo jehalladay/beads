@@ -253,16 +253,13 @@ Behavior:
 		}
 
 		 // Handle duplicates within the same import batch (last one wins)
-		  if idx, ok := seenNew[issue.ID]; ok {
-				if skipUpdate {
-		    skipped++
-		    continue
-				}
-				newIssues[idx] = issue
-			} else {
-				seenNew[issue.ID] = len(newIssues)
-				newIssues = append(newIssues, issue)
-			}
+		 if idx, ok := seenNew[issue.ID]; ok {
+		 // Last one wins regardless of skipUpdate (skipUpdate only applies to existing DB issues)
+		 newIssues[idx] = issue
+		 } else {
+		 seenNew[issue.ID] = len(newIssues)
+		 newIssues = append(newIssues, issue)
+		 }
 		}
 	}
 
