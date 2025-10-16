@@ -210,9 +210,13 @@ func autoImportIfNewer() {
 	}
 
 	// Check for Git merge conflict markers (bd-270)
-	conflictMarkers := []string{"<<<<<<< ", "=======", ">>>>>>> "}
-	for _, marker := range conflictMarkers {
-		if bytes.Contains(jsonlData, []byte(marker)) {
+	// Only match if they appear as standalone lines (not embedded in JSON strings)
+	lines := bytes.Split(jsonlData, []byte("\n"))
+	for _, line := range lines {
+		trimmed := bytes.TrimSpace(line)
+		if bytes.HasPrefix(trimmed, []byte("<<<<<<< ")) ||
+			bytes.Equal(trimmed, []byte("=======")) ||
+			bytes.HasPrefix(trimmed, []byte(">>>>>>> ")) {
 			fmt.Fprintf(os.Stderr, "\n❌ Git merge conflict detected in %s\n\n", jsonlPath)
 			fmt.Fprintf(os.Stderr, "The JSONL file contains unresolved merge conflict markers.\n")
 			fmt.Fprintf(os.Stderr, "This prevents auto-import from loading your issues.\n\n")
