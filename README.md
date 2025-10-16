@@ -881,6 +881,8 @@ Add to git:
 
 ### Workflow
 
+#### Manual Workflow
+
 ```bash
 # Create/update issues - they auto-export after 5 seconds
 bd create "Fix bug" -p 1
@@ -895,6 +897,37 @@ git push
 git pull
 bd ready  # Automatically imports first, then shows ready work
 ```
+
+#### Automatic Sync with `bd sync`
+
+For multi-device workflows, use `bd sync` to automate the entire sync process:
+
+```bash
+# Make your changes
+bd create "Fix auth bug" -p 1
+bd update bd-42 --status in_progress
+
+# Sync everything in one command
+bd sync -m "Update issues"
+
+# This does:
+# 1. Exports pending changes to JSONL
+# 2. Commits to git
+# 3. Pulls from remote (auto-resolves collisions)
+# 4. Imports updated JSONL
+# 5. Pushes to remote
+```
+
+Options:
+```bash
+bd sync                           # Auto-generated commit message
+bd sync -m "Custom message"       # Custom commit message
+bd sync --dry-run                 # Preview without changes
+bd sync --no-pull                 # Skip pulling from remote
+bd sync --no-push                 # Commit but don't push
+```
+
+The `bd sync` command automatically resolves ID collisions using the same logic as `bd import --resolve-collisions`, making it safe for concurrent updates from multiple devices.
 
 ### Optional: Git Hooks for Immediate Sync
 
