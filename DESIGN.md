@@ -398,8 +398,13 @@ const (
 - Cycle check runs on every `AddDependency` call (not skippable)
 - Indexed on `dependencies.issue_id` for efficient traversal
 - Cost grows with dependency graph depth, not total issue count
-- Typical case (small trees): <10ms overhead
-- Pathological case (deep chains): O(depth × branching) but limited by depth=100
+
+**Benchmark Results** (Apple M4 Max, October 2025):
+- Linear chains: ~3.4-3.7ms per AddDependency (100-1000 issues)
+- Tree structures: ~3.3-3.5ms per AddDependency (100-1000 issues)
+- Dense graphs (5+ deps per issue): Can be slow for large graphs, but rare in practice
+
+**Conclusion**: 3-4ms overhead is acceptable for typical workflows. No optimization needed.
 
 **User Experience**:
 
