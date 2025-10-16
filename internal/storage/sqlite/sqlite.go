@@ -72,6 +72,21 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to migrate closed_at constraint: %w", err)
 	}
 
+	// Migrate existing databases to add compaction columns
+	if err := migrateCompactionColumns(db); err != nil {
+		return nil, fmt.Errorf("failed to migrate compaction columns: %w", err)
+	}
+
+	// Migrate existing databases to add issue_snapshots table
+	if err := migrateSnapshotsTable(db); err != nil {
+		return nil, fmt.Errorf("failed to migrate snapshots table: %w", err)
+	}
+
+	// Migrate existing databases to add compaction config defaults
+	if err := migrateCompactionConfig(db); err != nil {
+		return nil, fmt.Errorf("failed to migrate compaction config: %w", err)
+	}
+
 	return &SQLiteStorage{
 		db: db,
 	}, nil
@@ -287,6 +302,102 @@ func migrateClosedAtConstraint(db *sql.DB) error {
 	}
 
 	// Migration complete - data is now consistent
+	return nil
+}
+
+// migrateCompactionColumns adds compaction_level, compacted_at, and original_size columns to the issues table.
+// This migration is idempotent and safe to run multiple times.
+func migrateCompactionColumns(db *sql.DB) error {
+	// Check if compaction_level column exists
+	var columnExists bool
+	err := db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM pragma_table_info('issues')
+		WHERE name = 'compaction_level'
+	`).Scan(&columnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check compaction_level column: %w", err)
+	}
+
+	if columnExists {
+		// Columns already exist, nothing to do
+		return nil
+	}
+
+	// Add the three compaction columns
+	_, err = db.Exec(`
+		ALTER TABLE issues ADD COLUMN compaction_level INTEGER DEFAULT 0;
+		ALTER TABLE issues ADD COLUMN compacted_at DATETIME;
+		ALTER TABLE issues ADD COLUMN original_size INTEGER;
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to add compaction columns: %w", err)
+	}
+
+	return nil
+}
+
+// migrateSnapshotsTable creates the issue_snapshots table if it doesn't exist.
+// This migration is idempotent and safe to run multiple times.
+func migrateSnapshotsTable(db *sql.DB) error {
+	// Check if issue_snapshots table exists
+	var tableExists bool
+	err := db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM sqlite_master
+		WHERE type='table' AND name='issue_snapshots'
+	`).Scan(&tableExists)
+	if err != nil {
+		return fmt.Errorf("failed to check issue_snapshots table: %w", err)
+	}
+
+	if tableExists {
+		// Table already exists, nothing to do
+		return nil
+	}
+
+	// Create the table and indexes
+	_, err = db.Exec(`
+		CREATE TABLE issue_snapshots (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			issue_id TEXT NOT NULL,
+			snapshot_time DATETIME NOT NULL,
+			compaction_level INTEGER NOT NULL,
+			original_size INTEGER NOT NULL,
+			compressed_size INTEGER NOT NULL,
+			original_content TEXT NOT NULL,
+			archived_events TEXT,
+			FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+		);
+		CREATE INDEX idx_snapshots_issue ON issue_snapshots(issue_id);
+		CREATE INDEX idx_snapshots_level ON issue_snapshots(compaction_level);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create issue_snapshots table: %w", err)
+	}
+
+	return nil
+}
+
+// migrateCompactionConfig adds default compaction configuration values.
+// This migration is idempotent and safe to run multiple times (INSERT OR IGNORE).
+func migrateCompactionConfig(db *sql.DB) error {
+	_, err := db.Exec(`
+		INSERT OR IGNORE INTO config (key, value) VALUES
+			('compaction_enabled', 'false'),
+			('compact_tier1_days', '30'),
+			('compact_tier1_dep_levels', '2'),
+			('compact_tier2_days', '90'),
+			('compact_tier2_dep_levels', '5'),
+			('compact_tier2_commits', '100'),
+			('compact_model', 'claude-3-5-haiku-20241022'),
+			('compact_batch_size', '50'),
+			('compact_parallel_workers', '5'),
+			('auto_compact_enabled', 'false')
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to add compaction config defaults: %w", err)
+	}
 	return nil
 }
 

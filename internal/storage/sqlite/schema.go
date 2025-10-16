@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS issues (
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     closed_at DATETIME,
     external_ref TEXT,
+    compaction_level INTEGER DEFAULT 0,
+    compacted_at DATETIME,
+    original_size INTEGER,
     CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 );
 
@@ -74,6 +77,19 @@ CREATE TABLE IF NOT EXISTS config (
     value TEXT NOT NULL
 );
 
+-- Default compaction configuration
+INSERT OR IGNORE INTO config (key, value) VALUES
+    ('compaction_enabled', 'false'),
+    ('compact_tier1_days', '30'),
+    ('compact_tier1_dep_levels', '2'),
+    ('compact_tier2_days', '90'),
+    ('compact_tier2_dep_levels', '5'),
+    ('compact_tier2_commits', '100'),
+    ('compact_model', 'claude-3-5-haiku-20241022'),
+    ('compact_batch_size', '50'),
+    ('compact_parallel_workers', '5'),
+    ('auto_compact_enabled', 'false');
+
 -- Metadata table (for storing internal state like import hashes)
 CREATE TABLE IF NOT EXISTS metadata (
     key TEXT PRIMARY KEY,
@@ -95,6 +111,22 @@ CREATE TABLE IF NOT EXISTS issue_counters (
     prefix TEXT PRIMARY KEY,
     last_id INTEGER NOT NULL DEFAULT 0
 );
+
+-- Issue snapshots table (for compaction)
+CREATE TABLE IF NOT EXISTS issue_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    issue_id TEXT NOT NULL,
+    snapshot_time DATETIME NOT NULL,
+    compaction_level INTEGER NOT NULL,
+    original_size INTEGER NOT NULL,
+    compressed_size INTEGER NOT NULL,
+    original_content TEXT NOT NULL,
+    archived_events TEXT,
+    FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_snapshots_issue ON issue_snapshots(issue_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_level ON issue_snapshots(compaction_level);
 
 -- Ready work view (with hierarchical blocking)
 -- Uses recursive CTE to propagate blocking through parent-child hierarchy
