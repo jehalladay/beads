@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bug**: Collision resolver missing ID counter sync (bd-331)
   - After remapping, ID counters weren't updated
   - Could cause duplicate IDs in subsequent creates
+- **Bug**: NULL handling in statistics for empty databases (PR #37)
+  - `bd stats` would crash on newly initialized databases
+  - Fixed NULL value handling in GetStatistics
 
 ### Changed
 - Compaction removes snapshot/restore (simplified to permanent decay)
