@@ -7,13 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.8] - 2025-10-16
+
 ### Added
-- **Nix Flake Support**: Declarative builds and installation via Nix
-  - Multi-platform support (x86_64/aarch64 for Linux and macOS)
-  - `nix build` to build the bd binary
-  - `nix run` support for running bd directly without installation
-  - Example flake input: `inputs.beads.url = "github:steveyegge/beads"`
-  - Example usage: `nix run github:steveyegge/beads -- ready --json`
+- **Background Daemon Mode**: `bd daemon` command for continuous auto-sync (#bd-386)
+  - Watches for changes and automatically exports to JSONL
+  - Monitors git repository for incoming changes and auto-imports
+  - Production-ready with graceful shutdown, PID file management, and signal handling
+  - Eliminates manual export/import in active development workflows
+- **Git Synchronization**: `bd sync` command for automated git workflows (#bd-378)
+  - One-command sync: stage, commit, pull, push JSONL changes
+  - Automatic merge conflict resolution with collision remapping
+  - Status reporting shows sync progress and any issues
+  - Ideal for distributed teams and CI/CD integration
+- **Issue Compaction**: `bd compact` command to summarize old closed issues (bd-254-264)
+  - AI-powered summarization using Claude Haiku
+  - Reduces database size while preserving essential information
+  - Configurable thresholds for age, dependencies, and references
+  - Compaction status visible in `bd show` output
+- **Label and Title Filtering**: Enhanced `bd list` command (#45, bd-269)
+  - Filter by labels: `bd list --label bug,critical`
+  - Filter by title: `bd list --title "auth"`
+  - Combine with status/priority filters
+- **List Output Formats**: `bd list --format` flag for custom output (PR #46)
+  - Format options: `default`, `compact`, `detailed`, `json`
+  - Better integration with scripts and automation tools
+- **MCP Reopen Support**: Reopen closed issues via MCP server
+  - Claude Desktop plugin can now reopen issues
+  - Useful for revisiting completed work
+- **Cross-Type Cycle Prevention**: Dependency cycles detected across all types (bd-312)
+  - Prevents A→B→A cycles even when mixing `blocks`, `related`, etc.
+  - Semantic validation for parent-child direction
+  - Diagnostic warnings when cycles detected
+
+### Fixed
+- **Critical**: Auto-import collision skipping bug (bd-393, bd-228)
+  - Import would silently skip collisions instead of remapping
+  - Could cause data loss when merging branches
+  - Now correctly applies collision resolution with remapping
+- **Critical**: Transaction state corruption (bd-221)
+  - Nested transactions could corrupt database state
+  - Fixed with proper transaction boundary handling
+- **Critical**: Concurrent temp file collisions (bd-306, bd-373)
+  - Multiple `bd` processes would collide on shared `.tmp` filename
+  - Now uses PID suffix for temp files: `.beads/issues.jsonl.tmp.12345`
+- **Critical**: Circular dependency detection gaps (bd-307)
+  - Some cycle patterns were missed by detection algorithm
+  - Enhanced with comprehensive cycle prevention
+- **Bug**: False positive merge conflict detection (bd-313, bd-270)
+  - Auto-import would detect conflicts when none existed
+  - Fixed with improved Git conflict marker detection
+- **Bug**: Import timeout with large issue sets (bd-199)
+  - 200+ issue imports would timeout
+  - Optimized import performance
+- **Bug**: Collision resolver missing ID counter sync (bd-331)
+  - After remapping, ID counters weren't updated
+  - Could cause duplicate IDs in subsequent creates
+
+### Changed
+- Compaction removes snapshot/restore (simplified to permanent decay)
+- Export file writing refactored to avoid Windows Defender false positives (PR #31)
+- Error handling improved in auto-import and fallback paths (PR #47)
+- Reduced cyclomatic complexity in main.go (PR #48)
+- MCP integration tests fixed and linting cleaned up (PR #40)
+
+### Performance
+- Cycle detection benchmarks added (bd-311)
+- Import optimization for large issue sets
+- Export uses PID-based temp files to avoid lock contention
+
+### Community
+- Merged PR #31: Windows Defender mitigation for export
+- Merged PR #38: Nix flake for declarative builds
+- Merged PR #40: MCP integration test fixes
+- Merged PR #46: Add --format flag to bd list
+- Merged PR #47: Error handling consistency
+- Merged PR #48: Cyclomatic complexity reduction
 
 ## [0.9.2] - 2025-10-14
 
@@ -188,12 +257,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **0.9.8** (2025-10-16): Daemon mode, git sync, compaction, critical bug fixes
 - **0.9.2** (2025-10-14): Community PRs, critical bug fixes, and --deps flag
 - **0.9.1** (2025-10-14): Performance optimization and critical bug fixes
 - **0.9.0** (2025-10-12): Pre-release polish and collision resolution
 - **0.1.0**: Initial development version
 
 ## Upgrade Guide
+
+### Upgrading to 0.9.8
+
+No breaking changes. All changes are backward compatible:
+- **bd daemon**: New optional background service for auto-sync workflows
+- **bd sync**: New optional git integration command
+- **bd compact**: New optional command for issue summarization (requires Anthropic API key)
+- **--format flag**: Optional new feature for `bd list`
+- **Label/title filters**: Optional new filters for `bd list`
+- **Bug fixes**: All critical fixes are transparent to users
+
+Simply pull the latest version and rebuild:
+```bash
+go install github.com/steveyegge/beads/cmd/bd@latest
+# or
+git pull && go build -o bd ./cmd/bd
+```
+
+**Note**: The `bd compact` command requires an Anthropic API key in `$ANTHROPIC_API_KEY` environment variable. All other features work without any additional setup.
 
 ### Upgrading to 0.9.2
 
