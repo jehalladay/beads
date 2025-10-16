@@ -370,3 +370,72 @@ func TestCompactTier1Batch_WithAPI(t *testing.T) {
 		}
 	}
 }
+
+func TestMockAPI_CompactTier1(t *testing.T) {
+	store := setupTestStorage(t)
+	defer store.Close()
+
+	issue := createClosedIssue(t, store, "test-mock")
+
+	c, err := New(store, "", &CompactConfig{DryRun: true, Concurrency: 1})
+	if err != nil {
+		t.Fatalf("failed to create compactor: %v", err)
+	}
+
+	ctx := context.Background()
+	err = c.CompactTier1(ctx, issue.ID)
+	if err == nil || err.Error()[:8] != "dry-run:" {
+		t.Errorf("expected dry-run error, got: %v", err)
+	}
+}
+
+func TestBatchOperations_ErrorHandling(t *testing.T) {
+	store := setupTestStorage(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	closedIssue := createClosedIssue(t, store, "test-closed")
+	openIssue := &types.Issue{
+		ID:          "test-open",
+		Title:       "Open",
+		Description: "Open issue",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	if err := store.CreateIssue(ctx, openIssue, "test"); err != nil {
+		t.Fatalf("failed to create open issue: %v", err)
+	}
+
+	c, err := New(store, "", &CompactConfig{DryRun: true, Concurrency: 2})
+	if err != nil {
+		t.Fatalf("failed to create compactor: %v", err)
+	}
+
+	results, err := c.CompactTier1Batch(ctx, []string{closedIssue.ID, openIssue.ID, "nonexistent"})
+	if err != nil {
+		t.Fatalf("batch operation failed: %v", err)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+
+	var successCount, errorCount int
+	for _, r := range results {
+		if r.Err == nil {
+			successCount++
+		} else {
+			errorCount++
+		}
+	}
+
+	if successCount != 1 {
+		t.Errorf("expected 1 success, got %d", successCount)
+	}
+	if errorCount != 2 {
+		t.Errorf("expected 2 errors, got %d", errorCount)
+	}
+}
