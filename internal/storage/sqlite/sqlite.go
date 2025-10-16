@@ -1151,6 +1151,12 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		args = append(args, pattern, pattern, pattern)
 	}
 
+	if filter.TitleSearch != "" {
+		whereClauses = append(whereClauses, "title LIKE ?")
+		pattern := "%" + filter.TitleSearch + "%"
+		args = append(args, pattern)
+	}
+
 	if filter.Status != nil {
 		whereClauses = append(whereClauses, "status = ?")
 		args = append(args, *filter.Status)
@@ -1169,6 +1175,14 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	if filter.Assignee != nil {
 		whereClauses = append(whereClauses, "assignee = ?")
 		args = append(args, *filter.Assignee)
+	}
+
+	// Label filtering: issue must have ALL specified labels
+	if len(filter.Labels) > 0 {
+		for _, label := range filter.Labels {
+			whereClauses = append(whereClauses, "id IN (SELECT issue_id FROM labels WHERE label = ?)")
+			args = append(args, label)
+		}
 	}
 
 	whereSQL := ""

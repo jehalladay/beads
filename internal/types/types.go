@@ -189,12 +189,13 @@ type Statistics struct {
 
 // IssueFilter is used to filter issue queries
 type IssueFilter struct {
-	Status    *Status
-	Priority  *int
-	IssueType *IssueType
-	Assignee  *string
-	Labels    []string
-	Limit     int
+	Status      *Status
+	Priority    *int
+	IssueType   *IssueType
+	Assignee    *string
+	Labels      []string
+	TitleSearch string
+	Limit       int
 }
 
 // WorkFilter is used to filter ready work queries

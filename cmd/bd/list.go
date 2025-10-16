@@ -21,6 +21,8 @@ var listCmd = &cobra.Command{
 		issueType, _ := cmd.Flags().GetString("type")
 		limit, _ := cmd.Flags().GetInt("limit")
 		formatStr, _ := cmd.Flags().GetString("format")
+		labels, _ := cmd.Flags().GetStringSlice("label")
+		titleSearch, _ := cmd.Flags().GetString("title")
 
 		filter := types.IssueFilter{
 			Limit: limit,
@@ -40,6 +42,12 @@ var listCmd = &cobra.Command{
 		if issueType != "" {
 			t := types.IssueType(issueType)
 			filter.IssueType = &t
+		}
+		if len(labels) > 0 {
+			filter.Labels = labels
+		}
+		if titleSearch != "" {
+			filter.TitleSearch = titleSearch
 		}
 
 		ctx := context.Background()
@@ -80,6 +88,8 @@ func init() {
 	listCmd.Flags().IntP("priority", "p", 0, "Filter by priority (0-4: 0=critical, 1=high, 2=medium, 3=low, 4=backlog)")
 	listCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
 	listCmd.Flags().StringP("type", "t", "", "Filter by type (bug, feature, task, epic, chore)")
+	listCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (comma-separated, must have ALL labels)")
+	listCmd.Flags().String("title", "", "Filter by title text (case-insensitive substring match)")
 	listCmd.Flags().IntP("limit", "n", 0, "Limit results")
 	listCmd.Flags().String("format", "", "Output format: 'digraph' (for golang.org/x/tools/cmd/digraph), 'dot' (Graphviz), or Go template")
 	rootCmd.AddCommand(listCmd)
