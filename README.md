@@ -446,18 +446,30 @@ bd compact --id bd-42
 
 # Force compact (bypass eligibility checks)
 bd compact --id bd-42 --force
+
+# Restore from snapshot (full recovery)
+bd compact --restore bd-42
+
+# Tier 2 ultra-compression (90+ days, 95% reduction)
+bd compact --tier 2 --all
 ```
 
-Compaction uses Claude Haiku to semantically summarize issues, achieving ~70-80% space reduction. The original content is permanently discarded - this is intentional graceful decay, not reversible compression.
+Compaction uses Claude Haiku to semantically summarize issues:
+- **Tier 1**: 70-80% space reduction (30+ days closed)
+- **Tier 2**: 90-95% space reduction (90+ days closed, rarely referenced)
 
 **Requirements:**
 - Set `ANTHROPIC_API_KEY` environment variable
-- Cost: ~$1 per 1,000 issues compacted
+- Cost: ~$1 per 1,000 issues compacted (Haiku pricing)
 
-**When issues are eligible:**
+**Eligibility:**
 - Status: closed
-- Age: 30+ days since closed
-- No open dependents (blocking other work)
+- Tier 1: 30+ days since closed, no open dependents
+- Tier 2: 90+ days since closed, rarely referenced in commits/issues
+
+**Safety:** Full snapshots are kept - you can restore any compacted issue to its original state.
+
+See [COMPACTION.md](COMPACTION.md) for detailed documentation, cost analysis, and automation examples.
 
 ## Database Discovery
 
