@@ -66,12 +66,7 @@ var rootCmd = &cobra.Command{
 				dbPath = foundDB
 			} else {
 				// Fallback to default location (will be created by init command)
-				home, err := os.UserHomeDir()
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: could not determine home directory: %v\n", err)
-					fmt.Fprintf(os.Stderr, "Using current directory for default database\n")
-					home = "."
-				}
+				home, _ := os.UserHomeDir()
 				dbPath = filepath.Join(home, ".beads", "default.db")
 			}
 		}
@@ -166,240 +161,6 @@ func findJSONLPath() string {
 	return jsonlPath
 }
 
-// parseJSONLIssues parses issues from JSONL data
-func parseJSONLIssues(jsonlData []byte) ([]*types.Issue, error) {
-	scanner := bufio.NewScanner(strings.NewReader(string(jsonlData)))
-	scanner.Buffer(make([]byte, 0, 1024), 2*1024*1024) // 2MB buffer for large JSON lines
-	var allIssues []*types.Issue
-	lineNo := 0
-
-	for scanner.Scan() {
-		lineNo++
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		var issue types.Issue
-		if err := json.Unmarshal([]byte(line), &issue); err != nil {
-			snippet := line
-			if len(snippet) > 80 {
-				snippet = snippet[:80] + "..."
-			}
-			return nil, fmt.Errorf("parse error at line %d: %w\nSnippet: %s", lineNo, err, snippet)
-		}
-
-		allIssues = append(allIssues, &issue)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scanner error: %w", err)
-	}
-
-	return allIssues, nil
-}
-
-// handleCollisions detects and reports collisions, returning safe issues to import
-func handleCollisions(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, allIssues []*types.Issue, jsonlPath string) ([]*types.Issue, error) {
-	collisionResult, err := sqlite.DetectCollisions(ctx, sqliteStore, allIssues)
-	if err != nil {
-		return nil, fmt.Errorf("collision detection error: %w", err)
-	}
-
-	if len(collisionResult.Collisions) == 0 {
-		return allIssues, nil
-	}
-
-	// Track colliding IDs
-	collidingIDs := make(map[string]bool)
-	for _, collision := range collisionResult.Collisions {
-		collidingIDs[collision.ID] = true
-	}
-
-	// Concise warning: show first 10 collisions
-	maxShow := 10
-	if len(collisionResult.Collisions) < maxShow {
-		maxShow = len(collisionResult.Collisions)
-	}
-
-	fmt.Fprintf(os.Stderr, "\nAuto-import: skipped %d issue(s) due to local edits.\n", len(collisionResult.Collisions))
-	fmt.Fprintf(os.Stderr, "Conflicting issues (showing first %d): ", maxShow)
-	for i := 0; i < maxShow; i++ {
-		if i > 0 {
-			fmt.Fprintf(os.Stderr, ", ")
-		}
-		fmt.Fprintf(os.Stderr, "%s", collisionResult.Collisions[i].ID)
-	}
-	if len(collisionResult.Collisions) > maxShow {
-		fmt.Fprintf(os.Stderr, " ... and %d more", len(collisionResult.Collisions)-maxShow)
-	}
-	fmt.Fprintf(os.Stderr, "\n")
-	fmt.Fprintf(os.Stderr, "To merge these changes, run: bd import -i %s --resolve-collisions\n\n", jsonlPath)
-
-	// Full details under BD_DEBUG
-	if os.Getenv("BD_DEBUG") != "" {
-		fmt.Fprintf(os.Stderr, "Debug: Full collision details:\n")
-		for _, collision := range collisionResult.Collisions {
-			fmt.Fprintf(os.Stderr, "  %s: %s\n", collision.ID, collision.IncomingIssue.Title)
-			fmt.Fprintf(os.Stderr, "    Conflicting fields: %v\n", collision.ConflictingFields)
-		}
-	}
-
-	// Remove colliding issues from the import list
-	safeIssues := make([]*types.Issue, 0)
-	for _, issue := range allIssues {
-		if !collidingIDs[issue.ID] {
-			safeIssues = append(safeIssues, issue)
-		}
-	}
-
-	return safeIssues, nil
-}
-
-// importIssueData imports issues and their dependencies/labels
-func importIssueData(ctx context.Context, issues []*types.Issue) {
-	// Import issues
-	for _, issue := range issues {
-		existing, err := store.GetIssue(ctx, issue.ID)
-		if err != nil {
-			continue
-		}
-
-		if existing != nil {
-			updateExistingIssue(ctx, issue)
-		} else {
-			createNewIssue(ctx, issue)
-		}
-	}
-
-	// Import dependencies and labels
-	for _, issue := range issues {
-		importDependencies(ctx, issue)
-		importLabels(ctx, issue)
-	}
-}
-
-// updateExistingIssue updates an existing issue with imported data
-func updateExistingIssue(ctx context.Context, issue *types.Issue) {
-	updates := make(map[string]interface{})
-	updates["title"] = issue.Title
-	updates["description"] = issue.Description
-	updates["design"] = issue.Design
-	updates["acceptance_criteria"] = issue.AcceptanceCriteria
-	updates["notes"] = issue.Notes
-	updates["status"] = issue.Status
-	updates["priority"] = issue.Priority
-	updates["issue_type"] = issue.IssueType
-	updates["assignee"] = issue.Assignee
-	if issue.EstimatedMinutes != nil {
-		updates["estimated_minutes"] = *issue.EstimatedMinutes
-	}
-	if issue.ExternalRef != nil {
-		updates["external_ref"] = *issue.ExternalRef
-	}
-
-	// Enforce status/closed_at invariant (bd-226)
-	if issue.Status == "closed" {
-		if issue.ClosedAt != nil {
-			updates["closed_at"] = *issue.ClosedAt
-		} else if !issue.UpdatedAt.IsZero() {
-			updates["closed_at"] = issue.UpdatedAt
-		} else {
-			updates["closed_at"] = time.Now().UTC()
-		}
-	} else {
-		updates["closed_at"] = nil
-	}
-
-	if err := store.UpdateIssue(ctx, issue.ID, updates, "auto-import"); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-import failed to update %s: %v\n", issue.ID, err)
-	}
-}
-
-// createNewIssue creates a new issue from imported data
-func createNewIssue(ctx context.Context, issue *types.Issue) {
-	// Enforce invariant before creation
-	if issue.Status == "closed" {
-		if issue.ClosedAt == nil {
-			now := time.Now().UTC()
-			issue.ClosedAt = &now
-		}
-	} else {
-		issue.ClosedAt = nil
-	}
-	if err := store.CreateIssue(ctx, issue, "auto-import"); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-import failed to create %s: %v\n", issue.ID, err)
-	}
-}
-
-// importDependencies imports dependencies for an issue
-func importDependencies(ctx context.Context, issue *types.Issue) {
-	if len(issue.Dependencies) == 0 {
-		return
-	}
-
-	existingDeps, err := store.GetDependencyRecords(ctx, issue.ID)
-	if err != nil {
-		return
-	}
-
-	for _, dep := range issue.Dependencies {
-		exists := false
-		for _, existing := range existingDeps {
-			if existing.DependsOnID == dep.DependsOnID && existing.Type == dep.Type {
-				exists = true
-				break
-			}
-		}
-
-		if !exists {
-			if err := store.AddDependency(ctx, dep, "auto-import"); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: auto-import failed to add dependency %s -> %s: %v\n", issue.ID, dep.DependsOnID, err)
-			}
-		}
-	}
-}
-
-// importLabels imports labels for an issue
-func importLabels(ctx context.Context, issue *types.Issue) {
-	if issue.Labels == nil {
-		return
-	}
-
-	existingLabels, err := store.GetLabels(ctx, issue.ID)
-	if err != nil {
-		return
-	}
-
-	// Convert to maps for comparison
-	existingLabelMap := make(map[string]bool)
-	for _, label := range existingLabels {
-		existingLabelMap[label] = true
-	}
-	importedLabelMap := make(map[string]bool)
-	for _, label := range issue.Labels {
-		importedLabelMap[label] = true
-	}
-
-	// Add missing labels
-	for _, label := range issue.Labels {
-		if !existingLabelMap[label] {
-			if err := store.AddLabel(ctx, issue.ID, label, "auto-import"); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: auto-import failed to add label %s to %s: %v\n", label, issue.ID, err)
-			}
-		}
-	}
-
-	// Remove labels not in imported data
-	for _, label := range existingLabels {
-		if !importedLabelMap[label] {
-			if err := store.RemoveLabel(ctx, issue.ID, label, "auto-import"); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: auto-import failed to remove label %s from %s: %v\n", label, issue.ID, err)
-			}
-		}
-	}
-}
-
 // autoImportIfNewer checks if JSONL content changed (via hash) and imports if so
 // Fixes bd-84: Hash-based comparison is git-proof (mtime comparison fails after git pull)
 // Fixes bd-228: Now uses collision detection to prevent silently overwriting local changes
@@ -447,10 +208,35 @@ func autoImportIfNewer() {
 		fmt.Fprintf(os.Stderr, "Debug: auto-import triggered (hash changed)\n")
 	}
 
-	// Parse issues from JSONL
-	allIssues, err := parseJSONLIssues(jsonlData)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Auto-import skipped: %v\n", err)
+	// Content changed - parse all issues
+	scanner := bufio.NewScanner(strings.NewReader(string(jsonlData)))
+	scanner.Buffer(make([]byte, 0, 1024), 2*1024*1024) // 2MB buffer for large JSON lines
+	var allIssues []*types.Issue
+	lineNo := 0
+
+	for scanner.Scan() {
+		lineNo++
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var issue types.Issue
+		if err := json.Unmarshal([]byte(line), &issue); err != nil {
+			// Parse error, skip this import
+			snippet := line
+			if len(snippet) > 80 {
+				snippet = snippet[:80] + "..."
+			}
+			fmt.Fprintf(os.Stderr, "Auto-import skipped: parse error at line %d: %v\nSnippet: %s\n", lineNo, err, snippet)
+			return
+		}
+
+		allIssues = append(allIssues, &issue)
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "Auto-import skipped: scanner error: %v\n", err)
 		return
 	}
 
@@ -463,20 +249,152 @@ func autoImportIfNewer() {
 		return
 	}
 
-	safeIssues, err := handleCollisions(ctx, sqliteStore, allIssues, jsonlPath)
+	collisionResult, err := sqlite.DetectCollisions(ctx, sqliteStore, allIssues)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Auto-import skipped: %v\n", err)
+		// Collision detection failed, skip import to be safe
+		fmt.Fprintf(os.Stderr, "Auto-import skipped: collision detection error: %v\n", err)
 		return
 	}
 
+	// Track colliding IDs (used later to skip their dependencies too)
+	collidingIDs := make(map[string]bool)
+
+	// If collisions detected, warn user and skip colliding issues
+	if len(collisionResult.Collisions) > 0 {
+		for _, collision := range collisionResult.Collisions {
+			collidingIDs[collision.ID] = true
+		}
+		
+		// Concise warning: show first 10 collisions
+		maxShow := 10
+		if len(collisionResult.Collisions) < maxShow {
+			maxShow = len(collisionResult.Collisions)
+		}
+		
+		fmt.Fprintf(os.Stderr, "\nAuto-import: skipped %d issue(s) due to local edits.\n", len(collisionResult.Collisions))
+		fmt.Fprintf(os.Stderr, "Conflicting issues (showing first %d): ", maxShow)
+		for i := 0; i < maxShow; i++ {
+			if i > 0 {
+				fmt.Fprintf(os.Stderr, ", ")
+			}
+			fmt.Fprintf(os.Stderr, "%s", collisionResult.Collisions[i].ID)
+		}
+		if len(collisionResult.Collisions) > maxShow {
+			fmt.Fprintf(os.Stderr, " ... and %d more", len(collisionResult.Collisions)-maxShow)
+		}
+		fmt.Fprintf(os.Stderr, "\n")
+		fmt.Fprintf(os.Stderr, "To merge these changes, run: bd import -i %s --resolve-collisions\n\n", jsonlPath)
+		
+		// Full details under BD_DEBUG
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: Full collision details:\n")
+			for _, collision := range collisionResult.Collisions {
+				fmt.Fprintf(os.Stderr, "  %s: %s\n", collision.ID, collision.IncomingIssue.Title)
+				fmt.Fprintf(os.Stderr, "    Conflicting fields: %v\n", collision.ConflictingFields)
+			}
+		}
+
+		// Remove colliding issues from the import list
+		safeIssues := make([]*types.Issue, 0)
+		for _, issue := range allIssues {
+			if !collidingIDs[issue.ID] {
+				safeIssues = append(safeIssues, issue)
+			}
+		}
+		allIssues = safeIssues
+	}
+
 	// Import non-colliding issues (exact matches + new issues)
-	importIssueData(ctx, safeIssues)
+	for _, issue := range allIssues {
+		existing, err := store.GetIssue(ctx, issue.ID)
+		if err != nil {
+			continue
+		}
+
+		if existing != nil {
+			// Update existing issue
+			updates := make(map[string]interface{})
+			updates["title"] = issue.Title
+			updates["description"] = issue.Description
+			updates["design"] = issue.Design
+			updates["acceptance_criteria"] = issue.AcceptanceCriteria
+			updates["notes"] = issue.Notes
+			updates["status"] = issue.Status
+			updates["priority"] = issue.Priority
+			updates["issue_type"] = issue.IssueType
+			updates["assignee"] = issue.Assignee
+			if issue.EstimatedMinutes != nil {
+				updates["estimated_minutes"] = *issue.EstimatedMinutes
+			}
+			if issue.ExternalRef != nil {
+				updates["external_ref"] = *issue.ExternalRef
+			}
+
+			// Enforce status/closed_at invariant (bd-226)
+			if issue.Status == "closed" {
+				// Issue is closed - ensure closed_at is set
+				if issue.ClosedAt != nil {
+					updates["closed_at"] = *issue.ClosedAt
+				} else if !issue.UpdatedAt.IsZero() {
+					updates["closed_at"] = issue.UpdatedAt
+				} else {
+					updates["closed_at"] = time.Now().UTC()
+				}
+			} else {
+				// Issue is not closed - ensure closed_at is null
+				updates["closed_at"] = nil
+			}
+
+			_ = store.UpdateIssue(ctx, issue.ID, updates, "auto-import")
+		} else {
+			// Create new issue - enforce invariant before creation
+			if issue.Status == "closed" {
+				if issue.ClosedAt == nil {
+					now := time.Now().UTC()
+					issue.ClosedAt = &now
+				}
+			} else {
+				issue.ClosedAt = nil
+			}
+			_ = store.CreateIssue(ctx, issue, "auto-import")
+		}
+	}
+
+	// Import dependencies (skip colliding issues to maintain consistency)
+	for _, issue := range allIssues {
+		// Skip if this issue was filtered out due to collision
+		if collidingIDs[issue.ID] {
+			continue
+		}
+
+		if len(issue.Dependencies) == 0 {
+			continue
+		}
+
+		// Get existing dependencies
+		existingDeps, err := store.GetDependencyRecords(ctx, issue.ID)
+		if err != nil {
+			continue
+		}
+
+		// Add missing dependencies
+		for _, dep := range issue.Dependencies {
+			exists := false
+			for _, existing := range existingDeps {
+				if existing.DependsOnID == dep.DependsOnID && existing.Type == dep.Type {
+					exists = true
+					break
+				}
+			}
+
+			if !exists {
+				_ = store.AddDependency(ctx, dep, "auto-import")
+			}
+		}
+	}
 
 	// Store new hash after successful import
-	if err := store.SetMetadata(ctx, "last_import_hash", currentHash); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to store import hash: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Auto-import may re-run unnecessarily. Run 'bd export' to fix.\n")
-	}
+	_ = store.SetMetadata(ctx, "last_import_hash", currentHash)
 }
 
 // checkVersionMismatch checks if the binary version matches the database version
@@ -567,141 +485,6 @@ func clearAutoFlushState() {
 	lastFlushError = nil
 }
 
-// recordFlushFailure records a flush failure and shows appropriate warnings
-func recordFlushFailure(err error) {
-	flushMutex.Lock()
-	flushFailureCount++
-	lastFlushError = err
-	failCount := flushFailureCount
-	flushMutex.Unlock()
-
-	// Always show the immediate warning
-	fmt.Fprintf(os.Stderr, "Warning: auto-flush failed: %v\n", err)
-
-	// Show prominent warning after 3+ consecutive failures
-	if failCount >= 3 {
-		red := color.New(color.FgRed, color.Bold).SprintFunc()
-		fmt.Fprintf(os.Stderr, "\n%s\n", red("⚠️  CRITICAL: Auto-flush has failed "+fmt.Sprint(failCount)+" times consecutively!"))
-		fmt.Fprintf(os.Stderr, "%s\n", red("⚠️  Your JSONL file may be out of sync with the database."))
-		fmt.Fprintf(os.Stderr, "%s\n\n", red("⚠️  Run 'bd export -o .beads/issues.jsonl' manually to fix."))
-	}
-}
-
-// recordFlushSuccess records a successful flush
-func recordFlushSuccess() {
-	flushMutex.Lock()
-	flushFailureCount = 0
-	lastFlushError = nil
-	flushMutex.Unlock()
-}
-
-// readExistingJSONL reads existing JSONL file into a map
-func readExistingJSONL(jsonlPath string) map[string]*types.Issue {
-	issueMap := make(map[string]*types.Issue)
-
-	existingFile, err := os.Open(jsonlPath)
-	if err != nil {
-		return issueMap // Return empty map if file doesn't exist
-	}
-	defer existingFile.Close()
-
-	scanner := bufio.NewScanner(existingFile)
-	lineNum := 0
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		var issue types.Issue
-		if err := json.Unmarshal([]byte(line), &issue); err == nil {
-			issueMap[issue.ID] = &issue
-		} else {
-			// Warn about malformed JSONL lines
-			fmt.Fprintf(os.Stderr, "Warning: skipping malformed JSONL line %d: %v\n", lineNum, err)
-		}
-	}
-
-	return issueMap
-}
-
-// fetchDirtyIssuesFromDB fetches dirty issues from database and updates the issue map
-func fetchDirtyIssuesFromDB(ctx context.Context, dirtyIDs []string, issueMap map[string]*types.Issue) error {
-	for _, issueID := range dirtyIDs {
-		issue, err := store.GetIssue(ctx, issueID)
-		if err != nil {
-			return fmt.Errorf("failed to get issue %s: %w", issueID, err)
-		}
-
-		if issue == nil {
-			// Issue was deleted, remove from map
-			delete(issueMap, issueID)
-			continue
-		}
-
-		// Get dependencies for this issue
-		deps, err := store.GetDependencyRecords(ctx, issueID)
-		if err != nil {
-			return fmt.Errorf("failed to get dependencies for %s: %w", issueID, err)
-		}
-		issue.Dependencies = deps
-
-		// Get labels for this issue
-		labels, err := store.GetLabels(ctx, issueID)
-		if err != nil {
-			return fmt.Errorf("failed to get labels for %s: %w", issueID, err)
-		}
-		issue.Labels = labels
-
-		// Update map
-		issueMap[issueID] = issue
-	}
-
-	return nil
-}
-
-// writeIssuesToJSONL writes issues to JSONL file atomically
-func writeIssuesToJSONL(jsonlPath string, issueMap map[string]*types.Issue) error {
-	// Convert map to sorted slice
-	issues := make([]*types.Issue, 0, len(issueMap))
-	for _, issue := range issueMap {
-		issues = append(issues, issue)
-	}
-	sort.Slice(issues, func(i, j int) bool {
-		return issues[i].ID < issues[j].ID
-	})
-
-	// Write to temp file first, then rename (atomic)
-	tempPath := jsonlPath + ".tmp"
-	f, err := os.Create(tempPath)
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-
-	encoder := json.NewEncoder(f)
-	for _, issue := range issues {
-		if err := encoder.Encode(issue); err != nil {
-			f.Close()
-			os.Remove(tempPath)
-			return fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
-		}
-	}
-
-	if err := f.Close(); err != nil {
-		os.Remove(tempPath)
-		return fmt.Errorf("failed to close temp file: %w", err)
-	}
-
-	// Atomic rename
-	if err := os.Rename(tempPath, jsonlPath); err != nil {
-		os.Remove(tempPath)
-		return fmt.Errorf("failed to rename file: %w", err)
-	}
-
-	return nil
-}
-
 // flushToJSONL exports dirty issues to JSONL using incremental updates
 func flushToJSONL() {
 	// Check if store is still active (not closed)
@@ -730,33 +513,133 @@ func flushToJSONL() {
 	}
 	storeMutex.Unlock()
 
+	// Helper to record failure
+	recordFailure := func(err error) {
+		flushMutex.Lock()
+		flushFailureCount++
+		lastFlushError = err
+		failCount := flushFailureCount
+		flushMutex.Unlock()
+
+		// Always show the immediate warning
+		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed: %v\n", err)
+
+		// Show prominent warning after 3+ consecutive failures
+		if failCount >= 3 {
+			red := color.New(color.FgRed, color.Bold).SprintFunc()
+			fmt.Fprintf(os.Stderr, "\n%s\n", red("⚠️  CRITICAL: Auto-flush has failed "+fmt.Sprint(failCount)+" times consecutively!"))
+			fmt.Fprintf(os.Stderr, "%s\n", red("⚠️  Your JSONL file may be out of sync with the database."))
+			fmt.Fprintf(os.Stderr, "%s\n\n", red("⚠️  Run 'bd export -o .beads/issues.jsonl' manually to fix."))
+		}
+	}
+
+	// Helper to record success
+	recordSuccess := func() {
+		flushMutex.Lock()
+		flushFailureCount = 0
+		lastFlushError = nil
+		flushMutex.Unlock()
+	}
+
 	ctx := context.Background()
 
 	// Get dirty issue IDs (bd-39: incremental export optimization)
 	dirtyIDs, err := store.GetDirtyIssues(ctx)
 	if err != nil {
-		recordFlushFailure(fmt.Errorf("failed to get dirty issues: %w", err))
+		recordFailure(fmt.Errorf("failed to get dirty issues: %w", err))
 		return
 	}
 
 	// No dirty issues? Nothing to do!
 	if len(dirtyIDs) == 0 {
-		recordFlushSuccess()
+		recordSuccess()
 		return
 	}
 
 	// Read existing JSONL into a map
-	issueMap := readExistingJSONL(jsonlPath)
+	issueMap := make(map[string]*types.Issue)
+	if existingFile, err := os.Open(jsonlPath); err == nil {
+		scanner := bufio.NewScanner(existingFile)
+		lineNum := 0
+		for scanner.Scan() {
+			lineNum++
+			line := scanner.Text()
+			if line == "" {
+				continue
+			}
+			var issue types.Issue
+			if err := json.Unmarshal([]byte(line), &issue); err == nil {
+				issueMap[issue.ID] = &issue
+			} else {
+				// Warn about malformed JSONL lines
+				fmt.Fprintf(os.Stderr, "Warning: skipping malformed JSONL line %d: %v\n", lineNum, err)
+			}
+		}
+		existingFile.Close()
+	}
 
 	// Fetch only dirty issues from DB
-	if err := fetchDirtyIssuesFromDB(ctx, dirtyIDs, issueMap); err != nil {
-		recordFlushFailure(err)
+	for _, issueID := range dirtyIDs {
+		issue, err := store.GetIssue(ctx, issueID)
+		if err != nil {
+			recordFailure(fmt.Errorf("failed to get issue %s: %w", issueID, err))
+			return
+		}
+		if issue == nil {
+			// Issue was deleted, remove from map
+			delete(issueMap, issueID)
+			continue
+		}
+
+		// Get dependencies for this issue
+		deps, err := store.GetDependencyRecords(ctx, issueID)
+		if err != nil {
+			recordFailure(fmt.Errorf("failed to get dependencies for %s: %w", issueID, err))
+			return
+		}
+		issue.Dependencies = deps
+
+		// Update map
+		issueMap[issueID] = issue
+	}
+
+	// Convert map to sorted slice
+	issues := make([]*types.Issue, 0, len(issueMap))
+	for _, issue := range issueMap {
+		issues = append(issues, issue)
+	}
+	sort.Slice(issues, func(i, j int) bool {
+		return issues[i].ID < issues[j].ID
+	})
+
+	// Write to temp file first, then rename (atomic)
+	tempPath := jsonlPath + ".tmp"
+	f, err := os.Create(tempPath)
+	if err != nil {
+		recordFailure(fmt.Errorf("failed to create temp file: %w", err))
 		return
 	}
 
-	// Write to JSONL file atomically
-	if err := writeIssuesToJSONL(jsonlPath, issueMap); err != nil {
-		recordFlushFailure(err)
+	encoder := json.NewEncoder(f)
+	for _, issue := range issues {
+		if err := encoder.Encode(issue); err != nil {
+			f.Close()
+			os.Remove(tempPath)
+			recordFailure(fmt.Errorf("failed to encode issue %s: %w", issue.ID, err))
+			return
+		}
+	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(tempPath)
+		recordFailure(fmt.Errorf("failed to close temp file: %w", err))
+		return
+	}
+
+	// Atomic rename
+	if err := os.Rename(tempPath, jsonlPath); err != nil {
+		os.Remove(tempPath)
+		recordFailure(fmt.Errorf("failed to rename file: %w", err))
 		return
 	}
 
@@ -776,7 +659,7 @@ func flushToJSONL() {
 	}
 
 	// Success!
-	recordFlushSuccess()
+	recordSuccess()
 }
 
 var (
@@ -792,92 +675,97 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noAutoImport, "no-auto-import", false, "Disable automatic JSONL import when newer than DB")
 }
 
-// addLabelsToIssue adds labels to an issue
-func addLabelsToIssue(ctx context.Context, issue *types.Issue, labels []string) {
-	for _, label := range labels {
-		if err := store.AddLabel(ctx, issue.ID, label, actor); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to add label %s to %s: %v\n", label, issue.ID, err)
+// createIssuesFromMarkdown parses a markdown file and creates multiple issues
+func createIssuesFromMarkdown(cmd *cobra.Command, filepath string) {
+	// Parse markdown file
+	templates, err := parseMarkdownFile(filepath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing markdown file: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(templates) == 0 {
+		fmt.Fprintf(os.Stderr, "No issues found in markdown file\n")
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	createdIssues := []*types.Issue{}
+	failedIssues := []string{}
+
+	// Create each issue
+	for _, template := range templates {
+		issue := &types.Issue{
+			Title:              template.Title,
+			Description:        template.Description,
+			Design:             template.Design,
+			AcceptanceCriteria: template.AcceptanceCriteria,
+			Status:             types.StatusOpen,
+			Priority:           template.Priority,
+			IssueType:          template.IssueType,
+			Assignee:           template.Assignee,
 		}
-	}
-}
 
-// parseDependencySpec parses a dependency specification string
-func parseDependencySpec(depSpec string) (types.DependencyType, string, error) {
-	depSpec = strings.TrimSpace(depSpec)
-	if depSpec == "" {
-		return "", "", fmt.Errorf("empty dependency spec")
-	}
-
-	var depType types.DependencyType
-	var dependsOnID string
-
-	// Parse format: "type:id" or just "id" (defaults to "blocks")
-	if strings.Contains(depSpec, ":") {
-		parts := strings.SplitN(depSpec, ":", 2)
-		if len(parts) != 2 {
-			return "", "", fmt.Errorf("invalid dependency format '%s'", depSpec)
-		}
-		depType = types.DependencyType(strings.TrimSpace(parts[0]))
-		dependsOnID = strings.TrimSpace(parts[1])
-	} else {
-		depType = types.DepBlocks
-		dependsOnID = depSpec
-	}
-
-	if !depType.IsValid() {
-		return "", "", fmt.Errorf("invalid dependency type '%s'", depType)
-	}
-
-	return depType, dependsOnID, nil
-}
-
-// addDependenciesToIssue adds dependencies to an issue
-func addDependenciesToIssue(ctx context.Context, issue *types.Issue, depSpecs []string) {
-	for _, depSpec := range depSpecs {
-		depType, dependsOnID, err := parseDependencySpec(depSpec)
-		if err != nil {
-			if !strings.Contains(err.Error(), "empty dependency spec") {
-				fmt.Fprintf(os.Stderr, "Warning: %v for %s\n", err, issue.ID)
-			}
+		if err := store.CreateIssue(ctx, issue, actor); err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating issue '%s': %v\n", template.Title, err)
+			failedIssues = append(failedIssues, template.Title)
 			continue
 		}
 
-		dep := &types.Dependency{
-			IssueID:     issue.ID,
-			DependsOnID: dependsOnID,
-			Type:        depType,
+		// Add labels
+		for _, label := range template.Labels {
+			if err := store.AddLabel(ctx, issue.ID, label, actor); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to add label %s to %s: %v\n", label, issue.ID, err)
+			}
 		}
-		if err := store.AddDependency(ctx, dep, actor); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s: %v\n", issue.ID, dependsOnID, err)
+
+		// Add dependencies
+		for _, depSpec := range template.Dependencies {
+			depSpec = strings.TrimSpace(depSpec)
+			if depSpec == "" {
+				continue
+			}
+
+			var depType types.DependencyType
+			var dependsOnID string
+
+			// Parse format: "type:id" or just "id" (defaults to "blocks")
+			if strings.Contains(depSpec, ":") {
+				parts := strings.SplitN(depSpec, ":", 2)
+				if len(parts) != 2 {
+					fmt.Fprintf(os.Stderr, "Warning: invalid dependency format '%s' for %s\n", depSpec, issue.ID)
+					continue
+				}
+				depType = types.DependencyType(strings.TrimSpace(parts[0]))
+				dependsOnID = strings.TrimSpace(parts[1])
+			} else {
+				depType = types.DepBlocks
+				dependsOnID = depSpec
+			}
+
+			if !depType.IsValid() {
+				fmt.Fprintf(os.Stderr, "Warning: invalid dependency type '%s' for %s\n", depType, issue.ID)
+				continue
+			}
+
+			dep := &types.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: dependsOnID,
+				Type:        depType,
+			}
+			if err := store.AddDependency(ctx, dep, actor); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s: %v\n", issue.ID, dependsOnID, err)
+			}
 		}
-	}
-}
 
-// createIssueFromTemplate creates a single issue from a template
-func createIssueFromTemplate(ctx context.Context, template *IssueTemplate) (*types.Issue, error) {
-	issue := &types.Issue{
-		Title:              template.Title,
-		Description:        template.Description,
-		Design:             template.Design,
-		AcceptanceCriteria: template.AcceptanceCriteria,
-		Status:             types.StatusOpen,
-		Priority:           template.Priority,
-		IssueType:          template.IssueType,
-		Assignee:           template.Assignee,
+		createdIssues = append(createdIssues, issue)
 	}
 
-	if err := store.CreateIssue(ctx, issue, actor); err != nil {
-		return nil, err
+	// Schedule auto-flush
+	if len(createdIssues) > 0 {
+		markDirtyAndScheduleFlush()
 	}
 
-	addLabelsToIssue(ctx, issue, template.Labels)
-	addDependenciesToIssue(ctx, issue, template.Dependencies)
-
-	return issue, nil
-}
-
-// reportMarkdownCreationResults reports the results of creating issues from markdown
-func reportMarkdownCreationResults(filepath string, createdIssues []*types.Issue, failedIssues []string) {
 	// Report failures if any
 	if len(failedIssues) > 0 {
 		red := color.New(color.FgRed).SprintFunc()
@@ -898,43 +786,6 @@ func reportMarkdownCreationResults(filepath string, createdIssues []*types.Issue
 	}
 }
 
-// createIssuesFromMarkdown parses a markdown file and creates multiple issues
-func createIssuesFromMarkdown(filepath string) {
-	// Parse markdown file
-	templates, err := parseMarkdownFile(filepath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing markdown file: %v\n", err)
-		os.Exit(1)
-	}
-
-	if len(templates) == 0 {
-		fmt.Fprintf(os.Stderr, "No issues found in markdown file\n")
-		os.Exit(1)
-	}
-
-	ctx := context.Background()
-	createdIssues := []*types.Issue{}
-	failedIssues := []string{}
-
-	// Create each issue
-	for _, template := range templates {
-		issue, err := createIssueFromTemplate(ctx, template)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating issue '%s': %v\n", template.Title, err)
-			failedIssues = append(failedIssues, template.Title)
-			continue
-		}
-		createdIssues = append(createdIssues, issue)
-	}
-
-	// Schedule auto-flush
-	if len(createdIssues) > 0 {
-		markDirtyAndScheduleFlush()
-	}
-
-	reportMarkdownCreationResults(filepath, createdIssues, failedIssues)
-}
-
 var createCmd = &cobra.Command{
 	Use:   "create [title]",
 	Short: "Create a new issue (or multiple issues from markdown file)",
@@ -948,7 +799,7 @@ var createCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Error: cannot specify both title and --file flag\n")
 				os.Exit(1)
 			}
-			createIssuesFromMarkdown(file)
+			createIssuesFromMarkdown(cmd, file)
 			return
 		}
 
@@ -1009,9 +860,55 @@ var createCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Add labels and dependencies using shared helper functions
-		addLabelsToIssue(ctx, issue, labels)
-		addDependenciesToIssue(ctx, issue, deps)
+		// Add labels if specified
+		for _, label := range labels {
+			if err := store.AddLabel(ctx, issue.ID, label, actor); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to add label %s: %v\n", label, err)
+			}
+		}
+
+		// Add dependencies if specified (format: type:id or just id for default "blocks" type)
+		for _, depSpec := range deps {
+			// Skip empty specs (e.g., from trailing commas)
+			depSpec = strings.TrimSpace(depSpec)
+			if depSpec == "" {
+				continue
+			}
+
+			var depType types.DependencyType
+			var dependsOnID string
+
+			// Parse format: "type:id" or just "id" (defaults to "blocks")
+			if strings.Contains(depSpec, ":") {
+				parts := strings.SplitN(depSpec, ":", 2)
+				if len(parts) != 2 {
+					fmt.Fprintf(os.Stderr, "Warning: invalid dependency format '%s', expected 'type:id' or 'id'\n", depSpec)
+					continue
+				}
+				depType = types.DependencyType(strings.TrimSpace(parts[0]))
+				dependsOnID = strings.TrimSpace(parts[1])
+			} else {
+				// Default to "blocks" if no type specified
+				depType = types.DepBlocks
+				dependsOnID = depSpec
+			}
+
+			// Validate dependency type
+			if !depType.IsValid() {
+				fmt.Fprintf(os.Stderr, "Warning: invalid dependency type '%s' (valid: blocks, related, parent-child, discovered-from)\n", depType)
+				continue
+			}
+
+			// Add the dependency
+			dep := &types.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: dependsOnID,
+				Type:        depType,
+			}
+			if err := store.AddDependency(ctx, dep, actor); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s: %v\n", issue.ID, dependsOnID, err)
+			}
+		}
 
 		// Schedule auto-flush
 		markDirtyAndScheduleFlush()
@@ -1068,19 +965,9 @@ var showCmd = &cobra.Command{
 				Dependents   []*types.Issue `json:"dependents,omitempty"`
 			}
 			details := &IssueDetails{Issue: issue}
-			var err error
-			details.Labels, err = store.GetLabels(ctx, issue.ID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to fetch labels: %v\n", err)
-			}
-			details.Dependencies, err = store.GetDependencies(ctx, issue.ID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to fetch dependencies: %v\n", err)
-			}
-			details.Dependents, err = store.GetDependents(ctx, issue.ID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to fetch dependents: %v\n", err)
-			}
+			details.Labels, _ = store.GetLabels(ctx, issue.ID)
+			details.Dependencies, _ = store.GetDependencies(ctx, issue.ID)
+			details.Dependents, _ = store.GetDependents(ctx, issue.ID)
 			outputJSON(details)
 			return
 		}
@@ -1142,73 +1029,6 @@ var showCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(showCmd)
-}
-
-var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List issues",
-	Run: func(cmd *cobra.Command, args []string) {
-		status, _ := cmd.Flags().GetString("status")
-		assignee, _ := cmd.Flags().GetString("assignee")
-		issueType, _ := cmd.Flags().GetString("type")
-		limit, _ := cmd.Flags().GetInt("limit")
-		labels, _ := cmd.Flags().GetStringSlice("label")
-
-		filter := types.IssueFilter{
-			Limit: limit,
-		}
-		if status != "" {
-			s := types.Status(status)
-			filter.Status = &s
-		}
-		// Use Changed() to properly handle P0 (priority=0)
-		if cmd.Flags().Changed("priority") {
-			priority, _ := cmd.Flags().GetInt("priority")
-			filter.Priority = &priority
-		}
-		if assignee != "" {
-			filter.Assignee = &assignee
-		}
-		if issueType != "" {
-			t := types.IssueType(issueType)
-			filter.IssueType = &t
-		}
-		if len(labels) > 0 {
-			filter.Labels = labels
-		}
-
-		ctx := context.Background()
-		issues, err := store.SearchIssues(ctx, "", filter)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		if jsonOutput {
-			outputJSON(issues)
-			return
-		}
-
-		fmt.Printf("\nFound %d issues:\n\n", len(issues))
-		for _, issue := range issues {
-			fmt.Printf("%s [P%d] [%s] %s\n", issue.ID, issue.Priority, issue.IssueType, issue.Status)
-			fmt.Printf("  %s\n", issue.Title)
-			if issue.Assignee != "" {
-				fmt.Printf("  Assignee: %s\n", issue.Assignee)
-			}
-			fmt.Println()
-		}
-	},
-}
-
-func init() {
-	listCmd.Flags().StringP("status", "s", "", "Filter by status")
-	listCmd.Flags().IntP("priority", "p", 0, "Filter by priority")
-	listCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
-	listCmd.Flags().StringP("type", "t", "", "Filter by type")
-	listCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (comma-separated)")
-	listCmd.Flags().IntP("limit", "n", 0, "Limit results")
-	rootCmd.AddCommand(listCmd)
 }
 
 var updateCmd = &cobra.Command{
