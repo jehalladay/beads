@@ -11,6 +11,12 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+const (
+	// maxDependencyDepth is the maximum depth for recursive dependency traversal
+	// to prevent infinite loops and limit query complexity
+	maxDependencyDepth = 100
+)
+
 // AddDependency adds a dependency between issues with cycle prevention
 func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
 	// Validate dependency type
@@ -49,6 +55,47 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 	}
 	defer tx.Rollback()
 
+	// Check if this would create a cycle across ALL dependency types
+	// We check before inserting to avoid unnecessary write on failure
+	// We traverse all dependency types to detect cross-type cycles
+	// (e.g., A blocks B, B parent-child A would create a cycle)
+	// We need to check if we can reach IssueID from DependsOnID
+	// If yes, adding "IssueID depends on DependsOnID" would create a cycle
+	var cycleExists bool
+	err = tx.QueryRowContext(ctx, `
+		WITH RECURSIVE paths AS (
+			SELECT
+				issue_id,
+				depends_on_id,
+				1 as depth
+			FROM dependencies
+			WHERE issue_id = ?
+
+			UNION ALL
+
+			SELECT
+				d.issue_id,
+				d.depends_on_id,
+				p.depth + 1
+			FROM dependencies d
+			JOIN paths p ON d.issue_id = p.depends_on_id
+			WHERE p.depth < ?
+		)
+		SELECT EXISTS(
+			SELECT 1 FROM paths
+			WHERE depends_on_id = ?
+		)
+	`, dep.DependsOnID, maxDependencyDepth, dep.IssueID).Scan(&cycleExists)
+
+	if err != nil {
+		return fmt.Errorf("failed to check for cycles: %w", err)
+	}
+
+	if cycleExists {
+		return fmt.Errorf("cannot add dependency: would create a cycle (%s → %s → ... → %s)",
+			dep.IssueID, dep.DependsOnID, dep.IssueID)
+	}
+
 	// Insert dependency
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
@@ -56,48 +103,6 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 	`, dep.IssueID, dep.DependsOnID, dep.Type, dep.CreatedAt, dep.CreatedBy)
 	if err != nil {
 		return fmt.Errorf("failed to add dependency: %w", err)
-	}
-
-	// Check if this creates a cycle (only for 'blocks' type dependencies)
-	// We need to check if we can reach IssueID from DependsOnID
-	// If yes, adding "IssueID depends on DependsOnID" would create a cycle
-	if dep.Type == types.DepBlocks {
-		var cycleExists bool
-		err = tx.QueryRowContext(ctx, `
-			WITH RECURSIVE paths AS (
-				SELECT
-					issue_id,
-					depends_on_id,
-					1 as depth
-				FROM dependencies
-				WHERE type = 'blocks'
-				  AND issue_id = ?
-
-				UNION ALL
-
-				SELECT
-					d.issue_id,
-					d.depends_on_id,
-					p.depth + 1
-				FROM dependencies d
-				JOIN paths p ON d.issue_id = p.depends_on_id
-				WHERE d.type = 'blocks'
-				  AND p.depth < 100
-			)
-			SELECT EXISTS(
-				SELECT 1 FROM paths
-				WHERE depends_on_id = ?
-			)
-		`, dep.DependsOnID, dep.IssueID).Scan(&cycleExists)
-
-		if err != nil {
-			return fmt.Errorf("failed to check for cycles: %w", err)
-		}
-
-		if cycleExists {
-			return fmt.Errorf("cannot add dependency: would create a cycle (%s → %s → ... → %s)",
-				dep.IssueID, dep.DependsOnID, dep.IssueID)
-		}
 	}
 
 	// Record event
@@ -387,14 +392,14 @@ func (s *SQLiteStorage) DetectCycles(ctx context.Context) ([][]*types.Issue, err
 				p.depth + 1
 			FROM dependencies d
 			JOIN paths p ON d.issue_id = p.depends_on_id
-			WHERE p.depth < 100
+			WHERE p.depth < ?
 			  AND p.path NOT LIKE '%' || d.depends_on_id || '→%'
 		)
 		SELECT DISTINCT path || '→' || start_id as cycle_path
 		FROM paths
 		WHERE depends_on_id = start_id
 		ORDER BY cycle_path
-	`)
+	`, maxDependencyDepth)
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect cycles: %w", err)
 	}

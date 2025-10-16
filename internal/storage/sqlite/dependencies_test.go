@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -247,5 +248,230 @@ func TestNoCyclesDetected(t *testing.T) {
 
 	if len(cycles) != 0 {
 		t.Errorf("Expected no cycles, but found %d", len(cycles))
+	}
+}
+
+func TestCrossTypeCyclePrevention(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create issues for cross-type cycle test
+	issue1 := &types.Issue{Title: "Task A", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue2 := &types.Issue{Title: "Task B", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, issue1, "test-user")
+	store.CreateIssue(ctx, issue2, "test-user")
+
+	// Add: issue1 blocks issue2
+	err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue1.ID,
+		DependsOnID: issue2.ID,
+		Type:        types.DepBlocks,
+	}, "test-user")
+	if err != nil {
+		t.Fatalf("First dependency (blocks) failed: %v", err)
+	}
+
+	// Try to add: issue2 parent-child issue1 (this would create a cross-type cycle)
+	err = store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue2.ID,
+		DependsOnID: issue1.ID,
+		Type:        types.DepParentChild,
+	}, "test-user")
+	if err == nil {
+		t.Fatal("Expected error when creating cross-type cycle, but got none")
+	}
+
+	// Verify no cycles exist
+	cycles, err := store.DetectCycles(ctx)
+	if err != nil {
+		t.Fatalf("DetectCycles failed: %v", err)
+	}
+
+	if len(cycles) != 0 {
+		t.Errorf("Expected no cycles after prevention, but found %d", len(cycles))
+	}
+}
+
+func TestCrossTypeCyclePreventionDiscoveredFrom(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create issues
+	issue1 := &types.Issue{Title: "Parent Task", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue2 := &types.Issue{Title: "Bug Found", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeBug}
+
+	store.CreateIssue(ctx, issue1, "test-user")
+	store.CreateIssue(ctx, issue2, "test-user")
+
+	// Add: issue2 discovered-from issue1
+	err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue2.ID,
+		DependsOnID: issue1.ID,
+		Type:        types.DepDiscoveredFrom,
+	}, "test-user")
+	if err != nil {
+		t.Fatalf("First dependency (discovered-from) failed: %v", err)
+	}
+
+	// Try to add: issue1 blocks issue2 (this would create a cross-type cycle)
+	err = store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue1.ID,
+		DependsOnID: issue2.ID,
+		Type:        types.DepBlocks,
+	}, "test-user")
+	if err == nil {
+		t.Fatal("Expected error when creating cross-type cycle with discovered-from, but got none")
+	}
+}
+
+func TestSelfDependencyPrevention(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	issue := &types.Issue{Title: "Task", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	store.CreateIssue(ctx, issue, "test-user")
+
+	// Try to create self-dependency (issue depends on itself)
+	err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue.ID,
+		DependsOnID: issue.ID,
+		Type:        types.DepBlocks,
+	}, "test-user")
+
+	if err == nil {
+		t.Fatal("Expected error when creating self-dependency, but got none")
+	}
+
+	if !strings.Contains(err.Error(), "cannot depend on itself") {
+		t.Errorf("Expected self-dependency error message, got: %v", err)
+	}
+}
+
+func TestRelatedTypeCyclePrevention(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	issue1 := &types.Issue{Title: "Task A", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue2 := &types.Issue{Title: "Task B", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, issue1, "test-user")
+	store.CreateIssue(ctx, issue2, "test-user")
+
+	// Add: issue1 related issue2
+	err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue1.ID,
+		DependsOnID: issue2.ID,
+		Type:        types.DepRelated,
+	}, "test-user")
+	if err != nil {
+		t.Fatalf("First dependency (related) failed: %v", err)
+	}
+
+	// Try to add: issue2 related issue1 (this creates a 2-node cycle with related type)
+	err = store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue2.ID,
+		DependsOnID: issue1.ID,
+		Type:        types.DepRelated,
+	}, "test-user")
+	if err == nil {
+		t.Fatal("Expected error when creating related-type cycle, but got none")
+	}
+}
+
+func TestMixedTypeRelatedCyclePrevention(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	issue1 := &types.Issue{Title: "Task A", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue2 := &types.Issue{Title: "Task B", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, issue1, "test-user")
+	store.CreateIssue(ctx, issue2, "test-user")
+
+	// Add: issue1 blocks issue2
+	err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue1.ID,
+		DependsOnID: issue2.ID,
+		Type:        types.DepBlocks,
+	}, "test-user")
+	if err != nil {
+		t.Fatalf("First dependency (blocks) failed: %v", err)
+	}
+
+	// Try to add: issue2 related issue1 (this creates a cross-type cycle)
+	err = store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue2.ID,
+		DependsOnID: issue1.ID,
+		Type:        types.DepRelated,
+	}, "test-user")
+	if err == nil {
+		t.Fatal("Expected error when creating blocks+related cycle, but got none")
+	}
+}
+
+func TestCrossTypeCyclePreventionThreeIssues(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create issues for 3-node cross-type cycle test
+	issue1 := &types.Issue{Title: "Task A", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue2 := &types.Issue{Title: "Task B", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue3 := &types.Issue{Title: "Task C", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, issue1, "test-user")
+	store.CreateIssue(ctx, issue2, "test-user")
+	store.CreateIssue(ctx, issue3, "test-user")
+
+	// Add: issue1 blocks issue2
+	err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue1.ID,
+		DependsOnID: issue2.ID,
+		Type:        types.DepBlocks,
+	}, "test-user")
+	if err != nil {
+		t.Fatalf("First dependency failed: %v", err)
+	}
+
+	// Add: issue2 parent-child issue3
+	err = store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue2.ID,
+		DependsOnID: issue3.ID,
+		Type:        types.DepParentChild,
+	}, "test-user")
+	if err != nil {
+		t.Fatalf("Second dependency failed: %v", err)
+	}
+
+	// Try to add: issue3 discovered-from issue1 (this would create a 3-node cross-type cycle)
+	err = store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue3.ID,
+		DependsOnID: issue1.ID,
+		Type:        types.DepDiscoveredFrom,
+	}, "test-user")
+	if err == nil {
+		t.Fatal("Expected error when creating 3-node cross-type cycle, but got none")
+	}
+
+	// Verify no cycles exist
+	cycles, err := store.DetectCycles(ctx)
+	if err != nil {
+		t.Fatalf("DetectCycles failed: %v", err)
+	}
+
+	if len(cycles) != 0 {
+		t.Errorf("Expected no cycles after prevention, but found %d", len(cycles))
 	}
 }
