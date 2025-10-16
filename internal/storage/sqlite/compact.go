@@ -450,3 +450,24 @@ func (s *SQLiteStorage) GetSnapshots(ctx context.Context, issueID string) ([]*Sn
 
 	return snapshots, nil
 }
+
+// ApplyCompaction updates the compaction metadata for an issue after successfully compacting it.
+// This sets compaction_level, compacted_at, and original_size fields.
+func (s *SQLiteStorage) ApplyCompaction(ctx context.Context, issueID string, level int, originalSize int) error {
+	now := time.Now().UTC()
+	
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE issues
+		SET compaction_level = ?,
+		    compacted_at = ?,
+		    original_size = ?,
+		    updated_at = ?
+		WHERE id = ?
+	`, level, now, originalSize, now, issueID)
+	
+	if err != nil {
+		return fmt.Errorf("failed to apply compaction metadata: %w", err)
+	}
+	
+	return nil
+}

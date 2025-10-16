@@ -212,7 +212,7 @@ func (w *bytesWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-const tier1PromptTemplate = `You are summarizing a closed software issue for long-term storage. Compress the following issue into a concise summary that preserves key technical decisions and outcomes.
+const tier1PromptTemplate = `You are summarizing a closed software issue for long-term storage. Your goal is to COMPRESS the content - the output MUST be significantly shorter than the input while preserving key technical decisions and outcomes.
 
 **Title:** {{.Title}}
 
@@ -231,13 +231,15 @@ const tier1PromptTemplate = `You are summarizing a closed software issue for lon
 {{.Notes}}
 {{end}}
 
+IMPORTANT: Your summary must be shorter than the original. Be concise and eliminate redundancy.
+
 Provide a summary in this exact format:
 
-**Summary:** [2-3 sentences covering what was done and why]
+**Summary:** [2-3 concise sentences covering what was done and why]
 
-**Key Decisions:** [Bullet points of important technical choices or design decisions]
+**Key Decisions:** [Brief bullet points of only the most important technical choices]
 
-**Resolution:** [Final outcome and any lasting impact]`
+**Resolution:** [One sentence on final outcome and lasting impact]`
 
 const tier2PromptTemplate = `You are performing ultra-compression on a closed software issue. The issue has already been summarized once. Your task is to create a single concise paragraph (≤150 words) that captures the essence.
 
