@@ -48,6 +48,7 @@ Agents report that they enjoy working with Beads, and they will use it spontaneo
 - 🎨 **Beautiful CLI** - Colored output for humans, JSON for bots
 - 💾 **Full audit trail** - Every change is logged
 - ⚡ **High performance** - Batch operations for bulk imports (1000 issues in ~950ms)
+- 🗜️ **Memory decay** - Semantic compaction gracefully reduces old closed issues
 
 ## Installation
 
@@ -425,6 +426,38 @@ bd stats
 # JSON output for agents
 bd ready --json
 ```
+
+### Compaction (Memory Decay)
+
+Beads can semantically compress old closed issues to keep the database lightweight. This is agentic memory decay - the database naturally forgets details over time while preserving essential context.
+
+```bash
+# Preview what would be compacted
+bd compact --dry-run --all
+
+# Show compaction statistics
+bd compact --stats
+
+# Compact all eligible issues (30+ days closed, no open dependents)
+bd compact --all
+
+# Compact specific issue
+bd compact --id bd-42
+
+# Force compact (bypass eligibility checks)
+bd compact --id bd-42 --force
+```
+
+Compaction uses Claude Haiku to semantically summarize issues, achieving ~70-80% space reduction. The original content is permanently discarded - this is intentional graceful decay, not reversible compression.
+
+**Requirements:**
+- Set `ANTHROPIC_API_KEY` environment variable
+- Cost: ~$1 per 1,000 issues compacted
+
+**When issues are eligible:**
+- Status: closed
+- Age: 30+ days since closed
+- No open dependents (blocking other work)
 
 ## Database Discovery
 
