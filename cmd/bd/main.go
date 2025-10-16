@@ -990,8 +990,21 @@ var showCmd = &cobra.Command{
 		}
 
 		cyan := color.New(color.FgCyan).SprintFunc()
-		fmt.Printf("\n%s: %s\n", cyan(issue.ID), issue.Title)
-		fmt.Printf("Status: %s\n", issue.Status)
+		
+		// Add compaction emoji to title line
+		tierEmoji := ""
+		statusSuffix := ""
+		if issue.CompactionLevel == 1 {
+			tierEmoji = " 🗜️"
+		} else if issue.CompactionLevel == 2 {
+			tierEmoji = " 📦"
+		}
+		if issue.CompactionLevel > 0 {
+			statusSuffix = fmt.Sprintf(" (compacted L%d)", issue.CompactionLevel)
+		}
+		
+		fmt.Printf("\n%s: %s%s\n", cyan(issue.ID), issue.Title, tierEmoji)
+		fmt.Printf("Status: %s%s\n", issue.Status, statusSuffix)
 		fmt.Printf("Priority: P%d\n", issue.Priority)
 		fmt.Printf("Type: %s\n", issue.IssueType)
 		if issue.Assignee != "" {
@@ -1003,27 +1016,29 @@ var showCmd = &cobra.Command{
 		fmt.Printf("Created: %s\n", issue.CreatedAt.Format("2006-01-02 15:04"))
 		fmt.Printf("Updated: %s\n", issue.UpdatedAt.Format("2006-01-02 15:04"))
 
-		// Show compaction status
+		// Show compaction status footer
 		if issue.CompactionLevel > 0 {
-			tierEmoji := ""
-			if issue.CompactionLevel == 1 {
-				tierEmoji = "🗜️ "
-			} else if issue.CompactionLevel == 2 {
-				tierEmoji = "📦 "
+			tierEmoji := "🗜️"
+			if issue.CompactionLevel == 2 {
+				tierEmoji = "📦"
 			}
-			fmt.Printf("\n%sCompacted: Tier %d", tierEmoji, issue.CompactionLevel)
-			if issue.CompactedAt != nil {
-				fmt.Printf(" on %s", issue.CompactedAt.Format("2006-01-02"))
-			}
+			tierName := fmt.Sprintf("Tier %d", issue.CompactionLevel)
+			
+			fmt.Println()
 			if issue.OriginalSize > 0 {
 				currentSize := len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
 				saved := issue.OriginalSize - currentSize
 				if saved > 0 {
 					reduction := float64(saved) / float64(issue.OriginalSize) * 100
-					fmt.Printf(" (%.0f%% reduction, saved %d bytes)", reduction, saved)
+					fmt.Printf("📊 Original: %d bytes | Compressed: %d bytes (%.0f%% reduction)\n", 
+						issue.OriginalSize, currentSize, reduction)
 				}
 			}
-			fmt.Println()
+			compactedDate := ""
+			if issue.CompactedAt != nil {
+				compactedDate = issue.CompactedAt.Format("2006-01-02")
+			}
+			fmt.Printf("%s Compacted: %s (%s)\n", tierEmoji, compactedDate, tierName)
 			fmt.Printf("💾 Restore: bd compact --restore %s\n", issue.ID)
 		}
 
