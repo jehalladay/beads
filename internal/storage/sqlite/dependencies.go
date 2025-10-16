@@ -46,6 +46,21 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		return fmt.Errorf("issue cannot depend on itself")
 	}
 
+	// Validate parent-child dependency direction
+	// In parent-child relationships: child depends on parent (child is part of parent)
+	// Parent should NOT depend on child (semantically backwards)
+	// Consistent with dependency semantics: IssueID depends on DependsOnID
+	if dep.Type == types.DepParentChild {
+		// issueExists is the dependent (the one that depends on something)
+		// dependsOnExists is what it depends on
+		// Correct: Task (child) depends on Epic (parent) - child belongs to parent
+		// Incorrect: Epic (parent) depends on Task (child) - backwards
+		if issueExists.IssueType == types.TypeEpic && dependsOnExists.IssueType != types.TypeEpic {
+			return fmt.Errorf("invalid parent-child dependency: parent (%s) cannot depend on child (%s). Use: bd dep add %s %s --type parent-child",
+				dep.IssueID, dep.DependsOnID, dep.DependsOnID, dep.IssueID)
+		}
+	}
+
 	dep.CreatedAt = time.Now()
 	dep.CreatedBy = actor
 
@@ -55,12 +70,27 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 	}
 	defer tx.Rollback()
 
-	// Check if this would create a cycle across ALL dependency types
-	// We check before inserting to avoid unnecessary write on failure
-	// We traverse all dependency types to detect cross-type cycles
-	// (e.g., A blocks B, B parent-child A would create a cycle)
-	// We need to check if we can reach IssueID from DependsOnID
-	// If yes, adding "IssueID depends on DependsOnID" would create a cycle
+	// Cycle Detection and Prevention
+	//
+	// We prevent cycles across ALL dependency types (blocks, related, parent-child, discovered-from)
+	// to maintain a directed acyclic graph (DAG). This is critical for:
+	//
+	// 1. Ready Work Calculation: Cycles can hide issues from the ready list by making them
+	//    appear blocked when they're actually part of a circular dependency.
+	//
+	// 2. Dependency Traversal: Operations like dep tree and blocking propagation rely on
+	//    DAG structure. Cycles would require special handling and could cause confusion.
+	//
+	// 3. Semantic Clarity: Circular dependencies are conceptually problematic - if A depends
+	//    on B and B depends on A (directly or through other issues), which should be done first?
+	//
+	// Implementation: We use a recursive CTE to traverse from DependsOnID to see if we can
+	// reach IssueID. If yes, adding "IssueID depends on DependsOnID" would complete a cycle.
+	// We check ALL dependency types because cross-type cycles (e.g., A blocks B, B parent-child A)
+	// are just as problematic as single-type cycles.
+	//
+	// The traversal is depth-limited to maxDependencyDepth (100) to prevent infinite loops
+	// and excessive query cost. We check before inserting to avoid unnecessary write on failure.
 	var cycleExists bool
 	err = tx.QueryRowContext(ctx, `
 		WITH RECURSIVE paths AS (

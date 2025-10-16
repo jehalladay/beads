@@ -408,6 +408,38 @@ bd dep tree bd-2
 bd dep cycles
 ```
 
+#### Dependency Types
+
+- **blocks**: Hard blocker (default) - issue cannot start until blocker is resolved
+- **related**: Soft relationship - issues are connected but not blocking
+- **parent-child**: Hierarchical relationship (child depends on parent)
+  - Correct: `bd dep add bd-task bd-epic --type parent-child` (task → epic)
+  - Wrong: `bd dep add bd-epic bd-task --type parent-child` (reversed!)
+- **discovered-from**: Issue discovered during work on another issue
+
+#### Cycle Prevention
+
+beads maintains a directed acyclic graph (DAG) of dependencies and prevents cycles across **all** dependency types. This ensures:
+
+- **Ready work is accurate**: Cycles can hide issues from `bd ready` by making them appear blocked when they're actually part of a circular dependency
+- **Dependencies are clear**: Circular dependencies are semantically confusing (if A depends on B and B depends on A, which should be done first?)
+- **Traversals work correctly**: Commands like `bd dep tree` rely on DAG structure
+
+**Example - Prevented Cycle:**
+```bash
+bd dep add bd-1 bd-2           # bd-1 blocks on bd-2 ✓
+bd dep add bd-2 bd-3           # bd-2 blocks on bd-3 ✓
+bd dep add bd-3 bd-1           # ERROR: would create cycle bd-3 → bd-1 → bd-2 → bd-3 ✗
+```
+
+Cross-type cycles are also prevented:
+```bash
+bd dep add bd-1 bd-2 --type blocks           # bd-1 blocks on bd-2 ✓
+bd dep add bd-2 bd-1 --type parent-child     # ERROR: would create cycle ✗
+```
+
+If you try to add a dependency that creates a cycle, you'll get a clear error message. After successfully adding dependencies, beads will warn you if any cycles are detected elsewhere in the graph.
+
 ### Finding Work
 
 ```bash

@@ -59,6 +59,58 @@ func TestAddDependencyDiscoveredFrom(t *testing.T) {
 	testAddDependencyWithType(t, types.DepDiscoveredFrom, "Parent task", "Bug found during work")
 }
 
+func TestParentChildValidation(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create an epic (parent) and a task (child)
+	epic := &types.Issue{Title: "Epic Feature", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic}
+	task := &types.Issue{Title: "Subtask", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, epic, "test-user")
+	store.CreateIssue(ctx, task, "test-user")
+
+	// Test 1: Valid direction - Task depends on Epic (child belongs to parent)
+	err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     task.ID,
+		DependsOnID: epic.ID,
+		Type:        types.DepParentChild,
+	}, "test-user")
+	if err != nil {
+		t.Fatalf("Valid parent-child dependency failed: %v", err)
+	}
+
+	// Verify it was added
+	deps, err := store.GetDependencies(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetDependencies failed: %v", err)
+	}
+	if len(deps) != 1 {
+		t.Fatalf("Expected 1 dependency, got %d", len(deps))
+	}
+
+	// Remove the dependency for next test
+	err = store.RemoveDependency(ctx, task.ID, epic.ID, "test-user")
+	if err != nil {
+		t.Fatalf("RemoveDependency failed: %v", err)
+	}
+
+	// Test 2: Invalid direction - Epic depends on Task (parent depends on child - backwards!)
+	err = store.AddDependency(ctx, &types.Dependency{
+		IssueID:     epic.ID,
+		DependsOnID: task.ID,
+		Type:        types.DepParentChild,
+	}, "test-user")
+	if err == nil {
+		t.Fatal("Expected error when parent depends on child, but got none")
+	}
+	if !strings.Contains(err.Error(), "child") || !strings.Contains(err.Error(), "parent") {
+		t.Errorf("Expected error message to mention child/parent relationship, got: %v", err)
+	}
+}
+
 func TestRemoveDependency(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()

@@ -366,11 +366,55 @@ type Dependency struct {
 
 type DependencyType string
 const (
-    DepBlocks      DependencyType = "blocks"      // hard blocker
-    DepRelated     DependencyType = "related"     // soft relationship
-    DepParentChild DependencyType = "parent-child" // epic/subtask
+    DepBlocks         DependencyType = "blocks"         // hard blocker
+    DepRelated        DependencyType = "related"        // soft relationship
+    DepParentChild    DependencyType = "parent-child"   // epic/subtask
+    DepDiscoveredFrom DependencyType = "discovered-from" // discovered during work
 )
 ```
+
+#### Cycle Prevention Design
+
+**Goal**: Maintain a directed acyclic graph (DAG) across all dependency types.
+
+**Rationale**: Cycles create three major problems:
+
+1. **Ready Work Calculation**: Issues in a cycle appear blocked by each other, hiding them from `bd ready` even though there's no clear blocking reason. Example: A depends on B, B depends on A → neither appears as ready work.
+
+2. **Semantic Confusion**: Circular dependencies are conceptually problematic. If A depends on B and B depends on A (directly or through other issues), which should be done first? The answer is ambiguous.
+
+3. **Traversal Complexity**: Operations like `bd dep tree`, blocking propagation, and hierarchy display rely on DAG structure. Cycles require special handling (cycle detection, path marking) or risk infinite loops.
+
+**Implementation Strategy**:
+
+- **Prevention over Detection**: We prevent cycles at insertion time in `AddDependency`, so cycles can never exist in the database.
+- **Cross-Type Checking**: We check ALL dependency types, not just `blocks`. Cross-type cycles (e.g., A blocks B, B parent-child A) are just as problematic as single-type cycles.
+- **Recursive CTE**: SQLite recursive common table expression traverses from `DependsOnID` to check if `IssueID` is reachable. If yes, adding the edge would complete a cycle.
+- **Depth Limit**: Traversal limited to 100 levels to prevent excessive query cost and handle edge cases.
+- **Transaction Safety**: Cycle check happens in transaction before INSERT, so no partial state on rejection.
+
+**Performance Considerations**:
+
+- Cycle check runs on every `AddDependency` call (not skippable)
+- Indexed on `dependencies.issue_id` for efficient traversal
+- Cost grows with dependency graph depth, not total issue count
+- Typical case (small trees): <10ms overhead
+- Pathological case (deep chains): O(depth × branching) but limited by depth=100
+
+**User Experience**:
+
+- Clear error messages: "cannot add dependency: would create a cycle (bd-3 → bd-1 → bd-2 → bd-3)"
+- After successful addition, we run `DetectCycles()` and warn if any cycles exist elsewhere
+- `bd dep cycles` command for manual cycle detection and diagnosis
+
+**Trade-offs**:
+
+- ✅ Prevents semantic confusion and broken ready work calculation
+- ✅ Keeps code simple (no cycle handling in traversals)
+- ⚠️ Small performance overhead on every dependency addition
+- ⚠️ Cannot represent certain real-world patterns (mutual blockers must be modeled differently)
+
+**Alternative Considered**: Allow cycles and handle during traversal with cycle detection and path tracking. Rejected because it adds complexity everywhere dependencies are used and doesn't solve the semantic ambiguity problem.
 
 ### Labels
 
