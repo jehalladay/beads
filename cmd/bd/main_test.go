@@ -2,10 +2,13 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -975,6 +978,90 @@ func TestAutoImportNoCollision(t *testing.T) {
 	}
 	if result.Title != "Brand new issue" {
 		t.Errorf("Expected title='Brand new issue', got '%s'", result.Title)
+	}
+}
+
+// TestAutoImportMergeConflict tests that auto-import detects Git merge conflicts (bd-270)
+func TestAutoImportMergeConflict(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "bd-test-conflict-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath = filepath.Join(tmpDir, "test.db")
+	jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+
+	testStore, err := sqlite.New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create storage: %v", err)
+	}
+	defer testStore.Close()
+
+	store = testStore
+	storeMutex.Lock()
+	storeActive = true
+	storeMutex.Unlock()
+	defer func() {
+		storeMutex.Lock()
+		storeActive = false
+		storeMutex.Unlock()
+	}()
+
+	ctx := context.Background()
+
+	// Create an initial issue in database
+	dbIssue := &types.Issue{
+		ID:        "test-conflict-1",
+		Title:     "Original issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := testStore.CreateIssue(ctx, dbIssue, "test"); err != nil {
+		t.Fatalf("Failed to create issue: %v", err)
+	}
+
+	// Create JSONL with merge conflict markers
+	conflictContent := `<<<<<<< HEAD
+{"id":"test-conflict-1","title":"HEAD version","status":"open","priority":1,"issue_type":"task","created_at":"2025-10-16T00:00:00Z","updated_at":"2025-10-16T00:00:00Z"}
+=======
+{"id":"test-conflict-1","title":"Incoming version","status":"in_progress","priority":2,"issue_type":"bug","created_at":"2025-10-16T00:00:00Z","updated_at":"2025-10-16T00:00:00Z"}
+>>>>>>> incoming-branch
+`
+	if err := os.WriteFile(jsonlPath, []byte(conflictContent), 0644); err != nil {
+		t.Fatalf("Failed to create conflicted JSONL: %v", err)
+	}
+
+	// Capture stderr to check for merge conflict message
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	// Run auto-import - should detect conflict and abort
+	autoImportIfNewer()
+
+	w.Close()
+	os.Stderr = oldStderr
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	stderrOutput := buf.String()
+
+	// Verify merge conflict was detected
+	if !strings.Contains(stderrOutput, "Git merge conflict detected") {
+		t.Errorf("Expected 'Git merge conflict detected' in stderr, got: %s", stderrOutput)
+	}
+
+	// Verify the database was not modified (original issue unchanged)
+	result, err := testStore.GetIssue(ctx, "test-conflict-1")
+	if err != nil {
+		t.Fatalf("Failed to get issue: %v", err)
+	}
+	if result.Title != "Original issue" {
+		t.Errorf("Expected title 'Original issue' (unchanged), got '%s'", result.Title)
 	}
 }
 

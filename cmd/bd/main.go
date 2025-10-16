@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -206,6 +207,22 @@ func autoImportIfNewer() {
 
 	if os.Getenv("BD_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr, "Debug: auto-import triggered (hash changed)\n")
+	}
+
+	// Check for Git merge conflict markers (bd-270)
+	conflictMarkers := []string{"<<<<<<< ", "=======", ">>>>>>> "}
+	for _, marker := range conflictMarkers {
+		if bytes.Contains(jsonlData, []byte(marker)) {
+			fmt.Fprintf(os.Stderr, "\n❌ Git merge conflict detected in %s\n\n", jsonlPath)
+			fmt.Fprintf(os.Stderr, "The JSONL file contains unresolved merge conflict markers.\n")
+			fmt.Fprintf(os.Stderr, "This prevents auto-import from loading your issues.\n\n")
+			fmt.Fprintf(os.Stderr, "To resolve:\n")
+			fmt.Fprintf(os.Stderr, "  1. Resolve the merge conflict in your Git client, OR\n")
+			fmt.Fprintf(os.Stderr, "  2. Export from database to regenerate clean JSONL:\n")
+			fmt.Fprintf(os.Stderr, "     bd export -o %s\n\n", jsonlPath)
+			fmt.Fprintf(os.Stderr, "After resolving, commit the fixed JSONL file.\n")
+			return
+		}
 	}
 
 	// Content changed - parse all issues
