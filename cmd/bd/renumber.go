@@ -161,40 +161,19 @@ func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string
 		tempID := fmt.Sprintf("%s-%s", tempPrefix, strings.TrimPrefix(oldID, prefix+"-"))
 		tempMapping[oldID] = tempID
 		
-		// Rename to temp ID
+		// Rename to temp ID (don't update text yet)
 		issue.ID = tempID
 		if err := store.UpdateIssueID(ctx, oldID, tempID, issue, actor); err != nil {
 			return fmt.Errorf("failed to rename %s to temp ID: %w", oldID, err)
 		}
 	}
 	
-	// Step 2: Now rename from temp IDs to final IDs
-	// Build regex to match any temp issue ID
-	tempIDs := make([]string, 0, len(tempMapping))
-	for _, tempID := range tempMapping {
-		tempIDs = append(tempIDs, regexp.QuoteMeta(tempID))
-	}
-	tempPattern := regexp.MustCompile(`\b(` + strings.Join(tempIDs, "|") + `)\b`)
-	
-	// Build reverse mapping: tempID -> finalID
-	tempToFinal := make(map[string]string)
-	for oldID, tempID := range tempMapping {
-		finalID := idMapping[oldID]
-		tempToFinal[tempID] = finalID
-	}
-
-	replaceFunc := func(match string) string {
-		if finalID, ok := tempToFinal[match]; ok {
-			return finalID
-		}
-		return match
-	}
-
-	// Update each issue from temp to final
+	// Step 2: Rename from temp IDs to final IDs (still don't update text)
 	for _, issue := range issues {
 		tempID := issue.ID // Currently has temp ID
-		oldOriginalID := ""
+		
 		// Find original ID
+		var oldOriginalID string
 		for origID, tID := range tempMapping {
 			if tID == tempID {
 				oldOriginalID = origID
@@ -202,26 +181,80 @@ func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string
 			}
 		}
 		finalID := idMapping[oldOriginalID]
-
-		// Update the issue's own ID
+		
+		// Just update the ID, not text yet
 		issue.ID = finalID
-
-		// Update text references in all fields
-		issue.Title = tempPattern.ReplaceAllStringFunc(issue.Title, replaceFunc)
-		issue.Description = tempPattern.ReplaceAllStringFunc(issue.Description, replaceFunc)
-		if issue.Design != "" {
-			issue.Design = tempPattern.ReplaceAllStringFunc(issue.Design, replaceFunc)
-		}
-		if issue.AcceptanceCriteria != "" {
-			issue.AcceptanceCriteria = tempPattern.ReplaceAllStringFunc(issue.AcceptanceCriteria, replaceFunc)
-		}
-		if issue.Notes != "" {
-			issue.Notes = tempPattern.ReplaceAllStringFunc(issue.Notes, replaceFunc)
-		}
-
-		// Update the issue in the database
 		if err := store.UpdateIssueID(ctx, tempID, finalID, issue, actor); err != nil {
 			return fmt.Errorf("failed to update issue %s: %w", tempID, err)
+		}
+	}
+	
+	// Step 3: Now update all text references using the original old->new mapping
+	// Build regex to match any OLD issue ID (before renumbering)
+	oldIDs := make([]string, 0, len(idMapping))
+	for oldID := range idMapping {
+		oldIDs = append(oldIDs, regexp.QuoteMeta(oldID))
+	}
+	oldPattern := regexp.MustCompile(`\b(` + strings.Join(oldIDs, "|") + `)\b`)
+	
+	replaceFunc := func(match string) string {
+		if newID, ok := idMapping[match]; ok {
+			return newID
+		}
+		return match
+	}
+
+	// Update text references in all issues
+	for _, issue := range issues {
+		changed := false
+		
+		newTitle := oldPattern.ReplaceAllStringFunc(issue.Title, replaceFunc)
+		if newTitle != issue.Title {
+			issue.Title = newTitle
+			changed = true
+		}
+		
+		newDesc := oldPattern.ReplaceAllStringFunc(issue.Description, replaceFunc)
+		if newDesc != issue.Description {
+			issue.Description = newDesc
+			changed = true
+		}
+		
+		if issue.Design != "" {
+			newDesign := oldPattern.ReplaceAllStringFunc(issue.Design, replaceFunc)
+			if newDesign != issue.Design {
+				issue.Design = newDesign
+				changed = true
+			}
+		}
+		
+		if issue.AcceptanceCriteria != "" {
+			newAC := oldPattern.ReplaceAllStringFunc(issue.AcceptanceCriteria, replaceFunc)
+			if newAC != issue.AcceptanceCriteria {
+				issue.AcceptanceCriteria = newAC
+				changed = true
+			}
+		}
+		
+		if issue.Notes != "" {
+			newNotes := oldPattern.ReplaceAllStringFunc(issue.Notes, replaceFunc)
+			if newNotes != issue.Notes {
+				issue.Notes = newNotes
+				changed = true
+			}
+		}
+		
+		// Only update if text changed
+		if changed {
+			if err := store.UpdateIssue(ctx, issue.ID, map[string]interface{}{
+				"title":               issue.Title,
+				"description":         issue.Description,
+				"design":              issue.Design,
+				"acceptance_criteria": issue.AcceptanceCriteria,
+				"notes":               issue.Notes,
+			}, actor); err != nil {
+				return fmt.Errorf("failed to update text references in %s: %w", issue.ID, err)
+			}
 		}
 	}
 
