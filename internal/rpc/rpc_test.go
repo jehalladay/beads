@@ -209,7 +209,7 @@ func TestSocketCleanup(t *testing.T) {
 }
 
 func TestConcurrentRequests(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
+	server, _, cleanup := setupTestServer(t)
 	defer cleanup()
 
 	done := make(chan bool)
@@ -217,6 +217,14 @@ func TestConcurrentRequests(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		go func(n int) {
+			client, err := TryConnect(server.socketPath)
+			if err != nil {
+				errors <- err
+				done <- true
+				return
+			}
+			defer client.Close()
+
 			args := &CreateArgs{
 				Title:     "Concurrent Issue",
 				IssueType: "task",

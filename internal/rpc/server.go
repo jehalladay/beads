@@ -163,6 +163,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleLabelAdd(req)
 	case OpLabelRemove:
 		return s.handleLabelRemove(req)
+	case OpBatch:
+		return s.handleBatch(req)
 	default:
 		return Response{
 			Success: false,
@@ -548,6 +550,47 @@ func (s *Server) handleLabelRemove(req *Request) Response {
 	}
 
 	return Response{Success: true}
+}
+
+func (s *Server) handleBatch(req *Request) Response {
+	var batchArgs BatchArgs
+	if err := json.Unmarshal(req.Args, &batchArgs); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid batch args: %v", err),
+		}
+	}
+
+	results := make([]BatchResult, 0, len(batchArgs.Operations))
+
+	for _, op := range batchArgs.Operations {
+		subReq := &Request{
+			Operation: op.Operation,
+			Args:      op.Args,
+			Actor:     req.Actor,
+			RequestID: req.RequestID,
+		}
+
+		resp := s.handleRequest(subReq)
+
+		results = append(results, BatchResult{
+			Success: resp.Success,
+			Data:    resp.Data,
+			Error:   resp.Error,
+		})
+
+		if !resp.Success {
+			break
+		}
+	}
+
+	batchResp := BatchResponse{Results: results}
+	data, _ := json.Marshal(batchResp)
+
+	return Response{
+		Success: true,
+		Data:    data,
+	}
 }
 
 func (s *Server) writeResponse(writer *bufio.Writer, resp Response) {

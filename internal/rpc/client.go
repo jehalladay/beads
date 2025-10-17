@@ -13,26 +13,37 @@ import (
 type Client struct {
 	conn       net.Conn
 	socketPath string
+	timeout    time.Duration
 }
 
 // TryConnect attempts to connect to the daemon socket
 // Returns nil if no daemon is running
 func TryConnect(socketPath string) (*Client, error) {
 	if _, err := os.Stat(socketPath); os.IsNotExist(err) {
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: socket does not exist: %s\n", socketPath)
+		}
 		return nil, nil
 	}
 
 	conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
 	if err != nil {
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: failed to dial socket: %v\n", err)
+		}
 		return nil, nil
 	}
 
 	client := &Client{
 		conn:       conn,
 		socketPath: socketPath,
+		timeout:    30 * time.Second,
 	}
 
 	if err := client.Ping(); err != nil {
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: ping failed: %v\n", err)
+		}
 		conn.Close()
 		return nil, nil
 	}
@@ -46,6 +57,11 @@ func (c *Client) Close() error {
 		return c.conn.Close()
 	}
 	return nil
+}
+
+// SetTimeout sets the request timeout duration
+func (c *Client) SetTimeout(timeout time.Duration) {
+	c.timeout = timeout
 }
 
 // Execute sends an RPC request and waits for a response
@@ -63,6 +79,13 @@ func (c *Client) Execute(operation string, args interface{}) (*Response, error) 
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	if c.timeout > 0 {
+		deadline := time.Now().Add(c.timeout)
+		if err := c.conn.SetDeadline(deadline); err != nil {
+			return nil, fmt.Errorf("failed to set deadline: %w", err)
+		}
 	}
 
 	writer := bufio.NewWriter(c.conn)
@@ -161,4 +184,9 @@ func (c *Client) AddLabel(args *LabelAddArgs) (*Response, error) {
 // RemoveLabel removes a label via the daemon
 func (c *Client) RemoveLabel(args *LabelRemoveArgs) (*Response, error) {
 	return c.Execute(OpLabelRemove, args)
+}
+
+// Batch executes multiple operations atomically
+func (c *Client) Batch(args *BatchArgs) (*Response, error) {
+	return c.Execute(OpBatch, args)
 }

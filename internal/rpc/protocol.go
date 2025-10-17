@@ -4,19 +4,20 @@ import "encoding/json"
 
 // Operation constants for all bd commands
 const (
-	OpPing      = "ping"
-	OpCreate    = "create"
-	OpUpdate    = "update"
-	OpClose     = "close"
-	OpList      = "list"
-	OpShow      = "show"
-	OpReady     = "ready"
-	OpStats     = "stats"
-	OpDepAdd    = "dep_add"
-	OpDepRemove = "dep_remove"
-	OpDepTree   = "dep_tree"
-	OpLabelAdd  = "label_add"
+	OpPing        = "ping"
+	OpCreate      = "create"
+	OpUpdate      = "update"
+	OpClose       = "close"
+	OpList        = "list"
+	OpShow        = "show"
+	OpReady       = "ready"
+	OpStats       = "stats"
+	OpDepAdd      = "dep_add"
+	OpDepRemove   = "dep_remove"
+	OpDepTree     = "dep_tree"
+	OpLabelAdd    = "label_add"
 	OpLabelRemove = "label_remove"
+	OpBatch       = "batch"
 )
 
 // Request represents an RPC request from client to daemon
@@ -125,4 +126,27 @@ type LabelRemoveArgs struct {
 type PingResponse struct {
 	Message string `json:"message"`
 	Version string `json:"version"`
+}
+
+// BatchArgs represents arguments for batch operations
+type BatchArgs struct {
+	Operations []BatchOperation `json:"operations"`
+}
+
+// BatchOperation represents a single operation in a batch
+type BatchOperation struct {
+	Operation string          `json:"operation"`
+	Args      json.RawMessage `json:"args"`
+}
+
+// BatchResponse contains the results of a batch operation
+type BatchResponse struct {
+	Results []BatchResult `json:"results"`
+}
+
+// BatchResult represents the result of a single operation in a batch
+type BatchResult struct {
+	Success bool            `json:"success"`
+	Data    json.RawMessage `json:"data,omitempty"`
+	Error   string          `json:"error,omitempty"`
 }

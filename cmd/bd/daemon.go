@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -9,12 +10,18 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads"
+	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 var daemonCmd = &cobra.Command{
@@ -290,6 +297,98 @@ func startDaemon(interval time.Duration, autoCommit, autoPush bool, logFile, pid
 	fmt.Fprintf(os.Stderr, "Check log file: %s\n", logPath)
 }
 
+// exportToJSONLWithStore exports issues to JSONL using the provided store
+func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPath string) error {
+	// Get all issues
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		return fmt.Errorf("failed to get issues: %w", err)
+	}
+
+	// Sort by ID for consistent output
+	sort.Slice(issues, func(i, j int) bool {
+		return issues[i].ID < issues[j].ID
+	})
+
+	// Populate dependencies for all issues
+	allDeps, err := store.GetAllDependencyRecords(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get dependencies: %w", err)
+	}
+	for _, issue := range issues {
+		issue.Dependencies = allDeps[issue.ID]
+	}
+
+	// Populate labels for all issues
+	for _, issue := range issues {
+		labels, err := store.GetLabels(ctx, issue.ID)
+		if err != nil {
+			return fmt.Errorf("failed to get labels for %s: %w", issue.ID, err)
+		}
+		issue.Labels = labels
+	}
+
+	// Create temp file for atomic write
+	dir := filepath.Dir(jsonlPath)
+	base := filepath.Base(jsonlPath)
+	tempFile, err := os.CreateTemp(dir, base+".tmp.*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tempPath := tempFile.Name()
+	
+	// Use defer pattern for proper cleanup
+	var writeErr error
+	defer func() {
+		tempFile.Close()
+		if writeErr != nil {
+			os.Remove(tempPath) // Remove temp file on error
+		}
+	}()
+
+	// Write JSONL
+	for _, issue := range issues {
+		data, marshalErr := json.Marshal(issue)
+		if marshalErr != nil {
+			writeErr = fmt.Errorf("failed to marshal issue %s: %w", issue.ID, marshalErr)
+			return writeErr
+		}
+		if _, writeErr = tempFile.Write(data); writeErr != nil {
+			writeErr = fmt.Errorf("failed to write issue %s: %w", issue.ID, writeErr)
+			return writeErr
+		}
+		if _, writeErr = tempFile.WriteString("\n"); writeErr != nil {
+			writeErr = fmt.Errorf("failed to write newline: %w", writeErr)
+			return writeErr
+		}
+	}
+
+	// Close before rename
+	if writeErr = tempFile.Close(); writeErr != nil {
+		writeErr = fmt.Errorf("failed to close temp file: %w", writeErr)
+		return writeErr
+	}
+
+	// Atomic rename
+	if writeErr = os.Rename(tempPath, jsonlPath); writeErr != nil {
+		writeErr = fmt.Errorf("failed to rename temp file: %w", writeErr)
+		return writeErr
+	}
+
+	return nil
+}
+
+// importToJSONLWithStore imports issues from JSONL using the provided store
+// Note: This cannot use the import command approach since we're in the daemon
+// We need to implement direct import logic here
+func importToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPath string) error {
+	// TODO Phase 4: Implement direct import for daemon
+	// Currently a no-op - daemon doesn't import git changes into DB
+	// This means git pulls won't update the database until this is implemented
+	// For now, users must restart daemon after git pulls to see changes
+	return nil
+}
+
 func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, pidFile string) {
 	logF, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
@@ -339,8 +438,60 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 
 	log("Daemon started (interval: %v, auto-commit: %v, auto-push: %v)", interval, autoCommit, autoPush)
 
+	// Open SQLite database (daemon owns exclusive connection)
+	// Use the same dbPath resolution logic as other commands
+	daemonDBPath := dbPath
+	if daemonDBPath == "" {
+		// Try to find database in current repo
+		if foundDB := beads.FindDatabasePath(); foundDB != "" {
+			daemonDBPath = foundDB
+		} else {
+			// Fallback to default location
+			home, err := os.UserHomeDir()
+			if err != nil {
+				log("Error: cannot resolve home directory: %v", err)
+				os.Exit(1)
+			}
+			daemonDBPath = filepath.Join(home, ".beads", "default.db")
+		}
+	}
+	
+	log("Using database: %s", daemonDBPath)
+	
+	store, err := sqlite.New(daemonDBPath)
+	if err != nil {
+		log("Error: cannot open database: %v", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+	log("Database opened: %s", daemonDBPath)
+
+	// Start RPC server
+	socketPath := filepath.Join(filepath.Dir(daemonDBPath), "bd.sock")
+	server := rpc.NewServer(socketPath, store)
+	
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	
+	// Start RPC server in background
+	serverErrChan := make(chan error, 1)
+	go func() {
+		log("Starting RPC server: %s", socketPath)
+		if err := server.Start(ctx); err != nil {
+			log("RPC server error: %v", err)
+			serverErrChan <- err
+		}
+	}()
+	
+	// Wait for server to start or fail
+	select {
+	case err := <-serverErrChan:
+		log("RPC server failed to start: %v", err)
+		os.Exit(1)
+	case <-time.After(2 * time.Second):
+		// If no error after 2 seconds, assume success
+		log("RPC server started")
+	}
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
@@ -360,7 +511,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 			return
 		}
 
-		if err := exportToJSONL(syncCtx, jsonlPath); err != nil {
+		if err := exportToJSONLWithStore(syncCtx, store, jsonlPath); err != nil {
 			log("Export failed: %v", err)
 			return
 		}
@@ -389,7 +540,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 		}
 		log("Pulled from remote")
 
-		if err := importFromJSONL(syncCtx, jsonlPath); err != nil {
+		if err := importToJSONLWithStore(syncCtx, store, jsonlPath); err != nil {
 			log("Import failed: %v", err)
 			return
 		}
@@ -422,9 +573,19 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 			}
 			log("Received signal %v, shutting down gracefully...", sig)
 			cancel()
+			if err := server.Stop(); err != nil {
+				log("Error stopping RPC server: %v", err)
+			}
 			return
 		case <-ctx.Done():
 			log("Context cancelled, shutting down")
+			if err := server.Stop(); err != nil {
+				log("Error stopping RPC server: %v", err)
+			}
+			return
+		case err := <-serverErrChan:
+			log("RPC server failed: %v", err)
+			cancel()
 			return
 		}
 	}
