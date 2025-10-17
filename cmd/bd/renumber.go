@@ -127,6 +127,9 @@ Risks:
 			os.Exit(1)
 		}
 
+		// Schedule auto-flush to export changes
+		markDirtyAndScheduleFlush()
+
 		fmt.Printf("%s Successfully renumbered %d issues\n", green("✓"), len(issues))
 
 		// Count actual changes

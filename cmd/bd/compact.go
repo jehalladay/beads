@@ -183,6 +183,9 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store *
 		originalSize, compactedSize, savingBytes,
 		float64(savingBytes)/float64(originalSize)*100)
 	fmt.Printf("  Time: %v\n", elapsed)
+
+	// Schedule auto-flush to export changes
+	markDirtyAndScheduleFlush()
 }
 
 func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *sqlite.SQLiteStorage) {
@@ -303,6 +306,11 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *sql
 	fmt.Printf("  Failed: %d\n", failCount)
 	if totalOriginal > 0 {
 		fmt.Printf("  Saved: %d bytes (%.1f%%)\n", totalSaved, float64(totalSaved)/float64(totalOriginal)*100)
+	}
+
+	// Schedule auto-flush to export changes
+	if successCount > 0 {
+		markDirtyAndScheduleFlush()
 	}
 }
 

@@ -96,6 +96,9 @@ Example:
 			os.Exit(1)
 		}
 
+		// Schedule auto-flush to export changes
+		markDirtyAndScheduleFlush()
+
 		fmt.Printf("%s Successfully renamed prefix from %s to %s\n", green("✓"), cyan(oldPrefix), cyan(newPrefix))
 
 		if jsonOutput {
