@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -155,13 +156,19 @@ Risks:
 }
 
 func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string]string, issues []*types.Issue) error {
-	// Step 1: Rename all issues to temporary IDs to avoid collisions
-	tempPrefix := "temp-renumber"
+	// Step 0: Get all dependencies BEFORE renaming (while IDs still match)
+	allDepsByIssue, err := store.GetAllDependencyRecords(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get dependency records: %w", err)
+	}
+	
+	// Step 1: Rename all issues to temporary UUIDs to avoid collisions
 	tempMapping := make(map[string]string)
 	
 	for _, issue := range issues {
 		oldID := issue.ID
-		tempID := fmt.Sprintf("%s-%s", tempPrefix, strings.TrimPrefix(oldID, prefix+"-"))
+		// Use UUID to guarantee uniqueness (no collision possible)
+		tempID := fmt.Sprintf("temp-%s", uuid.New().String())
 		tempMapping[oldID] = tempID
 		
 		// Rename to temp ID (don't update text yet)
@@ -261,8 +268,8 @@ func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string
 		}
 	}
 
-	// Update all dependency links
-	if err := renumberDependencies(ctx, idMapping); err != nil {
+	// Update all dependency links (use the deps we fetched before renaming)
+	if err := renumberDependencies(ctx, idMapping, allDepsByIssue); err != nil {
 		return fmt.Errorf("failed to update dependencies: %w", err)
 	}
 
@@ -273,13 +280,7 @@ func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string
 	return nil
 }
 
-func renumberDependencies(ctx context.Context, idMapping map[string]string) error {
-	// Get all dependency records
-	allDepsByIssue, err := store.GetAllDependencyRecords(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get dependency records: %w", err)
-	}
-
+func renumberDependencies(ctx context.Context, idMapping map[string]string, allDepsByIssue map[string][]*types.Dependency) error {
 	// Collect all dependencies to update
 	oldDeps := make([]*types.Dependency, 0)
 	newDeps := make([]*types.Dependency, 0)
