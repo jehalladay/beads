@@ -2,11 +2,11 @@
 
 **Give your coding agent a memory upgrade**
 
-> **⚠️ Alpha Status**: This project is in active development. The core features work well, but expect API changes before 1.0. Use for development/internal projects first.
-
-> **✅ Critical Fix (v0.9.6) - Testing Phase**
+> **🚨 CRITICAL WARNING - Do Not Use for Multiple Workstreams**
 >
-> Fixed auto-import bug (bd-228) that silently overwrote local changes. Collision detection is now enabled. **Field testing in progress** - please report any issues with multi-machine workflows or agent swarms.
+> **v0.9.x has data duplication and data loss bugs when handling multiple workstreams.** This creates a mess that's difficult even for agents to clean up. Until further notice, **use only for single-workstream projects**. A fix is in progress.
+
+> **⚠️ Alpha Status**: This project is in active development. The core features work well, but expect API changes before 1.0. Use for development/internal projects first.
 
 Beads is a lightweight memory system for coding agents, using a graph-based issue tracker. Four kinds of dependencies work to chain your issues together like beads, making them easy for agents to follow for long distances, and reliably perform complex task streams in the right order.
 
