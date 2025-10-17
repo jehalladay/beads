@@ -26,6 +26,7 @@ type Request struct {
 	Args      json.RawMessage `json:"args"`
 	Actor     string          `json:"actor,omitempty"`
 	RequestID string          `json:"request_id,omitempty"`
+	Cwd       string          `json:"cwd,omitempty"` // Working directory for database discovery
 }
 
 // Response represents an RPC response from daemon to client
