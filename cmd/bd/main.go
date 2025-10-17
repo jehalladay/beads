@@ -18,6 +18,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -28,6 +29,10 @@ var (
 	actor      string
 	store      storage.Storage
 	jsonOutput bool
+	
+	// Daemon mode
+	daemonClient *rpc.Client // RPC client when daemon is running
+	noDaemon     bool         // Force direct mode (no daemon)
 
 	// Auto-flush state
 	autoFlushEnabled  = true  // Can be disabled with --no-auto-flush
@@ -50,8 +55,8 @@ var rootCmd = &cobra.Command{
 	Short: "bd - Dependency-aware issue tracker",
 	Long:  `Issues chained together like beads. A lightweight issue tracker with first-class dependency support.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		// Skip database initialization for init command
-		if cmd.Name() == "init" {
+		// Skip database initialization for init and daemon commands
+		if cmd.Name() == "init" || cmd.Name() == "daemon" {
 			return
 		}
 
@@ -61,7 +66,7 @@ var rootCmd = &cobra.Command{
 		// Set auto-import based on flag (invert no-auto-import)
 		autoImportEnabled = !noAutoImport
 
-		// Initialize storage
+		// Initialize database path
 		if dbPath == "" {
 			// Use public API to find database (same logic as extensions)
 			if foundDB := beads.FindDatabasePath(); foundDB != "" {
@@ -72,18 +77,6 @@ var rootCmd = &cobra.Command{
 				dbPath = filepath.Join(home, ".beads", "default.db")
 			}
 		}
-
-		var err error
-		store, err = sqlite.New(dbPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Mark store as active for flush goroutine safety
-		storeMutex.Lock()
-		storeActive = true
-		storeMutex.Unlock()
 
 		// Set actor from flag, env, or default
 		// Priority: --actor flag > BD_ACTOR env > USER env > "unknown"
@@ -97,6 +90,35 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
+		// Try to connect to daemon first (unless --no-daemon flag is set)
+		if !noDaemon {
+			socketPath := getSocketPath()
+			client, err := rpc.TryConnect(socketPath)
+			if err == nil && client != nil {
+				daemonClient = client
+				if os.Getenv("BD_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "Debug: connected to daemon at %s\n", socketPath)
+				}
+				return // Skip direct storage initialization
+			}
+			if os.Getenv("BD_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "Debug: daemon not available, using direct mode\n")
+			}
+		}
+
+		// Fall back to direct storage access
+		var err error
+		store, err = sqlite.New(dbPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Mark store as active for flush goroutine safety
+		storeMutex.Lock()
+		storeActive = true
+		storeMutex.Unlock()
+
 		// Check for version mismatch (warn if binary is older than DB)
 		checkVersionMismatch()
 
@@ -107,6 +129,13 @@ var rootCmd = &cobra.Command{
 		}
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
+		// Close daemon client if we're using it
+		if daemonClient != nil {
+			_ = daemonClient.Close()
+			return
+		}
+
+		// Otherwise, handle direct mode cleanup
 		// Flush any pending changes before closing
 		flushMutex.Lock()
 		needsFlush := isDirty && autoFlushEnabled
@@ -134,6 +163,12 @@ var rootCmd = &cobra.Command{
 			_ = store.Close()
 		}
 	},
+}
+
+// getSocketPath returns the daemon socket path based on the database location
+func getSocketPath() string {
+	// Socket lives in same directory as database: .beads/bd.sock
+	return filepath.Join(filepath.Dir(dbPath), "bd.sock")
 }
 
 // outputJSON outputs data as pretty-printed JSON
@@ -766,6 +801,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "Database path (default: auto-discover .beads/*.db or ~/.beads/default.db)")
 	rootCmd.PersistentFlags().StringVar(&actor, "actor", "", "Actor name for audit trail (default: $BD_ACTOR or $USER)")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	rootCmd.PersistentFlags().BoolVar(&noDaemon, "no-daemon", false, "Force direct storage mode, bypass daemon if running")
 	rootCmd.PersistentFlags().BoolVar(&noAutoFlush, "no-auto-flush", false, "Disable automatic JSONL sync after CRUD operations")
 	rootCmd.PersistentFlags().BoolVar(&noAutoImport, "no-auto-import", false, "Disable automatic JSONL import when newer than DB")
 }
@@ -936,6 +972,45 @@ var createCmd = &cobra.Command{
 			externalRefPtr = &externalRef
 		}
 
+		// If daemon is running, use RPC
+		if daemonClient != nil {
+			createArgs := &rpc.CreateArgs{
+				ID:                 explicitID,
+				Title:              title,
+				Description:        description,
+				IssueType:          issueType,
+				Priority:           priority,
+				Design:             design,
+				AcceptanceCriteria: acceptance,
+				Assignee:           assignee,
+				Labels:             labels,
+				Dependencies:       deps,
+			}
+
+			resp, err := daemonClient.Create(createArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+
+			if jsonOutput {
+				fmt.Println(string(resp.Data))
+			} else {
+				var issue types.Issue
+				if err := json.Unmarshal(resp.Data, &issue); err != nil {
+					fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
+					os.Exit(1)
+				}
+				green := color.New(color.FgGreen).SprintFunc()
+				fmt.Printf("%s Created issue: %s\n", green("✓"), issue.ID)
+				fmt.Printf("  Title: %s\n", issue.Title)
+				fmt.Printf("  Priority: P%d\n", issue.Priority)
+				fmt.Printf("  Status: %s\n", issue.Status)
+			}
+			return
+		}
+
+		// Direct mode
 		issue := &types.Issue{
 			ID:                 explicitID, // Set explicit ID if provided (empty string if not)
 			Title:              title,
@@ -1040,6 +1115,119 @@ var showCmd = &cobra.Command{
 	Short: "Show issue details",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		// If daemon is running, use RPC
+		if daemonClient != nil {
+			showArgs := &rpc.ShowArgs{ID: args[0]}
+			resp, err := daemonClient.Show(showArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+
+			if jsonOutput {
+				fmt.Println(string(resp.Data))
+			} else {
+				// Parse response and use existing formatting code
+				type IssueDetails struct {
+					*types.Issue
+					Labels       []string       `json:"labels,omitempty"`
+					Dependencies []*types.Issue `json:"dependencies,omitempty"`
+					Dependents   []*types.Issue `json:"dependents,omitempty"`
+				}
+				var details IssueDetails
+				if err := json.Unmarshal(resp.Data, &details); err != nil {
+					fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
+					os.Exit(1)
+				}
+				issue := details.Issue
+
+				cyan := color.New(color.FgCyan).SprintFunc()
+				
+				// Format output (same as direct mode below)
+				tierEmoji := ""
+				statusSuffix := ""
+				if issue.CompactionLevel == 1 {
+					tierEmoji = " 🗜️"
+				} else if issue.CompactionLevel == 2 {
+					tierEmoji = " 📦"
+				}
+				if issue.CompactionLevel > 0 {
+					statusSuffix = fmt.Sprintf(" (compacted L%d)", issue.CompactionLevel)
+				}
+				
+				fmt.Printf("\n%s: %s%s\n", cyan(issue.ID), issue.Title, tierEmoji)
+				fmt.Printf("Status: %s%s\n", issue.Status, statusSuffix)
+				fmt.Printf("Priority: P%d\n", issue.Priority)
+				fmt.Printf("Type: %s\n", issue.IssueType)
+				if issue.Assignee != "" {
+					fmt.Printf("Assignee: %s\n", issue.Assignee)
+				}
+				if issue.EstimatedMinutes != nil {
+					fmt.Printf("Estimated: %d minutes\n", *issue.EstimatedMinutes)
+				}
+				fmt.Printf("Created: %s\n", issue.CreatedAt.Format("2006-01-02 15:04"))
+				fmt.Printf("Updated: %s\n", issue.UpdatedAt.Format("2006-01-02 15:04"))
+
+				// Show compaction status
+				if issue.CompactionLevel > 0 {
+					fmt.Println()
+					if issue.OriginalSize > 0 {
+						currentSize := len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
+						saved := issue.OriginalSize - currentSize
+						if saved > 0 {
+							reduction := float64(saved) / float64(issue.OriginalSize) * 100
+							fmt.Printf("📊 Original: %d bytes | Compressed: %d bytes (%.0f%% reduction)\n", 
+								issue.OriginalSize, currentSize, reduction)
+						}
+					}
+					tierEmoji2 := "🗜️"
+					if issue.CompactionLevel == 2 {
+						tierEmoji2 = "📦"
+					}
+					compactedDate := ""
+					if issue.CompactedAt != nil {
+						compactedDate = issue.CompactedAt.Format("2006-01-02")
+					}
+					fmt.Printf("%s Compacted: %s (Tier %d)\n", tierEmoji2, compactedDate, issue.CompactionLevel)
+				}
+
+				if issue.Description != "" {
+					fmt.Printf("\nDescription:\n%s\n", issue.Description)
+				}
+				if issue.Design != "" {
+					fmt.Printf("\nDesign:\n%s\n", issue.Design)
+				}
+				if issue.Notes != "" {
+					fmt.Printf("\nNotes:\n%s\n", issue.Notes)
+				}
+				if issue.AcceptanceCriteria != "" {
+					fmt.Printf("\nAcceptance Criteria:\n%s\n", issue.AcceptanceCriteria)
+				}
+
+				if len(details.Labels) > 0 {
+					fmt.Printf("\nLabels: %v\n", details.Labels)
+				}
+
+				if len(details.Dependencies) > 0 {
+					fmt.Printf("\nDepends on (%d):\n", len(details.Dependencies))
+					for _, dep := range details.Dependencies {
+						fmt.Printf("  → %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+					}
+				}
+
+				if len(details.Dependents) > 0 {
+					fmt.Printf("\nBlocks (%d):\n", len(details.Dependents))
+					for _, dep := range details.Dependents {
+						fmt.Printf("  ← %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+					}
+				}
+
+				fmt.Println()
+			}
+			return
+		}
+
+		// Direct mode
 		ctx := context.Background()
 		issue, err := store.GetIssue(ctx, args[0])
 		if err != nil {
@@ -1209,6 +1397,49 @@ var updateCmd = &cobra.Command{
 			return
 		}
 
+		// If daemon is running, use RPC
+		if daemonClient != nil {
+			updateArgs := &rpc.UpdateArgs{ID: args[0]}
+			
+			// Map updates to RPC args
+			if status, ok := updates["status"].(string); ok {
+				updateArgs.Status = &status
+			}
+			if priority, ok := updates["priority"].(int); ok {
+				updateArgs.Priority = &priority
+			}
+			if title, ok := updates["title"].(string); ok {
+				updateArgs.Title = &title
+			}
+			if assignee, ok := updates["assignee"].(string); ok {
+				updateArgs.Assignee = &assignee
+			}
+			if design, ok := updates["design"].(string); ok {
+				updateArgs.Design = &design
+			}
+			if notes, ok := updates["notes"].(string); ok {
+				updateArgs.Notes = &notes
+			}
+			if acceptanceCriteria, ok := updates["acceptance_criteria"].(string); ok {
+				updateArgs.AcceptanceCriteria = &acceptanceCriteria
+			}
+
+			resp, err := daemonClient.Update(updateArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+
+			if jsonOutput {
+				fmt.Println(string(resp.Data))
+			} else {
+				green := color.New(color.FgGreen).SprintFunc()
+				fmt.Printf("%s Updated issue: %s\n", green("✓"), args[0])
+			}
+			return
+		}
+
+		// Direct mode
 		ctx := context.Background()
 		if err := store.UpdateIssue(ctx, args[0], updates, actor); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -1251,6 +1482,38 @@ var closeCmd = &cobra.Command{
 			reason = "Closed"
 		}
 
+		// If daemon is running, use RPC
+		if daemonClient != nil {
+			closedIssues := []*types.Issue{}
+			for _, id := range args {
+				closeArgs := &rpc.CloseArgs{
+					ID:     id,
+					Reason: reason,
+				}
+				resp, err := daemonClient.CloseIssue(closeArgs)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
+					continue
+				}
+				
+				if jsonOutput {
+					var issue types.Issue
+					if err := json.Unmarshal(resp.Data, &issue); err == nil {
+						closedIssues = append(closedIssues, &issue)
+					}
+				} else {
+					green := color.New(color.FgGreen).SprintFunc()
+					fmt.Printf("%s Closed %s: %s\n", green("✓"), id, reason)
+				}
+			}
+
+			if jsonOutput && len(closedIssues) > 0 {
+				outputJSON(closedIssues)
+			}
+			return
+		}
+
+		// Direct mode
 		ctx := context.Background()
 		closedIssues := []*types.Issue{}
 		for _, id := range args {

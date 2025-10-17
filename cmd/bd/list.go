@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"text/template"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -50,6 +52,51 @@ var listCmd = &cobra.Command{
 			filter.TitleSearch = titleSearch
 		}
 
+		// If daemon is running, use RPC
+		if daemonClient != nil {
+			listArgs := &rpc.ListArgs{
+				Status:    status,
+				IssueType: issueType,
+				Assignee:  assignee,
+				Limit:     limit,
+			}
+			if cmd.Flags().Changed("priority") {
+				priority, _ := cmd.Flags().GetInt("priority")
+				listArgs.Priority = &priority
+			}
+			if len(labels) > 0 {
+				listArgs.Label = labels[0] // TODO: daemon protocol needs to support multiple labels
+			}
+
+			resp, err := daemonClient.List(listArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+
+			var issues []*types.Issue
+			if err := json.Unmarshal(resp.Data, &issues); err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
+				os.Exit(1)
+			}
+
+			if jsonOutput {
+				outputJSON(issues)
+			} else {
+				fmt.Printf("\nFound %d issues:\n\n", len(issues))
+				for _, issue := range issues {
+					fmt.Printf("%s [P%d] [%s] %s\n", issue.ID, issue.Priority, issue.IssueType, issue.Status)
+					fmt.Printf("  %s\n", issue.Title)
+					if issue.Assignee != "" {
+						fmt.Printf("  Assignee: %s\n", issue.Assignee)
+					}
+					fmt.Println()
+				}
+			}
+			return
+		}
+
+		// Direct mode
 		ctx := context.Background()
 		issues, err := store.SearchIssues(ctx, "", filter)
 		if err != nil {

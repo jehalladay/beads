@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -30,6 +32,61 @@ var readyCmd = &cobra.Command{
 			filter.Assignee = &assignee
 		}
 
+		// If daemon is running, use RPC
+		if daemonClient != nil {
+			readyArgs := &rpc.ReadyArgs{
+				Assignee: assignee,
+				Limit:    limit,
+			}
+			if cmd.Flags().Changed("priority") {
+				priority, _ := cmd.Flags().GetInt("priority")
+				readyArgs.Priority = &priority
+			}
+
+			resp, err := daemonClient.Ready(readyArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+
+			var issues []*types.Issue
+			if err := json.Unmarshal(resp.Data, &issues); err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
+				os.Exit(1)
+			}
+
+			if jsonOutput {
+				if issues == nil {
+					issues = []*types.Issue{}
+				}
+				outputJSON(issues)
+				return
+			}
+
+			if len(issues) == 0 {
+				yellow := color.New(color.FgYellow).SprintFunc()
+				fmt.Printf("\n%s No ready work found (all issues have blocking dependencies)\n\n",
+					yellow("✨"))
+				return
+			}
+
+			cyan := color.New(color.FgCyan).SprintFunc()
+			fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", cyan("📋"), len(issues))
+
+			for i, issue := range issues {
+				fmt.Printf("%d. [P%d] %s: %s\n", i+1, issue.Priority, issue.ID, issue.Title)
+				if issue.EstimatedMinutes != nil {
+					fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
+				}
+				if issue.Assignee != "" {
+					fmt.Printf("   Assignee: %s\n", issue.Assignee)
+				}
+			}
+			fmt.Println()
+			return
+		}
+
+		// Direct mode
 		ctx := context.Background()
 		issues, err := store.GetReadyWork(ctx, filter)
 		if err != nil {
