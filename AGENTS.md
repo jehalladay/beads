@@ -53,6 +53,10 @@ bd dep tree <id>
 # Get issue details
 bd show <id> --json
 
+# Rename issue prefix (e.g., from 'knowledge-work-' to 'kw-')
+bd rename-prefix kw- --dry-run  # Preview changes
+bd rename-prefix kw- --json     # Apply rename
+
 # Import with collision detection
 bd import -i .beads/issues.jsonl --dry-run             # Preview only
 bd import -i .beads/issues.jsonl --resolve-collisions  # Auto-resolve

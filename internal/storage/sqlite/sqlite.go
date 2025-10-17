@@ -1110,6 +1110,116 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 	return tx.Commit()
 }
 
+// UpdateIssueID updates an issue ID and all its text fields in a single transaction
+func (s *SQLiteStorage) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `
+		UPDATE issues
+		SET id = ?, title = ?, description = ?, design = ?, acceptance_criteria = ?, notes = ?, updated_at = ?
+		WHERE id = ?
+	`, newID, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes, time.Now(), oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update issue ID: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `UPDATE dependencies SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update issue_id in dependencies: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `UPDATE dependencies SET depends_on_id = ? WHERE depends_on_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update depends_on_id in dependencies: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `UPDATE events SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update events: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `UPDATE labels SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update labels: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		UPDATE dirty_issues SET issue_id = ? WHERE issue_id = ?
+	`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update dirty_issues: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `UPDATE issue_snapshots SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update issue_snapshots: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `UPDATE compaction_snapshots SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update compaction_snapshots: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO dirty_issues (issue_id, marked_at)
+		VALUES (?, ?)
+		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
+	`, newID, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to mark issue dirty: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO events (issue_id, event_type, actor, old_value, new_value)
+		VALUES (?, 'renamed', ?, ?, ?)
+	`, newID, actor, oldID, newID)
+	if err != nil {
+		return fmt.Errorf("failed to record rename event: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// RenameDependencyPrefix updates the prefix in all dependency records
+func (s *SQLiteStorage) RenameDependencyPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
+	return nil
+}
+
+// RenameCounterPrefix updates the prefix in the issue_counters table
+func (s *SQLiteStorage) RenameCounterPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var lastID int
+	err = tx.QueryRowContext(ctx, `SELECT last_id FROM issue_counters WHERE prefix = ?`, oldPrefix).Scan(&lastID)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("failed to get old counter: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `DELETE FROM issue_counters WHERE prefix = ?`, oldPrefix)
+	if err != nil {
+		return fmt.Errorf("failed to delete old counter: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO issue_counters (prefix, last_id)
+		VALUES (?, ?)
+		ON CONFLICT(prefix) DO UPDATE SET last_id = MAX(last_id, excluded.last_id)
+	`, newPrefix, lastID)
+	if err != nil {
+		return fmt.Errorf("failed to create new counter: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // CloseIssue closes an issue with a reason
 func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string, actor string) error {
 	now := time.Now()

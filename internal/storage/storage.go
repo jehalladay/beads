@@ -57,6 +57,11 @@ type Storage interface {
 	SetMetadata(ctx context.Context, key, value string) error
 	GetMetadata(ctx context.Context, key string) (string, error)
 
+	// Prefix rename operations
+	UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error
+	RenameDependencyPrefix(ctx context.Context, oldPrefix, newPrefix string) error
+	RenameCounterPrefix(ctx context.Context, oldPrefix, newPrefix string) error
+
 	// Lifecycle
 	Close() error
 }

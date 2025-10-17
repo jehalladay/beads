@@ -311,6 +311,49 @@ bd update bd-1 --status in_progress --json
 bd close bd-1 --json
 ```
 
+### Renaming Prefix
+
+Change the issue prefix for all issues in your database. This is useful if your prefix is too long or you want to standardize naming.
+
+```bash
+# Preview changes without applying
+bd rename-prefix kw- --dry-run
+
+# Rename from current prefix to new prefix
+bd rename-prefix kw-
+
+# JSON output
+bd rename-prefix kw- --json
+```
+
+The rename operation:
+- Updates all issue IDs (e.g., `knowledge-work-1` → `kw-1`)
+- Updates all text references in titles, descriptions, design notes, etc.
+- Updates dependencies and labels
+- Updates the counter table and config
+
+**Prefix validation rules:**
+- Max length: 8 characters
+- Allowed characters: lowercase letters, numbers, hyphens
+- Must start with a letter
+- Must end with a hyphen (or will be trimmed to add one)
+- Cannot be empty or just a hyphen
+
+Example workflow:
+```bash
+# You have issues like knowledge-work-1, knowledge-work-2, etc.
+bd list  # Shows knowledge-work-* issues
+
+# Preview the rename
+bd rename-prefix kw- --dry-run
+
+# Apply the rename
+bd rename-prefix kw-
+
+# Now you have kw-1, kw-2, etc.
+bd list  # Shows kw-* issues
+```
+
 ### Dependencies
 
 ```bash
