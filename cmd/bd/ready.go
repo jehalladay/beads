@@ -185,16 +185,19 @@ var statsCmd = &cobra.Command{
 		yellow := color.New(color.FgYellow).SprintFunc()
 
 		fmt.Printf("\n%s Beads Statistics:\n\n", cyan("📊"))
-		fmt.Printf("Total Issues:      %d\n", stats.TotalIssues)
-		fmt.Printf("Open:              %s\n", green(fmt.Sprintf("%d", stats.OpenIssues)))
-		fmt.Printf("In Progress:       %s\n", yellow(fmt.Sprintf("%d", stats.InProgressIssues)))
-		fmt.Printf("Closed:            %d\n", stats.ClosedIssues)
-		fmt.Printf("Blocked:           %d\n", stats.BlockedIssues)
-		fmt.Printf("Ready:             %s\n", green(fmt.Sprintf("%d", stats.ReadyIssues)))
-		if stats.AverageLeadTime > 0 {
-			fmt.Printf("Avg Lead Time:     %.1f hours\n", stats.AverageLeadTime)
+		fmt.Printf("Total Issues:           %d\n", stats.TotalIssues)
+		fmt.Printf("Open:                   %s\n", green(fmt.Sprintf("%d", stats.OpenIssues)))
+		fmt.Printf("In Progress:            %s\n", yellow(fmt.Sprintf("%d", stats.InProgressIssues)))
+		fmt.Printf("Closed:                 %d\n", stats.ClosedIssues)
+		fmt.Printf("Blocked:                %d\n", stats.BlockedIssues)
+		fmt.Printf("Ready:                  %s\n", green(fmt.Sprintf("%d", stats.ReadyIssues)))
+		if stats.EpicsEligibleForClosure > 0 {
+		fmt.Printf("Epics Ready to Close:   %s\n", green(fmt.Sprintf("%d", stats.EpicsEligibleForClosure)))
 		}
-		fmt.Println()
+		if stats.AverageLeadTime > 0 {
+		fmt.Printf("Avg Lead Time:          %.1f hours\n", stats.AverageLeadTime)
+	}
+	fmt.Println()
 	},
 }
 

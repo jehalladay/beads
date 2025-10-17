@@ -165,5 +165,35 @@ func (s *SQLiteStorage) GetStatistics(ctx context.Context) (*types.Statistics, e
 		stats.AverageLeadTime = avgLeadTime.Float64
 	}
 
+	// Get epics eligible for closure count
+	err = s.db.QueryRowContext(ctx, `
+		WITH epic_children AS (
+			SELECT 
+				d.depends_on_id AS epic_id,
+				i.status AS child_status
+			FROM dependencies d
+			JOIN issues i ON i.id = d.issue_id
+			WHERE d.type = 'parent-child'
+		),
+		epic_stats AS (
+			SELECT 
+				epic_id,
+				COUNT(*) AS total_children,
+				SUM(CASE WHEN child_status = 'closed' THEN 1 ELSE 0 END) AS closed_children
+			FROM epic_children
+			GROUP BY epic_id
+		)
+		SELECT COUNT(*)
+		FROM issues i
+		JOIN epic_stats es ON es.epic_id = i.id
+		WHERE i.issue_type = 'epic'
+		  AND i.status != 'closed'
+		  AND es.total_children > 0
+		  AND es.closed_children = es.total_children
+	`).Scan(&stats.EpicsEligibleForClosure)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get eligible epics count: %w", err)
+	}
+
 	return &stats, nil
 }

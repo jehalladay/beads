@@ -36,6 +36,7 @@ type Storage interface {
 	// Ready Work & Blocking
 	GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error)
 	GetBlockedIssues(ctx context.Context) ([]*types.BlockedIssue, error)
+	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)
 
 	// Events
 	AddComment(ctx context.Context, issueID, actor, comment string) error

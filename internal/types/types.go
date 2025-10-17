@@ -183,13 +183,14 @@ type TreeNode struct {
 
 // Statistics provides aggregate metrics
 type Statistics struct {
-	TotalIssues      int     `json:"total_issues"`
-	OpenIssues       int     `json:"open_issues"`
-	InProgressIssues int     `json:"in_progress_issues"`
-	ClosedIssues     int     `json:"closed_issues"`
-	BlockedIssues    int     `json:"blocked_issues"`
-	ReadyIssues      int     `json:"ready_issues"`
-	AverageLeadTime  float64 `json:"average_lead_time_hours"`
+	TotalIssues              int     `json:"total_issues"`
+	OpenIssues               int     `json:"open_issues"`
+	InProgressIssues         int     `json:"in_progress_issues"`
+	ClosedIssues             int     `json:"closed_issues"`
+	BlockedIssues            int     `json:"blocked_issues"`
+	ReadyIssues              int     `json:"ready_issues"`
+	EpicsEligibleForClosure  int     `json:"epics_eligible_for_closure"`
+	AverageLeadTime          float64 `json:"average_lead_time_hours"`
 }
 
 // IssueFilter is used to filter issue queries
@@ -209,4 +210,12 @@ type WorkFilter struct {
 	Priority *int
 	Assignee *string
 	Limit    int
+}
+
+// EpicStatus represents an epic with its completion status
+type EpicStatus struct {
+	Epic            *Issue `json:"epic"`
+	TotalChildren   int    `json:"total_children"`
+	ClosedChildren  int    `json:"closed_children"`
+	EligibleForClose bool  `json:"eligible_for_close"`
 }
