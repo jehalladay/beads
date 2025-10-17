@@ -342,12 +342,22 @@ func autoImportIfNewer() {
 		allIssues = filteredIssues
 	}
 
+	// Batch fetch all existing issues to avoid N+1 query pattern (bd-666)
+	allExistingIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Auto-import failed: error fetching existing issues: %v\n", err)
+		return
+	}
+	
+	// Build map for O(1) lookup
+	existingByID := make(map[string]*types.Issue)
+	for _, issue := range allExistingIssues {
+		existingByID[issue.ID] = issue
+	}
+
 	// Import non-colliding issues (exact matches + new issues)
 	for _, issue := range allIssues {
-		existing, err := store.GetIssue(ctx, issue.ID)
-		if err != nil {
-			continue
-		}
+		existing := existingByID[issue.ID]
 
 		if existing != nil {
 			// Update existing issue
