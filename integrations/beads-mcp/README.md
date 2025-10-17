@@ -56,6 +56,7 @@ Then use in Claude Desktop config:
 ```
 
 **Environment Variables** (all optional):
+- `BEADS_USE_DAEMON` - Use daemon RPC instead of CLI (default: `1`, set to `0` to disable)
 - `BEADS_PATH` - Path to bd executable (default: `~/.local/bin/bd`)
 - `BEADS_DB` - Path to beads database file (default: auto-discover from cwd)
 - `BEADS_WORKING_DIR` - Working directory for bd commands (default: `$PWD` or current directory)
@@ -114,3 +115,18 @@ uv run pytest --cov=beads_mcp tests/
 ```
 
 Test suite includes both mocked unit tests and integration tests with real `bd` CLI.
+
+### Multi-Repo Integration Test
+
+Test daemon RPC with multiple repositories:
+```bash
+# Start the daemon first
+cd /path/to/beads
+./bd daemon start
+
+# Run multi-repo test
+cd integrations/beads-mcp
+uv run python test_multi_repo.py
+```
+
+This test verifies that the daemon can handle operations across multiple repositories simultaneously using per-request context routing.
