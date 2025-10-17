@@ -279,8 +279,8 @@ func (s *SQLiteStorage) CheckEligibility(ctx context.Context, issueID string, ti
 }
 
 // ApplyCompaction updates the compaction metadata for an issue after successfully compacting it.
-// This sets compaction_level, compacted_at, and original_size fields.
-func (s *SQLiteStorage) ApplyCompaction(ctx context.Context, issueID string, level int, originalSize int, compressedSize int) error {
+// This sets compaction_level, compacted_at, compacted_at_commit, and original_size fields.
+func (s *SQLiteStorage) ApplyCompaction(ctx context.Context, issueID string, level int, originalSize int, compressedSize int, commitHash string) error {
 	now := time.Now().UTC()
 	
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -289,14 +289,20 @@ func (s *SQLiteStorage) ApplyCompaction(ctx context.Context, issueID string, lev
 	}
 	defer tx.Rollback()
 	
+	var commitHashPtr *string
+	if commitHash != "" {
+		commitHashPtr = &commitHash
+	}
+	
 	_, err = tx.ExecContext(ctx, `
 		UPDATE issues
 		SET compaction_level = ?,
 		    compacted_at = ?,
+		    compacted_at_commit = ?,
 		    original_size = ?,
 		    updated_at = ?
 		WHERE id = ?
-	`, level, now, originalSize, now, issueID)
+	`, level, now, commitHashPtr, originalSize, now, issueID)
 	
 	if err != nil {
 		return fmt.Errorf("failed to apply compaction metadata: %w", err)

@@ -333,18 +333,19 @@ func TestApplyCompaction(t *testing.T) {
 	}
 
 	originalSize := len(issue.Description)
-	err := store.ApplyCompaction(ctx, issue.ID, 1, originalSize, 500)
+	err := store.ApplyCompaction(ctx, issue.ID, 1, originalSize, 500, "abc123")
 	if err != nil {
 		t.Fatalf("ApplyCompaction failed: %v", err)
 	}
 
 	var compactionLevel int
 	var compactedAt sql.NullTime
+	var compactedAtCommit sql.NullString
 	var storedSize int
 	err = store.db.QueryRowContext(ctx, `
-		SELECT COALESCE(compaction_level, 0), compacted_at, COALESCE(original_size, 0)
+		SELECT COALESCE(compaction_level, 0), compacted_at, compacted_at_commit, COALESCE(original_size, 0)
 		FROM issues WHERE id = ?
-	`, issue.ID).Scan(&compactionLevel, &compactedAt, &storedSize)
+	`, issue.ID).Scan(&compactionLevel, &compactedAt, &compactedAtCommit, &storedSize)
 	if err != nil {
 		t.Fatalf("Failed to query issue: %v", err)
 	}
@@ -354,6 +355,9 @@ func TestApplyCompaction(t *testing.T) {
 	}
 	if !compactedAt.Valid {
 		t.Error("Expected compacted_at to be set")
+	}
+	if !compactedAtCommit.Valid || compactedAtCommit.String != "abc123" {
+		t.Errorf("Expected compacted_at_commit 'abc123', got %v", compactedAtCommit)
 	}
 	if storedSize != originalSize {
 		t.Errorf("Expected original_size %d, got %d", originalSize, storedSize)

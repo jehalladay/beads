@@ -87,6 +87,11 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to migrate compaction config: %w", err)
 	}
 
+	// Migrate existing databases to add compacted_at_commit column
+	if err := migrateCompactedAtCommitColumn(db); err != nil {
+		return nil, fmt.Errorf("failed to migrate compacted_at_commit column: %w", err)
+	}
+
 	return &SQLiteStorage{
 		db: db,
 	}, nil
@@ -398,6 +403,31 @@ func migrateCompactionConfig(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to add compaction config defaults: %w", err)
 	}
+	return nil
+}
+
+// migrateCompactedAtCommitColumn adds compacted_at_commit column to the issues table.
+// This migration is idempotent and safe to run multiple times.
+func migrateCompactedAtCommitColumn(db *sql.DB) error {
+	var columnExists bool
+	err := db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM pragma_table_info('issues')
+		WHERE name = 'compacted_at_commit'
+	`).Scan(&columnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check compacted_at_commit column: %w", err)
+	}
+
+	if columnExists {
+		return nil
+	}
+
+	_, err = db.Exec(`ALTER TABLE issues ADD COLUMN compacted_at_commit TEXT`)
+	if err != nil {
+		return fmt.Errorf("failed to add compacted_at_commit column: %w", err)
+	}
+
 	return nil
 }
 
@@ -846,11 +876,12 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var compactedAt sql.NullTime
 	var originalSize sql.NullInt64
 
+	var compactedAtCommit sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, original_size
+		       compaction_level, compacted_at, compacted_at_commit, original_size
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -858,7 +889,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef,
-		&issue.CompactionLevel, &compactedAt, &originalSize,
+		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize,
 	)
 
 	if err == sql.ErrNoRows {
@@ -883,6 +914,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if compactedAt.Valid {
 		issue.CompactedAt = &compactedAt.Time
+	}
+	if compactedAtCommit.Valid {
+		issue.CompactedAtCommit = &compactedAtCommit.String
 	}
 	if originalSize.Valid {
 		issue.OriginalSize = int(originalSize.Int64)

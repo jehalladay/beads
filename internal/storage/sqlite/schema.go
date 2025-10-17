@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS issues (
     external_ref TEXT,
     compaction_level INTEGER DEFAULT 0,
     compacted_at DATETIME,
+    compacted_at_commit TEXT,
     original_size INTEGER,
     CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 );

@@ -25,6 +25,7 @@ type Issue struct {
 	ExternalRef        *string        `json:"external_ref,omitempty"` // e.g., "gh-9", "jira-ABC"
 	CompactionLevel    int            `json:"compaction_level,omitempty"`
 	CompactedAt        *time.Time     `json:"compacted_at,omitempty"`
+	CompactedAtCommit  *string        `json:"compacted_at_commit,omitempty"` // Git commit hash when compacted
 	OriginalSize       int            `json:"original_size,omitempty"`
 	Labels             []string       `json:"labels,omitempty"`       // Populated only for export/import
 	Dependencies       []*Dependency  `json:"dependencies,omitempty"` // Populated only for export/import

@@ -114,7 +114,8 @@ func (c *Compactor) CompactTier1(ctx context.Context, issueID string) error {
 		return fmt.Errorf("failed to update issue: %w", err)
 	}
 
-	if err := c.store.ApplyCompaction(ctx, issueID, 1, originalSize, compactedSize); err != nil {
+	commitHash := GetCurrentCommitHash()
+	if err := c.store.ApplyCompaction(ctx, issueID, 1, originalSize, compactedSize, commitHash); err != nil {
 		return fmt.Errorf("failed to set compaction level: %w", err)
 	}
 
@@ -257,7 +258,8 @@ func (c *Compactor) compactSingleWithResult(ctx context.Context, issueID string,
 		return fmt.Errorf("failed to update issue: %w", err)
 	}
 
-	if err := c.store.ApplyCompaction(ctx, issueID, 1, result.OriginalSize, result.CompactedSize); err != nil {
+	commitHash := GetCurrentCommitHash()
+	if err := c.store.ApplyCompaction(ctx, issueID, 1, result.OriginalSize, result.CompactedSize, commitHash); err != nil {
 		return fmt.Errorf("failed to set compaction level: %w", err)
 	}
 
