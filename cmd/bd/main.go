@@ -30,8 +30,9 @@ var (
 	jsonOutput bool
 
 	// Auto-flush state
-	autoFlushEnabled  = true // Can be disabled with --no-auto-flush
-	isDirty           = false
+	autoFlushEnabled  = true  // Can be disabled with --no-auto-flush
+	isDirty           = false // Tracks if DB has changes needing export
+	needsFullExport   = false // Set to true when IDs change (renumber, rename-prefix)
 	flushMutex        sync.Mutex
 	flushTimer        *time.Timer
 	flushDebounce     = 5 * time.Second
@@ -115,12 +116,12 @@ var rootCmd = &cobra.Command{
 				flushTimer.Stop()
 				flushTimer = nil
 			}
-			// Don't clear isDirty here - let flushToJSONL do it
+			// Don't clear isDirty or needsFullExport here - let flushToJSONL do it
 		}
 		flushMutex.Unlock()
 
 		if needsFlush {
-			// Call the shared flush function (no code duplication)
+			// Call the shared flush function (handles both incremental and full export)
 			flushToJSONL()
 		}
 
@@ -512,6 +513,30 @@ func markDirtyAndScheduleFlush() {
 	})
 }
 
+// markDirtyAndScheduleFullExport marks DB as needing a full export (for ID-changing operations)
+func markDirtyAndScheduleFullExport() {
+	if !autoFlushEnabled {
+		return
+	}
+
+	flushMutex.Lock()
+	defer flushMutex.Unlock()
+
+	isDirty = true
+	needsFullExport = true // Force full export, not incremental
+
+	// Cancel existing timer if any
+	if flushTimer != nil {
+		flushTimer.Stop()
+		flushTimer = nil
+	}
+
+	// Schedule new flush
+	flushTimer = time.AfterFunc(flushDebounce, func() {
+		flushToJSONL()
+	})
+}
+
 // clearAutoFlushState cancels pending flush and marks DB as clean (after manual export)
 func clearAutoFlushState() {
 	flushMutex.Lock()
@@ -547,6 +572,8 @@ func flushToJSONL() {
 		return
 	}
 	isDirty = false
+	fullExport := needsFullExport
+	needsFullExport = false // Reset flag
 	flushMutex.Unlock()
 
 	jsonlPath := findJSONLPath()
@@ -589,39 +616,58 @@ func flushToJSONL() {
 
 	ctx := context.Background()
 
-	// Get dirty issue IDs (bd-39: incremental export optimization)
-	dirtyIDs, err := store.GetDirtyIssues(ctx)
-	if err != nil {
-		recordFailure(fmt.Errorf("failed to get dirty issues: %w", err))
-		return
-	}
-
-	// No dirty issues? Nothing to do!
-	if len(dirtyIDs) == 0 {
-		recordSuccess()
-		return
-	}
-
-	// Read existing JSONL into a map
-	issueMap := make(map[string]*types.Issue)
-	if existingFile, err := os.Open(jsonlPath); err == nil {
-		scanner := bufio.NewScanner(existingFile)
-		lineNum := 0
-		for scanner.Scan() {
-			lineNum++
-			line := scanner.Text()
-			if line == "" {
-				continue
-			}
-			var issue types.Issue
-			if err := json.Unmarshal([]byte(line), &issue); err == nil {
-				issueMap[issue.ID] = &issue
-			} else {
-				// Warn about malformed JSONL lines
-				fmt.Fprintf(os.Stderr, "Warning: skipping malformed JSONL line %d: %v\n", lineNum, err)
-			}
+	// Determine which issues to export
+	var dirtyIDs []string
+	var err error
+	
+	if fullExport {
+		// Full export: get ALL issues (needed after ID-changing operations like renumber)
+		allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+		if err != nil {
+			recordFailure(fmt.Errorf("failed to get all issues: %w", err))
+			return
 		}
-		existingFile.Close()
+		dirtyIDs = make([]string, len(allIssues))
+		for i, issue := range allIssues {
+			dirtyIDs[i] = issue.ID
+		}
+	} else {
+		// Incremental export: get only dirty issue IDs (bd-39 optimization)
+		dirtyIDs, err = store.GetDirtyIssues(ctx)
+		if err != nil {
+			recordFailure(fmt.Errorf("failed to get dirty issues: %w", err))
+			return
+		}
+
+		// No dirty issues? Nothing to do!
+		if len(dirtyIDs) == 0 {
+			recordSuccess()
+			return
+		}
+	}
+
+	// Read existing JSONL into a map (skip for full export - we'll rebuild from scratch)
+	issueMap := make(map[string]*types.Issue)
+	if !fullExport {
+		if existingFile, err := os.Open(jsonlPath); err == nil {
+			scanner := bufio.NewScanner(existingFile)
+			lineNum := 0
+			for scanner.Scan() {
+				lineNum++
+				line := scanner.Text()
+				if line == "" {
+					continue
+				}
+				var issue types.Issue
+				if err := json.Unmarshal([]byte(line), &issue); err == nil {
+					issueMap[issue.ID] = &issue
+				} else {
+					// Warn about malformed JSONL lines
+					fmt.Fprintf(os.Stderr, "Warning: skipping malformed JSONL line %d: %v\n", lineNum, err)
+				}
+			}
+			existingFile.Close()
+		}
 	}
 
 	// Fetch only dirty issues from DB

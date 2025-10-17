@@ -128,8 +128,8 @@ Risks:
 			os.Exit(1)
 		}
 
-		// Schedule auto-flush to export changes
-		markDirtyAndScheduleFlush()
+		// Schedule full export (IDs changed, incremental won't work)
+		markDirtyAndScheduleFullExport()
 
 		fmt.Printf("%s Successfully renumbered %d issues\n", green("✓"), len(issues))
 
