@@ -1294,6 +1294,49 @@ func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string
 	return tx.Commit()
 }
 
+// DeleteIssue permanently removes an issue from the database
+func (s *SQLiteStorage) DeleteIssue(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Delete dependencies (both directions)
+	_, err = tx.ExecContext(ctx, `DELETE FROM dependencies WHERE issue_id = ? OR depends_on_id = ?`, id, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete dependencies: %w", err)
+	}
+
+	// Delete events
+	_, err = tx.ExecContext(ctx, `DELETE FROM events WHERE issue_id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete events: %w", err)
+	}
+
+	// Delete from dirty_issues
+	_, err = tx.ExecContext(ctx, `DELETE FROM dirty_issues WHERE issue_id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete dirty marker: %w", err)
+	}
+
+	// Delete the issue itself
+	result, err := tx.ExecContext(ctx, `DELETE FROM issues WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete issue: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("issue not found: %s", id)
+	}
+
+	return tx.Commit()
+}
+
 // SearchIssues finds issues matching query and filters
 func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
 	whereClauses := []string{}
