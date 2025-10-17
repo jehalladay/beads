@@ -437,7 +437,10 @@ func autoImportIfNewer() {
 	}
 
 	// Store new hash after successful import
-	_ = store.SetMetadata(ctx, "last_import_hash", currentHash)
+	if err := store.SetMetadata(ctx, "last_import_hash", currentHash); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to update last_import_hash after import: %v\n", err)
+		fmt.Fprintf(os.Stderr, "This may cause auto-import to retry the same import on next operation.\n")
+	}
 }
 
 // checkVersionMismatch checks if the binary version matches the database version
@@ -699,7 +702,9 @@ func flushToJSONL() {
 		hasher := sha256.New()
 		hasher.Write(jsonlData)
 		exportedHash := hex.EncodeToString(hasher.Sum(nil))
-		_ = store.SetMetadata(ctx, "last_import_hash", exportedHash)
+		if err := store.SetMetadata(ctx, "last_import_hash", exportedHash); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to update last_import_hash after export: %v\n", err)
+		}
 	}
 
 	// Success!
