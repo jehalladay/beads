@@ -114,8 +114,8 @@ class BdClient:
         """
         if self.working_dir:
             return self.working_dir
-        # Fall back to PWD environment variable or current directory
-        return os.environ.get("PWD", os.getcwd())
+        # Use process working directory (set by MCP client at spawn time)
+        return os.getcwd()
 
     def _global_flags(self) -> list[str]:
         """Build list of global flags for bd commands.
@@ -134,11 +134,12 @@ class BdClient:
             flags.append("--no-auto-import")
         return flags
 
-    async def _run_command(self, *args: str) -> object:
+    async def _run_command(self, *args: str, cwd: str | None = None) -> object:
         """Run bd command and parse JSON output.
 
         Args:
             *args: Command arguments to pass to bd
+            cwd: Optional working directory override for this command
 
         Returns:
             Parsed JSON output (dict or list)
@@ -148,6 +149,7 @@ class BdClient:
             BdCommandError: If bd command fails
         """
         cmd = [self.bd_path, *args, *self._global_flags(), "--json"]
+        working_dir = cwd if cwd is not None else self._get_working_dir()
 
         # Log database routing for debugging
         import sys
