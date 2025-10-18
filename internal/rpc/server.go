@@ -161,15 +161,27 @@ func (s *Server) Stop() error {
 
 func (s *Server) ensureSocketDir() error {
 	dir := filepath.Dir(s.socketPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
+	// Best-effort tighten permissions if directory already existed
+	_ = os.Chmod(dir, 0700)
 	return nil
 }
 
 func (s *Server) removeOldSocket() error {
 	if _, err := os.Stat(s.socketPath); err == nil {
-		if err := os.Remove(s.socketPath); err != nil {
+		// Socket exists - check if it's stale before removing
+		// Try to connect to see if a daemon is actually using it
+		conn, err := net.DialTimeout("unix", s.socketPath, 500*time.Millisecond)
+		if err == nil {
+			// Socket is active - another daemon is running
+			conn.Close()
+			return fmt.Errorf("socket %s is in use by another daemon", s.socketPath)
+		}
+		
+		// Socket is stale - safe to remove
+		if err := os.Remove(s.socketPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}

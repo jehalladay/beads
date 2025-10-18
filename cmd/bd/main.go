@@ -8,10 +8,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -228,21 +230,79 @@ func tryAutoStartDaemon(socketPath string) bool {
 		return false
 	}
 	
+	// Fast path: check if daemon is already healthy
+	client, err := rpc.TryConnect(socketPath)
+	if err == nil && client != nil {
+		client.Close()
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: daemon already running and healthy\n")
+		}
+		return true
+	}
+	
 	// Use lockfile to prevent multiple processes from starting daemon simultaneously
 	lockPath := socketPath + ".startlock"
 	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
-		// Someone else is already starting daemon, wait for socket readiness
+		// Someone else is starting daemon, wait for socket readiness
 		if os.Getenv("BD_DEBUG") != "" {
 			fmt.Fprintf(os.Stderr, "Debug: another process is starting daemon, waiting for readiness\n")
 		}
-		return waitForSocketReadiness(socketPath, 5*time.Second)
+		if waitForSocketReadiness(socketPath, 5*time.Second) {
+			return true
+		}
+		
+		// Socket still not ready - check if lock is stale
+		if lockPID, err := readPIDFromFile(lockPath); err == nil {
+			if !isPIDAlive(lockPID) {
+				if os.Getenv("BD_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "Debug: lock is stale (PID %d dead), removing and retrying\n", lockPID)
+				}
+				os.Remove(lockPath)
+				// Retry once
+				return tryAutoStartDaemon(socketPath)
+			}
+		}
+		return false
 	}
 	
 	// Write our PID to lockfile
 	fmt.Fprintf(lockFile, "%d\n", os.Getpid())
 	lockFile.Close()
 	defer os.Remove(lockPath)
+	
+	// Under lock: check for stale socket and clean up if necessary
+	if _, err := os.Stat(socketPath); err == nil {
+		// Socket exists - check if it's truly stale by trying a quick connect
+		if canDialSocket(socketPath, 200*time.Millisecond) {
+			// Another daemon is running - it must have started between our check and lock acquisition
+			if os.Getenv("BD_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "Debug: daemon started by another process\n")
+			}
+			return true
+		}
+		
+		// Socket exists but not responding - check if PID is alive before removing
+		pidFile := getPIDFileForSocket(socketPath)
+		if pidFile != "" {
+			if pid, err := readPIDFromFile(pidFile); err == nil && isPIDAlive(pid) {
+				// Daemon process is alive but socket not responding - wait for it
+				if os.Getenv("BD_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "Debug: daemon PID %d alive, waiting for socket\n", pid)
+				}
+				return waitForSocketReadiness(socketPath, 5*time.Second)
+			}
+		}
+		
+		// Socket is stale (connect failed and PID dead/missing) - safe to remove
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: socket is stale, cleaning up\n")
+		}
+		os.Remove(socketPath)
+		if pidFile != "" {
+			os.Remove(pidFile)
+		}
+	}
 	
 	// Determine if we should start global or local daemon
 	isGlobal := false
@@ -310,15 +370,61 @@ func tryAutoStartDaemon(socketPath string) bool {
 	return false
 }
 
+// getPIDFileForSocket returns the PID file path for a given socket path
+func getPIDFileForSocket(socketPath string) string {
+	// PID file is in same directory as socket, named daemon.pid
+	dir := filepath.Dir(socketPath)
+	return filepath.Join(dir, "daemon.pid")
+}
+
+// readPIDFromFile reads a PID from a file
+func readPIDFromFile(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, err
+	}
+	return pid, nil
+}
+
+// isPIDAlive checks if a process with the given PID is running
+func isPIDAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = process.Signal(syscall.Signal(0))
+	return err == nil
+}
+
+// canDialSocket attempts a quick dial to the socket with a timeout
+func canDialSocket(socketPath string, timeout time.Duration) bool {
+	conn, err := net.DialTimeout("unix", socketPath, timeout)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // waitForSocketReadiness waits for daemon socket to be ready by testing actual connections
 func waitForSocketReadiness(socketPath string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		// Try actual connection, not just file existence
-		client, err := rpc.TryConnect(socketPath)
-		if err == nil && client != nil {
-			client.Close()
-			return true
+		// Use quick dial with short timeout per attempt
+		if canDialSocket(socketPath, 200*time.Millisecond) {
+			// Socket is dialable - do a final health check
+			client, err := rpc.TryConnect(socketPath)
+			if err == nil && client != nil {
+				client.Close()
+				return true
+			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
