@@ -315,6 +315,58 @@ bd update bd-1 --status in_progress --json
 bd close bd-1 --json
 ```
 
+### Deleting Issues
+
+Delete one or more issues, with automatic cleanup of references and dependencies:
+
+```bash
+# Single issue deletion (preview mode)
+bd delete bd-1
+
+# Force single deletion
+bd delete bd-1 --force
+
+# Batch deletion
+bd delete bd-1 bd-2 bd-3 --force
+
+# Delete from file (one ID per line, supports # comments)
+bd delete --from-file deletions.txt --force
+
+# Dry-run mode (preview without changes)
+bd delete --from-file deletions.txt --dry-run
+
+# Cascade deletion (recursively delete dependents)
+bd delete bd-1 --cascade --force
+
+# Force deletion (orphan dependents instead of failing)
+bd delete bd-1 --force
+
+# JSON output
+bd delete bd-1 bd-2 --force --json
+```
+
+The delete operation:
+- Removes all dependency links (both directions)
+- Updates text references to `[deleted:ID]` in connected issues
+- Deletes the issue from database and JSONL
+- Atomic: all deletions succeed or none do
+
+**Dependency handling:**
+- **Default**: Fails if any issue has dependents not in deletion set
+- **`--cascade`**: Recursively deletes all dependent issues
+- **`--force`**: Deletes and orphans dependents (use with caution)
+
+**File format** for `--from-file`:
+```text
+# Cleanup test issues
+bd-100
+bd-101
+bd-102
+
+# Another batch
+bd-200
+```
+
 ### Renaming Prefix
 
 Change the issue prefix for all issues in your database. This is useful if your prefix is too long or you want to standardize naming.
