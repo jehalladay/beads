@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Atomic transactions: all deletions succeed or none do
   - Comprehensive statistics: tracks deleted issues, dependencies, labels, and events
 
+### Fixed
+- **Critical**: `bd list --status all` showing 0 issues (bd-148)
+  - Status filter now treats "all" as special value meaning "show all statuses"
+  - Previously treated "all" as literal status value, matching no issues
+
 ## [0.9.9] - 2025-10-17
 
 ### Added
