@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"sync"
 	"syscall"
 	"time"
@@ -32,8 +33,9 @@ type Server struct {
 	mu           sync.RWMutex
 	shutdown     bool
 	shutdownChan chan struct{}
+	stopOnce     sync.Once
 	// Per-request storage routing with eviction support
-	storageCache   map[string]*StorageCacheEntry // path -> entry
+	storageCache   map[string]*StorageCacheEntry // repoRoot -> entry
 	cacheMu        sync.RWMutex
 	maxCacheSize   int
 	cacheTTL       time.Duration
@@ -54,7 +56,7 @@ func NewServer(socketPath string, store storage.Storage) *Server {
 	
 	cacheTTL := 30 * time.Minute // default
 	if env := os.Getenv("BEADS_DAEMON_CACHE_TTL"); env != "" {
-		if ttl, err := time.ParseDuration(env); err == nil {
+		if ttl, err := time.ParseDuration(env); err == nil && ttl > 0 {
 			cacheTTL = ttl
 		}
 	}
@@ -112,38 +114,43 @@ func (s *Server) Start(ctx context.Context) error {
 
 // Stop stops the RPC server and cleans up resources
 func (s *Server) Stop() error {
-	s.mu.Lock()
-	s.shutdown = true
-	s.mu.Unlock()
+	var err error
+	s.stopOnce.Do(func() {
+		s.mu.Lock()
+		s.shutdown = true
+		s.mu.Unlock()
 
-	// Signal cleanup goroutine to stop
-	close(s.shutdownChan)
-	
-	if s.cleanupTicker != nil {
-		s.cleanupTicker.Stop()
-	}
+		// Signal cleanup goroutine to stop
+		close(s.shutdownChan)
 
-	// Close all cached storage connections
-	s.cacheMu.Lock()
-	for _, entry := range s.storageCache {
-		if err := entry.store.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to close storage: %v\n", err)
+		// Close all cached storage connections outside lock
+		s.cacheMu.Lock()
+		stores := make([]storage.Storage, 0, len(s.storageCache))
+		for _, entry := range s.storageCache {
+			stores = append(stores, entry.store)
 		}
-	}
-	s.storageCache = make(map[string]*StorageCacheEntry)
-	s.cacheMu.Unlock()
+		s.storageCache = make(map[string]*StorageCacheEntry)
+		s.cacheMu.Unlock()
 
-	if s.listener != nil {
-		if err := s.listener.Close(); err != nil {
-			return fmt.Errorf("failed to close listener: %w", err)
+		// Close stores without holding lock
+		for _, store := range stores {
+			if closeErr := store.Close(); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to close storage: %v\n", closeErr)
+			}
 		}
-	}
 
-	if err := s.removeOldSocket(); err != nil {
-		return fmt.Errorf("failed to remove socket: %w", err)
-	}
+		if s.listener != nil {
+			if closeErr := s.listener.Close(); closeErr != nil {
+				err = fmt.Errorf("failed to close listener: %w", closeErr)
+				return
+			}
+		}
 
-	return nil
+		if removeErr := s.removeOldSocket(); removeErr != nil {
+			err = fmt.Errorf("failed to remove socket: %w", removeErr)
+		}
+	})
+	return err
 }
 
 func (s *Server) ensureSocketDir() error {
@@ -191,7 +198,6 @@ func (s *Server) evictStaleStorage() {
 	toClose := []storage.Storage{}
 	
 	s.cacheMu.Lock()
-	defer s.cacheMu.Unlock()
 
 	// First pass: evict TTL-expired entries
 	for path, entry := range s.storageCache {
@@ -205,22 +211,18 @@ func (s *Server) evictStaleStorage() {
 	if len(s.storageCache) > s.maxCacheSize {
 		// Build sorted list of entries by lastAccess
 		type cacheItem struct {
-			path       string
-			entry      *StorageCacheEntry
+			path  string
+			entry *StorageCacheEntry
 		}
 		items := make([]cacheItem, 0, len(s.storageCache))
 		for path, entry := range s.storageCache {
 			items = append(items, cacheItem{path, entry})
 		}
 
-		// Sort by lastAccess (oldest first)
-		for i := 0; i < len(items)-1; i++ {
-			for j := i + 1; j < len(items); j++ {
-				if items[i].entry.lastAccess.After(items[j].entry.lastAccess) {
-					items[i], items[j] = items[j], items[i]
-				}
-			}
-		}
+		// Sort by lastAccess (oldest first) with sort.Slice
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].entry.lastAccess.Before(items[j].entry.lastAccess)
+		})
 
 		// Evict oldest entries until we're under the limit
 		numToEvict := len(s.storageCache) - s.maxCacheSize
@@ -230,14 +232,15 @@ func (s *Server) evictStaleStorage() {
 		}
 	}
 
-	// Close connections outside of lock to avoid blocking
-	go func() {
-		for _, store := range toClose {
-			if err := store.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to close evicted storage: %v\n", err)
-			}
+	// Unlock before closing to avoid holding lock during Close
+	s.cacheMu.Unlock()
+
+	// Close connections synchronously
+	for _, store := range toClose {
+		if err := store.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close evicted storage: %v\n", err)
 		}
-	}()
+	}
 }
 
 func (s *Server) handleConnection(conn net.Conn) {
@@ -829,20 +832,24 @@ func (s *Server) getStorageForRequest(req *Request) (storage.Storage, error) {
 		return s.storage, nil
 	}
 
-	// Check cache first
-	s.cacheMu.Lock()
-	defer s.cacheMu.Unlock()
-	
-	if entry, ok := s.storageCache[req.Cwd]; ok {
-		// Update last access time
-		entry.lastAccess = time.Now()
-		return entry.store, nil
-	}
-
-	// Find database for this cwd
+	// Find database for this cwd (to get the canonical repo root)
 	dbPath := s.findDatabaseForCwd(req.Cwd)
 	if dbPath == "" {
 		return nil, fmt.Errorf("no .beads database found for path: %s", req.Cwd)
+	}
+
+	// Canonicalize key to repo root (parent of .beads directory)
+	beadsDir := filepath.Dir(dbPath)
+	repoRoot := filepath.Dir(beadsDir)
+
+	// Check cache first with write lock (to avoid race on lastAccess update)
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	
+	if entry, ok := s.storageCache[repoRoot]; ok {
+		// Update last access time (safe under Lock)
+		entry.lastAccess = time.Now()
+		return entry.store, nil
 	}
 
 	// Open storage
@@ -852,10 +859,21 @@ func (s *Server) getStorageForRequest(req *Request) (storage.Storage, error) {
 	}
 
 	// Cache it with current timestamp
-	s.storageCache[req.Cwd] = &StorageCacheEntry{
+	s.storageCache[repoRoot] = &StorageCacheEntry{
 		store:      store,
 		lastAccess: time.Now(),
 	}
+
+	// Enforce LRU immediately to prevent FD spikes between cleanup ticks
+	needEvict := len(s.storageCache) > s.maxCacheSize
+	s.cacheMu.Unlock()
+	
+	if needEvict {
+		s.evictStaleStorage()
+	}
+
+	// Re-acquire lock for defer
+	s.cacheMu.Lock()
 
 	return store, nil
 }
