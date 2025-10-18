@@ -915,7 +915,7 @@ The daemon will:
 - Auto-push commits (if `--auto-push` flag set)
 - Pull remote changes periodically
 - Auto-import when remote changes detected
-- Log all activity to `.beads/daemon.log`
+- Log all activity to `.beads/daemon.log` with automatic rotation
 
 Options:
 ```bash
@@ -927,6 +927,14 @@ bd daemon --status                    # Show daemon status
 bd daemon --stop                      # Stop running daemon
 bd daemon --global                    # Run as global daemon (see below)
 bd daemon --migrate-to-global         # Migrate from local to global daemon
+```
+
+Log rotation is automatic and configurable via environment variables:
+```bash
+export BEADS_DAEMON_LOG_MAX_SIZE=10      # Max log size in MB (default: 10)
+export BEADS_DAEMON_LOG_MAX_BACKUPS=3    # Number of rotated logs to keep (default: 3)
+export BEADS_DAEMON_LOG_MAX_AGE=7        # Max age of logs in days (default: 7)
+export BEADS_DAEMON_LOG_COMPRESS=true    # Compress rotated logs (default: true)
 ```
 
 The daemon is ideal for:

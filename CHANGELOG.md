@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Log Rotation**: Automatic daemon log rotation with configurable limits (bd-154)
+  - Prevents unbounded log file growth for long-running daemons
+  - Configurable via environment variables: `BEADS_DAEMON_LOG_MAX_SIZE`, `BEADS_DAEMON_LOG_MAX_BACKUPS`, `BEADS_DAEMON_LOG_MAX_AGE`
+  - Optional compression of rotated logs
+  - Defaults: 10MB max size, 3 backups, 7 day retention, compression enabled
 - **Batch Deletion**: Enhanced `bd delete` command with batch operations (bd-127)
   - Delete multiple issues at once: `bd delete bd-1 bd-2 bd-3 --force`
   - Read from file: `bd delete --from-file deletions.txt --force`

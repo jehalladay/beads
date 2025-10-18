@@ -22,6 +22,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 var daemonCmd = &cobra.Command{
@@ -180,6 +181,24 @@ func boolToFlag(condition bool, flag string) string {
 		return flag
 	}
 	return ""
+}
+
+// getEnvInt reads an integer from environment variable with a default value
+func getEnvInt(key string, defaultValue int) int {
+	if val := os.Getenv(key); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil {
+			return parsed
+		}
+	}
+	return defaultValue
+}
+
+// getEnvBool reads a boolean from environment variable with a default value
+func getEnvBool(key string, defaultValue bool) bool {
+	if val := os.Getenv(key); val != "" {
+		return val == "true" || val == "1"
+	}
+	return defaultValue
 }
 
 func getPIDFilePath(global bool) (string, error) {
@@ -606,10 +625,18 @@ func importToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 }
 
 func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, pidFile string, global bool) {
-	logF, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening log file: %v\n", err)
-		os.Exit(1)
+	// Configure log rotation with lumberjack
+	maxSizeMB := getEnvInt("BEADS_DAEMON_LOG_MAX_SIZE", 10)
+	maxBackups := getEnvInt("BEADS_DAEMON_LOG_MAX_BACKUPS", 3)
+	maxAgeDays := getEnvInt("BEADS_DAEMON_LOG_MAX_AGE", 7)
+	compress := getEnvBool("BEADS_DAEMON_LOG_COMPRESS", true)
+	
+	logF := &lumberjack.Logger{
+		Filename:   logPath,
+		MaxSize:    maxSizeMB,    // MB
+		MaxBackups: maxBackups,   // number of rotated files
+		MaxAge:     maxAgeDays,   // days
+		Compress:   compress,     // compress old logs
 	}
 	defer logF.Close()
 
