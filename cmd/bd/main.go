@@ -169,9 +169,24 @@ var rootCmd = &cobra.Command{
 }
 
 // getSocketPath returns the daemon socket path based on the database location
+// If no local socket exists, check for global socket at ~/.beads/bd.sock
 func getSocketPath() string {
-	// Socket lives in same directory as database: .beads/bd.sock
-	return filepath.Join(filepath.Dir(dbPath), "bd.sock")
+	// First check local socket (same directory as database: .beads/bd.sock)
+	localSocket := filepath.Join(filepath.Dir(dbPath), "bd.sock")
+	if _, err := os.Stat(localSocket); err == nil {
+		return localSocket
+	}
+	
+	// Fall back to global socket at ~/.beads/bd.sock
+	if home, err := os.UserHomeDir(); err == nil {
+		globalSocket := filepath.Join(home, ".beads", "bd.sock")
+		if _, err := os.Stat(globalSocket); err == nil {
+			return globalSocket
+		}
+	}
+	
+	// Default to local socket even if it doesn't exist
+	return localSocket
 }
 
 // outputJSON outputs data as pretty-printed JSON

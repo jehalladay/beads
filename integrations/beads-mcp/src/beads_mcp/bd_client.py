@@ -640,7 +640,7 @@ def create_bd_client(
             from pathlib import Path
 
             # Check if daemon socket exists before creating client
-            # Walk up from working_dir to find .beads/bd.sock
+            # Walk up from working_dir to find .beads/bd.sock, then check global
             search_dir = Path(working_dir) if working_dir else Path.cwd()
             socket_found = False
 
@@ -652,15 +652,21 @@ def create_bd_client(
                     if sock_path.exists():
                         socket_found = True
                         break
-                    # Found .beads but no socket - daemon not running
+                    # Found .beads but no socket - check global before giving up
                     break
 
                 # Move up one directory
                 parent = current.parent
                 if parent == current:
-                    # Reached filesystem root
+                    # Reached filesystem root - check global
                     break
                 current = parent
+
+            # If no local socket, check global daemon socket at ~/.beads/bd.sock
+            if not socket_found:
+                global_sock_path = Path.home() / ".beads" / "bd.sock"
+                if global_sock_path.exists():
+                    socket_found = True
 
             if socket_found:
                 # Daemon is running, use it
