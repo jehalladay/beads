@@ -59,10 +59,72 @@ Then use in Claude Desktop config:
 - `BEADS_USE_DAEMON` - Use daemon RPC instead of CLI (default: `1`, set to `0` to disable)
 - `BEADS_PATH` - Path to bd executable (default: `~/.local/bin/bd`)
 - `BEADS_DB` - Path to beads database file (default: auto-discover from cwd)
-- `BEADS_WORKING_DIR` - Working directory for bd commands (default: `$PWD` or current directory)
+- `BEADS_WORKING_DIR` - Working directory for bd commands (default: `$PWD` or current directory). Used for multi-repo setups - see below
 - `BEADS_ACTOR` - Actor name for audit trail (default: `$USER`)
 - `BEADS_NO_AUTO_FLUSH` - Disable automatic JSONL sync (default: `false`)
 - `BEADS_NO_AUTO_IMPORT` - Disable automatic JSONL import (default: `false`)
+
+## Multi-Repository Setup
+
+**New in v0.9.11:** Work across multiple beads projects seamlessly!
+
+### Option 1: Global Daemon (Recommended)
+
+Start a single daemon to serve all your projects:
+
+```bash
+# Start global daemon (serves all repos)
+bd daemon --global
+```
+
+The MCP server automatically detects the global daemon and routes requests based on your working directory. No configuration changes needed!
+
+**How it works:**
+1. MCP server checks for local daemon socket (`.beads/bd.sock`)
+2. Falls back to global daemon socket (`~/.beads/bd.sock`)
+3. Routes requests to correct database based on working directory
+4. Each project keeps its own database at `.beads/*.db`
+
+**Simple config - works for all projects:**
+```json
+{
+  "mcpServers": {
+    "beads": {
+      "command": "beads-mcp"
+    }
+  }
+}
+```
+
+### Option 2: Per-Project MCP Instances
+
+Configure separate MCP servers for specific projects using `BEADS_WORKING_DIR`:
+
+```json
+{
+  "mcpServers": {
+    "beads-webapp": {
+      "command": "beads-mcp",
+      "env": {
+        "BEADS_WORKING_DIR": "/Users/yourname/projects/webapp"
+      }
+    },
+    "beads-api": {
+      "command": "beads-mcp",
+      "env": {
+        "BEADS_WORKING_DIR": "/Users/yourname/projects/api"
+      }
+    }
+  }
+}
+```
+
+Each instance will discover and use the database in its `BEADS_WORKING_DIR` path.
+
+**Which should you use?**
+- ✅ **Global daemon**: 3+ projects, better resource usage, automatic routing
+- ✅ **Per-project instances**: 1-2 main projects, explicit control
+- ✅ **Hybrid**: Run global daemon for convenience + per-project for main projects
 
 ## Features
 

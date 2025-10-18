@@ -40,6 +40,60 @@ pip install beads-mcp
 
 See `integrations/beads-mcp/README.md` for complete documentation.
 
+### Multi-Repo Configuration (MCP Server)
+
+**Working on multiple projects?** You can configure beads MCP to work across multiple repositories.
+
+**Option 1: Global Daemon (Recommended - v0.9.11+)**
+Start a single daemon to serve all your projects:
+```bash
+# Start global daemon
+bd daemon --global
+
+# MCP server automatically discovers and uses the global daemon
+```
+
+Your MCP config stays simple:
+```json
+{
+  "beads": {
+    "command": "beads-mcp",
+    "args": []
+  }
+}
+```
+
+The MCP server will:
+1. Check for local daemon socket (`.beads/bd.sock`)
+2. Fall back to global daemon socket (`~/.beads/bd.sock`)
+3. Automatically route requests to the correct database based on your current working directory
+
+**Option 2: Multiple MCP Server Instances**
+Configure separate MCP servers for each major project:
+```json
+{
+  "beads-webapp": {
+    "command": "beads-mcp",
+    "env": {
+      "BEADS_WORKING_DIR": "/Users/you/projects/webapp"
+    }
+  },
+  "beads-api": {
+    "command": "beads-mcp",
+    "env": {
+      "BEADS_WORKING_DIR": "/Users/you/projects/api"
+    }
+  }
+}
+```
+
+Each MCP instance will use its specified working directory to find the correct `.beads/*.db` database.
+
+**Which approach should you use?**
+- ✅ **Global daemon**: Best for 3+ projects, better resource usage, automatic routing
+- ✅ **Multiple instances**: Best for 1-2 projects you switch between frequently
+- ✅ **Hybrid**: Run global daemon + use MCP instances for convenience
+
 ### CLI Quick Reference
 
 If you're not using the MCP server, here are the CLI commands:
