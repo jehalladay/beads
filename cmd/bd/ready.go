@@ -169,8 +169,12 @@ var blockedCmd = &cobra.Command{
 
 		for _, issue := range blocked {
 			fmt.Printf("[P%d] %s: %s\n", issue.Priority, issue.ID, issue.Title)
+			blockedBy := issue.BlockedBy
+			if blockedBy == nil {
+				blockedBy = []string{}
+			}
 			fmt.Printf("  Blocked by %d open dependencies: %v\n",
-				issue.BlockedByCount, issue.BlockedBy)
+				issue.BlockedByCount, blockedBy)
 			fmt.Println()
 		}
 	},
