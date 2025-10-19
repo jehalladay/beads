@@ -150,6 +150,9 @@ type HealthResponse struct {
 	CacheHits       int64   `json:"cache_hits"`
 	CacheMisses     int64   `json:"cache_misses"`
 	DBResponseTime  float64 `json:"db_response_ms"`
+	ActiveConns     int32   `json:"active_connections"`
+	MaxConns        int     `json:"max_connections"`
+	MemoryAllocMB   uint64  `json:"memory_alloc_mb"`
 	Error           string  `json:"error,omitempty"`
 }
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -52,6 +53,12 @@ type Server struct {
 	startTime    time.Time
 	cacheHits    int64
 	cacheMisses  int64
+	// Connection limiting
+	maxConns      int
+	activeConns   int32 // atomic counter
+	connSemaphore chan struct{}
+	// Request timeout
+	requestTimeout time.Duration
 }
 
 // NewServer creates a new RPC server
@@ -73,14 +80,32 @@ func NewServer(socketPath string, store storage.Storage) *Server {
 		}
 	}
 
+	maxConns := 100 // default
+	if env := os.Getenv("BEADS_DAEMON_MAX_CONNS"); env != "" {
+		var conns int
+		if _, err := fmt.Sscanf(env, "%d", &conns); err == nil && conns > 0 {
+			maxConns = conns
+		}
+	}
+
+	requestTimeout := 30 * time.Second // default
+	if env := os.Getenv("BEADS_DAEMON_REQUEST_TIMEOUT"); env != "" {
+		if timeout, err := time.ParseDuration(env); err == nil && timeout > 0 {
+			requestTimeout = timeout
+		}
+	}
+
 	return &Server{
-		socketPath:   socketPath,
-		storage:      store,
-		storageCache: make(map[string]*StorageCacheEntry),
-		maxCacheSize: maxCacheSize,
-		cacheTTL:     cacheTTL,
-		shutdownChan: make(chan struct{}),
-		startTime:    time.Now(),
+		socketPath:     socketPath,
+		storage:        store,
+		storageCache:   make(map[string]*StorageCacheEntry),
+		maxCacheSize:   maxCacheSize,
+		cacheTTL:       cacheTTL,
+		shutdownChan:   make(chan struct{}),
+		startTime:      time.Now(),
+		maxConns:       maxConns,
+		connSemaphore:  make(chan struct{}, maxConns),
+		requestTimeout: requestTimeout,
 	}
 }
 
@@ -131,7 +156,20 @@ func (s *Server) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to accept connection: %w", err)
 		}
 
-		go s.handleConnection(conn)
+		// Try to acquire connection slot (non-blocking)
+		select {
+		case s.connSemaphore <- struct{}{}:
+			// Acquired slot, handle connection
+			go func(c net.Conn) {
+				defer func() { <-s.connSemaphore }() // Release slot
+				atomic.AddInt32(&s.activeConns, 1)
+				defer atomic.AddInt32(&s.activeConns, -1)
+				s.handleConnection(c)
+			}(conn)
+		default:
+			// Max connections reached, reject immediately
+			conn.Close()
+		}
 	}
 }
 
@@ -218,7 +256,7 @@ func (s *Server) handleSignals() {
 	s.Stop()
 }
 
-// runCleanupLoop periodically evicts stale storage connections
+// runCleanupLoop periodically evicts stale storage connections and checks memory pressure
 func (s *Server) runCleanupLoop() {
 	s.cleanupTicker = time.NewTicker(5 * time.Minute)
 	defer s.cleanupTicker.Stop()
@@ -226,9 +264,75 @@ func (s *Server) runCleanupLoop() {
 	for {
 		select {
 		case <-s.cleanupTicker.C:
+			s.checkMemoryPressure()
 			s.evictStaleStorage()
 		case <-s.shutdownChan:
 			return
+		}
+	}
+}
+
+// checkMemoryPressure monitors memory usage and triggers aggressive eviction if needed
+func (s *Server) checkMemoryPressure() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	// Memory thresholds (configurable via env var)
+	const defaultThresholdMB = 500
+	thresholdMB := defaultThresholdMB
+	if env := os.Getenv("BEADS_DAEMON_MEMORY_THRESHOLD_MB"); env != "" {
+		var threshold int
+		if _, err := fmt.Sscanf(env, "%d", &threshold); err == nil && threshold > 0 {
+			thresholdMB = threshold
+		}
+	}
+
+	allocMB := m.Alloc / 1024 / 1024
+	if allocMB > uint64(thresholdMB) {
+		fmt.Fprintf(os.Stderr, "Warning: High memory usage detected (%d MB), triggering aggressive cache eviction\n", allocMB)
+		s.aggressiveEviction()
+		runtime.GC() // Suggest garbage collection
+	}
+}
+
+// aggressiveEviction evicts 50% of cached storage to reduce memory pressure
+func (s *Server) aggressiveEviction() {
+	toClose := []storage.Storage{}
+
+	s.cacheMu.Lock()
+	
+	if len(s.storageCache) == 0 {
+		s.cacheMu.Unlock()
+		return
+	}
+
+	// Build sorted list by last access
+	type cacheItem struct {
+		path  string
+		entry *StorageCacheEntry
+	}
+	items := make([]cacheItem, 0, len(s.storageCache))
+	for path, entry := range s.storageCache {
+		items = append(items, cacheItem{path, entry})
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].entry.lastAccess.Before(items[j].entry.lastAccess)
+	})
+
+	// Evict oldest 50%
+	numToEvict := len(items) / 2
+	for i := 0; i < numToEvict; i++ {
+		toClose = append(toClose, items[i].entry.store)
+		delete(s.storageCache, items[i].path)
+	}
+
+	s.cacheMu.Unlock()
+
+	// Close without holding lock
+	for _, store := range toClose {
+		if err := store.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close evicted storage: %v\n", err)
 		}
 	}
 }
@@ -291,6 +395,11 @@ func (s *Server) handleConnection(conn net.Conn) {
 	writer := bufio.NewWriter(conn)
 
 	for {
+		// Set read deadline for the next request
+		if err := conn.SetReadDeadline(time.Now().Add(s.requestTimeout)); err != nil {
+			return
+		}
+
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
 			return
@@ -304,6 +413,11 @@ func (s *Server) handleConnection(conn net.Conn) {
 			}
 			s.writeResponse(writer, resp)
 			continue
+		}
+
+		// Set write deadline for the response
+		if err := conn.SetWriteDeadline(time.Now().Add(s.requestTimeout)); err != nil {
+			return
 		}
 
 		resp := s.handleRequest(&req)
@@ -488,6 +602,10 @@ func (s *Server) handlePing(_ *Request) Response {
 func (s *Server) handleHealth(req *Request) Response {
 	start := time.Now()
 	
+	// Get memory stats for health response
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	
 	store, err := s.getStorageForRequest(req)
 	if err != nil {
 		data, _ := json.Marshal(HealthResponse{
@@ -541,6 +659,9 @@ func (s *Server) handleHealth(req *Request) Response {
 		CacheHits:      atomic.LoadInt64(&s.cacheHits),
 		CacheMisses:    atomic.LoadInt64(&s.cacheMisses),
 		DBResponseTime: dbResponseMs,
+		ActiveConns:    atomic.LoadInt32(&s.activeConns),
+		MaxConns:       s.maxConns,
+		MemoryAllocMB:  m.Alloc / 1024 / 1024,
 	}
 	
 	if dbError != "" {
