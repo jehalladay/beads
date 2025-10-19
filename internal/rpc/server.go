@@ -53,6 +53,7 @@ type Server struct {
 	startTime    time.Time
 	cacheHits    int64
 	cacheMisses  int64
+	metrics      *Metrics
 	// Connection limiting
 	maxConns      int
 	activeConns   int32 // atomic counter
@@ -103,6 +104,7 @@ func NewServer(socketPath string, store storage.Storage) *Server {
 		cacheTTL:       cacheTTL,
 		shutdownChan:   make(chan struct{}),
 		startTime:      time.Now(),
+		metrics:        NewMetrics(),
 		maxConns:       maxConns,
 		connSemaphore:  make(chan struct{}, maxConns),
 		requestTimeout: requestTimeout,
@@ -160,6 +162,7 @@ func (s *Server) Start(ctx context.Context) error {
 		select {
 		case s.connSemaphore <- struct{}{}:
 			// Acquired slot, handle connection
+			s.metrics.RecordConnection()
 			go func(c net.Conn) {
 				defer func() { <-s.connSemaphore }() // Release slot
 				atomic.AddInt32(&s.activeConns, 1)
@@ -168,6 +171,7 @@ func (s *Server) Start(ctx context.Context) error {
 			}(conn)
 		default:
 			// Max connections reached, reject immediately
+			s.metrics.RecordRejectedConnection()
 			conn.Close()
 		}
 	}
@@ -374,6 +378,7 @@ func (s *Server) evictStaleStorage() {
 		for i := 0; i < numToEvict && i < len(items); i++ {
 			toClose = append(toClose, items[i].entry.store)
 			delete(s.storageCache, items[i].path)
+			s.metrics.RecordCacheEviction()
 		}
 	}
 
@@ -479,9 +484,19 @@ func (s *Server) checkVersionCompatibility(clientVersion string) error {
 }
 
 func (s *Server) handleRequest(req *Request) Response {
+	// Track request timing
+	start := time.Now()
+	
+	// Defer metrics recording to ensure it always happens
+	defer func() {
+		latency := time.Since(start)
+		s.metrics.RecordRequest(req.Operation, latency)
+	}()
+	
 	// Check version compatibility (skip for ping/health to allow version checks)
 	if req.Operation != OpPing && req.Operation != OpHealth {
 		if err := s.checkVersionCompatibility(req.ClientVersion); err != nil {
+			s.metrics.RecordError(req.Operation)
 			return Response{
 				Success: false,
 				Error:   err.Error(),
@@ -489,49 +504,60 @@ func (s *Server) handleRequest(req *Request) Response {
 		}
 	}
 	
+	var resp Response
 	switch req.Operation {
 	case OpPing:
-		return s.handlePing(req)
+		resp = s.handlePing(req)
 	case OpHealth:
-		return s.handleHealth(req)
+		resp = s.handleHealth(req)
+	case OpMetrics:
+		resp = s.handleMetrics(req)
 	case OpCreate:
-		return s.handleCreate(req)
+		resp = s.handleCreate(req)
 	case OpUpdate:
-		return s.handleUpdate(req)
+		resp = s.handleUpdate(req)
 	case OpClose:
-		return s.handleClose(req)
+		resp = s.handleClose(req)
 	case OpList:
-		return s.handleList(req)
+		resp = s.handleList(req)
 	case OpShow:
-		return s.handleShow(req)
+		resp = s.handleShow(req)
 	case OpReady:
-		return s.handleReady(req)
+		resp = s.handleReady(req)
 	case OpStats:
-		return s.handleStats(req)
+		resp = s.handleStats(req)
 	case OpDepAdd:
-		return s.handleDepAdd(req)
+		resp = s.handleDepAdd(req)
 	case OpDepRemove:
-		return s.handleDepRemove(req)
+		resp = s.handleDepRemove(req)
 	case OpLabelAdd:
-		return s.handleLabelAdd(req)
+		resp = s.handleLabelAdd(req)
 	case OpLabelRemove:
-		return s.handleLabelRemove(req)
+		resp = s.handleLabelRemove(req)
 	case OpBatch:
-		return s.handleBatch(req)
+		resp = s.handleBatch(req)
 	case OpReposList:
-		return s.handleReposList(req)
+		resp = s.handleReposList(req)
 	case OpReposReady:
-		return s.handleReposReady(req)
+		resp = s.handleReposReady(req)
 	case OpReposStats:
-		return s.handleReposStats(req)
+		resp = s.handleReposStats(req)
 	case OpReposClearCache:
-		return s.handleReposClearCache(req)
+		resp = s.handleReposClearCache(req)
 	default:
+		s.metrics.RecordError(req.Operation)
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("unknown operation: %s", req.Operation),
 		}
 	}
+	
+	// Record error if request failed
+	if !resp.Success {
+		s.metrics.RecordError(req.Operation)
+	}
+	
+	return resp
 }
 
 // Adapter helpers
@@ -673,6 +699,25 @@ func (s *Server) handleHealth(req *Request) Response {
 		Success: status != "unhealthy",
 		Data:    data,
 		Error:   dbError,
+	}
+}
+
+func (s *Server) handleMetrics(_ *Request) Response {
+	s.cacheMu.RLock()
+	cacheSize := len(s.storageCache)
+	s.cacheMu.RUnlock()
+	
+	snapshot := s.metrics.Snapshot(
+		atomic.LoadInt64(&s.cacheHits),
+		atomic.LoadInt64(&s.cacheMisses),
+		cacheSize,
+		int(atomic.LoadInt32(&s.activeConns)),
+	)
+	
+	data, _ := json.Marshal(snapshot)
+	return Response{
+		Success: true,
+		Data:    data,
 	}
 }
 

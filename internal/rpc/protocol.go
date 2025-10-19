@@ -10,6 +10,7 @@ import (
 const (
 	OpPing           = "ping"
 	OpHealth         = "health"
+	OpMetrics        = "metrics"
 	OpCreate         = "create"
 	OpUpdate         = "update"
 	OpClose          = "close"

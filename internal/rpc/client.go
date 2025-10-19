@@ -165,6 +165,21 @@ func (c *Client) Health() (*HealthResponse, error) {
 	return &health, nil
 }
 
+// Metrics retrieves daemon metrics
+func (c *Client) Metrics() (*MetricsSnapshot, error) {
+	resp, err := c.Execute(OpMetrics, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var metrics MetricsSnapshot
+	if err := json.Unmarshal(resp.Data, &metrics); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal metrics response: %w", err)
+	}
+
+	return &metrics, nil
+}
+
 // Create creates a new issue via the daemon
 func (c *Client) Create(args *CreateArgs) (*Response, error) {
 	return c.Execute(OpCreate, args)

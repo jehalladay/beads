@@ -940,6 +940,8 @@ bd daemon --auto-commit               # Auto-commit changes
 bd daemon --auto-push                 # Auto-push commits (requires auto-commit)
 bd daemon --log /var/log/bd.log       # Custom log file path
 bd daemon --status                    # Show daemon status
+bd daemon --health                    # Check daemon health
+bd daemon --metrics                   # Show detailed performance metrics
 bd daemon --stop                      # Stop running daemon
 bd daemon --global                    # Run as global daemon (see below)
 bd daemon --migrate-to-global         # Migrate from local to global daemon
@@ -961,6 +963,29 @@ The daemon is ideal for:
 - CI/CD pipelines that track issue status
 
 The daemon gracefully shuts down on SIGTERM and maintains a PID file at `.beads/daemon.pid` for process management.
+
+##### Monitoring & Observability
+
+Check daemon health and performance with built-in metrics:
+
+```bash
+# Quick health check
+bd daemon --health
+
+# Detailed performance metrics
+bd daemon --metrics
+
+# JSON output for programmatic access
+bd daemon --metrics --json
+```
+
+Metrics include:
+- **Request metrics**: Operation counts, latency percentiles (p50, p95, p99), error rates
+- **Cache metrics**: Hit/miss ratios, eviction counts, active database connections
+- **Connection metrics**: Total connections, active connections, rejected connections
+- **System metrics**: Memory usage, goroutine count, uptime
+
+All metrics are collected with zero overhead using lock-free atomic operations and efficient ring buffers for latency tracking.
 
 #### Global Daemon for Multiple Projects
 

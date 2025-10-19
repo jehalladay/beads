@@ -45,6 +45,7 @@ Use --health to check daemon health and metrics.`,
 		stop, _ := cmd.Flags().GetBool("stop")
 		status, _ := cmd.Flags().GetBool("status")
 		health, _ := cmd.Flags().GetBool("health")
+		metrics, _ := cmd.Flags().GetBool("metrics")
 		migrateToGlobal, _ := cmd.Flags().GetBool("migrate-to-global")
 		interval, _ := cmd.Flags().GetDuration("interval")
 		autoCommit, _ := cmd.Flags().GetBool("auto-commit")
@@ -70,6 +71,11 @@ Use --health to check daemon health and metrics.`,
 
 		if health {
 			showDaemonHealth(global)
+			return
+		}
+
+		if metrics {
+			showDaemonMetrics(global)
 			return
 		}
 
@@ -134,6 +140,7 @@ func init() {
 	daemonCmd.Flags().Bool("stop", false, "Stop running daemon")
 	daemonCmd.Flags().Bool("status", false, "Show daemon status")
 	daemonCmd.Flags().Bool("health", false, "Check daemon health and metrics")
+	daemonCmd.Flags().Bool("metrics", false, "Show detailed daemon metrics")
 	daemonCmd.Flags().Bool("migrate-to-global", false, "Migrate from local to global daemon")
 	daemonCmd.Flags().String("log", "", "Log file path (default: .beads/daemon.log)")
 	daemonCmd.Flags().Bool("global", false, "Run as global daemon (socket at ~/.beads/bd.sock)")
@@ -353,6 +360,100 @@ func showDaemonHealth(global bool) {
 	
 	if health.Status == "unhealthy" {
 		os.Exit(1)
+	}
+}
+
+func showDaemonMetrics(global bool) {
+	var socketPath string
+	if global {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: cannot get home directory: %v\n", err)
+			os.Exit(1)
+		}
+		socketPath = filepath.Join(home, ".beads", "bd.sock")
+	} else {
+		beadsDir, err := ensureBeadsDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		socketPath = filepath.Join(beadsDir, "bd.sock")
+	}
+	
+	client, err := rpc.TryConnect(socketPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error connecting to daemon: %v\n", err)
+		os.Exit(1)
+	}
+	
+	if client == nil {
+		fmt.Println("✗ Daemon is not running")
+		os.Exit(1)
+	}
+	defer client.Close()
+	
+	metrics, err := client.Metrics()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error fetching metrics: %v\n", err)
+		os.Exit(1)
+	}
+	
+	if jsonOutput {
+		data, _ := json.MarshalIndent(metrics, "", "  ")
+		fmt.Println(string(data))
+		return
+	}
+	
+	// Human-readable output
+	fmt.Printf("Daemon Metrics\n")
+	fmt.Printf("==============\n\n")
+	
+	fmt.Printf("Uptime: %.1f seconds (%.1f minutes)\n", metrics.UptimeSeconds, metrics.UptimeSeconds/60)
+	fmt.Printf("Timestamp: %s\n\n", metrics.Timestamp.Format(time.RFC3339))
+	
+	// Cache metrics
+	fmt.Printf("Cache Metrics:\n")
+	fmt.Printf("  Size: %d databases\n", metrics.CacheSize)
+	fmt.Printf("  Hits: %d\n", metrics.CacheHits)
+	fmt.Printf("  Misses: %d\n", metrics.CacheMisses)
+	if metrics.CacheHits+metrics.CacheMisses > 0 {
+		hitRate := float64(metrics.CacheHits) / float64(metrics.CacheHits+metrics.CacheMisses) * 100
+		fmt.Printf("  Hit Rate: %.1f%%\n", hitRate)
+	}
+	fmt.Printf("  Evictions: %d\n\n", metrics.CacheEvictions)
+	
+	// Connection metrics
+	fmt.Printf("Connection Metrics:\n")
+	fmt.Printf("  Total: %d\n", metrics.TotalConns)
+	fmt.Printf("  Active: %d\n", metrics.ActiveConns)
+	fmt.Printf("  Rejected: %d\n\n", metrics.RejectedConns)
+	
+	// System metrics
+	fmt.Printf("System Metrics:\n")
+	fmt.Printf("  Memory Alloc: %d MB\n", metrics.MemoryAllocMB)
+	fmt.Printf("  Memory Sys: %d MB\n", metrics.MemorySysMB)
+	fmt.Printf("  Goroutines: %d\n\n", metrics.GoroutineCount)
+	
+	// Operation metrics
+	if len(metrics.Operations) > 0 {
+		fmt.Printf("Operation Metrics:\n")
+		for _, op := range metrics.Operations {
+			fmt.Printf("\n  %s:\n", op.Operation)
+			fmt.Printf("    Total Requests: %d\n", op.TotalCount)
+			fmt.Printf("    Successful: %d\n", op.SuccessCount)
+			fmt.Printf("    Errors: %d\n", op.ErrorCount)
+			
+			if op.Latency.AvgMS > 0 {
+				fmt.Printf("    Latency:\n")
+				fmt.Printf("      Min: %.3f ms\n", op.Latency.MinMS)
+				fmt.Printf("      Avg: %.3f ms\n", op.Latency.AvgMS)
+				fmt.Printf("      P50: %.3f ms\n", op.Latency.P50MS)
+				fmt.Printf("      P95: %.3f ms\n", op.Latency.P95MS)
+				fmt.Printf("      P99: %.3f ms\n", op.Latency.P99MS)
+				fmt.Printf("      Max: %.3f ms\n", op.Latency.MaxMS)
+			}
+		}
 	}
 }
 
