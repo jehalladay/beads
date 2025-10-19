@@ -192,11 +192,32 @@ func TestSocketCleanup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
+	// Start server in goroutine
+	started := make(chan error, 1)
+	go func() {
+		err := server.Start(ctx)
+		if err != nil {
+			started <- err
+		}
+	}()
 
-	if _, err := os.Stat(socketPath); os.IsNotExist(err) {
-		t.Fatal("Socket file not created")
+	// Wait for socket to be created (with timeout)
+	timeout := time.After(5 * time.Second)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	socketReady := false
+	for !socketReady {
+		select {
+		case err := <-started:
+			t.Fatalf("Server failed to start: %v", err)
+		case <-timeout:
+			t.Fatal("Timeout waiting for socket creation")
+		case <-ticker.C:
+			if _, err := os.Stat(socketPath); err == nil {
+				socketReady = true
+			}
+		}
 	}
 
 	if err := server.Stop(); err != nil {

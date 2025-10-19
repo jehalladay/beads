@@ -94,23 +94,33 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to remove old socket: %w", err)
 	}
 
-	var err error
-	s.listener, err = net.Listen("unix", s.socketPath)
+	listener, err := net.Listen("unix", s.socketPath)
 	if err != nil {
 		return fmt.Errorf("failed to listen on socket: %w", err)
 	}
 
 	// Set socket permissions to 0600 for security (owner only)
 	if err := os.Chmod(s.socketPath, 0600); err != nil {
-		s.listener.Close()
+		listener.Close()
 		return fmt.Errorf("failed to set socket permissions: %w", err)
 	}
+
+	// Store listener under lock
+	s.mu.Lock()
+	s.listener = listener
+	s.mu.Unlock()
 
 	go s.handleSignals()
 	go s.runCleanupLoop()
 
+	// Accept connections using listener
 	for {
-		conn, err := s.listener.Accept()
+		// Get listener under lock
+		s.mu.RLock()
+		listener := s.listener
+		s.mu.RUnlock()
+		
+		conn, err := listener.Accept()
 		if err != nil {
 			s.mu.Lock()
 			shutdown := s.shutdown
@@ -152,8 +162,14 @@ func (s *Server) Stop() error {
 			}
 		}
 
-		if s.listener != nil {
-			if closeErr := s.listener.Close(); closeErr != nil {
+		// Close listener under lock
+		s.mu.Lock()
+		listener := s.listener
+		s.listener = nil
+		s.mu.Unlock()
+		
+		if listener != nil {
+			if closeErr := listener.Close(); closeErr != nil {
 				err = fmt.Errorf("failed to close listener: %w", closeErr)
 				return
 			}
