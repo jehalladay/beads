@@ -30,10 +30,12 @@ func New(path string) (*SQLiteStorage, error) {
 	}
 
 	// Open database with WAL mode for better concurrency and busy timeout for parallel writes
+	// Use modernc.org/sqlite's _pragma syntax for all options to ensure consistent behavior
+	// _pragma=journal_mode(WAL) enables Write-Ahead Logging for better concurrency
+	// _pragma=foreign_keys(ON) enforces foreign key constraints
 	// _pragma=busy_timeout(30000) means wait up to 30 seconds for locks instead of failing immediately
-	// Higher timeout helps with parallel issue creation from multiple processes
-	// _time_format=sqlite uses SQLite's native time format for DATETIME columns
-	db, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_foreign_keys=ON&_pragma=busy_timeout(30000)&_time_format=sqlite")
+	// _time_format=sqlite enables automatic parsing of DATETIME columns to time.Time
+	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
