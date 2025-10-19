@@ -178,8 +178,15 @@ var depTreeCmd = &cobra.Command{
 		}
 
 		showAllPaths, _ := cmd.Flags().GetBool("show-all-paths")
+		maxDepth, _ := cmd.Flags().GetInt("max-depth")
+		
+		if maxDepth < 1 {
+			fmt.Fprintf(os.Stderr, "Error: --max-depth must be >= 1\n")
+			os.Exit(1)
+		}
+		
 		ctx := context.Background()
-		tree, err := store.GetDependencyTree(ctx, args[0], 50, showAllPaths)
+		tree, err := store.GetDependencyTree(ctx, args[0], maxDepth, showAllPaths)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -208,17 +215,19 @@ var depTreeCmd = &cobra.Command{
 			for i := 0; i < node.Depth; i++ {
 				indent += "  "
 			}
-			fmt.Printf("%s→ %s: %s [P%d] (%s)\n",
+			line := fmt.Sprintf("%s→ %s: %s [P%d] (%s)",
 				indent, node.ID, node.Title, node.Priority, node.Status)
 			if node.Truncated {
+				line += " … [truncated]"
 				hasTruncation = true
 			}
+			fmt.Println(line)
 		}
 
 		if hasTruncation {
 			yellow := color.New(color.FgYellow).SprintFunc()
-			fmt.Printf("\n%s Warning: Tree truncated at depth 50 (safety limit)\n",
-				yellow("⚠"))
+			fmt.Printf("\n%s Warning: Tree truncated at depth %d (safety limit)\n",
+				yellow("⚠"), maxDepth)
 		}
 		fmt.Println()
 	},
@@ -276,6 +285,7 @@ var depCyclesCmd = &cobra.Command{
 func init() {
 	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks|related|parent-child|discovered-from)")
 	depTreeCmd.Flags().Bool("show-all-paths", false, "Show all paths to nodes (no deduplication for diamond dependencies)")
+	depTreeCmd.Flags().IntP("max-depth", "d", 50, "Maximum tree depth to display (safety limit)")
 	depCmd.AddCommand(depAddCmd)
 	depCmd.AddCommand(depRemoveCmd)
 	depCmd.AddCommand(depTreeCmd)

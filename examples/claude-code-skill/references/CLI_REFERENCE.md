@@ -185,9 +185,13 @@ Visualize full dependency tree for an issue.
 
 ```bash
 bd dep tree issue-123
+
+# Limit tree depth (default: 50)
+bd dep tree issue-123 --max-depth 10
+bd dep tree issue-123 -d 10
 ```
 
-Shows all dependencies and dependents in tree format.
+Shows all dependencies and dependents in tree format. Use `--max-depth` to limit traversal depth for very deep trees.
 
 ---
 

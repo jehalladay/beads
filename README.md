@@ -1421,8 +1421,11 @@ Those issues probably have open blockers. Check:
 # See blocked issues
 bd blocked
 
-# Show dependency tree
+# Show dependency tree (default max depth: 50)
 bd dep tree <issue-id>
+
+# Limit tree depth to prevent deep traversals
+bd dep tree <issue-id> --max-depth 10
 
 # Remove blocking dependency if needed
 bd dep remove <from-id> <to-id>

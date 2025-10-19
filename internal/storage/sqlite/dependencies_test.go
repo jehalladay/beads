@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -231,6 +232,161 @@ func TestGetDependencyTree(t *testing.T) {
 
 	if depthMap[issue1.ID] != 2 {
 		t.Errorf("Expected depth 2 for %s, got %d", issue1.ID, depthMap[issue1.ID])
+	}
+}
+
+func TestGetDependencyTree_TruncationDepth(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a long chain: bd-5 → bd-4 → bd-3 → bd-2 → bd-1
+	issues := make([]*types.Issue, 5)
+	for i := 0; i < 5; i++ {
+		issues[i] = &types.Issue{
+			Title:     fmt.Sprintf("Level %d", i),
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		}
+		err := store.CreateIssue(ctx, issues[i], "test-user")
+		if err != nil {
+			t.Fatalf("CreateIssue failed: %v", err)
+		}
+	}
+
+	// Link them in chain
+	for i := 1; i < 5; i++ {
+		err := store.AddDependency(ctx, &types.Dependency{
+			IssueID:     issues[i].ID,
+			DependsOnID: issues[i-1].ID,
+			Type:        types.DepBlocks,
+		}, "test-user")
+		if err != nil {
+			t.Fatalf("AddDependency failed: %v", err)
+		}
+	}
+
+	// Get tree with maxDepth=2 (should only get 3 nodes: depths 0, 1, 2)
+	tree, err := store.GetDependencyTree(ctx, issues[4].ID, 2, false)
+	if err != nil {
+		t.Fatalf("GetDependencyTree failed: %v", err)
+	}
+
+	if len(tree) != 3 {
+		t.Fatalf("Expected 3 nodes with maxDepth=2, got %d", len(tree))
+	}
+
+	// Check that last node is marked as truncated
+	foundTruncated := false
+	for _, node := range tree {
+		if node.Depth == 2 && node.Truncated {
+			foundTruncated = true
+			break
+		}
+	}
+
+	if !foundTruncated {
+		t.Error("Expected node at depth 2 to be marked as truncated")
+	}
+}
+
+func TestGetDependencyTree_DefaultDepth(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a simple chain
+	issue1 := &types.Issue{Title: "Level 0", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue2 := &types.Issue{Title: "Level 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, issue1, "test-user")
+	store.CreateIssue(ctx, issue2, "test-user")
+
+	store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue2.ID,
+		DependsOnID: issue1.ID,
+		Type:        types.DepBlocks,
+	}, "test-user")
+
+	// Get tree with default depth (50)
+	tree, err := store.GetDependencyTree(ctx, issue2.ID, 50, false)
+	if err != nil {
+		t.Fatalf("GetDependencyTree failed: %v", err)
+	}
+
+	if len(tree) != 2 {
+		t.Fatalf("Expected 2 nodes, got %d", len(tree))
+	}
+
+	// No truncation should occur
+	for _, node := range tree {
+		if node.Truncated {
+			t.Error("Expected no truncation with default depth on short chain")
+		}
+	}
+}
+
+func TestGetDependencyTree_MaxDepthOne(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a chain: bd-3 → bd-2 → bd-1
+	issue1 := &types.Issue{Title: "Level 2", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue2 := &types.Issue{Title: "Level 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue3 := &types.Issue{Title: "Root", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, issue1, "test-user")
+	store.CreateIssue(ctx, issue2, "test-user")
+	store.CreateIssue(ctx, issue3, "test-user")
+
+	store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue2.ID,
+		DependsOnID: issue1.ID,
+		Type:        types.DepBlocks,
+	}, "test-user")
+
+	store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue3.ID,
+		DependsOnID: issue2.ID,
+		Type:        types.DepBlocks,
+	}, "test-user")
+
+	// Get tree with maxDepth=1 (should get root + one level)
+	tree, err := store.GetDependencyTree(ctx, issue3.ID, 1, false)
+	if err != nil {
+		t.Fatalf("GetDependencyTree failed: %v", err)
+	}
+
+	// Should get root (depth 0) and one child (depth 1)
+	if len(tree) != 2 {
+		t.Fatalf("Expected 2 nodes with maxDepth=1, got %d", len(tree))
+	}
+
+	// Check root is at depth 0 and not truncated
+	rootFound := false
+	for _, node := range tree {
+		if node.ID == issue3.ID && node.Depth == 0 && !node.Truncated {
+			rootFound = true
+		}
+	}
+	if !rootFound {
+		t.Error("Expected root at depth 0, not truncated")
+	}
+
+	// Check child at depth 1 is truncated
+	childTruncated := false
+	for _, node := range tree {
+		if node.Depth == 1 && node.Truncated {
+			childTruncated = true
+		}
+	}
+	if !childTruncated {
+		t.Error("Expected child at depth 1 to be truncated")
 	}
 }
 
