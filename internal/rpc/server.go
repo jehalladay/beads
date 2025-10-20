@@ -60,6 +60,8 @@ type Server struct {
 	connSemaphore chan struct{}
 	// Request timeout
 	requestTimeout time.Duration
+	// Ready channel signals when server is listening
+	readyChan      chan struct{}
 }
 
 // NewServer creates a new RPC server
@@ -108,6 +110,7 @@ func NewServer(socketPath string, store storage.Storage) *Server {
 		maxConns:       maxConns,
 		connSemaphore:  make(chan struct{}, maxConns),
 		requestTimeout: requestTimeout,
+		readyChan:      make(chan struct{}),
 	}
 }
 
@@ -136,6 +139,9 @@ func (s *Server) Start(ctx context.Context) error {
 	s.mu.Lock()
 	s.listener = listener
 	s.mu.Unlock()
+
+	// Signal that server is ready to accept connections
+	close(s.readyChan)
 
 	go s.handleSignals()
 	go s.runCleanupLoop()
@@ -175,6 +181,11 @@ func (s *Server) Start(ctx context.Context) error {
 			conn.Close()
 		}
 	}
+}
+
+// WaitReady waits for the server to be ready to accept connections
+func (s *Server) WaitReady() <-chan struct{} {
+	return s.readyChan
 }
 
 // Stop stops the RPC server and cleans up resources

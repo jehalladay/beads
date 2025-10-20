@@ -816,13 +816,15 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 			}
 		}()
 		
-		// Wait for server to start or fail
+		// Wait for server to be ready or fail
 		select {
 		case err := <-serverErrChan:
 			log("RPC server failed to start: %v", err)
 			os.Exit(1)
-		case <-time.After(2 * time.Second):
-			log("Global RPC server started")
+		case <-server.WaitReady():
+			log("Global RPC server ready (socket listening)")
+		case <-time.After(5 * time.Second):
+			log("WARNING: Server didn't signal ready after 5 seconds (may still be starting)")
 		}
 		
 		// Wait for shutdown signal
@@ -883,14 +885,15 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 		}
 	}()
 	
-	// Wait for server to start or fail
+	// Wait for server to be ready or fail
 	select {
 	case err := <-serverErrChan:
 		log("RPC server failed to start: %v", err)
 		os.Exit(1)
-	case <-time.After(2 * time.Second):
-		// If no error after 2 seconds, assume success
-		log("RPC server started")
+	case <-server.WaitReady():
+		log("RPC server ready (socket listening)")
+	case <-time.After(5 * time.Second):
+		log("WARNING: Server didn't signal ready after 5 seconds (may still be starting)")
 	}
 
 	sigChan := make(chan os.Signal, 1)
