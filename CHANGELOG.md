@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.11] - 2025-10-20
+
+### Added
+- **Labels Documentation**: Comprehensive LABELS.md guide (bd-159, bd-163)
+  - Complete label system documentation with workflows and best practices
+  - Common label patterns (components, domains, size, quality gates, releases)
+  - Advanced filtering techniques and integration examples
+  - Added Labels section to README with quick reference
+
+### Fixed
+- **Critical**: MCP server crashes on None/null responses (bd-172, fixes #79)
+  - Added null safety checks in `list_issues()`, `ready()`, and `stats()` methods
+  - Returns empty arrays/dicts instead of crashing on None responses
+  - Prevents TypeError when daemon returns empty results
+
+## [0.9.10] - 2025-10-18
+
 ### Added
 - **Label Filtering**: Enhanced `bd list` command with label-based filtering (bd-161)
   - `--label` (or `-l`): Filter by multiple labels with AND semantics (must have ALL)
