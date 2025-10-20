@@ -1731,17 +1731,19 @@ var showCmd = &cobra.Command{
 		}
 
 		if jsonOutput {
-			// Include labels and dependencies in JSON output
+			// Include labels, dependencies, and comments in JSON output
 			type IssueDetails struct {
 				*types.Issue
-				Labels      []string       `json:"labels,omitempty"`
-				Dependencies []*types.Issue `json:"dependencies,omitempty"`
-				Dependents   []*types.Issue `json:"dependents,omitempty"`
+				Labels       []string         `json:"labels,omitempty"`
+				Dependencies []*types.Issue   `json:"dependencies,omitempty"`
+				Dependents   []*types.Issue   `json:"dependents,omitempty"`
+				Comments     []*types.Comment `json:"comments,omitempty"`
 			}
 			details := &IssueDetails{Issue: issue}
 			details.Labels, _ = store.GetLabels(ctx, issue.ID)
 			details.Dependencies, _ = store.GetDependencies(ctx, issue.ID)
 			details.Dependents, _ = store.GetDependents(ctx, issue.ID)
+			details.Comments, _ = store.GetIssueComments(ctx, issue.ID)
 			outputJSON(details)
 			return
 		}
@@ -1832,6 +1834,15 @@ var showCmd = &cobra.Command{
 			fmt.Printf("\nBlocks (%d):\n", len(dependents))
 			for _, dep := range dependents {
 				fmt.Printf("  ← %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+			}
+		}
+
+		// Show comments
+		comments, _ := store.GetIssueComments(ctx, issue.ID)
+		if len(comments) > 0 {
+			fmt.Printf("\nComments (%d):\n", len(comments))
+			for _, comment := range comments {
+				fmt.Printf("  [%s at %s]\n  %s\n\n", comment.Author, comment.CreatedAt.Format("2006-01-02 15:04"), comment.Text)
 			}
 		}
 

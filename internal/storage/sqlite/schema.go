@@ -56,6 +56,19 @@ CREATE TABLE IF NOT EXISTS labels (
 
 CREATE INDEX IF NOT EXISTS idx_labels_label ON labels(label);
 
+-- Comments table
+CREATE TABLE IF NOT EXISTS comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    issue_id TEXT NOT NULL,
+    author TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_issue ON comments(issue_id);
+CREATE INDEX IF NOT EXISTS idx_comments_created_at ON comments(created_at);
+
 -- Events table (audit trail)
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

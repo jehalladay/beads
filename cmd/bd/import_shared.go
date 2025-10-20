@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
@@ -269,6 +270,40 @@ func importIssuesCore(ctx context.Context, dbPath string, store storage.Storage,
 						return nil, fmt.Errorf("error adding label %s to %s: %w", label, issue.ID, err)
 					}
 					// Non-strict mode: skip this label
+					continue
+				}
+			}
+		}
+	}
+
+	// Phase 7: Import comments
+	for _, issue := range issues {
+		if len(issue.Comments) == 0 {
+			continue
+		}
+
+		// Get current comments to avoid duplicates
+		currentComments, err := sqliteStore.GetIssueComments(ctx, issue.ID)
+		if err != nil {
+			return nil, fmt.Errorf("error getting comments for %s: %w", issue.ID, err)
+		}
+
+		// Build a set of existing comments (by author+text+timestamp)
+		existingComments := make(map[string]bool)
+		for _, c := range currentComments {
+			key := fmt.Sprintf("%s:%s:%s", c.Author, c.Text, c.CreatedAt.Format(time.RFC3339))
+			existingComments[key] = true
+		}
+
+		// Add missing comments
+		for _, comment := range issue.Comments {
+			key := fmt.Sprintf("%s:%s:%s", comment.Author, comment.Text, comment.CreatedAt.Format(time.RFC3339))
+			if !existingComments[key] {
+				if _, err := sqliteStore.AddIssueComment(ctx, issue.ID, comment.Author, comment.Text); err != nil {
+					if opts.Strict {
+						return nil, fmt.Errorf("error adding comment to %s: %w", issue.ID, err)
+					}
+					// Non-strict mode: skip this comment
 					continue
 				}
 			}

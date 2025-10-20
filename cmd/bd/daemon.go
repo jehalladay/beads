@@ -664,6 +664,15 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 		issue.Labels = labels
 	}
 
+	// Populate comments for all issues
+	for _, issue := range issues {
+		comments, err := store.GetIssueComments(ctx, issue.ID)
+		if err != nil {
+			return fmt.Errorf("failed to get comments for %s: %w", issue.ID, err)
+		}
+		issue.Comments = comments
+	}
+
 	// Create temp file for atomic write
 	dir := filepath.Dir(jsonlPath)
 	base := filepath.Base(jsonlPath)

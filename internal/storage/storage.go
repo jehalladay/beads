@@ -42,6 +42,10 @@ type Storage interface {
 	AddComment(ctx context.Context, issueID, actor, comment string) error
 	GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error)
 
+	// Comments
+	AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error)
+	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
+
 	// Statistics
 	GetStatistics(ctx context.Context) (*types.Statistics, error)
 

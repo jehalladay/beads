@@ -29,6 +29,7 @@ type Issue struct {
 	OriginalSize       int            `json:"original_size,omitempty"`
 	Labels             []string       `json:"labels,omitempty"`       // Populated only for export/import
 	Dependencies       []*Dependency  `json:"dependencies,omitempty"` // Populated only for export/import
+	Comments           []*Comment     `json:"comments,omitempty"`     // Populated only for export/import
 }
 
 // Validate checks if the issue has valid field values
@@ -135,6 +136,15 @@ func (d DependencyType) IsValid() bool {
 type Label struct {
 	IssueID string `json:"issue_id"`
 	Label   string `json:"label"`
+}
+
+// Comment represents a comment on an issue
+type Comment struct {
+	ID        int64     `json:"id"`
+	IssueID   string    `json:"issue_id"`
+	Author    string    `json:"author"`
+	Text      string    `json:"text"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Event represents an audit trail entry
