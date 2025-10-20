@@ -42,21 +42,14 @@ See `integrations/beads-mcp/README.md` for complete documentation.
 
 ### Multi-Repo Configuration (MCP Server)
 
-**Working on multiple projects?** You can configure beads MCP to work across multiple repositories.
+**RECOMMENDED: Use a single MCP server with global daemon** for all beads repositories.
 
-**Option 1: Global Daemon (Recommended - v0.9.11+)**
-Start a single daemon to serve all your projects:
+**Setup (one-time):**
 ```bash
-# Start global daemon
+# Start global daemon (or it will auto-start on first bd command)
 bd daemon --global
 
-# MCP server automatically discovers and uses the global daemon
-```
-
-**Note:** As of v0.9.11, the daemon **auto-starts automatically** when you run any `bd` command. You typically don't need to manually start it. To disable auto-start, set `BEADS_AUTO_START_DAEMON=false`.
-
-Your MCP config stays simple:
-```json
+# MCP config in ~/.config/amp/settings.json or Claude Desktop config:
 {
   "beads": {
     "command": "beads-mcp",
@@ -65,15 +58,24 @@ Your MCP config stays simple:
 }
 ```
 
-The MCP server will:
-1. Check for local daemon socket (`.beads/bd.sock`)
-2. Fall back to global daemon socket (`~/.beads/bd.sock`)
-3. Automatically route requests to the correct database based on your current working directory
-4. Auto-start the daemon if it's not running (with exponential backoff on failures)
-5. Auto-detect multiple repositories and prefer global daemon when 4+ repos are found
+**How it works:**
+The single MCP server instance automatically:
+1. Checks for local daemon socket (`.beads/bd.sock`) in your current workspace
+2. Falls back to global daemon socket (`~/.beads/bd.sock`)
+3. Routes requests to the correct database based on your current working directory
+4. Auto-starts the daemon if it's not running (with exponential backoff on failures)
+5. Auto-detects multiple repositories and prefers global daemon when 4+ repos are found
 
-**Option 2: Multiple MCP Server Instances**
-Configure separate MCP servers for each major project:
+**Why this is better than multiple MCP servers:**
+- ✅ One config entry works for all your beads projects
+- ✅ No risk of AI selecting wrong MCP server for workspace
+- ✅ Better resource usage (one daemon instead of multiple)
+- ✅ Automatic workspace detection without BEADS_WORKING_DIR
+
+**Note:** The daemon **auto-starts automatically** when you run any `bd` command (v0.9.11+). To disable auto-start, set `BEADS_AUTO_START_DAEMON=false`.
+
+**Alternative (legacy): Multiple MCP Server Instances**
+If you must use separate MCP servers (not recommended):
 ```json
 {
   "beads-webapp": {
@@ -90,13 +92,7 @@ Configure separate MCP servers for each major project:
   }
 }
 ```
-
-Each MCP instance will use its specified working directory to find the correct `.beads/*.db` database.
-
-**Which approach should you use?**
-- ✅ **Global daemon**: Best for 3+ projects, better resource usage, automatic routing (auto-started when 4+ repos detected)
-- ✅ **Multiple instances**: Best for 1-2 projects you switch between frequently
-- ✅ **Hybrid**: Run global daemon + use MCP instances for convenience
+⚠️ **Problem**: AI may select the wrong MCP server for your workspace, causing commands to operate on the wrong database.
 
 **Migration helper:**
 ```bash
