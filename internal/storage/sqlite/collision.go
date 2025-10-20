@@ -152,12 +152,6 @@ func equalStringPtr(a, b *string) bool {
 //
 // Reference score = text mentions + dependency references
 func ScoreCollisions(ctx context.Context, s *SQLiteStorage, collisions []*CollisionDetail, allIssues []*types.Issue) error {
-	// Build a map of all issues for quick lookup
-	issueMap := make(map[string]*types.Issue)
-	for _, issue := range allIssues {
-		issueMap[issue.ID] = issue
-	}
-
 	// Get all dependency records for efficient lookup
 	allDeps, err := s.GetAllDependencyRecords(ctx)
 	if err != nil {

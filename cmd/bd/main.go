@@ -745,6 +745,15 @@ func outputJSON(v interface{}) {
 }
 
 // findJSONLPath finds the JSONL file path for the current database
+// findJSONLPath discovers the JSONL file path for the current database and ensures
+// the parent directory exists. Uses beads.FindJSONLPath() for discovery (checking
+// BEADS_JSONL env var first, then using .beads/issues.jsonl next to the database).
+//
+// Creates the .beads directory if it doesn't exist (important for new databases).
+// If directory creation fails, returns the path anyway - the subsequent write will
+// fail with a clearer error message.
+//
+// Thread-safe: No shared state access.
 func findJSONLPath() string {
 	// Use public API for path discovery
 	jsonlPath := beads.FindJSONLPath(dbPath)
@@ -985,6 +994,19 @@ func checkVersionMismatch() {
 }
 
 // markDirtyAndScheduleFlush marks the database as dirty and schedules a flush
+// markDirtyAndScheduleFlush marks the database as dirty and schedules a debounced
+// export to JSONL. Uses a timer that resets on each call - flush occurs 5 seconds
+// after the LAST database modification (not the first).
+//
+// Debouncing behavior: If multiple operations happen within 5 seconds, the timer
+// resets each time, and only one flush occurs after the burst of activity completes.
+// This prevents excessive writes during rapid issue creation/updates.
+//
+// Flush-on-exit guarantee: PersistentPostRun cancels the timer and flushes immediately
+// before the command exits, ensuring no data is lost even if the timer hasn't fired.
+//
+// Thread-safe: Protected by flushMutex. Safe to call from multiple goroutines.
+// No-op if auto-flush is disabled via --no-auto-flush flag.
 func markDirtyAndScheduleFlush() {
 	if !autoFlushEnabled {
 		return
@@ -1051,6 +1073,27 @@ func clearAutoFlushState() {
 }
 
 // flushToJSONL exports dirty issues to JSONL using incremental updates
+// flushToJSONL exports dirty database changes to the JSONL file. Uses incremental
+// export by default (only exports modified issues), or full export for ID-changing
+// operations (renumber, resolve-collisions). Invoked by the debounce timer or
+// immediately on command exit.
+//
+// Export modes:
+//   - Incremental (default): Exports only GetDirtyIssues(), merges with existing JSONL
+//   - Full (after renumber): Exports all issues, rebuilds JSONL from scratch
+//
+// Error handling: Tracks consecutive failures. After 3+ failures, displays prominent
+// warning suggesting manual "bd export" to recover. Failure counter resets on success.
+//
+// Thread-safety:
+//   - Protected by flushMutex for isDirty/needsFullExport access
+//   - Checks storeActive flag (via storeMutex) to prevent use-after-close
+//   - Safe to call from timer goroutine or main thread
+//
+// No-op conditions:
+//   - Store already closed (storeActive=false)
+//   - Database not dirty (isDirty=false)
+//   - No dirty issues found (incremental mode only)
 func flushToJSONL() {
 	// Check if store is still active (not closed)
 	storeMutex.Lock()

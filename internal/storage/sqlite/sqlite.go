@@ -1149,17 +1149,24 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 
 // UpdateIssueID updates an issue ID and all its text fields in a single transaction
 func (s *SQLiteStorage) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Get exclusive connection to ensure PRAGMA applies
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer conn.Close()
+
+	// Disable foreign keys on this specific connection
+	_, err = conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`)
+	if err != nil {
+		return fmt.Errorf("failed to disable foreign keys: %w", err)
+	}
+
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
-
-	// Defer foreign key checks until end of transaction
-	_, err = tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`)
-	if err != nil {
-		return fmt.Errorf("failed to defer foreign keys: %w", err)
-	}
 
 	_, err = tx.ExecContext(ctx, `
 		UPDATE issues
