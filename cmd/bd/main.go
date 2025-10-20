@@ -861,6 +861,12 @@ func autoImportIfNewer() {
 			return
 		}
 
+		// Fix closed_at invariant: closed issues must have closed_at timestamp
+		if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
+			now := time.Now()
+			issue.ClosedAt = &now
+		}
+
 		allIssues = append(allIssues, &issue)
 	}
 
