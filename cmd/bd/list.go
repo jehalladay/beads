@@ -90,6 +90,9 @@ var listCmd = &cobra.Command{
 					if issue.Assignee != "" {
 						fmt.Printf("  Assignee: %s\n", issue.Assignee)
 					}
+					if len(issue.Labels) > 0 {
+						fmt.Printf("  Labels: %v\n", issue.Labels)
+					}
 					fmt.Println()
 				}
 			}
@@ -114,16 +117,26 @@ var listCmd = &cobra.Command{
 		}
 
 		if jsonOutput {
+			// Populate labels for JSON output
+			for _, issue := range issues {
+				issue.Labels, _ = store.GetLabels(ctx, issue.ID)
+			}
 			outputJSON(issues)
 			return
 		}
 
 		fmt.Printf("\nFound %d issues:\n\n", len(issues))
 		for _, issue := range issues {
+			// Load labels for display
+			labels, _ := store.GetLabels(ctx, issue.ID)
+			
 			fmt.Printf("%s [P%d] [%s] %s\n", issue.ID, issue.Priority, issue.IssueType, issue.Status)
 			fmt.Printf("  %s\n", issue.Title)
 			if issue.Assignee != "" {
 				fmt.Printf("  Assignee: %s\n", issue.Assignee)
+			}
+			if len(labels) > 0 {
+				fmt.Printf("  Labels: %v\n", labels)
 			}
 			fmt.Println()
 		}

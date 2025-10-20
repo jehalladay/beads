@@ -909,6 +909,12 @@ func (s *Server) handleList(req *Request) Response {
 		}
 	}
 
+	// Populate labels for each issue
+	for _, issue := range issues {
+		labels, _ := store.GetLabels(ctx, issue.ID)
+		issue.Labels = labels
+	}
+
 	data, _ := json.Marshal(issues)
 	return Response{
 		Success: true,
@@ -942,7 +948,27 @@ func (s *Server) handleShow(req *Request) Response {
 		}
 	}
 
-	data, _ := json.Marshal(issue)
+	// Populate labels, dependencies, and dependents
+	labels, _ := store.GetLabels(ctx, issue.ID)
+	deps, _ := store.GetDependencies(ctx, issue.ID)
+	dependents, _ := store.GetDependents(ctx, issue.ID)
+	
+	// Create detailed response with related data
+	type IssueDetails struct {
+		*types.Issue
+		Labels       []string       `json:"labels,omitempty"`
+		Dependencies []*types.Issue `json:"dependencies,omitempty"`
+		Dependents   []*types.Issue `json:"dependents,omitempty"`
+	}
+	
+	details := &IssueDetails{
+		Issue:        issue,
+		Labels:       labels,
+		Dependencies: deps,
+		Dependents:   dependents,
+	}
+
+	data, _ := json.Marshal(details)
 	return Response{
 		Success: true,
 		Data:    data,
