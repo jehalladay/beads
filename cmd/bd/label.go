@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -21,13 +23,36 @@ var labelCmd = &cobra.Command{
 // executeLabelCommand executes a label operation and handles output
 func executeLabelCommand(issueID, label, operation string, operationFunc func(context.Context, string, string, string) error) {
 	ctx := context.Background()
-	if err := operationFunc(ctx, issueID, label, actor); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	
+	// Use daemon if available
+	if daemonClient != nil {
+		var err error
+		if operation == "added" {
+			_, err = daemonClient.AddLabel(&rpc.LabelAddArgs{
+				ID:    issueID,
+				Label: label,
+			})
+		} else {
+			_, err = daemonClient.RemoveLabel(&rpc.LabelRemoveArgs{
+				ID:    issueID,
+				Label: label,
+			})
+		}
+		
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		// Direct mode
+		if err := operationFunc(ctx, issueID, label, actor); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
-	// Schedule auto-flush
-	markDirtyAndScheduleFlush()
+		// Schedule auto-flush
+		markDirtyAndScheduleFlush()
+	}
 
 	if jsonOutput {
 		outputJSON(map[string]interface{}{
@@ -49,7 +74,9 @@ var labelAddCmd = &cobra.Command{
 	Short: "Add a label to an issue",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		executeLabelCommand(args[0], args[1], "added", store.AddLabel)
+		executeLabelCommand(args[0], args[1], "added", func(ctx context.Context, issueID, label, actor string) error {
+			return store.AddLabel(ctx, issueID, label, actor)
+		})
 	},
 }
 
@@ -58,7 +85,9 @@ var labelRemoveCmd = &cobra.Command{
 	Short: "Remove a label from an issue",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		executeLabelCommand(args[0], args[1], "removed", store.RemoveLabel)
+		executeLabelCommand(args[0], args[1], "removed", func(ctx context.Context, issueID, label, actor string) error {
+			return store.RemoveLabel(ctx, issueID, label, actor)
+		})
 	},
 }
 
@@ -70,10 +99,30 @@ var labelListCmd = &cobra.Command{
 		issueID := args[0]
 
 		ctx := context.Background()
-		labels, err := store.GetLabels(ctx, issueID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+		var labels []string
+		
+		// Use daemon if available
+		if daemonClient != nil {
+			resp, err := daemonClient.Show(&rpc.ShowArgs{ID: issueID})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			
+			var issue types.Issue
+			if err := json.Unmarshal(resp.Data, &issue); err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
+				os.Exit(1)
+			}
+			labels = issue.Labels
+		} else {
+			// Direct mode
+			var err error
+			labels, err = store.GetLabels(ctx, issueID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 		}
 
 		if jsonOutput {
@@ -105,23 +154,48 @@ var labelListAllCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
 
-		// Get all issues to collect labels
-		issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+		var issues []*types.Issue
+		var err error
+		
+		// Use daemon if available
+		if daemonClient != nil {
+			resp, err := daemonClient.List(&rpc.ListArgs{})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			
+			if err := json.Unmarshal(resp.Data, &issues); err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			// Direct mode
+			issues, err = store.SearchIssues(ctx, "", types.IssueFilter{})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 		}
 
 		// Collect unique labels with counts
 		labelCounts := make(map[string]int)
 		for _, issue := range issues {
-			labels, err := store.GetLabels(ctx, issue.ID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting labels for %s: %v\n", issue.ID, err)
-				os.Exit(1)
-			}
-			for _, label := range labels {
-				labelCounts[label]++
+			if daemonClient != nil {
+				// Labels are already in the issue from daemon
+				for _, label := range issue.Labels {
+					labelCounts[label]++
+				}
+			} else {
+				// Direct mode - need to fetch labels
+				labels, err := store.GetLabels(ctx, issue.ID)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error getting labels for %s: %v\n", issue.ID, err)
+					os.Exit(1)
+				}
+				for _, label := range labels {
+					labelCounts[label]++
+				}
 			}
 		}
 

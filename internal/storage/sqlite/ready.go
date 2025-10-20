@@ -109,7 +109,7 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 	}
 	defer rows.Close()
 
-	return scanIssues(rows)
+	return s.scanIssues(ctx, rows)
 }
 
 // GetBlockedIssues returns issues that are blocked by dependencies

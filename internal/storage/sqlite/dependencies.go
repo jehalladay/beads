@@ -363,7 +363,7 @@ func (s *SQLiteStorage) GetDependencies(ctx context.Context, issueID string) ([]
 	}
 	defer rows.Close()
 
-	return scanIssues(rows)
+	return s.scanIssues(ctx, rows)
 }
 
 // GetDependents returns issues that depend on this issue
@@ -382,7 +382,7 @@ func (s *SQLiteStorage) GetDependents(ctx context.Context, issueID string) ([]*t
 	}
 	defer rows.Close()
 
-	return scanIssues(rows)
+	return s.scanIssues(ctx, rows)
 }
 
 // GetDependencyRecords returns raw dependency records for an issue
@@ -644,7 +644,7 @@ func (s *SQLiteStorage) DetectCycles(ctx context.Context) ([][]*types.Issue, err
 }
 
 // Helper function to scan issues from rows
-func scanIssues(rows *sql.Rows) ([]*types.Issue, error) {
+func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*types.Issue, error) {
 	var issues []*types.Issue
 	for rows.Next() {
 		var issue types.Issue
@@ -676,6 +676,13 @@ func scanIssues(rows *sql.Rows) ([]*types.Issue, error) {
 		if externalRef.Valid {
 			issue.ExternalRef = &externalRef.String
 		}
+
+		// Fetch labels for this issue
+		labels, err := s.GetLabels(ctx, issue.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get labels for issue %s: %w", issue.ID, err)
+		}
+		issue.Labels = labels
 
 		issues = append(issues, &issue)
 	}

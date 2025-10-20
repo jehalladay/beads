@@ -112,5 +112,5 @@ func (s *SQLiteStorage) GetIssuesByLabel(ctx context.Context, label string) ([]*
 	}
 	defer rows.Close()
 
-	return scanIssues(rows)
+	return s.scanIssues(ctx, rows)
 }

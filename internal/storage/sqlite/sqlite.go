@@ -925,6 +925,13 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		issue.OriginalSize = int(originalSize.Int64)
 	}
 
+	// Fetch labels for this issue
+	labels, err := s.GetLabels(ctx, issue.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get labels: %w", err)
+	}
+	issue.Labels = labels
+
 	return &issue, nil
 }
 
@@ -1693,7 +1700,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	}
 	defer rows.Close()
 
-	return scanIssues(rows)
+	return s.scanIssues(ctx, rows)
 }
 
 // SetConfig sets a configuration value
