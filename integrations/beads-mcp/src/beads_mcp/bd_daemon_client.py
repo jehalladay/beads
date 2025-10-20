@@ -340,6 +340,8 @@ class BdDaemonClient(BdClientBase):
 
         data = await self._send_request("list", args)
         issues_data = json.loads(data) if isinstance(data, str) else data
+        if issues_data is None:
+            return []
         return [Issue(**issue) for issue in issues_data]
 
     async def show(self, params: ShowIssueParams) -> Issue:
@@ -375,6 +377,8 @@ class BdDaemonClient(BdClientBase):
 
         data = await self._send_request("ready", args)
         issues_data = json.loads(data) if isinstance(data, str) else data
+        if issues_data is None:
+            return []
         return [Issue(**issue) for issue in issues_data]
 
     async def stats(self) -> Stats:
@@ -385,6 +389,8 @@ class BdDaemonClient(BdClientBase):
         """
         data = await self._send_request("stats", {})
         stats_data = json.loads(data) if isinstance(data, str) else data
+        if stats_data is None:
+            stats_data = {}
         return Stats(**stats_data)
 
     async def blocked(self) -> List[BlockedIssue]:
