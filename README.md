@@ -184,17 +184,23 @@ Tested with mingw64 from https://github.com/niXman/mingw-builds-binaries
 
 ### For Humans
 
-Beads is designed for **AI coding agents** to use on your behalf. As a human, you typically just:
+Beads is designed for **AI coding agents** to use on your behalf. Setup takes 30 seconds:
 
 ```bash
-# 1. Initialize beads in your project
+# 1. Initialize bd in your project
 bd init
 
-# 2. Add a note to your agent instructions (CLAUDE.md, AGENTS.md, etc.)
-echo "We track work in Beads instead of Markdown. Run \`bd quickstart\` to see how." >> CLAUDE.md
-
-# 3. Let agents handle the rest!
+# 2. Tell your agent to configure itself
+echo "BEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions" >> AGENTS.md
 ```
+
+That's it! Next time your agent starts, it will:
+1. Run `bd onboard` and receive integration instructions
+2. Add bd workflow documentation to AGENTS.md
+3. Update CLAUDE.md with a note (if present)
+4. Remove the bootstrap instruction
+
+**Why this approach?** We leverage the agent's intelligence to naturally integrate bd into your project's documentation, rather than doing brittle string replacement. The agent adapts to your existing structure.
 
 Most tasks will be created and managed by agents during conversations. You can check on things with:
 
@@ -255,6 +261,21 @@ When you install bd on any machine with your project repo, you get:
 No PostgreSQL instance. No MySQL server. No hosted service. Just install bd, clone the repo, and you're connected to the "database."
 
 ## Usage
+
+### Onboarding Agents
+
+Bootstrap your project for AI agents by adding this to AGENTS.md:
+
+```
+BEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions
+```
+
+When the agent runs `bd onboard`, it receives instructions to integrate bd into your documentation. The agent will:
+- Add bd workflow documentation to AGENTS.md
+- Update CLAUDE.md with an integration note (if present)
+- Remove the bootstrap instruction
+
+This approach leverages the agent's intelligence to naturally merge content instead of using brittle string replacement.
 
 ### Creating Issues
 
