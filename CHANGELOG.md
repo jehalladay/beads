@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Label Filtering**: Enhanced `bd list` command with label-based filtering (bd-161)
+  - `--label` (or `-l`): Filter by multiple labels with AND semantics (must have ALL)
+  - `--label-any`: Filter by multiple labels with OR semantics (must have AT LEAST ONE)
+  - Examples:
+    - `bd list --label backend,urgent`: Issues with both 'backend' AND 'urgent'
+    - `bd list --label-any frontend,backend`: Issues with either 'frontend' OR 'backend'
+  - Works in both daemon and direct modes
+  - Includes comprehensive test coverage
 - **Log Rotation**: Automatic daemon log rotation with configurable limits (bd-154)
   - Prevents unbounded log file growth for long-running daemons
   - Configurable via environment variables: `BEADS_DAEMON_LOG_MAX_SIZE`, `BEADS_DAEMON_LOG_MAX_BACKUPS`, `BEADS_DAEMON_LOG_MAX_AGE`

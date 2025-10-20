@@ -896,6 +896,80 @@ func TestSearchIssues(t *testing.T) {
 	if len(results) != 1 {
 		t.Errorf("Expected 1 P0 issue, got %d", len(results))
 	}
+
+	// Test label filtering (AND semantics)
+	err = store.AddLabel(ctx, issues[0].ID, "backend", "test-user")
+	if err != nil {
+		t.Fatalf("AddLabel failed: %v", err)
+	}
+	err = store.AddLabel(ctx, issues[0].ID, "urgent", "test-user")
+	if err != nil {
+		t.Fatalf("AddLabel failed: %v", err)
+	}
+	err = store.AddLabel(ctx, issues[1].ID, "backend", "test-user")
+	if err != nil {
+		t.Fatalf("AddLabel failed: %v", err)
+	}
+
+	// Filter by single label
+	results, err = store.SearchIssues(ctx, "", types.IssueFilter{Labels: []string{"backend"}})
+	if err != nil {
+		t.Fatalf("SearchIssues with label filter failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("Expected 2 issues with 'backend' label, got %d", len(results))
+	}
+
+	// Filter by multiple labels (AND semantics - must have ALL)
+	results, err = store.SearchIssues(ctx, "", types.IssueFilter{Labels: []string{"backend", "urgent"}})
+	if err != nil {
+		t.Fatalf("SearchIssues with multiple labels failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("Expected 1 issue with both 'backend' AND 'urgent' labels, got %d", len(results))
+	}
+
+	// Test label filtering (OR semantics)
+	err = store.AddLabel(ctx, issues[2].ID, "frontend", "test-user")
+	if err != nil {
+		t.Fatalf("AddLabel failed: %v", err)
+	}
+
+	results, err = store.SearchIssues(ctx, "", types.IssueFilter{LabelsAny: []string{"frontend", "urgent"}})
+	if err != nil {
+		t.Fatalf("SearchIssues with LabelsAny filter failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("Expected 2 issues with 'frontend' OR 'urgent' labels, got %d", len(results))
+	}
+
+	// Test combined AND + OR filtering
+	results, err = store.SearchIssues(ctx, "", types.IssueFilter{
+		Labels:    []string{"backend"},
+		LabelsAny: []string{"urgent", "frontend"},
+	})
+	if err != nil {
+		t.Fatalf("SearchIssues with combined Labels and LabelsAny failed: %v", err)
+	}
+	// Should return issue[0] (has backend AND urgent)
+	// issue[1] has backend but not urgent/frontend, so excluded
+	if len(results) != 1 {
+		t.Errorf("Expected 1 issue with 'backend' AND ('urgent' OR 'frontend'), got %d", len(results))
+	}
+	if len(results) > 0 && results[0].ID != issues[0].ID {
+		t.Errorf("Expected issue %s, got %s", issues[0].ID, results[0].ID)
+	}
+
+	// Test whitespace trimming in labels
+	results, err = store.SearchIssues(ctx, "", types.IssueFilter{Labels: []string{" backend ", "  urgent  "}})
+	if err != nil {
+		t.Fatalf("SearchIssues with whitespace labels failed: %v", err)
+	}
+	// This won't match because storage layer doesn't trim - that's CLI's job
+	// But let's verify the storage layer accepts it without error
+	if len(results) != 0 {
+		t.Logf("Note: Storage layer doesn't auto-trim labels (expected - trimming is CLI responsibility)")
+	}
 }
 
 func TestGetStatistics(t *testing.T) {

@@ -28,6 +28,24 @@ import (
 // It's set as a var so it can be initialized from main
 var ServerVersion = "0.9.10"
 
+// normalizeLabels trims whitespace, removes empty strings, and deduplicates labels
+func normalizeLabels(ss []string) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
 // StorageCacheEntry holds a cached storage with metadata for eviction
 type StorageCacheEntry struct {
 	store      storage.Storage
@@ -898,6 +916,18 @@ func (s *Server) handleList(req *Request) Response {
 	}
 	if listArgs.Priority != nil {
 		filter.Priority = listArgs.Priority
+	}
+	// Normalize and apply label filters
+	labels := normalizeLabels(listArgs.Labels)
+	labelsAny := normalizeLabels(listArgs.LabelsAny)
+	// Support both old single Label and new Labels array
+	if len(labels) > 0 {
+		filter.Labels = labels
+	} else if listArgs.Label != "" {
+		filter.Labels = []string{strings.TrimSpace(listArgs.Label)}
+	}
+	if len(labelsAny) > 0 {
+		filter.LabelsAny = labelsAny
 	}
 
 	ctx := s.reqCtx(req)

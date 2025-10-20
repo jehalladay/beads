@@ -81,13 +81,15 @@ type CloseArgs struct {
 
 // ListArgs represents arguments for the list operation
 type ListArgs struct {
-	Query     string `json:"query,omitempty"`
-	Status    string `json:"status,omitempty"`
-	Priority  *int   `json:"priority,omitempty"`
-	IssueType string `json:"issue_type,omitempty"`
-	Assignee  string `json:"assignee,omitempty"`
-	Label     string `json:"label,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
+	Query     string   `json:"query,omitempty"`
+	Status    string   `json:"status,omitempty"`
+	Priority  *int     `json:"priority,omitempty"`
+	IssueType string   `json:"issue_type,omitempty"`
+	Assignee  string   `json:"assignee,omitempty"`
+	Label     string   `json:"label,omitempty"`     // Deprecated: use Labels
+	Labels    []string `json:"labels,omitempty"`    // AND semantics
+	LabelsAny []string `json:"labels_any,omitempty"` // OR semantics
+	Limit     int      `json:"limit,omitempty"`
 }
 
 // ShowArgs represents arguments for the show operation

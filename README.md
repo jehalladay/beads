@@ -290,11 +290,14 @@ Draft multiple issues in a markdown file with `bd create -f file.md`. Format: `#
 ### Viewing Issues
 
 ```bash
-bd show bd-1              # Show full details
-bd list                   # List all issues
-bd list --status open     # Filter by status
-bd list --priority 1      # Filter by priority
-bd list --assignee alice  # Filter by assignee
+bd show bd-1                               # Show full details
+bd list                                    # List all issues
+bd list --status open                      # Filter by status
+bd list --priority 1                       # Filter by priority
+bd list --assignee alice                   # Filter by assignee
+bd list --label=backend,urgent             # Filter by labels (AND: must have ALL)
+bd list --label-any=frontend,backend       # Filter by labels (OR: must have AT LEAST ONE)
+bd list --priority 1 --label=backend       # Combine filters
 
 # JSON output for agents
 bd list --json

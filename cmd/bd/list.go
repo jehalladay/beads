@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"text/template"
 
 	"github.com/spf13/cobra"
@@ -13,6 +14,24 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// normalizeLabels trims whitespace, removes empty strings, and deduplicates labels
+func normalizeLabels(ss []string) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
 
 var listCmd = &cobra.Command{
 	Use:   "list",
@@ -24,7 +43,12 @@ var listCmd = &cobra.Command{
 		limit, _ := cmd.Flags().GetInt("limit")
 		formatStr, _ := cmd.Flags().GetString("format")
 		labels, _ := cmd.Flags().GetStringSlice("label")
+		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		titleSearch, _ := cmd.Flags().GetString("title")
+
+		// Normalize labels: trim, dedupe, remove empty
+		labels = normalizeLabels(labels)
+		labelsAny = normalizeLabels(labelsAny)
 
 		filter := types.IssueFilter{
 			Limit: limit,
@@ -48,6 +72,9 @@ var listCmd = &cobra.Command{
 		if len(labels) > 0 {
 			filter.Labels = labels
 		}
+		if len(labelsAny) > 0 {
+			filter.LabelsAny = labelsAny
+		}
 		if titleSearch != "" {
 			filter.TitleSearch = titleSearch
 		}
@@ -65,7 +92,14 @@ var listCmd = &cobra.Command{
 				listArgs.Priority = &priority
 			}
 			if len(labels) > 0 {
-				listArgs.Label = labels[0] // TODO: daemon protocol needs to support multiple labels
+				listArgs.Labels = labels
+			}
+			if len(labelsAny) > 0 {
+				listArgs.LabelsAny = labelsAny
+			}
+			// Forward title search via Query field (searches title/description/id)
+			if titleSearch != "" {
+				listArgs.Query = titleSearch
 			}
 
 			resp, err := daemonClient.List(listArgs)
@@ -148,7 +182,8 @@ func init() {
 	listCmd.Flags().IntP("priority", "p", 0, "Filter by priority (0-4: 0=critical, 1=high, 2=medium, 3=low, 4=backlog)")
 	listCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
 	listCmd.Flags().StringP("type", "t", "", "Filter by type (bug, feature, task, epic, chore)")
-	listCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (comma-separated, must have ALL labels)")
+	listCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL). Can combine with --label-any")
+	listCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE). Can combine with --label")
 	listCmd.Flags().String("title", "", "Filter by title text (case-insensitive substring match)")
 	listCmd.Flags().IntP("limit", "n", 0, "Limit results")
 	listCmd.Flags().String("format", "", "Output format: 'digraph' (for golang.org/x/tools/cmd/digraph), 'dot' (Graphviz), or Go template")
