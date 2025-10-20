@@ -268,6 +268,25 @@ func isDaemonRunning(pidFile string) (bool, int) {
 	return true, pid
 }
 
+func formatUptime(seconds float64) string {
+	if seconds < 60 {
+		return fmt.Sprintf("%.1f seconds", seconds)
+	}
+	if seconds < 3600 {
+		minutes := int(seconds / 60)
+		secs := int(seconds) % 60
+		return fmt.Sprintf("%dm %ds", minutes, secs)
+	}
+	if seconds < 86400 {
+		hours := int(seconds / 3600)
+		minutes := int(seconds/60) % 60
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	}
+	days := int(seconds / 86400)
+	hours := int(seconds/3600) % 24
+	return fmt.Sprintf("%dd %dh", days, hours)
+}
+
 func showDaemonStatus(pidFile string, global bool) {
 	if isRunning, pid := isDaemonRunning(pidFile); isRunning {
 		scope := "local"
@@ -342,7 +361,7 @@ func showDaemonHealth(global bool) {
 	
 	fmt.Printf("%s Daemon Health: %s\n", statusIcon, health.Status)
 	fmt.Printf("  Version: %s\n", health.Version)
-	fmt.Printf("  Uptime: %.1f seconds\n", health.Uptime)
+	fmt.Printf("  Uptime: %s\n", formatUptime(health.Uptime))
 	fmt.Printf("  Cache Size: %d databases\n", health.CacheSize)
 	fmt.Printf("  Cache Hits: %d\n", health.CacheHits)
 	fmt.Printf("  Cache Misses: %d\n", health.CacheMisses)
@@ -551,8 +570,18 @@ func stopDaemon(pidFile string) {
 		}
 
 		fmt.Fprintf(os.Stderr, "Warning: daemon did not stop after 5 seconds, sending SIGKILL\n")
+		
+		// Check one more time before SIGKILL to avoid race condition
+		if isRunning, _ := isDaemonRunning(pidFile); !isRunning {
+			fmt.Println("✓ Daemon stopped")
+			return
+		}
+		
 		if err := process.Kill(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error killing process: %v\n", err)
+			// Ignore "process already finished" errors
+			if !strings.Contains(err.Error(), "process already finished") {
+				fmt.Fprintf(os.Stderr, "Error killing process: %v\n", err)
+			}
 		}
 		os.Remove(pidFile)
 		fmt.Println("✓ Daemon killed")
