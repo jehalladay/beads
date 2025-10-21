@@ -339,6 +339,11 @@ async def update_issue(
     workspace_root: str | None = None,
 ) -> Issue:
     """Update an existing issue."""
+    # If trying to close via update, redirect to close_issue to preserve approval workflow
+    if status == "closed":
+        issues = await beads_close_issue(issue_id=issue_id, reason="Closed via update")
+        return issues[0] if issues else None
+    
     return await beads_update_issue(
         issue_id=issue_id,
         status=status,
