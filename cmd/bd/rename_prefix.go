@@ -35,6 +35,19 @@ Example:
 
 		ctx := context.Background()
 
+		// rename-prefix requires direct mode (not supported by daemon)
+		if daemonClient != nil {
+			if err := ensureDirectMode("daemon does not support rename-prefix command"); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		} else if store == nil {
+			if err := ensureStoreActive(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
 		if err := validatePrefix(newPrefix); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
