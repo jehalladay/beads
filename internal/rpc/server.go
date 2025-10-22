@@ -50,6 +50,7 @@ func normalizeLabels(ss []string) []string {
 type StorageCacheEntry struct {
 	store      storage.Storage
 	lastAccess time.Time
+	dbMtime    time.Time // DB file modification time for detecting external changes
 }
 
 // Server represents the RPC server that runs in the daemon
@@ -1408,13 +1409,43 @@ func (s *Server) getStorageForRequest(req *Request) (storage.Storage, error) {
 	defer s.cacheMu.Unlock()
 
 	if entry, ok := s.storageCache[repoRoot]; ok {
-		// Update last access time (safe under Lock)
-		entry.lastAccess = time.Now()
-		atomic.AddInt64(&s.cacheHits, 1)
-		return entry.store, nil
+		// Check if DB file has been modified externally
+		info, err := os.Stat(dbPath)
+		if err == nil && !info.ModTime().Equal(entry.dbMtime) {
+			// DB file changed - evict stale cache entry
+			// Remove from cache first to prevent concurrent access
+			delete(s.storageCache, repoRoot)
+			atomic.AddInt64(&s.cacheMisses, 1)
+			// Close storage after removing from cache (safe now)
+			// Unlock briefly to avoid blocking during Close()
+			s.cacheMu.Unlock()
+			if err := entry.store.Close(); err != nil {
+				// Log but don't fail - we'll reopen anyway
+				fmt.Fprintf(os.Stderr, "Warning: failed to close stale cached storage: %v\n", err)
+			}
+			s.cacheMu.Lock()
+			// Fall through to reopen
+		} else if err == nil {
+			// Cache hit - DB file unchanged
+			entry.lastAccess = time.Now()
+			atomic.AddInt64(&s.cacheHits, 1)
+			return entry.store, nil
+		} else {
+			// Stat failed - evict and reopen
+			// Remove from cache first to prevent concurrent access
+			delete(s.storageCache, repoRoot)
+			atomic.AddInt64(&s.cacheMisses, 1)
+			// Close storage after removing from cache
+			s.cacheMu.Unlock()
+			if err := entry.store.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to close cached storage: %v\n", err)
+			}
+			s.cacheMu.Lock()
+			// Fall through to reopen
+		}
+	} else {
+		atomic.AddInt64(&s.cacheMisses, 1)
 	}
-
-	atomic.AddInt64(&s.cacheMisses, 1)
 
 	// Open storage
 	store, err := sqlite.New(dbPath)
@@ -1422,10 +1453,23 @@ func (s *Server) getStorageForRequest(req *Request) (storage.Storage, error) {
 		return nil, fmt.Errorf("failed to open database at %s: %w", dbPath, err)
 	}
 
-	// Cache it with current timestamp
+	// Get mtime for the newly opened DB
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		// If we can't stat, still cache it but with zero mtime (will invalidate on next check)
+		info = nil
+	}
+	
+	mtime := time.Time{}
+	if info != nil {
+		mtime = info.ModTime()
+	}
+
+	// Cache it with current timestamp and mtime
 	s.storageCache[repoRoot] = &StorageCacheEntry{
 		store:      store,
 		lastAccess: time.Now(),
+		dbMtime:    mtime,
 	}
 
 	// Enforce LRU immediately to prevent FD spikes between cleanup ticks
