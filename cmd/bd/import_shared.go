@@ -87,6 +87,16 @@ func importIssuesCore(ctx context.Context, dbPath string, store storage.Storage,
 	if err != nil {
 		return nil, fmt.Errorf("failed to get configured prefix: %w", err)
 	}
+	
+	// Validate configured prefix
+	if strings.TrimSpace(configuredPrefix) == "" {
+		if opts.RenameOnImport {
+			return nil, fmt.Errorf("cannot rename: issue_prefix not configured in database")
+		}
+		// Skip prefix validation if prefix is not configured
+		return result, nil
+	}
+	
 	result.ExpectedPrefix = configuredPrefix
 
 	// Analyze prefixes in imported issues
@@ -384,9 +394,19 @@ func renameImportedIssuePrefixes(issues []*types.Issue, targetPrefix string) err
 	
 	for _, issue := range issues {
 		oldPrefix := extractPrefix(issue.ID)
+		if oldPrefix == "" {
+			return fmt.Errorf("cannot rename issue %s: malformed ID (no hyphen found)", issue.ID)
+		}
+		
 		if oldPrefix != targetPrefix {
 			// Extract the numeric part
 			numPart := strings.TrimPrefix(issue.ID, oldPrefix+"-")
+			
+			// Validate that the numeric part is actually numeric
+			if numPart == "" || !isNumeric(numPart) {
+				return fmt.Errorf("cannot rename issue %s: non-numeric suffix '%s'", issue.ID, numPart)
+			}
+			
 			newID := fmt.Sprintf("%s-%s", targetPrefix, numPart)
 			idMapping[issue.ID] = newID
 		}
@@ -432,11 +452,76 @@ func renameImportedIssuePrefixes(issues []*types.Issue, targetPrefix string) err
 }
 
 // replaceIDReferences replaces all old issue ID references with new ones in text
+// Uses boundary-aware matching to avoid partial replacements (e.g., wy-1 inside wy-10)
 func replaceIDReferences(text string, idMapping map[string]string) string {
+	if len(idMapping) == 0 {
+		return text
+	}
+	
+	// Sort old IDs by length descending to handle longer IDs first
+	// This prevents "wy-1" from being replaced inside "wy-10"
+	oldIDs := make([]string, 0, len(idMapping))
+	for oldID := range idMapping {
+		oldIDs = append(oldIDs, oldID)
+	}
+	sort.Slice(oldIDs, func(i, j int) bool {
+		return len(oldIDs[i]) > len(oldIDs[j])
+	})
+	
 	result := text
-	for oldID, newID := range idMapping {
-		// Use word boundary to match full IDs only (e.g., "wy-123" but not "wy-1234")
-		result = strings.ReplaceAll(result, oldID, newID)
+	for _, oldID := range oldIDs {
+		newID := idMapping[oldID]
+		// Replace with boundary checking
+		result = replaceBoundaryAware(result, oldID, newID)
 	}
 	return result
+}
+
+// replaceBoundaryAware replaces oldID with newID only when surrounded by boundaries
+func replaceBoundaryAware(text, oldID, newID string) string {
+	if !strings.Contains(text, oldID) {
+		return text
+	}
+	
+	var result strings.Builder
+	result.Grow(len(text))
+	
+	for i := 0; i < len(text); {
+		// Check if we match oldID at this position
+		if strings.HasPrefix(text[i:], oldID) {
+			// Check boundaries before and after
+			beforeOK := i == 0 || isBoundary(text[i-1])
+			afterOK := (i+len(oldID) >= len(text)) || isBoundary(text[i+len(oldID)])
+			
+			if beforeOK && afterOK {
+				// Valid match - replace
+				result.WriteString(newID)
+				i += len(oldID)
+				continue
+			}
+		}
+		
+		// Not a match or invalid boundaries - keep original character
+		result.WriteByte(text[i])
+		i++
+	}
+	
+	return result.String()
+}
+
+// isBoundary returns true if the character is not part of an issue ID
+func isBoundary(c byte) bool {
+	// Issue IDs contain: lowercase letters, digits, and hyphens
+	// Boundaries are anything else (space, punctuation, etc.)
+	return !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-')
+}
+
+// isNumeric returns true if the string contains only digits
+func isNumeric(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
