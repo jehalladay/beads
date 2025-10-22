@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -241,6 +242,22 @@ func gitPush(ctx context.Context) error {
 
 // exportToJSONL exports the database to JSONL format
 func exportToJSONL(ctx context.Context, jsonlPath string) error {
+	// If daemon is running, use RPC
+	if daemonClient != nil {
+		exportArgs := &rpc.ExportArgs{
+			JSONLPath: jsonlPath,
+		}
+		resp, err := daemonClient.Export(exportArgs)
+		if err != nil {
+			return fmt.Errorf("daemon export failed: %w", err)
+		}
+		if !resp.Success {
+			return fmt.Errorf("daemon export error: %s", resp.Error)
+		}
+		return nil
+	}
+
+	// Direct mode: access store directly
 	// Get all issues
 	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {

@@ -32,6 +32,8 @@ const (
 	OpReposClearCache = "repos_clear_cache"
 	OpCompact         = "compact"
 	OpCompactStats    = "compact_stats"
+	OpExport          = "export"
+	OpImport          = "import"
 )
 
 // Request represents an RPC request from client to daemon
@@ -283,4 +285,14 @@ type CompactStatsData struct {
 	Tier1MinAge     string  `json:"tier1_min_age"`
 	Tier2MinAge     string  `json:"tier2_min_age"`
 	EstimatedSavings string `json:"estimated_savings,omitempty"`
+}
+
+// ExportArgs represents arguments for the export operation
+type ExportArgs struct {
+	JSONLPath string `json:"jsonl_path"` // Path to export JSONL file
+}
+
+// ImportArgs represents arguments for the import operation
+type ImportArgs struct {
+	JSONLPath string `json:"jsonl_path"` // Path to import JSONL file
 }

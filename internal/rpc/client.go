@@ -297,3 +297,13 @@ func (c *Client) ReposStats() (*Response, error) {
 func (c *Client) ReposClearCache() (*Response, error) {
 	return c.Execute(OpReposClearCache, struct{}{})
 }
+
+// Export exports the database to JSONL format
+func (c *Client) Export(args *ExportArgs) (*Response, error) {
+	return c.Execute(OpExport, args)
+}
+
+// Import imports issues from JSONL format
+func (c *Client) Import(args *ImportArgs) (*Response, error) {
+	return c.Execute(OpImport, args)
+}

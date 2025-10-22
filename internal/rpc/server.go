@@ -644,6 +644,10 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleCompact(req)
 	case OpCompactStats:
 		resp = s.handleCompactStats(req)
+	case OpExport:
+		resp = s.handleExport(req)
+	case OpImport:
+		resp = s.handleImport(req)
 	default:
 		s.metrics.RecordError(req.Operation)
 		return Response{
@@ -2051,5 +2055,157 @@ func (s *Server) handleCompactStats(req *Request) Response {
 	return Response{
 		Success: true,
 		Data:    data,
+	}
+}
+
+// handleExport handles the export operation
+func (s *Server) handleExport(req *Request) Response {
+	var exportArgs ExportArgs
+	if err := json.Unmarshal(req.Args, &exportArgs); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid export args: %v", err),
+		}
+	}
+
+	store, err := s.getStorageForRequest(req)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get storage: %v", err),
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Get all issues
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get issues: %v", err),
+		}
+	}
+
+	// Sort by ID for consistent output
+	sort.Slice(issues, func(i, j int) bool {
+		return issues[i].ID < issues[j].ID
+	})
+
+	// Populate dependencies for all issues (avoid N+1)
+	allDeps, err := store.GetAllDependencyRecords(ctx)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get dependencies: %v", err),
+		}
+	}
+	for _, issue := range issues {
+		issue.Dependencies = allDeps[issue.ID]
+	}
+
+	// Populate labels for all issues
+	for _, issue := range issues {
+		labels, err := store.GetLabels(ctx, issue.ID)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to get labels for %s: %v", issue.ID, err),
+			}
+		}
+		issue.Labels = labels
+	}
+
+	// Populate comments for all issues
+	for _, issue := range issues {
+		comments, err := store.GetIssueComments(ctx, issue.ID)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to get comments for %s: %v", issue.ID, err),
+			}
+		}
+		issue.Comments = comments
+	}
+
+	// Create temp file for atomic write
+	dir := filepath.Dir(exportArgs.JSONLPath)
+	base := filepath.Base(exportArgs.JSONLPath)
+	tempFile, err := os.CreateTemp(dir, base+".tmp.*")
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to create temp file: %v", err),
+		}
+	}
+	tempPath := tempFile.Name()
+	defer func() {
+		tempFile.Close()
+		os.Remove(tempPath)
+	}()
+
+	// Write JSONL
+	encoder := json.NewEncoder(tempFile)
+	exportedIDs := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		if err := encoder.Encode(issue); err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to encode issue %s: %v", issue.ID, err),
+			}
+		}
+		exportedIDs = append(exportedIDs, issue.ID)
+	}
+
+	// Close temp file before rename
+	tempFile.Close()
+
+	// Atomic replace
+	if err := os.Rename(tempPath, exportArgs.JSONLPath); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to replace JSONL file: %v", err),
+		}
+	}
+
+	// Set appropriate file permissions (0644: rw-r--r--)
+	if err := os.Chmod(exportArgs.JSONLPath, 0644); err != nil {
+		// Non-fatal, just log
+		fmt.Fprintf(os.Stderr, "Warning: failed to set file permissions: %v\n", err)
+	}
+
+	// Clear dirty flags for exported issues
+	if err := store.ClearDirtyIssuesByID(ctx, exportedIDs); err != nil {
+		// Non-fatal, just log
+		fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty flags: %v\n", err)
+	}
+
+	result := map[string]interface{}{
+		"exported_count": len(exportedIDs),
+		"path":          exportArgs.JSONLPath,
+	}
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// handleImport handles the import operation
+func (s *Server) handleImport(req *Request) Response {
+	var importArgs ImportArgs
+	if err := json.Unmarshal(req.Args, &importArgs); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid import args: %v", err),
+		}
+	}
+
+	// Note: The actual import logic is complex and lives in cmd/bd/import.go
+	// For now, we'll return an error suggesting to use direct mode
+	// In the future, we can refactor the import logic into a shared package
+	return Response{
+		Success: false,
+		Error:   "import via daemon not yet implemented, use --no-daemon flag",
 	}
 }
