@@ -170,6 +170,12 @@ var rootCmd = &cobra.Command{
 			// Attempt daemon connection
 			client, err := rpc.TryConnect(socketPath)
 			if err == nil && client != nil {
+				// Set expected database path for validation
+				if dbPath != "" {
+					absDBPath, _ := filepath.Abs(dbPath)
+					client.SetDatabasePath(absDBPath)
+				}
+				
 				// Perform health check
 				health, healthErr := client.Health()
 				if healthErr == nil && health.Status == "healthy" {
@@ -222,6 +228,12 @@ var rootCmd = &cobra.Command{
 					// Retry connection after auto-start
 					client, err := rpc.TryConnect(socketPath)
 					if err == nil && client != nil {
+						// Set expected database path for validation
+						if dbPath != "" {
+							absDBPath, _ := filepath.Abs(dbPath)
+							client.SetDatabasePath(absDBPath)
+						}
+						
 						// Check health of auto-started daemon
 						health, healthErr := client.Health()
 						if healthErr == nil && health.Status == "healthy" {
@@ -737,23 +749,21 @@ func recordDaemonStartFailure() {
 }
 
 // getSocketPath returns the daemon socket path based on the database location
-// If no local socket exists, check for global socket at ~/.beads/bd.sock
+// Always returns local socket path (.beads/bd.sock relative to database)
 func getSocketPath() string {
-	// First check local socket (same directory as database: .beads/bd.sock)
+	// Always use local socket (same directory as database: .beads/bd.sock)
 	localSocket := filepath.Join(filepath.Dir(dbPath), "bd.sock")
-	if _, err := os.Stat(localSocket); err == nil {
-		return localSocket
-	}
-
-	// Fall back to global socket at ~/.beads/bd.sock
+	
+	// Warn if old global socket exists
 	if home, err := os.UserHomeDir(); err == nil {
 		globalSocket := filepath.Join(home, ".beads", "bd.sock")
 		if _, err := os.Stat(globalSocket); err == nil {
-			return globalSocket
+			fmt.Fprintf(os.Stderr, "Warning: Found old global daemon socket at %s\n", globalSocket)
+			fmt.Fprintf(os.Stderr, "Global sockets are deprecated. Each project now uses its own local daemon.\n")
+			fmt.Fprintf(os.Stderr, "To migrate: Stop the global daemon and restart with 'bd daemon' in each project.\n")
 		}
 	}
-
-	// Default to local socket even if it doesn't exist
+	
 	return localSocket
 }
 

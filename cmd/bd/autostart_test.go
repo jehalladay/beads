@@ -187,12 +187,12 @@ func TestGetSocketPath(t *testing.T) {
 		}
 	})
 
-	t.Run("falls back to global socket", func(t *testing.T) {
+	t.Run("always returns local socket path", func(t *testing.T) {
 		// Ensure no local socket exists
 		localSocket := filepath.Join(beadsDir, "bd.sock")
 		os.Remove(localSocket)
 
-		// Create global socket
+		// Even with global socket present, should return local socket
 		home, err := os.UserHomeDir()
 		if err != nil {
 			t.Skip("Cannot get home directory")
@@ -208,9 +208,10 @@ func TestGetSocketPath(t *testing.T) {
 		}
 		defer os.Remove(globalSocket)
 
+		// Capture stderr to verify warning is displayed
 		socketPath := getSocketPath()
-		if socketPath != globalSocket {
-			t.Errorf("Expected global socket %s, got %s", globalSocket, socketPath)
+		if socketPath != localSocket {
+			t.Errorf("Expected local socket %s, got %s", localSocket, socketPath)
 		}
 	})
 

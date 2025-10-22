@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING**: Removed global daemon socket fallback (bd-231)
+  - Each project now must use its own local daemon (.beads/bd.sock)
+  - Prevents cross-project daemon connections and database pollution
+  - Migration: Stop any global daemon and restart with `bd daemon` in each project
+  - Warning displayed if old global socket (~/.beads/bd.sock) is found
+
 ## [0.10.0] - 2025-10-20
 
 ### Added

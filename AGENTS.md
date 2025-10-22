@@ -42,13 +42,10 @@ See `integrations/beads-mcp/README.md` for complete documentation.
 
 ### Multi-Repo Configuration (MCP Server)
 
-**RECOMMENDED: Use a single MCP server with global daemon** for all beads repositories.
+**RECOMMENDED: Use a single MCP server with per-project local daemons** for all beads repositories.
 
 **Setup (one-time):**
 ```bash
-# Start global daemon (or it will auto-start on first bd command)
-bd daemon --global
-
 # MCP config in ~/.config/amp/settings.json or Claude Desktop config:
 {
   "beads": {
@@ -61,15 +58,14 @@ bd daemon --global
 **How it works:**
 The single MCP server instance automatically:
 1. Checks for local daemon socket (`.beads/bd.sock`) in your current workspace (Windows note: this file stores the loopback TCP endpoint used by the daemon)
-2. Falls back to global daemon socket (`~/.beads/bd.sock`)
-3. Routes requests to the correct database based on your current working directory
-4. Auto-starts the daemon if it's not running (with exponential backoff on failures)
-5. Auto-detects multiple repositories and prefers global daemon when 4+ repos are found
+2. Routes requests to the correct database based on your current working directory
+3. Auto-starts the local daemon if it's not running (with exponential backoff on failures)
+4. Each project gets its own isolated daemon serving only its database
 
-**Why this is better than multiple MCP servers:**
+**Why this is better:**
 - ✅ One config entry works for all your beads projects
 - ✅ No risk of AI selecting wrong MCP server for workspace
-- ✅ Better resource usage (one daemon instead of multiple)
+- ✅ Complete database isolation per project
 - ✅ Automatic workspace detection without BEADS_WORKING_DIR
 
 **Note:** The daemon **auto-starts automatically** when you run any `bd` command (v0.9.11+). To disable auto-start, set `BEADS_AUTO_START_DAEMON=false`.
@@ -93,15 +89,6 @@ If you must use separate MCP servers (not recommended):
 }
 ```
 ⚠️ **Problem**: AI may select the wrong MCP server for your workspace, causing commands to operate on the wrong database.
-
-**Migration helper:**
-```bash
-# Migrate from local to global daemon
-bd daemon --migrate-to-global
-
-# Or set environment variable for permanent preference
-export BEADS_PREFER_GLOBAL_DAEMON=1
-```
 
 ### CLI Quick Reference
 
@@ -160,13 +147,6 @@ bd restore <id>  # View full history at time of compaction
 # Import with collision detection
 bd import -i .beads/issues.jsonl --dry-run             # Preview only
 bd import -i .beads/issues.jsonl --resolve-collisions  # Auto-resolve
-
-# Multi-repo management (requires global daemon)
-bd repos list                    # List all cached repositories
-bd repos ready                   # View ready work across all repos
-bd repos ready --group           # Group by repository
-bd repos stats                   # Combined statistics
-bd repos clear-cache             # Clear repository cache
 ```
 
 ### Workflow

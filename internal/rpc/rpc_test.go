@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,8 +19,18 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	dbPath := filepath.Join(tmpDir, "test.db")
-	socketPath := filepath.Join(tmpDir, "bd.sock")
+	// Create .beads subdirectory so findDatabaseForCwd finds THIS database, not project's
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		os.RemoveAll(tmpDir)
+		t.Fatalf("Failed to create .beads dir: %v", err)
+	}
+
+	dbPath := filepath.Join(beadsDir, "test.db")
+	socketPath := filepath.Join(beadsDir, "bd.sock")
+
+	// Ensure socket doesn't exist from previous failed test
+	os.Remove(socketPath)
 
 	store, err := sqlitestorage.New(dbPath)
 	if err != nil {
@@ -36,7 +47,38 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 		}
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	// Wait for server to be ready
+	maxWait := 50
+	for i := 0; i < maxWait; i++ {
+		time.Sleep(10 * time.Millisecond)
+		if _, err := os.Stat(socketPath); err == nil {
+			break
+		}
+		if i == maxWait-1 {
+			cancel()
+			server.Stop()
+			store.Close()
+			os.RemoveAll(tmpDir)
+			t.Fatalf("Server socket not created after waiting")
+		}
+	}
+
+	// Change to tmpDir so client's os.Getwd() finds the test database
+	originalWd, err := os.Getwd()
+	if err != nil {
+		cancel()
+		server.Stop()
+		store.Close()
+		os.RemoveAll(tmpDir)
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		cancel()
+		server.Stop()
+		store.Close()
+		os.RemoveAll(tmpDir)
+		t.Fatalf("Failed to change directory: %v", err)
+	}
 
 	client, err := TryConnect(socketPath)
 	if err != nil {
@@ -46,12 +88,24 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to connect client: %v", err)
 	}
+	
+	if client == nil {
+		cancel()
+		server.Stop()
+		store.Close()
+		os.RemoveAll(tmpDir)
+		t.Fatalf("Client is nil after connection")
+	}
+	
+	// Set the client's dbPath to the test database so it doesn't route to the wrong DB
+	client.dbPath = dbPath
 
 	cleanup := func() {
 		client.Close()
 		cancel()
 		server.Stop()
 		store.Close()
+		os.Chdir(originalWd) // Restore original working directory
 		os.RemoveAll(tmpDir)
 	}
 
@@ -268,5 +322,115 @@ func TestConcurrentRequests(t *testing.T) {
 		if err != nil {
 			t.Errorf("Concurrent request failed: %v", err)
 		}
+	}
+}
+
+func TestDatabaseHandshake(t *testing.T) {
+	// Save original directory and change to a temp directory for test isolation
+	origDir, _ := os.Getwd()
+	
+	// Create two separate databases and daemons
+	tmpDir1, err := os.MkdirTemp("", "bd-test-db1-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir 1: %v", err)
+	}
+	defer os.RemoveAll(tmpDir1)
+
+	tmpDir2, err := os.MkdirTemp("", "bd-test-db2-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir 2: %v", err)
+	}
+	defer os.RemoveAll(tmpDir2)
+
+	// Setup first daemon (db1)
+	beadsDir1 := filepath.Join(tmpDir1, ".beads")
+	os.MkdirAll(beadsDir1, 0755)
+	dbPath1 := filepath.Join(beadsDir1, "db1.db")
+	socketPath1 := filepath.Join(beadsDir1, "bd.sock")
+	store1, err := sqlitestorage.New(dbPath1)
+	if err != nil {
+		t.Fatalf("Failed to create store 1: %v", err)
+	}
+	defer store1.Close()
+
+	server1 := NewServer(socketPath1, store1)
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
+	go server1.Start(ctx1)
+	defer server1.Stop()
+	time.Sleep(100 * time.Millisecond)
+
+	// Setup second daemon (db2)
+	beadsDir2 := filepath.Join(tmpDir2, ".beads")
+	os.MkdirAll(beadsDir2, 0755)
+	dbPath2 := filepath.Join(beadsDir2, "db2.db")
+	socketPath2 := filepath.Join(beadsDir2, "bd.sock")
+	store2, err := sqlitestorage.New(dbPath2)
+	if err != nil {
+		t.Fatalf("Failed to create store 2: %v", err)
+	}
+	defer store2.Close()
+
+	server2 := NewServer(socketPath2, store2)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	go server2.Start(ctx2)
+	defer server2.Stop()
+	time.Sleep(100 * time.Millisecond)
+
+	// Test 1: Client with correct ExpectedDB should succeed
+	// Change to tmpDir1 so cwd resolution doesn't find other databases
+	os.Chdir(tmpDir1)
+	defer os.Chdir(origDir)
+	
+	client1, err := TryConnect(socketPath1)
+	if err != nil {
+		t.Fatalf("Failed to connect to server 1: %v", err)
+	}
+	if client1 == nil {
+		t.Fatal("client1 is nil")
+	}
+	defer client1.Close()
+
+	client1.SetDatabasePath(dbPath1)
+
+	args := &CreateArgs{
+		Title:     "Test Issue",
+		IssueType: "task",
+		Priority:  2,
+	}
+	_, err = client1.Create(args)
+	if err != nil {
+		t.Errorf("Create with correct database should succeed: %v", err)
+	}
+
+	// Test 2: Client with wrong ExpectedDB should fail
+	client2, err := TryConnect(socketPath1) // Connect to server1
+	if err != nil {
+		t.Fatalf("Failed to connect to server 1: %v", err)
+	}
+	defer client2.Close()
+
+	// But set ExpectedDB to db2 (mismatch!)
+	client2.SetDatabasePath(dbPath2)
+
+	_, err = client2.Create(args)
+	if err == nil {
+		t.Error("Create with wrong database should fail")
+	} else if !strings.Contains(err.Error(), "database mismatch:") {
+		t.Errorf("Expected 'database mismatch' error, got: %v", err)
+	}
+
+	// Test 3: Client without ExpectedDB should succeed (backward compat)
+	client3, err := TryConnect(socketPath1)
+	if err != nil {
+		t.Fatalf("Failed to connect to server 1: %v", err)
+	}
+	defer client3.Close()
+
+	// Don't set database path (old client behavior)
+	_, err = client3.Create(args)
+	if err != nil {
+		t.Errorf("Create without ExpectedDB should succeed (backward compat): %v", err)
 	}
 }
