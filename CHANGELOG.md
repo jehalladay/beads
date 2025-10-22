@@ -7,12 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2025-10-22
+
+### Added
+- **Issue Merging**: New `bd merge` command for consolidating duplicate issues (bd-7, bd-11-17)
+  - Merge multiple source issues into a single target issue
+  - Automatically migrates all dependencies and dependents to target
+  - Updates text references (bd-X mentions) across all issue fields
+  - Closes source issues with "Merged into bd-Y" reason
+  - Supports `--dry-run` for validation without changes
+  - Example: `bd merge bd-42 bd-43 --into bd-41`
+- **Multi-ID Operations**: Batch operations for increased efficiency (bd-195, #101)
+  - `bd update`: Update multiple issues at once
+  - `bd show`: View multiple issues in single call
+  - `bd label add/remove`: Apply labels to multiple issues
+  - `bd close`: Close multiple issues with one command
+  - `bd reopen`: Reopen multiple issues together
+  - Example: `bd close bd-1 bd-2 bd-3 --reason "Done"`
+- **Daemon RPC Improvements**: Enhanced sync operations (bd-2)
+  - `bd sync` now works correctly in daemon mode
+  - Export operations properly supported via RPC
+  - Prevents database access conflicts during sync
+- **Acceptance Criteria Alias**: Added `--acceptance-criteria` flag (bd-228, #102)
+  - Backward-compatible alias for `--acceptance` in `bd update`
+  - Improves clarity and matches field name
+
+### Fixed
+- **Critical**: Test isolation and database pollution (bd-1, bd-15, bd-19, bd-52)
+  - Comprehensive test isolation ensuring tests never pollute production database
+  - Fixed stress test issues writing 1000+ test issues to production
+  - Quarantined RPC benchmarks to prevent pollution
+  - Added database isolation canary tests
+- **Critical**: Daemon cache staleness (bd-49)
+  - Daemon now detects external database modifications via mtime check
+  - Prevents serving stale data after external `bd import`, `rm bd.db`, etc.
+  - Cache automatically invalidates when DB file changes
+- **Critical**: Counter desync after deletions (bd-49)
+  - Issue counters now sync correctly after bulk deletions
+  - Prevents ID gaps and counter drift
+- **Critical**: Labels and dependencies not persisted in daemon mode (#101)
+  - Fixed label operations failing silently in daemon mode
+  - Fixed dependency operations not saving in daemon mode
+  - Both now correctly propagate through RPC layer
+- **Daemon sync support**: `bd sync` command now works in daemon mode (bd-2)
+  - Previously crashed with nil pointer when daemon running
+  - Export operations now properly routed through RPC
+- **Acceptance flag normalization**: Unified `--acceptance` flag behavior (bd-228, #102)
+  - Added `--acceptance-criteria` as clearer alias
+  - Both flags work identically for backward compatibility
+- **Auto-import Git conflicts**: Better detection of merge conflicts (bd-270)
+  - Auto-import detects and warns about unresolved Git merge conflicts
+  - Prevents importing corrupted JSONL with conflict markers
+  - Clear instructions for resolving conflicts
+
 ### Changed
 - **BREAKING**: Removed global daemon socket fallback (bd-231)
   - Each project now must use its own local daemon (.beads/bd.sock)
   - Prevents cross-project daemon connections and database pollution
   - Migration: Stop any global daemon and restart with `bd daemon` in each project
   - Warning displayed if old global socket (~/.beads/bd.sock) is found
+- **Database cleanup**: Project database cleaned from 1000+ to 55 issues
+  - Removed accumulated test pollution from stress testing
+  - Renumbered issues for clean ID space (bd-1 through bd-55)
+  - Better test isolation prevents future pollution
+
+### Deprecated
+- Global daemon socket support (see BREAKING change above)
 
 ## [0.10.0] - 2025-10-20
 
