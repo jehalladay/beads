@@ -48,4 +48,3 @@ Thumbs.db
 
 # Ignore nix result
 result
-.beads/issues.jsonl
