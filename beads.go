@@ -18,10 +18,21 @@ import (
 
 // Core types for working with issues
 type (
-	Issue      = types.Issue
-	Status     = types.Status
-	IssueType  = types.IssueType
-	WorkFilter = types.WorkFilter
+	Issue          = types.Issue
+	Status         = types.Status
+	IssueType      = types.IssueType
+	Dependency     = types.Dependency
+	DependencyType = types.DependencyType
+	Comment        = types.Comment
+	Event          = types.Event
+	EventType      = types.EventType
+	Label          = types.Label
+	BlockedIssue   = types.BlockedIssue
+	TreeNode       = types.TreeNode
+	Statistics     = types.Statistics
+	IssueFilter    = types.IssueFilter
+	WorkFilter     = types.WorkFilter
+	EpicStatus     = types.EpicStatus
 )
 
 // Status constants
@@ -39,6 +50,29 @@ const (
 	TypeTask    = types.TypeTask
 	TypeEpic    = types.TypeEpic
 	TypeChore   = types.TypeChore
+)
+
+// DependencyType constants
+const (
+	DepBlocks         = types.DepBlocks
+	DepRelated        = types.DepRelated
+	DepParentChild    = types.DepParentChild
+	DepDiscoveredFrom = types.DepDiscoveredFrom
+)
+
+// EventType constants
+const (
+	EventCreated           = types.EventCreated
+	EventUpdated           = types.EventUpdated
+	EventStatusChanged     = types.EventStatusChanged
+	EventCommented         = types.EventCommented
+	EventClosed            = types.EventClosed
+	EventReopened          = types.EventReopened
+	EventDependencyAdded   = types.EventDependencyAdded
+	EventDependencyRemoved = types.EventDependencyRemoved
+	EventLabelAdded        = types.EventLabelAdded
+	EventLabelRemoved      = types.EventLabelRemoved
+	EventCompacted         = types.EventCompacted
 )
 
 // Storage provides the minimal interface for extension orchestration

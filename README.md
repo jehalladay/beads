@@ -777,6 +777,47 @@ bd ensures only one daemon runs per repository using file locking:
 
 The lock file is the single source of truth for daemon status. Commands like `bd daemon --status` check lock availability rather than PID file contents, eliminating race conditions where multiple daemons could start simultaneously.
 
+## Using Beads as a Library
+
+For Go projects that need deeper integration, import Beads directly instead of spawning CLI processes:
+
+```go
+import "github.com/steveyegge/beads"
+
+// Find and open the database
+dbPath := beads.FindDatabasePath()
+store, err := beads.NewSQLiteStorage(dbPath)
+if err != nil {
+    log.Fatal(err)
+}
+defer store.Close()
+
+// Get ready work
+ctx := context.Background()
+ready, err := store.GetReadyWork(ctx, beads.WorkFilter{
+    Status: beads.StatusOpen,
+    Limit: 10,
+})
+
+// Create issues programmatically
+issue := &beads.Issue{
+    Title:     "New task",
+    Status:    beads.StatusOpen,
+    Priority:  2,
+    IssueType: beads.TypeTask,
+}
+store.CreateIssue(ctx, issue, "my-app")
+```
+
+**Why use Beads as a library?**
+- ✅ **Direct API access** - No process spawn overhead
+- ✅ **Type safety** - Compile-time checking
+- ✅ **Performance** - Native Go calls
+- ✅ **Transactions** - Full control over database operations
+- ✅ **Error handling** - Proper Go error types
+
+See [examples/library-usage/](examples/library-usage/) for a complete working example.
+
 ## Extending bd
 
 Applications can extend bd's SQLite database with their own tables. See [EXTENDING.md](EXTENDING.md) for the full guide.
