@@ -152,6 +152,62 @@ Only `blocks` dependencies affect the ready work queue.
 
 ## Configuration
 
+### Auto-Approval Configuration
+
+By default, Claude Code asks for confirmation every time the beads MCP server wants to run a command. This is a security feature, but it can disrupt workflow during active development.
+
+**Available Options:**
+
+#### 1. Auto-Approve All Beads Tools (Recommended for Trusted Projects)
+
+Add to your Claude Code `settings.json`:
+
+```json
+{
+  "enabledMcpjsonServers": ["beads"]
+}
+```
+
+This auto-approves all beads commands without prompting.
+
+#### 2. Auto-Approve Project MCP Servers
+
+Add to your Claude Code `settings.json`:
+
+```json
+{
+  "enableAllProjectMcpServers": true
+}
+```
+
+This auto-approves all MCP servers defined in your project's `.mcp.json` file. Useful when working across multiple projects with different MCP requirements.
+
+#### 3. Manual Approval (Default)
+
+No configuration needed. Claude Code will prompt for approval on each MCP tool invocation.
+
+**Security Trade-offs:**
+
+- **Manual approval (default)**: Maximum safety, but interrupts workflow frequently
+- **Server-level auto-approval**: Convenient for trusted projects, but allows any beads operation without confirmation
+- **Project-level auto-approval**: Good balance for multi-project workflows with project-specific trust levels
+
+**Limitation:** Claude Code doesn't currently support per-tool approval granularity. You cannot auto-approve only read operations (like `bd ready`, `bd show`) while requiring confirmation for mutations (like `bd create`, `bd update`). It's all-or-nothing at the server level.
+
+**Recommended Configuration:**
+
+For active development on trusted projects where you're frequently using beads:
+
+```json
+{
+  "enabledMcpjsonServers": ["beads"]
+}
+```
+
+For more information, see the [Claude Code settings documentation](https://docs.claude.com/en/docs/claude-code/settings).
+
+### Environment Variables
+
 The MCP server supports these environment variables:
 
 - **`BEADS_PATH`** - Path to bd executable (default: `bd` in PATH)
