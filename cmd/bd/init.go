@@ -21,6 +21,14 @@ and database file. Optionally specify a custom issue prefix.`,
 		prefix, _ := cmd.Flags().GetString("prefix")
 		quiet, _ := cmd.Flags().GetBool("quiet")
 
+		// Check BEADS_DB environment variable if --db flag not set
+		// (PersistentPreRun doesn't run for init command)
+		if dbPath == "" {
+			if envDB := os.Getenv("BEADS_DB"); envDB != "" {
+				dbPath = envDB
+			}
+		}
+
 		if prefix == "" {
 			// Auto-detect from directory name
 			cwd, err := os.Getwd()
@@ -35,15 +43,45 @@ and database file. Optionally specify a custom issue prefix.`,
 		// The hyphen is added automatically during ID generation
 		prefix = strings.TrimRight(prefix, "-")
 
+		// Create database
+		// Use global dbPath if set via --db flag or BEADS_DB env var, otherwise default to .beads/{prefix}.db
+		initDBPath := dbPath
+		if initDBPath == "" {
+		 initDBPath = filepath.Join(".beads", prefix+".db")
+		}
+		
+		// Determine if we should create .beads/ directory in CWD
+		// Only create it if the database will be stored there
+	cwd, err := os.Getwd()
+		if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
+		os.Exit(1)
+	}
+	
+	localBeadsDir := filepath.Join(cwd, ".beads")
+	initDBDir := filepath.Dir(initDBPath)
+	
+	// Convert both to absolute paths for comparison
+	localBeadsDirAbs, err := filepath.Abs(localBeadsDir)
+	if err != nil {
+		localBeadsDirAbs = filepath.Clean(localBeadsDir)
+	}
+	initDBDirAbs, err := filepath.Abs(initDBDir)
+	if err != nil {
+		initDBDirAbs = filepath.Clean(initDBDir)
+	}
+	
+	useLocalBeads := filepath.Clean(initDBDirAbs) == filepath.Clean(localBeadsDirAbs)
+	
+	if useLocalBeads {
 		// Create .beads directory
-		beadsDir := ".beads"
-		if err := os.MkdirAll(beadsDir, 0750); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to create %s directory: %v\n", beadsDir, err)
+		if err := os.MkdirAll(localBeadsDir, 0750); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to create .beads directory: %v\n", err)
 			os.Exit(1)
 		}
 
 		// Create .gitignore in .beads directory
-		gitignorePath := filepath.Join(beadsDir, ".gitignore")
+		gitignorePath := filepath.Join(localBeadsDir, ".gitignore")
 		gitignoreContent := `# SQLite databases
 *.db
 *.db-journal
@@ -62,14 +100,19 @@ bd.db
 # Keep JSONL exports (source of truth for git)
 !*.jsonl
 `
-		if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to create .gitignore: %v\n", err)
-			// Non-fatal - continue anyway
+			if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to create .gitignore: %v\n", err)
+				// Non-fatal - continue anyway
+			}
 		}
-
-		// Create database
-		dbPath := filepath.Join(beadsDir, prefix+".db")
-		store, err := sqlite.New(dbPath)
+	
+		// Ensure parent directory exists for the database
+		if err := os.MkdirAll(initDBDir, 0750); err != nil {
+		 fmt.Fprintf(os.Stderr, "Error: failed to create database directory %s: %v\n", initDBDir, err)
+		 os.Exit(1)
+		}
+		
+		store, err := sqlite.New(initDBPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to create database: %v\n", err)
 			os.Exit(1)
@@ -96,31 +139,31 @@ bd.db
 		fmt.Fprintf(os.Stderr, "\n✓ Database initialized. Found %d issues in git, importing...\n", issueCount)
 		}
 		
-		if err := importFromGit(ctx, dbPath, store, jsonlPath); err != nil {
-			if !quiet {
-				fmt.Fprintf(os.Stderr, "Warning: auto-import failed: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Try manually: git show HEAD:%s | bd import -i /dev/stdin\n", jsonlPath)
-			}
-			// Non-fatal - continue with empty database
-		} else if !quiet {
-			fmt.Fprintf(os.Stderr, "✓ Successfully imported %d issues from git.\n\n", issueCount)
+		if err := importFromGit(ctx, initDBPath, store, jsonlPath); err != nil {
+		if !quiet {
+		fmt.Fprintf(os.Stderr, "Warning: auto-import failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Try manually: git show HEAD:%s | bd import -i /dev/stdin\n", jsonlPath)
 		}
-	}
+		// Non-fatal - continue with empty database
+		} else if !quiet {
+		fmt.Fprintf(os.Stderr, "✓ Successfully imported %d issues from git.\n\n", issueCount)
+		}
+}
 
-	if err := store.Close(); err != nil {
+if err := store.Close(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to close database: %v\n", err)
-	}
+}
 
-	// Skip output if quiet mode
-	if quiet {
+// Skip output if quiet mode
+if quiet {
 		return
-	}
+}
 
 		green := color.New(color.FgGreen).SprintFunc()
 		cyan := color.New(color.FgCyan).SprintFunc()
 
 		fmt.Printf("\n%s bd initialized successfully!\n\n", green("✓"))
-		fmt.Printf("  Database: %s\n", cyan(dbPath))
+		fmt.Printf("  Database: %s\n", cyan(initDBPath))
 		fmt.Printf("  Issue prefix: %s\n", cyan(prefix))
 		fmt.Printf("  Issues will be named: %s\n\n", cyan(prefix+"-1, "+prefix+"-2, ..."))
 		fmt.Printf("Run %s to get started.\n\n", cyan("bd quickstart"))
