@@ -1477,12 +1477,27 @@ var createCmd = &cobra.Command{
 		}
 
 		// Original single-issue creation logic
-		if len(args) == 0 {
+		// Get title from flag or positional argument
+		titleFlag, _ := cmd.Flags().GetString("title")
+		var title string
+
+		if len(args) > 0 && titleFlag != "" {
+			// Both provided - check if they match
+			if args[0] != titleFlag {
+				fmt.Fprintf(os.Stderr, "Error: cannot specify different titles as both positional argument and --title flag\n")
+				fmt.Fprintf(os.Stderr, "  Positional: %q\n", args[0])
+				fmt.Fprintf(os.Stderr, "  --title:    %q\n", titleFlag)
+				os.Exit(1)
+			}
+			title = args[0] // They're the same, use either
+		} else if len(args) > 0 {
+			title = args[0]
+		} else if titleFlag != "" {
+			title = titleFlag
+		} else {
 			fmt.Fprintf(os.Stderr, "Error: title required (or use --file to create from markdown)\n")
 			os.Exit(1)
 		}
-
-		title := args[0]
 		description, _ := cmd.Flags().GetString("description")
 		design, _ := cmd.Flags().GetString("design")
 		acceptance, _ := cmd.Flags().GetString("acceptance")
@@ -1664,6 +1679,7 @@ var createCmd = &cobra.Command{
 
 func init() {
 	createCmd.Flags().StringP("file", "f", "", "Create multiple issues from markdown file")
+	createCmd.Flags().String("title", "", "Issue title (alternative to positional argument)")
 	createCmd.Flags().StringP("description", "d", "", "Issue description")
 	createCmd.Flags().String("design", "", "Design notes")
 	createCmd.Flags().String("acceptance", "", "Acceptance criteria")
