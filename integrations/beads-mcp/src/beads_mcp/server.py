@@ -70,8 +70,8 @@ def cleanup() -> None:
     # Close all daemon client connections
     for client in _daemon_clients:
         try:
-            if hasattr(client, 'close'):
-                client.close()
+            if hasattr(client, 'cleanup'):
+                client.cleanup()
                 logger.debug(f"Closed daemon client: {client}")
         except Exception as e:
             logger.warning(f"Error closing daemon client: {e}")

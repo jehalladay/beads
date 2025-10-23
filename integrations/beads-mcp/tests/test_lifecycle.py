@@ -40,8 +40,8 @@ def test_cleanup_function_safe_to_call_multiple_times():
     cleanup()
     cleanup()
     
-    # Client should only be closed once
-    assert mock_client.close.call_count == 1
+    # Client should only be cleaned up once
+    assert mock_client.cleanup.call_count == 1
     assert len(_daemon_clients) == 0
 
 
@@ -55,7 +55,7 @@ def test_cleanup_handles_client_errors_gracefully():
     
     # Create mock clients - one that raises, one that doesn't
     failing_client = MagicMock()
-    failing_client.close.side_effect = Exception("Connection failed")
+    failing_client.cleanup.side_effect = Exception("Connection failed")
     
     good_client = MagicMock()
     
@@ -66,8 +66,8 @@ def test_cleanup_handles_client_errors_gracefully():
     cleanup()
     
     # Both clients should have been attempted
-    assert failing_client.close.called
-    assert good_client.close.called
+    assert failing_client.cleanup.called
+    assert good_client.cleanup.called
     assert len(_daemon_clients) == 0
 
 

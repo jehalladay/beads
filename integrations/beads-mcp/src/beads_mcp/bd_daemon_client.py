@@ -431,7 +431,7 @@ class BdDaemonClient(BdClientBase):
         except (DaemonNotRunningError, DaemonConnectionError, DaemonError):
             return False
 
-    def close(self) -> None:
+    def cleanup(self) -> None:
         """Close daemon client connections and cleanup resources.
         
         This is called during MCP server shutdown to ensure clean termination.
