@@ -548,7 +548,7 @@ async def test_add_dependency(bd_client, mock_process):
     mock_process.communicate = AsyncMock(return_value=(b"Dependency added\n", b""))
 
     with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-        params = AddDependencyParams(from_id="bd-2", to_id="bd-1", dep_type="blocks")
+        params = AddDependencyParams(issue_id="bd-2", depends_on_id="bd-1", dep_type="blocks")
         await bd_client.add_dependency(params)
 
     # Should complete without raising an exception
@@ -564,7 +564,7 @@ async def test_add_dependency_failure(bd_client, mock_process):
         patch("asyncio.create_subprocess_exec", return_value=mock_process),
         pytest.raises(BdCommandError, match="bd dep add failed"),
     ):
-        params = AddDependencyParams(from_id="bd-2", to_id="bd-1", dep_type="blocks")
+        params = AddDependencyParams(issue_id="bd-2", depends_on_id="bd-1", dep_type="blocks")
         await bd_client.add_dependency(params)
 
 
@@ -575,7 +575,7 @@ async def test_add_dependency_not_found(bd_client):
         patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError()),
         pytest.raises(BdNotFoundError, match="bd CLI not found"),
     ):
-        params = AddDependencyParams(from_id="bd-2", to_id="bd-1", dep_type="blocks")
+        params = AddDependencyParams(issue_id="bd-2", depends_on_id="bd-1", dep_type="blocks")
         await bd_client.add_dependency(params)
 
 

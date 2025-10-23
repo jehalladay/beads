@@ -386,15 +386,15 @@ related (soft link), parent-child (epic/subtask), discovered-from (found during 
 )
 @require_context
 async def add_dependency(
-    from_id: str,
-    to_id: str,
+    issue_id: str,
+    depends_on_id: str,
     dep_type: DependencyType = "blocks",
     workspace_root: str | None = None,
 ) -> str:
     """Add a dependency relationship between two issues."""
     return await beads_add_dependency(
-        from_id=from_id,
-        to_id=to_id,
+        issue_id=issue_id,
+        depends_on_id=depends_on_id,
         dep_type=dep_type,
     )
 

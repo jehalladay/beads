@@ -97,8 +97,8 @@ class ReopenIssueParams(BaseModel):
 class AddDependencyParams(BaseModel):
     """Parameters for adding a dependency."""
 
-    from_id: str
-    to_id: str
+    issue_id: str
+    depends_on_id: str
     dep_type: DependencyType = "blocks"
 
 

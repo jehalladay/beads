@@ -415,8 +415,8 @@ class BdDaemonClient(BdClientBase):
             params: Dependency parameters
         """
         args = {
-            "from_id": params.from_id,
-            "to_id": params.to_id,
+            "from_id": params.issue_id,
+            "to_id": params.depends_on_id,
             "dep_type": params.dep_type or "blocks",
         }
         await self._send_request("dep_add", args)

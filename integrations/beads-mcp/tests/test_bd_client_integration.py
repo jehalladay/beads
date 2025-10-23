@@ -255,7 +255,7 @@ async def test_add_dependency(bd_client):
     issue2 = await bd_client.create(CreateIssueParams(title="Issue 2", priority=1, issue_type="task"))
 
     # Add dependency: issue2 blocks issue1
-    params = AddDependencyParams(from_id=issue1.id, to_id=issue2.id, dep_type="blocks")
+    params = AddDependencyParams(issue_id=issue1.id, depends_on_id=issue2.id, dep_type="blocks")
     await bd_client.add_dependency(params)
 
     # Verify dependency by showing issue1
@@ -392,7 +392,7 @@ async def test_dependency_types(bd_client):
     issue2 = await bd_client.create(CreateIssueParams(title="Issue 2", priority=1, issue_type="task"))
 
     # Test related dependency
-    params = AddDependencyParams(from_id=issue1.id, to_id=issue2.id, dep_type="related")
+    params = AddDependencyParams(issue_id=issue1.id, depends_on_id=issue2.id, dep_type="related")
     await bd_client.add_dependency(params)
 
     # Verify

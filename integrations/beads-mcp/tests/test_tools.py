@@ -237,7 +237,7 @@ async def test_beads_add_dependency_success():
 
     with patch("beads_mcp.tools._get_client", return_value=mock_client):
         result = await beads_add_dependency(
-            from_id="bd-2", to_id="bd-1", dep_type="blocks"
+            issue_id="bd-2", depends_on_id="bd-1", dep_type="blocks"
         )
 
     assert "Added dependency" in result
@@ -258,7 +258,7 @@ async def test_beads_add_dependency_error():
 
     with patch("beads_mcp.tools._get_client", return_value=mock_client):
         result = await beads_add_dependency(
-            from_id="bd-2", to_id="bd-1", dep_type="blocks"
+            issue_id="bd-2", depends_on_id="bd-1", dep_type="blocks"
         )
 
     assert "Error" in result

@@ -382,7 +382,7 @@ async def test_add_dependency_tool(mcp_client):
     # Add dependency
     result = await mcp_client.call_tool(
         "dep",
-        {"from_id": issue1["id"], "to_id": issue2["id"], "dep_type": "blocks"},
+        {"issue_id": issue1["id"], "depends_on_id": issue2["id"], "dep_type": "blocks"},
     )
 
     message = result.content[0].text
@@ -523,7 +523,7 @@ async def test_dependency_types(mcp_client):
     # Test related dependency
     result = await mcp_client.call_tool(
         "dep",
-        {"from_id": issue1["id"], "to_id": issue2["id"], "dep_type": "related"},
+        {"issue_id": issue1["id"], "depends_on_id": issue2["id"], "dep_type": "related"},
     )
 
     message = result.content[0].text

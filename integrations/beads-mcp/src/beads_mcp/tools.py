@@ -229,8 +229,8 @@ async def beads_reopen_issue(
 
 
 async def beads_add_dependency(
-    from_id: Annotated[str, "Issue that depends on another (e.g., bd-2)"],
-    to_id: Annotated[str, "Issue that blocks or is related to from_id (e.g., bd-1)"],
+    issue_id: Annotated[str, "Issue that has the dependency (e.g., bd-2)"],
+    depends_on_id: Annotated[str, "Issue that issue_id depends on (e.g., bd-1)"],
     dep_type: Annotated[
         DependencyType,
         "Dependency type: blocks, related, parent-child, or discovered-from",
@@ -239,22 +239,22 @@ async def beads_add_dependency(
     """Add a dependency relationship between two issues.
 
     Types:
-    - blocks: to_id must complete before from_id can start
+    - blocks: depends_on_id must complete before issue_id can start
     - related: Soft connection, doesn't block progress
     - parent-child: Epic/subtask hierarchical relationship
-    - discovered-from: Track that from_id was discovered while working on to_id
+    - discovered-from: Track that issue_id was discovered while working on depends_on_id
 
     Use 'discovered-from' when you find new work during your session.
     """
     client = await _get_client()
     params = AddDependencyParams(
-        from_id=from_id,
-        to_id=to_id,
+        issue_id=issue_id,
+        depends_on_id=depends_on_id,
         dep_type=dep_type,
     )
     try:
         await client.add_dependency(params)
-        return f"Added dependency: {from_id} depends on {to_id} ({dep_type})"
+        return f"Added dependency: {issue_id} depends on {depends_on_id} ({dep_type})"
     except BdError as e:
         return f"Error: {str(e)}"
 
