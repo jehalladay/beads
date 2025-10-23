@@ -7,13 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2025-10-22
+
+### Added
+- **Lifecycle Safety Documentation**: Complete documentation for UnderlyingDB() usage (bd-64)
+  - Added tracking guidelines for database lifecycle safety
+  - Documented transaction management best practices
+  - Prevents UAF (use-after-free) bugs in extensions
+
 ### Fixed
+- **Critical**: Git worktree detection and warnings (bd-73)
+  - Added automatic detection when running in git worktrees
+  - Displays prominent warning if daemon mode is active in worktree
+  - Prevents daemon from committing/pushing to wrong branch
+  - Documents `--no-daemon` flag as solution for worktree users
 - **Critical**: Multiple daemon race condition (bd-54)
   - Implemented file locking (`daemon.lock`) to prevent multiple daemons per repository
   - Uses `flock` on Unix, `LockFileEx` on Windows for process-level exclusivity
   - Lock held for daemon lifetime, automatically released on exit
   - Eliminates race conditions in concurrent daemon start attempts
   - Backward compatible: Falls back to PID check for pre-lock daemons during upgrades
+- **Bug**: daemon.lock tracked in git
+  - Removed daemon.lock from git tracking
+  - Added to .gitignore to prevent future commits
+- **Bug**: Regression in Nix Flake (#110)
+  - Fixed flake build issues
+  - Restored working Nix development environment
+
+### Changed
+- UnderlyingDB() deprecated for most use cases
+  - New UnderlyingConn(ctx) provides safer scoped access
+  - Reduced risk of UAF bugs in database extensions
+  - Updated EXTENDING.md with migration guide
+
+### Documentation
+- Complete release process documentation in RELEASING.md
+- Enhanced EXTENDING.md with lifecycle safety patterns
+- Added UnderlyingDB() tracking guidelines
 
 ## [0.11.0] - 2025-10-22
 
