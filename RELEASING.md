@@ -4,20 +4,31 @@ Quick guide for releasing a new version of beads.
 
 ## Pre-Release Checklist
 
-1. **Run tests and build**:
+1. **Kill all running daemons**:
    ```bash
-   go test ./...
-   golangci-lint run ./...
-   go build -o bd ./cmd/bd
+   pkill -f "bd.*daemon"
    ```
 
-2. **Update CHANGELOG.md**:
+2. **Run tests and build**:
+   ```bash
+   TMPDIR=/tmp go test ./...
+   golangci-lint run ./...
+   TMPDIR=/tmp go build -o bd ./cmd/bd
+   ```
+
+3. **Update local Go install**:
+   ```bash
+   TMPDIR=/tmp go install ./cmd/bd
+   bd version  # Verify it shows new version
+   ```
+
+4. **Update CHANGELOG.md**:
    - Add version heading: `## [0.9.X] - YYYY-MM-DD`
    - Summarize changes under: Added, Fixed, Changed, Performance, Community
    - Update Version History section
    - Add Upgrade Guide section if needed
 
-3. **Commit changelog**:
+5. **Commit changelog**:
    ```bash
    git add CHANGELOG.md
    git commit -m "Add 0.9.X release notes"
@@ -78,6 +89,8 @@ curl -sL https://github.com/steveyegge/beads/archive/refs/tags/v0.9.X.tar.gz | s
 # Clone tap repo (if not already)
 git clone https://github.com/steveyegge/homebrew-beads /tmp/homebrew-beads
 cd /tmp/homebrew-beads
+git config user.name "Your Name"
+git config user.email "your.email@example.com"
 
 # Update Formula/bd.rb:
 # - url: https://github.com/steveyegge/beads/archive/refs/tags/v0.9.X.tar.gz
@@ -85,14 +98,16 @@ cd /tmp/homebrew-beads
 
 # Commit and push
 git add Formula/bd.rb
-git commit -m "Update bd to 0.9.X"
+git commit -m "Update bd formula to v0.9.X"
 git push origin main
 ```
 
-Users can then upgrade with:
+Install/upgrade locally with:
 ```bash
 brew update
-brew upgrade bd
+brew uninstall bd
+brew install --build-from-source bd
+bd version  # Verify it shows new version
 ```
 
 ### 4. Create GitHub Release
