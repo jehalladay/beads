@@ -12,6 +12,97 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// issueDataChanged checks if any fields in the updates map differ from the existing issue
+// Returns true if any field changed, false if all fields match
+func issueDataChanged(existing *types.Issue, updates map[string]interface{}) bool {
+	// Helper to safely compare string values (handles empty vs nil)
+	strMatch := func(existingVal string, newVal interface{}) bool {
+		if newVal == nil {
+			return existingVal == ""
+		}
+		valStr, ok := newVal.(string)
+		if !ok {
+			return false
+		}
+		return existingVal == valStr
+	}
+
+	// Helper to safely compare pointer string values
+	ptrStrMatch := func(ptr *string, val interface{}) bool {
+		if val == nil {
+			return ptr == nil || *ptr == ""
+		}
+		valStr, ok := val.(string)
+		if !ok {
+			return false
+		}
+		if ptr == nil {
+			return valStr == ""
+		}
+		return *ptr == valStr
+	}
+
+	// Check each field in updates map
+	for key, newVal := range updates {
+		switch key {
+		case "title":
+			if existing.Title != newVal.(string) {
+				return true
+			}
+		case "description":
+			if existing.Description != newVal.(string) {
+				return true
+			}
+		case "status":
+			if newStatus, ok := newVal.(types.Status); ok {
+				if existing.Status != newStatus {
+					return true
+				}
+			} else if newStatusStr, ok := newVal.(string); ok {
+				if string(existing.Status) != newStatusStr {
+					return true
+				}
+			}
+		case "priority":
+			if existing.Priority != newVal.(int) {
+				return true
+			}
+		case "issue_type":
+			if newType, ok := newVal.(types.IssueType); ok {
+				if existing.IssueType != newType {
+					return true
+				}
+			} else if newTypeStr, ok := newVal.(string); ok {
+				if string(existing.IssueType) != newTypeStr {
+					return true
+				}
+			}
+		case "design":
+			if !strMatch(existing.Design, newVal) {
+				return true
+			}
+		case "acceptance_criteria":
+			if !strMatch(existing.AcceptanceCriteria, newVal) {
+				return true
+			}
+		case "notes":
+			if !strMatch(existing.Notes, newVal) {
+				return true
+			}
+		case "assignee":
+			if !strMatch(existing.Assignee, newVal) {
+				return true
+			}
+		case "external_ref":
+			if !ptrStrMatch(existing.ExternalRef, newVal) {
+				return true
+			}
+		}
+	}
+
+	return false // No changes detected
+}
+
 // ImportOptions configures how the import behaves
 type ImportOptions struct {
 	ResolveCollisions  bool // Auto-resolve collisions by remapping to new IDs
@@ -223,10 +314,16 @@ func importIssuesCore(ctx context.Context, dbPath string, store storage.Storage,
 				updates["external_ref"] = nil
 			}
 
-			if err := sqliteStore.UpdateIssue(ctx, issue.ID, updates, "import"); err != nil {
-				return nil, fmt.Errorf("error updating issue %s: %w", issue.ID, err)
+			// bd-84: Only update if data actually changed (prevents timestamp churn)
+			if issueDataChanged(existing, updates) {
+				if err := sqliteStore.UpdateIssue(ctx, issue.ID, updates, "import"); err != nil {
+					return nil, fmt.Errorf("error updating issue %s: %w", issue.ID, err)
+				}
+				result.Updated++
+			} else {
+				// Issue unchanged - count as skipped to avoid polluting JSONL with timestamp updates
+				result.Skipped++
 			}
-			result.Updated++
 		} else {
 			// New issue - check for duplicates in import batch
 			if idx, seen := seenNew[issue.ID]; seen {
