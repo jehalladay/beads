@@ -70,6 +70,12 @@ The single MCP server instance automatically:
 
 **Note:** The daemon **auto-starts automatically** when you run any `bd` command (v0.9.11+). To disable auto-start, set `BEADS_AUTO_START_DAEMON=false`.
 
+**Version Management:** bd automatically handles daemon version mismatches (v0.16.0+):
+- When you upgrade bd, old daemons are automatically detected and restarted
+- Version compatibility is checked on every connection
+- No manual `bd daemon --stop` required after upgrades
+- Works transparently with MCP server and CLI
+
 **Alternative (legacy): Multiple MCP Server Instances**
 If you must use separate MCP servers (not recommended):
 ```json

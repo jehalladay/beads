@@ -90,9 +90,32 @@ Use --health to check daemon health and metrics.`,
 
 		// Check if daemon is already running
 		if isRunning, pid := isDaemonRunning(pidFile); isRunning {
-			fmt.Fprintf(os.Stderr, "Error: daemon already running (PID %d)\n", pid)
-			fmt.Fprintf(os.Stderr, "Use 'bd daemon --stop%s' to stop it first\n", boolToFlag(global, " --global"))
-			os.Exit(1)
+			// Check if running daemon has compatible version
+			socketPath := getSocketPathForPID(pidFile, global)
+			if client, err := rpc.TryConnectWithTimeout(socketPath, 1*time.Second); err == nil && client != nil {
+				health, healthErr := client.Health()
+				client.Close()
+				
+				// If we can check version and it's compatible, exit
+				if healthErr == nil && health.Compatible {
+					fmt.Fprintf(os.Stderr, "Error: daemon already running (PID %d, version %s)\n", pid, health.Version)
+					fmt.Fprintf(os.Stderr, "Use 'bd daemon --stop%s' to stop it first\n", boolToFlag(global, " --global"))
+					os.Exit(1)
+				}
+				
+				// Version mismatch - auto-stop old daemon
+				if healthErr == nil && !health.Compatible {
+					fmt.Fprintf(os.Stderr, "Warning: daemon version mismatch (daemon: %s, client: %s)\n", health.Version, Version)
+					fmt.Fprintf(os.Stderr, "Stopping old daemon and starting new one...\n")
+					stopDaemon(pidFile)
+					// Continue with daemon startup
+				}
+			} else {
+				// Can't check version - assume incompatible
+				fmt.Fprintf(os.Stderr, "Error: daemon already running (PID %d)\n", pid)
+				fmt.Fprintf(os.Stderr, "Use 'bd daemon --stop%s' to stop it first\n", boolToFlag(global, " --global"))
+				os.Exit(1)
+			}
 		}
 
 		// Global daemon doesn't support auto-commit/auto-push (no sync loop)
@@ -218,6 +241,16 @@ func getEnvBool(key string, defaultValue bool) bool {
 		return val == "true" || val == "1"
 	}
 	return defaultValue
+}
+
+// getSocketPathForPID determines the socket path for a given PID file
+func getSocketPathForPID(pidFile string, global bool) string {
+	if global {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, ".beads", "bd.sock")
+	}
+	// Local daemon: socket is in same directory as PID file
+	return filepath.Join(filepath.Dir(pidFile), "bd.sock")
 }
 
 func getPIDFilePath(global bool) (string, error) {

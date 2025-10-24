@@ -212,18 +212,56 @@ var rootCmd = &cobra.Command{
 				// Perform health check
 				health, healthErr := client.Health()
 				if healthErr == nil && health.Status == "healthy" {
-					// Daemon is healthy - use it
-					daemonClient = client
-					daemonStatus.Mode = "daemon"
-					daemonStatus.Connected = true
-					daemonStatus.Degraded = false
-					daemonStatus.Health = health.Status
-					if os.Getenv("BD_DEBUG") != "" {
-						fmt.Fprintf(os.Stderr, "Debug: connected to daemon at %s (health: %s)\n", socketPath, health.Status)
+					// Check version compatibility
+					if !health.Compatible {
+						if os.Getenv("BD_DEBUG") != "" {
+							fmt.Fprintf(os.Stderr, "Debug: daemon version mismatch (daemon: %s, client: %s), restarting daemon\n", 
+								health.Version, Version)
+						}
+						client.Close()
+						
+						// Kill old daemon and restart with new version
+						if restartDaemonForVersionMismatch() {
+							// Retry connection after restart
+							client, err = rpc.TryConnect(socketPath)
+							if err == nil && client != nil {
+								if dbPath != "" {
+									absDBPath, _ := filepath.Abs(dbPath)
+									client.SetDatabasePath(absDBPath)
+								}
+								health, healthErr = client.Health()
+								if healthErr == nil && health.Status == "healthy" {
+									daemonClient = client
+									daemonStatus.Mode = "daemon"
+									daemonStatus.Connected = true
+									daemonStatus.Degraded = false
+									daemonStatus.Health = health.Status
+									if os.Getenv("BD_DEBUG") != "" {
+										fmt.Fprintf(os.Stderr, "Debug: connected to restarted daemon (version: %s)\n", health.Version)
+									}
+									warnWorktreeDaemon(dbPath)
+									return
+								}
+							}
+						}
+						// If restart failed, fall through to direct mode
+						daemonStatus.FallbackReason = FallbackHealthFailed
+						daemonStatus.Detail = fmt.Sprintf("version mismatch (daemon: %s, client: %s) and restart failed", 
+							health.Version, Version)
+					} else {
+						// Daemon is healthy and compatible - use it
+						daemonClient = client
+						daemonStatus.Mode = "daemon"
+						daemonStatus.Connected = true
+						daemonStatus.Degraded = false
+						daemonStatus.Health = health.Status
+						if os.Getenv("BD_DEBUG") != "" {
+							fmt.Fprintf(os.Stderr, "Debug: connected to daemon at %s (health: %s)\n", socketPath, health.Status)
+						}
+						// Warn if using daemon with git worktrees
+						warnWorktreeDaemon(dbPath)
+						return // Skip direct storage initialization
 					}
-					// Warn if using daemon with git worktrees
-					warnWorktreeDaemon(dbPath)
-					return // Skip direct storage initialization
 				} else {
 					// Health check failed or daemon unhealthy
 					client.Close()
@@ -539,6 +577,128 @@ func shouldUseGlobalDaemon() bool {
 	// Use global daemon if we found more than 1 repository (multi-repo workflow)
 	// This prevents concurrency issues when multiple repos are being worked on
 	return repoCount > 1
+}
+
+// restartDaemonForVersionMismatch stops the old daemon and starts a new one
+// Returns true if restart was successful
+func restartDaemonForVersionMismatch() bool {
+	// Use local daemon (global is deprecated)
+	pidFile, err := getPIDFilePath(false)
+	if err != nil {
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: failed to get PID file path: %v\n", err)
+		}
+		return false
+	}
+
+	socketPath := getSocketPath()
+
+	// Check if daemon is running and stop it
+	forcedKill := false
+	if isRunning, pid := isDaemonRunning(pidFile); isRunning {
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: stopping old daemon (PID %d)\n", pid)
+		}
+		
+		process, err := os.FindProcess(pid)
+		if err != nil {
+			if os.Getenv("BD_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "Debug: failed to find process: %v\n", err)
+			}
+			return false
+		}
+
+		// Send stop signal
+		if err := sendStopSignal(process); err != nil {
+			if os.Getenv("BD_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "Debug: failed to signal daemon: %v\n", err)
+			}
+			return false
+		}
+
+		// Wait for daemon to stop (up to 5 seconds)
+		for i := 0; i < 50; i++ {
+			time.Sleep(100 * time.Millisecond)
+			if isRunning, _ := isDaemonRunning(pidFile); !isRunning {
+				if os.Getenv("BD_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "Debug: old daemon stopped successfully\n")
+				}
+				break
+			}
+		}
+
+		// Force kill if still running
+		if isRunning, _ := isDaemonRunning(pidFile); isRunning {
+			if os.Getenv("BD_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "Debug: force killing old daemon\n")
+			}
+			process.Kill()
+			forcedKill = true
+		}
+	}
+
+	// Clean up stale socket and PID file after force kill or if not running
+	if forcedKill || !isDaemonRunningQuiet(pidFile) {
+		os.Remove(socketPath)
+		os.Remove(pidFile)
+	}
+
+	// Start new daemon with current binary version
+	exe, err := os.Executable()
+	if err != nil {
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: failed to get executable path: %v\n", err)
+		}
+		return false
+	}
+
+	args := []string{"daemon"}
+	cmd := exec.Command(exe, args...)
+	cmd.Env = append(os.Environ(), "BD_DAEMON_FOREGROUND=1")
+
+	// Set working directory to database directory so daemon finds correct DB
+	if dbPath != "" {
+		cmd.Dir = filepath.Dir(dbPath)
+	}
+
+	configureDaemonProcess(cmd)
+
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err == nil {
+		cmd.Stdin = devNull
+		cmd.Stdout = devNull
+		cmd.Stderr = devNull
+		defer devNull.Close()
+	}
+
+	if err := cmd.Start(); err != nil {
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: failed to start new daemon: %v\n", err)
+		}
+		return false
+	}
+
+	// Reap the process to avoid zombies
+	go cmd.Wait()
+
+	// Wait for daemon to be ready using shared helper
+	if waitForSocketReadiness(socketPath, 5*time.Second) {
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: new daemon started successfully\n")
+		}
+		return true
+	}
+
+	if os.Getenv("BD_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "Debug: new daemon failed to become ready\n")
+	}
+	return false
+}
+
+// isDaemonRunningQuiet checks if daemon is running without output
+func isDaemonRunningQuiet(pidFile string) bool {
+	isRunning, _ := isDaemonRunning(pidFile)
+	return isRunning
 }
 
 // tryAutoStartDaemon attempts to start the daemon in the background
