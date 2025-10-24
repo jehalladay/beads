@@ -599,7 +599,7 @@ func stopDaemon(pidFile string) {
 				fmt.Fprintf(os.Stderr, "Error killing process: %v\n", err)
 			}
 		}
-		os.Remove(pidFile)
+		_ = os.Remove(pidFile)
 		fmt.Println("Daemon killed")
 	}
 }

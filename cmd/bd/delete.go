@@ -70,7 +70,7 @@ Force: Delete and orphan dependents
 
 		if len(issueIDs) == 0 {
 			fmt.Fprintf(os.Stderr, "Error: no issue IDs provided\n")
-			cmd.Usage()
+			_ = cmd.Usage()
 			os.Exit(1)
 		}
 
@@ -353,8 +353,8 @@ func removeIssueFromJSONL(issueID string) error {
 	enc := json.NewEncoder(out)
 	for _, iss := range issues {
 		if err := enc.Encode(iss); err != nil {
-			out.Close()
-			os.Remove(temp)
+			_ = out.Close()
+			_ = os.Remove(temp)
 			return fmt.Errorf("failed to write issue: %w", err)
 		}
 	}

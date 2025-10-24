@@ -41,7 +41,7 @@ func acquireDaemonLock(beadsDir string, global bool) (*DaemonLock, error) {
 
 	// Try to acquire exclusive non-blocking lock
 	if err := flockExclusive(f); err != nil {
-		f.Close()
+		_ = f.Close()
 		if err == ErrDaemonLocked {
 			return nil, ErrDaemonLocked
 		}
@@ -51,7 +51,7 @@ func acquireDaemonLock(beadsDir string, global bool) (*DaemonLock, error) {
 	// Write our PID to the lock file for debugging (optional)
 	_ = f.Truncate(0)
 	_, _ = f.Seek(0, 0)
-	fmt.Fprintf(f, "%d\n", os.Getpid())
+	_, _ = fmt.Fprintf(f, "%d\n", os.Getpid())
 	_ = f.Sync()
 
 	// Also write PID file for Windows compatibility (can't read locked files on Windows)
@@ -74,7 +74,7 @@ func tryDaemonLock(beadsDir string) (running bool, pid int) {
 		// Fall back to PID file check for backward compatibility
 		return checkPIDFile(beadsDir)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Try to acquire lock non-blocking
 	if err := flockExclusive(f); err != nil {
