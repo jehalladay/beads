@@ -20,6 +20,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
@@ -83,6 +84,30 @@ var rootCmd = &cobra.Command{
 	Short: "bd - Dependency-aware issue tracker",
 	Long:  `Issues chained together like beads. A lightweight issue tracker with first-class dependency support.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Apply viper configuration if flags weren't explicitly set
+		// Priority: flags > viper (config file + env vars) > defaults
+		// Do this BEFORE early-return so init/version/help respect config
+		
+		// If flag wasn't explicitly set, use viper value
+		if !cmd.Flags().Changed("json") {
+			jsonOutput = config.GetBool("json")
+		}
+		if !cmd.Flags().Changed("no-daemon") {
+			noDaemon = config.GetBool("no-daemon")
+		}
+		if !cmd.Flags().Changed("no-auto-flush") {
+			noAutoFlush = config.GetBool("no-auto-flush")
+		}
+		if !cmd.Flags().Changed("no-auto-import") {
+			noAutoImport = config.GetBool("no-auto-import")
+		}
+		if !cmd.Flags().Changed("db") && dbPath == "" {
+			dbPath = config.GetString("db")
+		}
+		if !cmd.Flags().Changed("actor") && actor == "" {
+			actor = config.GetString("actor")
+		}
+
 		// Skip database initialization for commands that don't need a database
 		if cmd.Name() == "init" || cmd.Name() == "daemon" || cmd.Name() == "help" || cmd.Name() == "version" || cmd.Name() == "quickstart" {
 			return
@@ -144,12 +169,13 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// Set actor from flag, env, or default
-		// Priority: --actor flag > BD_ACTOR env > USER env > "unknown"
+		// Set actor from flag, viper (env), or default
+		// Priority: --actor flag > viper (config + BD_ACTOR env) > USER env > "unknown"
+		// Note: Viper handles BD_ACTOR automatically via AutomaticEnv()
 		if actor == "" {
-			if bdActor := os.Getenv("BD_ACTOR"); bdActor != "" {
-				actor = bdActor
-			} else if user := os.Getenv("USER"); user != "" {
+			// Viper already populated from config file or BD_ACTOR env
+			// Fall back to USER env if still empty
+			if user := os.Getenv("USER"); user != "" {
 				actor = user
 			} else {
 				actor = "unknown"
@@ -374,20 +400,14 @@ var rootCmd = &cobra.Command{
 }
 
 // getDebounceDuration returns the auto-flush debounce duration
-// Configurable via BEADS_FLUSH_DEBOUNCE (e.g., "500ms", "10s")
+// Configurable via config file or BEADS_FLUSH_DEBOUNCE env var (e.g., "500ms", "10s")
 // Defaults to 5 seconds if not set or invalid
 func getDebounceDuration() time.Duration {
-	envVal := os.Getenv("BEADS_FLUSH_DEBOUNCE")
-	if envVal == "" {
+	duration := config.GetDuration("flush-debounce")
+	if duration == 0 {
+		// If parsing failed, use default
 		return 5 * time.Second
 	}
-
-	duration, err := time.ParseDuration(envVal)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: invalid BEADS_FLUSH_DEBOUNCE value '%s', using default 5s\n", envVal)
-		return 5 * time.Second
-	}
-
 	return duration
 }
 
@@ -418,22 +438,21 @@ func shouldAutoStartDaemon() bool {
 		return false // Explicit opt-out
 	}
 
-	// Check legacy BEADS_AUTO_START_DAEMON for backward compatibility
-	autoStart := strings.ToLower(strings.TrimSpace(os.Getenv("BEADS_AUTO_START_DAEMON")))
-	if autoStart != "" {
-		// Accept common falsy values
-		return autoStart != "false" && autoStart != "0" && autoStart != "no" && autoStart != "off"
-	}
-	return true // Default to enabled (always-daemon mode)
+	// Use viper to read from config file or BEADS_AUTO_START_DAEMON env var
+	// Viper handles BEADS_AUTO_START_DAEMON automatically via BindEnv
+	return config.GetBool("auto-start-daemon") // Defaults to true
 }
 
 // shouldUseGlobalDaemon determines if global daemon should be preferred
-// based on environment variables, config, or heuristics (multi-repo detection)
+// based on heuristics (multi-repo detection)
+// Note: Global daemon is deprecated; this always returns false for now
 func shouldUseGlobalDaemon() bool {
-	// Check explicit environment variable first
-	if pref := os.Getenv("BEADS_PREFER_GLOBAL_DAEMON"); pref != "" {
-		return pref == "1" || strings.ToLower(pref) == "true"
-	}
+	// Global daemon support is deprecated
+	// Always use local daemon (per-project .beads/ socket)
+	return false
+	
+	// Previously supported BEADS_PREFER_GLOBAL_DAEMON env var, but global
+	// daemon has issues with multi-workspace git workflows
 
 	// Heuristic: detect multiple beads repositories
 	home, err := os.UserHomeDir()
@@ -1352,6 +1371,11 @@ var (
 )
 
 func init() {
+	// Initialize viper configuration
+	if err := config.Initialize(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
+	}
+
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "Database path (default: auto-discover .beads/*.db or ~/.beads/default.db)")
 	rootCmd.PersistentFlags().StringVar(&actor, "actor", "", "Actor name for audit trail (default: $BD_ACTOR or $USER)")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")

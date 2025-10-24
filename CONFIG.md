@@ -1,10 +1,88 @@
 # Configuration System
 
-bd supports per-project configuration stored in `.beads/*.db` for external integrations and user preferences.
+bd has two complementary configuration systems:
 
-## Overview
+1. **Tool-level configuration** (Viper): User preferences for tool behavior (flags, output format)
+2. **Project-level configuration** (`bd config`): Integration data and project-specific settings
 
-Configuration is:
+## Tool-Level Configuration (Viper)
+
+### Overview
+
+Tool preferences control how `bd` behaves globally or per-user. These are stored in config files or environment variables and managed by [Viper](https://github.com/spf13/viper).
+
+**Configuration precedence** (highest to lowest):
+1. Command-line flags (`--json`, `--no-daemon`, etc.)
+2. Environment variables (`BD_JSON`, `BD_NO_DAEMON`, etc.)
+3. Config file (`~/.config/bd/config.yaml` or `.beads/config.yaml`)
+4. Defaults
+
+### Config File Locations
+
+Viper searches for `config.yaml` in these locations (in order):
+1. `.beads/config.yaml` - Project-specific tool settings (version-controlled)
+2. `~/.config/bd/config.yaml` - User-specific tool settings
+3. `~/.beads/config.yaml` - Legacy user settings
+
+### Supported Settings
+
+Tool-level settings you can configure:
+
+| Setting | Flag | Environment Variable | Default | Description |
+|---------|------|---------------------|---------|-------------|
+| `json` | `--json` | `BD_JSON` | `false` | Output in JSON format |
+| `no-daemon` | `--no-daemon` | `BD_NO_DAEMON` | `false` | Force direct mode, bypass daemon |
+| `no-auto-flush` | `--no-auto-flush` | `BD_NO_AUTO_FLUSH` | `false` | Disable auto JSONL export |
+| `no-auto-import` | `--no-auto-import` | `BD_NO_AUTO_IMPORT` | `false` | Disable auto JSONL import |
+| `db` | `--db` | `BD_DB` | (auto-discover) | Database path |
+| `actor` | `--actor` | `BD_ACTOR` | `$USER` | Actor name for audit trail |
+| `flush-debounce` | - | `BEADS_FLUSH_DEBOUNCE` | `5s` | Debounce time for auto-flush |
+| `auto-start-daemon` | - | `BEADS_AUTO_START_DAEMON` | `true` | Auto-start daemon if not running |
+
+### Example Config File
+
+`~/.config/bd/config.yaml`:
+```yaml
+# Default to JSON output for scripting
+json: true
+
+# Disable daemon for single-user workflows
+no-daemon: true
+
+# Custom debounce for auto-flush (default 5s)
+flush-debounce: 10s
+
+# Auto-start daemon (default true)
+auto-start-daemon: true
+```
+
+`.beads/config.yaml` (project-specific):
+```yaml
+# Project team prefers longer flush delay
+flush-debounce: 15s
+```
+
+### Why Two Systems?
+
+**Tool settings (Viper)** are user preferences:
+- How should I see output? (`--json`)
+- Should I use the daemon? (`--no-daemon`)
+- How should the CLI behave?
+
+**Project config (`bd config`)** is project data:
+- What's our Jira URL?
+- What are our Linear tokens?
+- How do we map statuses?
+
+This separation is correct: **tool settings are user-specific, project config is team-shared**.
+
+Agents benefit from `bd config`'s structured CLI interface over manual YAML editing.
+
+## Project-Level Configuration (`bd config`)
+
+### Overview
+
+Project configuration is:
 - **Per-project**: Isolated to each `.beads/*.db` database
 - **Version-control-friendly**: Stored in SQLite, queryable and scriptable
 - **Machine-readable**: JSON output for automation
