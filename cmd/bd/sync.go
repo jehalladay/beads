@@ -327,7 +327,7 @@ func exportToJSONL(ctx context.Context, jsonlPath string) error {
 	}
 
 	// Close temp file before rename
-	tempFile.Close()
+	_ = tempFile.Close()
 
 	// Atomic replace
 	if err := os.Rename(tempPath, jsonlPath); err != nil {

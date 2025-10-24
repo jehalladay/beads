@@ -217,7 +217,7 @@ func importIssuesCore(ctx context.Context, dbPath string, store storage.Storage,
 		needCloseStore = true
 		defer func() {
 			if needCloseStore {
-				sqliteStore.Close()
+				_ = sqliteStore.Close()
 			}
 		}()
 	}

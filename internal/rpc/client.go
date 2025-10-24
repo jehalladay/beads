@@ -60,7 +60,7 @@ func TryConnectWithTimeout(socketPath string, dialTimeout time.Duration) (*Clien
 		if os.Getenv("BD_DEBUG") != "" {
 			fmt.Fprintf(os.Stderr, "Debug: health check failed: %v\n", err)
 		}
-		conn.Close()
+		_ = conn.Close()
 		return nil, nil
 	}
 
@@ -68,7 +68,7 @@ func TryConnectWithTimeout(socketPath string, dialTimeout time.Duration) (*Clien
 		if os.Getenv("BD_DEBUG") != "" {
 			fmt.Fprintf(os.Stderr, "Debug: daemon unhealthy: %s\n", health.Error)
 		}
-		conn.Close()
+		_ = conn.Close()
 		return nil, nil
 	}
 

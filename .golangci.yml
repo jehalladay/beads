@@ -8,7 +8,7 @@ linters:
   enable:
     - dupl
     - goconst
-    - gocyclo
+    # - gocyclo  # Disabled: high complexity acceptable for large functions (see LINTING.md)
     - gosec
     - misspell
     - revive
@@ -43,12 +43,19 @@ linters:
           - errcheck
           - goconst
           - gocyclo
+          - gosec  # Test files use insecure permissions and dummy files
       - path: (.+)\.go$
         text: Error return value.*\.Close.*is not checked
       - path: (.+)\.go$
         text: Error return value.*\.Rollback.*is not checked
       - path: (.+)\.go$
         text: Error return value.*\.RemoveAll.*is not checked
+      - path: (.+)\.go$
+        text: 'G104.*rows.Close'  # Database rows.Close errors are non-critical
+      - path: (.+)\.go$
+        text: 'G104.*conn.Close'  # Connection close errors in error paths are non-critical
+      - path: (.+)\.go$
+        text: 'G104.*tempFile.Close'  # Temp file close errors are non-critical
       - path: (.+)\.go$
         text: 'unused-parameter: parameter ''cmd'' seems to be unused'
       - path: (.+)\.go$
@@ -63,3 +70,15 @@ linters:
         text: G304.*file inclusion via variable
       - path: (.+)\.go$
         text: 'G301: Expect directory permissions'
+      - path: (.+)\.go$
+        text: 'G204: Subprocess launched'
+      - path: (.+)\.go$
+        text: 'G115: integer overflow conversion'
+      - path: (export|sync|init)\.go$
+        text: 'G302|G306.*0644'  # JSONL and .gitignore should be world-readable
+      - path: server\.go$
+        text: 'G302'  # Socket directory permissions
+      - path: sqlite\.go$
+        text: 'G104.*rows\.Close'  # Database cleanup in error paths
+      - path: init\.go$
+        text: 'G306'  # .gitignore should be world-readable

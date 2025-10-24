@@ -1516,7 +1516,7 @@ func (s *SQLiteStorage) DeleteIssues(ctx context.Context, ids []string, cascade 
 				for rows.Next() {
 					var depID string
 					if err := rows.Scan(&depID); err != nil {
-						rows.Close()
+						_ = rows.Close()
 						return nil, fmt.Errorf("failed to scan dependent: %w", err)
 					}
 					if !idSet[depID] {
@@ -1524,7 +1524,7 @@ func (s *SQLiteStorage) DeleteIssues(ctx context.Context, ids []string, cascade 
 						result.OrphanedIssues = append(result.OrphanedIssues, depID)
 					}
 				}
-				rows.Close()
+				_ = rows.Close()
 				if hasExternalDependents {
 					return nil, fmt.Errorf("issue %s has dependents not in deletion set; use --cascade to delete them or --force to orphan them", id)
 				}
@@ -1542,7 +1542,7 @@ func (s *SQLiteStorage) DeleteIssues(ctx context.Context, ids []string, cascade 
 			for rows.Next() {
 				var depID string
 				if err := rows.Scan(&depID); err != nil {
-					rows.Close()
+					_ = rows.Close()
 					return nil, fmt.Errorf("failed to scan dependent: %w", err)
 				}
 				if !idSet[depID] {
@@ -1550,10 +1550,10 @@ func (s *SQLiteStorage) DeleteIssues(ctx context.Context, ids []string, cascade 
 				}
 			}
 			if err := rows.Err(); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("failed to iterate dependents: %w", err)
 			}
-			rows.Close()
+			_ = rows.Close()
 		}
 		// Convert set to slice
 		for orphanID := range orphanSet {
@@ -1689,7 +1689,7 @@ func (s *SQLiteStorage) findAllDependentsRecursive(ctx context.Context, tx *sql.
 		for rows.Next() {
 			var depID string
 			if err := rows.Scan(&depID); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			if !result[depID] {
@@ -1698,10 +1698,10 @@ func (s *SQLiteStorage) findAllDependentsRecursive(ctx context.Context, tx *sql.
 			}
 		}
 		if err := rows.Err(); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
-		rows.Close()
+		_ = rows.Close()
 	}
 
 	return result, nil

@@ -221,7 +221,7 @@ var rootCmd = &cobra.Command{
 							fmt.Fprintf(os.Stderr, "Debug: daemon version mismatch (daemon: %s, client: %s), restarting daemon\n",
 								health.Version, Version)
 						}
-						client.Close()
+						_ = client.Close()
 
 						// Kill old daemon and restart with new version
 						if restartDaemonForVersionMismatch() {
@@ -267,7 +267,7 @@ var rootCmd = &cobra.Command{
 					}
 				} else {
 					// Health check failed or daemon unhealthy
-					client.Close()
+					_ = client.Close()
 					daemonStatus.FallbackReason = FallbackHealthFailed
 					if healthErr != nil {
 						daemonStatus.Detail = healthErr.Error()
@@ -329,7 +329,7 @@ var rootCmd = &cobra.Command{
 							return // Skip direct storage initialization
 						} else {
 							// Auto-started daemon is unhealthy
-							client.Close()
+							_ = client.Close()
 							daemonStatus.FallbackReason = FallbackHealthFailed
 							if healthErr != nil {
 								daemonStatus.Detail = healthErr.Error()
@@ -631,7 +631,7 @@ func tryAutoStartDaemon(socketPath string) bool {
 	// Fast path: check if daemon is already healthy
 	client, err := rpc.TryConnect(socketPath)
 	if err == nil && client != nil {
-		client.Close()
+		_ = client.Close()
 		if os.Getenv("BD_DEBUG") != "" {
 			fmt.Fprintf(os.Stderr, "Debug: daemon already running and healthy\n")
 		}
@@ -808,7 +808,7 @@ func canDialSocket(socketPath string, timeout time.Duration) bool {
 	if err != nil || client == nil {
 		return false
 	}
-	client.Close()
+	_ = client.Close()
 	return true
 }
 
@@ -1351,7 +1351,7 @@ func flushToJSONL() {
 					fmt.Fprintf(os.Stderr, "Warning: skipping malformed JSONL line %d: %v\n", lineNum, err)
 				}
 			}
-			existingFile.Close()
+			_ = existingFile.Close()
 		}
 	}
 
@@ -1464,6 +1464,7 @@ func init() {
 }
 
 // createIssuesFromMarkdown parses a markdown file and creates multiple issues
+//nolint:unparam // cmd parameter required for potential future use
 func createIssuesFromMarkdown(cmd *cobra.Command, filepath string) {
 	// Parse markdown file
 	templates, err := parseMarkdownFile(filepath)

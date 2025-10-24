@@ -403,6 +403,7 @@ func progressBar(current, total int) string {
 	return "[" + bar + "]"
 }
 
+//nolint:unparam // ctx may be used in future for cancellation
 func runCompactRPC(ctx context.Context) {
 	if compactID != "" && compactAll {
 		fmt.Fprintf(os.Stderr, "Error: cannot use --id and --all together\n")

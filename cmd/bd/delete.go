@@ -335,7 +335,7 @@ func removeIssueFromJSONL(issueID string) error {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		f.Close()
+		_ = f.Close()
 		return fmt.Errorf("failed to read JSONL: %w", err)
 	}
 
@@ -374,6 +374,7 @@ func removeIssueFromJSONL(issueID string) error {
 }
 
 // deleteBatch handles deletion of multiple issues
+//nolint:unparam // cmd parameter required for potential future use
 func deleteBatch(cmd *cobra.Command, issueIDs []string, force bool, dryRun bool, cascade bool) {
 	// Ensure we have a direct store when daemon lacks delete support
 	if daemonClient != nil {

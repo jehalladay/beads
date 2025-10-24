@@ -158,7 +158,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Set socket permissions to 0600 for security (owner only)
 	if runtime.GOOS != "windows" {
 		if err := os.Chmod(s.socketPath, 0600); err != nil {
-			listener.Close()
+			_ = listener.Close()
 			return fmt.Errorf("failed to set socket permissions: %w", err)
 		}
 	}
@@ -209,7 +209,7 @@ func (s *Server) Start(ctx context.Context) error {
 		default:
 			// Max connections reached, reject immediately
 			s.metrics.RecordRejectedConnection()
-			conn.Close()
+			_ = conn.Close()
 		}
 	}
 }
@@ -292,7 +292,7 @@ func (s *Server) removeOldSocket() error {
 		conn, err := dialRPC(s.socketPath, 500*time.Millisecond)
 		if err == nil {
 			// Socket is active - another daemon is running
-			conn.Close()
+			_ = conn.Close()
 			return fmt.Errorf("socket %s is in use by another daemon", s.socketPath)
 		}
 
@@ -2137,7 +2137,7 @@ func (s *Server) handleExport(req *Request) Response {
 	}
 
 	// Close temp file before rename
-	tempFile.Close()
+	_ = tempFile.Close()
 
 	// Atomic replace
 	if err := os.Rename(tempPath, exportArgs.JSONLPath); err != nil {
