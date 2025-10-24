@@ -76,8 +76,8 @@ func Initialize() error {
 	
 	// Additional environment variables (not prefixed with BD_)
 	// These are bound explicitly for backward compatibility
-	v.BindEnv("flush-debounce", "BEADS_FLUSH_DEBOUNCE")
-	v.BindEnv("auto-start-daemon", "BEADS_AUTO_START_DAEMON")
+	_ = v.BindEnv("flush-debounce", "BEADS_FLUSH_DEBOUNCE")
+	_ = v.BindEnv("auto-start-daemon", "BEADS_AUTO_START_DAEMON")
 	
 	// Set defaults for additional settings
 	v.SetDefault("flush-debounce", "5s")

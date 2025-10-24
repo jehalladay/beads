@@ -290,7 +290,7 @@ func (s *Server) handleSignals() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, serverSignals...)
 	<-sigChan
-	s.Stop()
+	_ = s.Stop()
 }
 
 // runCleanupLoop periodically evicts stale storage connections and checks memory pressure
@@ -1582,9 +1582,9 @@ func (s *Server) findDatabaseForCwd(cwd string) string {
 
 func (s *Server) writeResponse(writer *bufio.Writer, resp Response) {
 	data, _ := json.Marshal(resp)
-	writer.Write(data)
-	writer.WriteByte('\n')
-	writer.Flush()
+	_, _ = writer.Write(data)
+	_ = writer.WriteByte('\n')
+	_ = writer.Flush()
 }
 
 // Multi-repo handlers

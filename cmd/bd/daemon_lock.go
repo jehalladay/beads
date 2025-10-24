@@ -49,10 +49,10 @@ func acquireDaemonLock(beadsDir string, global bool) (*DaemonLock, error) {
 	}
 
 	// Write our PID to the lock file for debugging (optional)
-	f.Truncate(0)
-	f.Seek(0, 0)
+	_ = f.Truncate(0)
+	_, _ = f.Seek(0, 0)
 	fmt.Fprintf(f, "%d\n", os.Getpid())
-	f.Sync()
+	_ = f.Sync()
 
 	return &DaemonLock{file: f, path: lockPath}, nil
 }
@@ -80,7 +80,7 @@ func tryDaemonLock(beadsDir string) (running bool, pid int) {
 			if data := make([]byte, 32); true {
 				n, _ := f.Read(data)
 				if n > 0 {
-					fmt.Sscanf(string(data), "%d", &pid)
+					_, _ = fmt.Sscanf(string(data), "%d", &pid)
 				}
 			}
 			return true, pid

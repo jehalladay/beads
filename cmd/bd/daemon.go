@@ -544,7 +544,7 @@ func migrateToGlobalDaemon() {
 		os.Exit(1)
 	}
 
-	go cmd.Wait()
+	go func() { _ = cmd.Wait() }()
 
 	// Wait for daemon to be ready
 	time.Sleep(2 * time.Second)

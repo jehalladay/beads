@@ -219,10 +219,6 @@ func TestMemoryPressureDetection(t *testing.T) {
 
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
-	// Set very low memory threshold to trigger eviction
-	os.Setenv("BEADS_DAEMON_MEMORY_THRESHOLD_MB", "1")
-	defer os.Unsetenv("BEADS_DAEMON_MEMORY_THRESHOLD_MB")
-
 	srv := NewServer(socketPath, store)
 
 	// Add some entries to cache
@@ -237,8 +233,8 @@ func TestMemoryPressureDetection(t *testing.T) {
 	initialSize := len(srv.storageCache)
 	srv.cacheMu.Unlock()
 
-	// Trigger memory pressure check (should evict entries)
-	srv.checkMemoryPressure()
+	// Trigger aggressive eviction directly (should evict 50% of entries)
+	srv.aggressiveEviction()
 
 	// Check that some entries were evicted
 	srv.cacheMu.RLock()
@@ -247,6 +243,11 @@ func TestMemoryPressureDetection(t *testing.T) {
 
 	if finalSize >= initialSize {
 		t.Errorf("expected cache eviction, but size went from %d to %d", initialSize, finalSize)
+	}
+
+	expectedSize := initialSize / 2
+	if finalSize != expectedSize {
+		t.Errorf("expected exactly %d entries after evicting 50%%, got %d", expectedSize, finalSize)
 	}
 
 	t.Logf("Cache evicted: %d -> %d entries", initialSize, finalSize)
