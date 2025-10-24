@@ -88,6 +88,13 @@ var rootCmd = &cobra.Command{
 			return
 		}
 
+		// If sandbox mode is set, enable all sandbox flags
+		if sandboxMode {
+			noDaemon = true
+			noAutoFlush = true
+			noAutoImport = true
+		}
+
 		// Set auto-flush based on flag (invert no-auto-flush)
 		autoFlushEnabled = !noAutoFlush
 
@@ -1341,6 +1348,7 @@ func flushToJSONL() {
 var (
 	noAutoFlush  bool
 	noAutoImport bool
+	sandboxMode  bool
 )
 
 func init() {
@@ -1350,6 +1358,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noDaemon, "no-daemon", false, "Force direct storage mode, bypass daemon if running")
 	rootCmd.PersistentFlags().BoolVar(&noAutoFlush, "no-auto-flush", false, "Disable automatic JSONL sync after CRUD operations")
 	rootCmd.PersistentFlags().BoolVar(&noAutoImport, "no-auto-import", false, "Disable automatic JSONL import when newer than DB")
+	rootCmd.PersistentFlags().BoolVar(&sandboxMode, "sandbox", false, "Sandbox mode: disables daemon and auto-sync (equivalent to --no-daemon --no-auto-flush --no-auto-import)")
 }
 
 // createIssuesFromMarkdown parses a markdown file and creates multiple issues

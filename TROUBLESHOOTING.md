@@ -334,6 +334,36 @@ ps aux | grep "bd daemon"
 
 See [integrations/beads-mcp/README.md](integrations/beads-mcp/README.md) for MCP-specific troubleshooting.
 
+### Claude Code sandbox mode
+
+**Issue:** Claude Code's sandbox restricts network access to a single socket, conflicting with bd's daemon and git operations.
+
+**Solution:** Use the `--sandbox` flag:
+
+```bash
+# Sandbox mode disables daemon and auto-sync
+bd --sandbox ready
+bd --sandbox create "Fix bug" -p 1
+bd --sandbox update bd-42 --status in_progress
+
+# Or set individual flags
+bd --no-daemon --no-auto-flush --no-auto-import <command>
+```
+
+**What sandbox mode does:**
+- Disables daemon (uses direct SQLite mode)
+- Disables auto-export to JSONL
+- Disables auto-import from JSONL
+- Allows bd to work in network-restricted environments
+
+**Note:** You'll need to manually sync when outside the sandbox:
+```bash
+# After leaving sandbox, sync manually
+bd sync
+```
+
+**Related:** See [Claude Code sandboxing documentation](https://www.anthropic.com/engineering/claude-code-sandboxing) for more about sandbox restrictions.
+
 ## Platform-Specific Issues
 
 ### Windows: Path issues
