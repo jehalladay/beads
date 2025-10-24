@@ -535,7 +535,7 @@ func migrateToGlobalDaemon() {
 		cmd.Stdout = devNull
 		cmd.Stderr = devNull
 		cmd.Stdin = devNull
-		defer devNull.Close()
+		defer func() { _ = devNull.Close() }()
 	}
 
 	configureDaemonProcess(cmd)
@@ -812,7 +812,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 		log("Error acquiring daemon lock: %v", err)
 		os.Exit(1)
 	}
-	defer lock.Close()
+	defer func() { _ = lock.Close() }()
 
 	myPID := os.Getpid()
 	pidFileCreated := false
@@ -820,8 +820,8 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 	for attempt := 0; attempt < 2; attempt++ {
 		f, err := os.OpenFile(pidFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err == nil {
-			fmt.Fprintf(f, "%d", myPID)
-			f.Close()
+			_, _ = fmt.Fprintf(f, "%d", myPID)
+			_ = f.Close()
 			pidFileCreated = true
 			break
 		}
@@ -832,7 +832,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 				os.Exit(1)
 			}
 			log("Stale PID file detected, removing and retrying")
-			os.Remove(pidFile)
+			_ = os.Remove(pidFile)
 			continue
 		}
 
@@ -845,7 +845,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 		os.Exit(1)
 	}
 
-	defer os.Remove(pidFile)
+	defer func() { _ = os.Remove(pidFile) }()
 
 	log("Daemon started (interval: %v, auto-commit: %v, auto-push: %v)", interval, autoCommit, autoPush)
 
@@ -923,7 +923,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 		log("Error: cannot open database: %v", err)
 		os.Exit(1)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	log("Database opened: %s", daemonDBPath)
 
 	// Start RPC server
