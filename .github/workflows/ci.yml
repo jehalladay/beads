@@ -75,7 +75,6 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: v1.63.4
           args: --timeout=5m
   test-nix:
     name: Test Nix Flake
