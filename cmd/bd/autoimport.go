@@ -58,7 +58,7 @@ func checkAndAutoImport(ctx context.Context, store storage.Storage) bool {
 	return true
 }
 
-// checkGitForIssues checks if git has issues in HEAD:.beads/beads.jsonl or issues.jsonl
+// checkGitForIssues checks if git has issues in HEAD:.beads/issues.jsonl
 // Returns (issue_count, relative_jsonl_path)
 func checkGitForIssues() (int, string) {
 	// Try to find .beads directory
@@ -67,37 +67,32 @@ func checkGitForIssues() (int, string) {
 		return 0, ""
 	}
 
-	// Construct relative path from git root
+	// Construct relative path to issues.jsonl from git root
 	gitRoot := findGitRoot()
 	if gitRoot == "" {
 		return 0, ""
 	}
 
-	relBeads, err := filepath.Rel(gitRoot, beadsDir)
+	relPath, err := filepath.Rel(gitRoot, filepath.Join(beadsDir, "issues.jsonl"))
 	if err != nil {
 		return 0, ""
 	}
 
-	// Try canonical JSONL filenames in precedence order
-	candidates := []string{
-		filepath.Join(relBeads, "beads.jsonl"),
-		filepath.Join(relBeads, "issues.jsonl"),
+	// Check if git has this file with content
+	cmd := exec.Command("git", "show", fmt.Sprintf("HEAD:%s", relPath))
+	output, err := cmd.Output()
+	if err != nil {
+		// File doesn't exist in git or other error
+		return 0, ""
 	}
 
-	for _, relPath := range candidates {
-		// Use ToSlash for git path compatibility on Windows
-		gitPath := filepath.ToSlash(relPath)
-		cmd := exec.Command("git", "show", fmt.Sprintf("HEAD:%s", gitPath))
-		output, err := cmd.Output()
-		if err == nil && len(output) > 0 {
-			lines := bytes.Count(output, []byte("\n"))
-			if lines > 0 {
-				return lines, relPath
-			}
-		}
+	// Count lines (rough estimate of issue count)
+	lines := bytes.Count(output, []byte("\n"))
+	if lines == 0 {
+		return 0, ""
 	}
 
-	return 0, ""
+	return lines, relPath
 }
 
 // findBeadsDir finds the .beads directory in current or parent directories
@@ -136,9 +131,8 @@ func findGitRoot() string {
 
 // importFromGit imports issues from git HEAD
 func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage, jsonlPath string) error {
-	// Get content from git (use ToSlash for Windows compatibility)
-	gitPath := filepath.ToSlash(jsonlPath)
-	cmd := exec.Command("git", "show", fmt.Sprintf("HEAD:%s", gitPath))
+	// Get content from git
+	cmd := exec.Command("git", "show", fmt.Sprintf("HEAD:%s", jsonlPath))
 	jsonlData, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to read from git: %w", err)
@@ -146,8 +140,6 @@ func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage
 
 	// Parse JSONL data
 	scanner := bufio.NewScanner(bytes.NewReader(jsonlData))
-	// Increase buffer size to handle large JSONL lines (e.g., big descriptions)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 64*1024*1024) // allow up to 64MB per line
 	var issues []*types.Issue
 
 	for scanner.Scan() {

@@ -145,55 +145,10 @@ bd.db
 		fmt.Fprintf(os.Stderr, "Try manually: git show HEAD:%s | bd import -i /dev/stdin\n", jsonlPath)
 		}
 		// Non-fatal - continue with empty database
-		} else {
-		// CRITICAL: Immediately export to local JSONL to prevent daemon race condition
-		// The daemon might auto-start before the 5-second auto-flush debounce completes
-		// Write to exact git-relative path to prevent path drift
-		gitRoot := findGitRoot()
-		if gitRoot == "" {
-		if !quiet {
-		 fmt.Fprintf(os.Stderr, "Warning: could not find git root for export\n")
-		 }
-		} else {
-		absJSONL := filepath.Join(gitRoot, filepath.FromSlash(jsonlPath))
-		 if err := os.MkdirAll(filepath.Dir(absJSONL), 0750); err != nil {
-		   if !quiet {
-					fmt.Fprintf(os.Stderr, "Warning: failed to create export dir: %v\n", err)
-				}
-			} else if err := exportToJSONLWithStore(ctx, store, absJSONL); err != nil {
-				if !quiet {
-					fmt.Fprintf(os.Stderr, "Warning: failed to export after import: %v\n", err)
-				}
-			}
+		} else if !quiet {
+		fmt.Fprintf(os.Stderr, "✓ Successfully imported %d issues from git.\n\n", issueCount)
 		}
-		if !quiet {
-			fmt.Fprintf(os.Stderr, "✓ Successfully imported %d issues from git.\n\n", issueCount)
-		}
-	}
 }
-
-	// Safety check: verify import succeeded and catch silent data loss
-	stats, err := store.GetStatistics(ctx)
-	if err == nil && stats.TotalIssues == 0 {
-		// DB empty after init - check if git has issues we failed to import
-		recheck, recheckPath := checkGitForIssues()
-		if recheck > 0 {
-			fmt.Fprintf(os.Stderr, "\n❌ ERROR: Database empty but git has %d issues!\n", recheck)
-			fmt.Fprintf(os.Stderr, "Auto-import failed. Manual recovery:\n")
-			fmt.Fprintf(os.Stderr, "  git show HEAD:%s | bd import -i /dev/stdin\n", filepath.ToSlash(recheckPath))
-			// Only suggest local file import if file exists
-			gitRoot := findGitRoot()
-			if gitRoot != "" {
-				localFile := filepath.Join(gitRoot, filepath.FromSlash(recheckPath))
-				if _, err := os.Stat(localFile); err == nil {
-					fmt.Fprintf(os.Stderr, "Or:\n")
-					fmt.Fprintf(os.Stderr, "  bd import -i %s\n", localFile)
-				}
-			}
-			_ = store.Close()
-			os.Exit(1)
-		}
-	}
 
 if err := store.Close(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to close database: %v\n", err)

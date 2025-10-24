@@ -926,21 +926,6 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 	defer func() { _ = store.Close() }()
 	log("Database opened: %s", daemonDBPath)
 
-	// Check for empty DB with issues in git - auto-recovery
-	ctx := context.Background()
-	stats, err := store.GetStatistics(ctx)
-	if err == nil && stats.TotalIssues == 0 {
-		issueCount, jsonlPath := checkGitForIssues()
-		if issueCount > 0 {
-			log("Empty database but git has %d issues, importing...", issueCount)
-			if err := importFromGit(ctx, daemonDBPath, store, jsonlPath); err != nil {
-				log("Warning: startup import failed: %v", err)
-			} else {
-				log("Successfully imported %d issues from git", issueCount)
-			}
-		}
-	}
-
 	// Start RPC server
 	socketPath := filepath.Join(filepath.Dir(daemonDBPath), "bd.sock")
 	server := rpc.NewServer(socketPath, store)
