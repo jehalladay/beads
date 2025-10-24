@@ -394,6 +394,9 @@ var rootCmd = &cobra.Command{
 		storeActive = true
 		storeMutex.Unlock()
 
+		// Warn if multiple databases detected in directory hierarchy
+		warnMultipleDatabases(dbPath)
+
 		// Check for version mismatch (warn if binary is older than DB)
 		checkVersionMismatch()
 

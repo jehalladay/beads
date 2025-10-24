@@ -8,6 +8,7 @@
 package beads
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
@@ -144,6 +145,13 @@ func FindJSONLPath(dbPath string) string {
 	return filepath.Join(dbDir, "issues.jsonl")
 }
 
+// DatabaseInfo contains information about a discovered beads database
+type DatabaseInfo struct {
+	Path      string // Full path to the .db file
+	BeadsDir  string // Parent .beads directory
+	IssueCount int   // Number of issues (-1 if unknown)
+}
+
 // findDatabaseInTree walks up the directory tree looking for .beads/*.db
 func findDatabaseInTree() string {
 	dir, err := os.Getwd()
@@ -173,4 +181,56 @@ func findDatabaseInTree() string {
 	}
 
 	return ""
+}
+
+// FindAllDatabases scans the directory hierarchy for all .beads directories
+// Returns a slice of DatabaseInfo for each database found, starting from the
+// closest to CWD (most relevant) to the furthest (least relevant).
+func FindAllDatabases() []DatabaseInfo {
+	var databases []DatabaseInfo
+	
+	dir, err := os.Getwd()
+	if err != nil {
+		return databases
+	}
+
+	// Walk up directory tree
+	for {
+		beadsDir := filepath.Join(dir, ".beads")
+		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
+			// Found .beads/ directory, look for *.db files
+			matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
+			if err == nil && len(matches) > 0 {
+				// Count issues if we can open the database (best-effort)
+				issueCount := -1
+				dbPath := matches[0]
+				// Don't fail if we can't open/query the database - it might be locked
+				// or corrupted, but we still want to detect and warn about it
+				store, err := sqlite.New(dbPath)
+				if err == nil {
+					ctx := context.Background()
+					if issues, err := store.SearchIssues(ctx, "", types.IssueFilter{}); err == nil {
+						issueCount = len(issues)
+					}
+					store.Close()
+				}
+				
+				databases = append(databases, DatabaseInfo{
+					Path:       dbPath,
+					BeadsDir:   beadsDir,
+					IssueCount: issueCount,
+				})
+			}
+		}
+
+		// Move up one directory
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached filesystem root
+			break
+		}
+		dir = parent
+	}
+
+	return databases
 }

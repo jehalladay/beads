@@ -104,6 +104,56 @@ bd init
 bd import -i .beads/issues.jsonl
 ```
 
+### Multiple databases detected warning
+
+If you see a warning about multiple `.beads` databases in the directory hierarchy:
+
+```
+╔══════════════════════════════════════════════════════════════════════════╗
+║ WARNING: 2 beads databases detected in directory hierarchy             ║
+╠══════════════════════════════════════════════════════════════════════════╣
+║ Multiple databases can cause confusion and database pollution.          ║
+║                                                                          ║
+║ ▶ /path/to/project/.beads (15 issues)                                   ║
+║   /path/to/parent/.beads (32 issues)                                    ║
+║                                                                          ║
+║ Currently using the closest database (▶). This is usually correct.      ║
+║                                                                          ║
+║ RECOMMENDED: Consolidate or remove unused databases to avoid confusion. ║
+╚══════════════════════════════════════════════════════════════════════════╝
+```
+
+This means bd found multiple `.beads` directories in your directory hierarchy. The `▶` marker shows which database is actively being used (usually the closest one to your current directory).
+
+**Why this matters:**
+- Can cause confusion about which database contains your work
+- Easy to accidentally work in the wrong database
+- May lead to duplicate tracking of the same work
+
+**Solutions:**
+
+1. **If you have nested projects** (intentional):
+   - This is fine! bd is designed to support this
+   - Just be aware which database you're using
+   - Set `BEADS_DB` environment variable if you want to override the default selection
+
+2. **If you have accidental duplicates** (unintentional):
+   - Decide which database to keep
+   - Export issues from the unwanted database: `cd <unwanted-dir> && bd export -o backup.jsonl`
+   - Remove the unwanted `.beads` directory: `rm -rf <unwanted-dir>/.beads`
+   - Optionally import issues into the main database if needed
+
+3. **Override database selection**:
+   ```bash
+   # Temporarily use specific database
+   BEADS_DB=/path/to/.beads/issues.db bd list
+
+   # Or add to shell config for permanent override
+   export BEADS_DB=/path/to/.beads/issues.db
+   ```
+
+**Note**: The warning only appears when bd detects multiple databases. If you see this consistently and want to suppress it, you're using the correct database (marked with `▶`).
+
 ## Git and Sync Issues
 
 ### Git merge conflict in `issues.jsonl`
