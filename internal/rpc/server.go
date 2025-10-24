@@ -264,7 +264,7 @@ func (s *Server) Stop() error {
 	select {
 	case <-s.doneChan:
 		// Cleanup completed
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		// Timeout waiting for cleanup - continue anyway
 	}
 	

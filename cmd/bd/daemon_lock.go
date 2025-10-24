@@ -54,6 +54,10 @@ func acquireDaemonLock(beadsDir string, global bool) (*DaemonLock, error) {
 	fmt.Fprintf(f, "%d\n", os.Getpid())
 	_ = f.Sync()
 
+	// Also write PID file for Windows compatibility (can't read locked files on Windows)
+	pidFile := filepath.Join(beadsDir, "daemon.pid")
+	_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0644)
+
 	return &DaemonLock{file: f, path: lockPath}, nil
 }
 

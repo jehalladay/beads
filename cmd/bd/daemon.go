@@ -94,7 +94,7 @@ Use --health to check daemon health and metrics.`,
 			socketPath := getSocketPathForPID(pidFile, global)
 			if client, err := rpc.TryConnectWithTimeout(socketPath, 1*time.Second); err == nil && client != nil {
 				health, healthErr := client.Health()
-				client.Close()
+				_ = client.Close()
 				
 				// If we can check version and it's compatible, exit
 				if healthErr == nil && health.Compatible {
@@ -364,7 +364,7 @@ func showDaemonHealth(global bool) {
 		fmt.Println("Daemon is not running")
 		os.Exit(1)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	health, err := client.Health()
 	if err != nil {
@@ -430,7 +430,7 @@ func showDaemonMetrics(global bool) {
 		fmt.Println("Daemon is not running")
 		os.Exit(1)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	metrics, err := client.Metrics()
 	if err != nil {
@@ -647,7 +647,7 @@ func startDaemon(interval time.Duration, autoCommit, autoPush bool, logFile, pid
 		fmt.Fprintf(os.Stderr, "Error opening /dev/null: %v\n", err)
 		os.Exit(1)
 	}
-	defer devNull.Close()
+	defer func() { _ = devNull.Close() }()
 
 	cmd.Stdin = devNull
 	cmd.Stdout = devNull
@@ -730,9 +730,9 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 	// Use defer pattern for proper cleanup
 	var writeErr error
 	defer func() {
-		tempFile.Close()
+		_ = tempFile.Close()
 		if writeErr != nil {
-			os.Remove(tempPath) // Remove temp file on error
+			_ = os.Remove(tempPath) // Remove temp file on error
 		}
 	}()
 
@@ -793,12 +793,12 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 		MaxAge:     maxAgeDays, // days
 		Compress:   compress,   // compress old logs
 	}
-	defer logF.Close()
+	defer func() { _ = logF.Close() }()
 
 	log := func(format string, args ...interface{}) {
 		msg := fmt.Sprintf(format, args...)
 		timestamp := time.Now().Format("2006-01-02 15:04:05")
-		fmt.Fprintf(logF, "[%s] %s\n", timestamp, msg)
+		_, _ = fmt.Fprintf(logF, "[%s] %s\n", timestamp, msg)
 	}
 
 	// Acquire daemon lock FIRST - this is the single source of truth for exclusivity
