@@ -63,8 +63,8 @@ func acquireDaemonLock(beadsDir string, global bool) (*DaemonLock, error) {
 func tryDaemonLock(beadsDir string) (running bool, pid int) {
 	lockPath := filepath.Join(beadsDir, "daemon.lock")
 
-	// Try to open existing lock file
-	f, err := os.Open(lockPath)
+	// Open lock file with read-write access (required for LockFileEx on Windows)
+	f, err := os.OpenFile(lockPath, os.O_RDWR, 0)
 	if err != nil {
 		// No lock file - could be old daemon without lock support
 		// Fall back to PID file check for backward compatibility
@@ -77,11 +77,15 @@ func tryDaemonLock(beadsDir string) (running bool, pid int) {
 		if err == ErrDaemonLocked {
 			// Lock is held - daemon is running
 			// Try to read PID for display (best effort)
-			if data := make([]byte, 32); true {
-				n, _ := f.Read(data)
-				if n > 0 {
-					_, _ = fmt.Sscanf(string(data), "%d", &pid)
-				}
+			_, _ = f.Seek(0, 0) // Seek to beginning before reading
+			data := make([]byte, 32)
+			n, _ := f.Read(data)
+			if n > 0 {
+				_, _ = fmt.Sscanf(string(data[:n]), "%d", &pid)
+			}
+			// Fallback to PID file if we couldn't read PID from lock file
+			if pid == 0 {
+				_, pid = checkPIDFile(beadsDir)
 			}
 			return true, pid
 		}

@@ -24,8 +24,13 @@ func TestScripts(t *testing.T) {
 	}
 
 	// Create minimal engine with default commands plus bd
+	// Use longer timeout on Windows for slower process startup and I/O
+	timeout := 2 * time.Second
+	if runtime.GOOS == "windows" {
+		timeout = 5 * time.Second
+	}
 	engine := script.NewEngine()
-	engine.Cmds["bd"] = script.Program(exe, nil, 100*time.Millisecond)
+	engine.Cmds["bd"] = script.Program(exe, nil, timeout)
 
 	// Run all tests
 	scripttest.Test(t, context.Background(), engine, nil, "testdata/*.txt")

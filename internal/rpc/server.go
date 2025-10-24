@@ -62,6 +62,7 @@ type Server struct {
 	shutdown     bool
 	shutdownChan chan struct{}
 	stopOnce     sync.Once
+	doneChan     chan struct{} // closed when Start() cleanup is complete
 	// Per-request storage routing with eviction support
 	storageCache  map[string]*StorageCacheEntry // repoRoot -> entry
 	cacheMu       sync.RWMutex
@@ -124,6 +125,7 @@ func NewServer(socketPath string, store storage.Storage) *Server {
 		maxCacheSize:   maxCacheSize,
 		cacheTTL:       cacheTTL,
 		shutdownChan:   make(chan struct{}),
+		doneChan:       make(chan struct{}),
 		startTime:      time.Now(),
 		metrics:        NewMetrics(),
 		maxConns:       maxConns,
@@ -167,6 +169,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	go s.handleSignals()
 	go s.runCleanupLoop()
+
+	// Ensure cleanup is signaled when this function returns
+	defer close(s.doneChan)
 
 	// Accept connections using listener
 	for {
@@ -254,6 +259,15 @@ func (s *Server) Stop() error {
 			err = fmt.Errorf("failed to remove socket: %w", removeErr)
 		}
 	})
+	
+	// Wait for Start() goroutine to finish cleanup (with timeout)
+	select {
+	case <-s.doneChan:
+		// Cleanup completed
+	case <-time.After(2 * time.Second):
+		// Timeout waiting for cleanup - continue anyway
+	}
+	
 	return err
 }
 

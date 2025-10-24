@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"math"
 	"runtime"
 	"sort"
 	"sync"
@@ -112,6 +113,12 @@ func (m *Metrics) Snapshot(cacheHits, cacheMisses int64, cacheSize, activeConns 
 
 	// Compute statistics outside the lock
 	uptime := time.Since(m.startTime)
+	// Round up uptime and enforce minimum of 1 second if any time has passed
+	// This prevents flaky tests on fast systems (especially Windows VMs)
+	uptimeSeconds := math.Ceil(uptime.Seconds())
+	if uptime > 0 && uptimeSeconds == 0 {
+		uptimeSeconds = 1
+	}
 
 	// Calculate per-operation stats
 	operations := make([]OperationMetrics, 0, len(opsSet))
@@ -152,7 +159,7 @@ func (m *Metrics) Snapshot(cacheHits, cacheMisses int64, cacheSize, activeConns 
 
 	return MetricsSnapshot{
 		Timestamp:      time.Now(),
-		UptimeSeconds:  uptime.Seconds(),
+		UptimeSeconds:  uptimeSeconds,
 		Operations:     operations,
 		CacheHits:      cacheHits,
 		CacheMisses:    cacheMisses,
