@@ -1,4 +1,4 @@
-version: 2
+version: "2"
 
 run:
   timeout: 5m
@@ -14,56 +14,52 @@ linters:
     - revive
     - unconvert
     - unparam
-
-linters-settings:
-  dupl:
-    threshold: 100
-  errcheck:
-    check-type-assertions: true
-    check-blank: false
-    exclude-functions:
-      - (*database/sql.DB).Close
-      - (*database/sql.Rows).Close
-      - (*database/sql.Tx).Rollback
-  goconst:
-    min-len: 3
-    min-occurrences: 3
-  gocyclo:
-    min-complexity: 15
-  misspell:
-    locale: US
-  revive:
+  settings:
+    dupl:
+      threshold: 100
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+      exclude-functions:
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    gocyclo:
+      min-complexity: 15
+    misspell:
+      locale: US
+    revive:
+      rules:
+        - name: var-naming
+        - name: exported
+  exclusions:
     rules:
-      - name: var-naming
-      - name: exported
-
-issues:
-  max-issues-per-linter: 0
-  max-same-issues: 0
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - dupl
-        - errcheck
-        - goconst
-        - gocyclo
-    - path: (.+)\.go$
-      text: Error return value.*\.Close.*is not checked
-    - path: (.+)\.go$
-      text: Error return value.*\.Rollback.*is not checked
-    - path: (.+)\.go$
-      text: Error return value.*\.RemoveAll.*is not checked
-    - path: (.+)\.go$
-      text: 'unused-parameter: parameter ''cmd'' seems to be unused'
-    - path: (.+)\.go$
-      text: 'unused-parameter: parameter ''args'' seems to be unused'
-    - path: (.+)\.go$
-      text: 'var-naming: avoid meaningless package names'
-    - path: (.+)\.go$
-      text: exported.*SQLiteStorage.*stutters
-    - path: (.+)\.go$
-      text: 'G201: SQL string formatting'
-    - path: (.+)\.go$
-      text: G304.*file inclusion via variable
-    - path: (.+)\.go$
-      text: 'G301: Expect directory permissions'
+      - path: _test\.go
+        linters:
+          - dupl
+          - errcheck
+          - goconst
+          - gocyclo
+      - path: (.+)\.go$
+        text: Error return value.*\.Close.*is not checked
+      - path: (.+)\.go$
+        text: Error return value.*\.Rollback.*is not checked
+      - path: (.+)\.go$
+        text: Error return value.*\.RemoveAll.*is not checked
+      - path: (.+)\.go$
+        text: 'unused-parameter: parameter ''cmd'' seems to be unused'
+      - path: (.+)\.go$
+        text: 'unused-parameter: parameter ''args'' seems to be unused'
+      - path: (.+)\.go$
+        text: 'var-naming: avoid meaningless package names'
+      - path: (.+)\.go$
+        text: exported.*SQLiteStorage.*stutters
+      - path: (.+)\.go$
+        text: 'G201: SQL string formatting'
+      - path: (.+)\.go$
+        text: G304.*file inclusion via variable
+      - path: (.+)\.go$
+        text: 'G301: Expect directory permissions'
