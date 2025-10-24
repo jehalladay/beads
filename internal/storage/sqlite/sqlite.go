@@ -26,10 +26,20 @@ type SQLiteStorage struct {
 
 // New creates a new SQLite storage backend
 func New(path string) (*SQLiteStorage, error) {
-	// Ensure directory exists
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("failed to create directory: %w", err)
+	// Convert :memory: to shared memory URL for consistent behavior across connections
+	// SQLite creates separate in-memory databases for each connection to ":memory:",
+	// but "file::memory:?cache=shared" creates a shared in-memory database.
+	dbPath := path
+	if path == ":memory:" {
+		dbPath = "file::memory:?cache=shared"
+	}
+
+	// Ensure directory exists (skip for memory databases)
+	if !strings.Contains(dbPath, ":memory:") {
+		dir := filepath.Dir(dbPath)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("failed to create directory: %w", err)
+		}
 	}
 
 	// Open database with WAL mode for better concurrency and busy timeout for parallel writes
@@ -38,7 +48,15 @@ func New(path string) (*SQLiteStorage, error) {
 	// _pragma=foreign_keys(ON) enforces foreign key constraints
 	// _pragma=busy_timeout(30000) means wait up to 30 seconds for locks instead of failing immediately
 	// _time_format=sqlite enables automatic parsing of DATETIME columns to time.Time
-	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite")
+	// Note: For shared memory URLs, additional params need to be added with & not ?
+	connStr := dbPath
+	if strings.Contains(dbPath, "?") {
+		connStr += "&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
+	} else {
+		connStr += "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
+	}
+
+	db, err := sql.Open("sqlite", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

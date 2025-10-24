@@ -1293,3 +1293,119 @@ func TestMultipleStorageDistinctPaths(t *testing.T) {
 		t.Errorf("Both paths should be absolute: path1=%s, path2=%s", path1, path2)
 	}
 }
+
+func TestInMemoryDatabase(t *testing.T) {
+	ctx := context.Background()
+
+	// Test that :memory: database works
+	store, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create in-memory storage: %v", err)
+	}
+	defer store.Close()
+
+	// Verify we can create and retrieve an issue
+	issue := &types.Issue{
+		Title:       "Test in-memory issue",
+		Description: "Testing :memory: database",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeTask,
+	}
+
+	err = store.CreateIssue(ctx, issue, "test-user")
+	if err != nil {
+		t.Fatalf("CreateIssue failed in memory database: %v", err)
+	}
+
+	// Retrieve the issue
+	retrieved, err := store.GetIssue(ctx, issue.ID)
+	if err != nil {
+		t.Fatalf("GetIssue failed in memory database: %v", err)
+	}
+
+	if retrieved == nil {
+		t.Fatal("GetIssue returned nil for in-memory issue")
+	}
+
+	if retrieved.Title != issue.Title {
+		t.Errorf("Title mismatch: got %v, want %v", retrieved.Title, issue.Title)
+	}
+
+	if retrieved.Description != issue.Description {
+		t.Errorf("Description mismatch: got %v, want %v", retrieved.Description, issue.Description)
+	}
+}
+
+func TestInMemorySharedCache(t *testing.T) {
+	ctx := context.Background()
+
+	// Create first connection
+	store1, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create first in-memory storage: %v", err)
+	}
+	defer store1.Close()
+
+	// Create an issue in the first connection
+	issue := &types.Issue{
+		Title:       "Shared memory test",
+		Description: "Testing shared cache behavior",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeBug,
+	}
+
+	err = store1.CreateIssue(ctx, issue, "test-user")
+	if err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	// Create second connection - should share the same database due to file::memory:?cache=shared
+	store2, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create second in-memory storage: %v", err)
+	}
+	defer store2.Close()
+
+	// Retrieve the issue from the second connection
+	retrieved, err := store2.GetIssue(ctx, issue.ID)
+	if err != nil {
+		t.Fatalf("GetIssue failed from second connection: %v", err)
+	}
+
+	if retrieved == nil {
+		t.Fatal("Shared memory cache not working: second connection can't see first connection's data")
+	}
+
+	if retrieved.Title != issue.Title {
+		t.Errorf("Title mismatch: got %v, want %v", retrieved.Title, issue.Title)
+	}
+
+	// Verify both connections can see each other's changes
+	issue2 := &types.Issue{
+		Title:     "Second issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+
+	err = store2.CreateIssue(ctx, issue2, "test-user")
+	if err != nil {
+		t.Fatalf("CreateIssue failed in second connection: %v", err)
+	}
+
+	// First connection should see the issue created by second connection
+	retrieved2, err := store1.GetIssue(ctx, issue2.ID)
+	if err != nil {
+		t.Fatalf("GetIssue failed from first connection: %v", err)
+	}
+
+	if retrieved2 == nil {
+		t.Fatal("First connection can't see second connection's data")
+	}
+
+	if retrieved2.Title != issue2.Title {
+		t.Errorf("Title mismatch: got %v, want %v", retrieved2.Title, issue2.Title)
+	}
+}
