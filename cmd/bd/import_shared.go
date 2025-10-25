@@ -10,11 +10,18 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// issueDataChanged checks if any fields in the updates map differ from the existing issue
-// Returns true if any field changed, false if all fields match
-func issueDataChanged(existing *types.Issue, updates map[string]interface{}) bool {
+// fieldComparator handles comparison logic for a specific field type
+type fieldComparator struct {
 	// Helper to safely extract string from interface (handles string and *string)
-	strFrom := func(v interface{}) (string, bool) {
+	strFrom func(v interface{}) (string, bool)
+	// Helper to safely extract int from interface
+	intFrom func(v interface{}) (int64, bool)
+}
+
+func newFieldComparator() *fieldComparator {
+	fc := &fieldComparator{}
+	
+	fc.strFrom = func(v interface{}) (string, bool) {
 		switch t := v.(type) {
 		case string:
 			return t, true
@@ -29,30 +36,8 @@ func issueDataChanged(existing *types.Issue, updates map[string]interface{}) boo
 			return "", false
 		}
 	}
-
-	// Helper to compare string field (treats empty and nil as equal)
-	equalStr := func(existingVal string, newVal interface{}) bool {
-		s, ok := strFrom(newVal)
-		if !ok {
-			return false // Type mismatch means changed
-		}
-		return existingVal == s
-	}
-
-	// Helper to compare *string field (treats empty and nil as equal)
-	equalPtrStr := func(existing *string, newVal interface{}) bool {
-		s, ok := strFrom(newVal)
-		if !ok {
-			return false // Type mismatch means changed
-		}
-		if existing == nil {
-			return s == ""
-		}
-		return *existing == s
-	}
-
-	// Helper to safely extract int from interface
-	intFrom := func(v interface{}) (int64, bool) {
+	
+	fc.intFrom = func(v interface{}) (int64, bool) {
 		switch t := v.(type) {
 		case int:
 			return int64(t), true
@@ -70,82 +55,106 @@ func issueDataChanged(existing *types.Issue, updates map[string]interface{}) boo
 			return 0, false
 		}
 	}
+	
+	return fc
+}
 
-	// Helper to compare Status field
-	equalStatus := func(existing types.Status, newVal interface{}) bool {
-		switch t := newVal.(type) {
-		case types.Status:
-			return existing == t
-		case string:
-			return string(existing) == t
-		default:
-			return false // Unknown type means changed
-		}
+// equalStr compares string field (treats empty and nil as equal)
+func (fc *fieldComparator) equalStr(existingVal string, newVal interface{}) bool {
+	s, ok := fc.strFrom(newVal)
+	if !ok {
+		return false // Type mismatch means changed
 	}
+	return existingVal == s
+}
 
-	// Helper to compare IssueType field
-	equalIssueType := func(existing types.IssueType, newVal interface{}) bool {
-		switch t := newVal.(type) {
-		case types.IssueType:
-			return existing == t
-		case string:
-			return string(existing) == t
-		default:
-			return false // Unknown type means changed
-		}
+// equalPtrStr compares *string field (treats empty and nil as equal)
+func (fc *fieldComparator) equalPtrStr(existing *string, newVal interface{}) bool {
+	s, ok := fc.strFrom(newVal)
+	if !ok {
+		return false // Type mismatch means changed
 	}
+	if existing == nil {
+		return s == ""
+	}
+	return *existing == s
+}
 
+// equalStatus compares Status field
+func (fc *fieldComparator) equalStatus(existing types.Status, newVal interface{}) bool {
+	switch t := newVal.(type) {
+	case types.Status:
+		return existing == t
+	case string:
+		return string(existing) == t
+	default:
+		return false // Unknown type means changed
+	}
+}
+
+// equalIssueType compares IssueType field
+func (fc *fieldComparator) equalIssueType(existing types.IssueType, newVal interface{}) bool {
+	switch t := newVal.(type) {
+	case types.IssueType:
+		return existing == t
+	case string:
+		return string(existing) == t
+	default:
+		return false // Unknown type means changed
+	}
+}
+
+// equalPriority compares priority field
+func (fc *fieldComparator) equalPriority(existing int, newVal interface{}) bool {
+	p, ok := fc.intFrom(newVal)
+	if !ok {
+		return false
+	}
+	return existing == int(p)
+}
+
+// checkFieldChanged checks if a specific field has changed
+func (fc *fieldComparator) checkFieldChanged(key string, existing *types.Issue, newVal interface{}) bool {
+	switch key {
+	case "title":
+		return !fc.equalStr(existing.Title, newVal)
+	case "description":
+		return !fc.equalStr(existing.Description, newVal)
+	case "status":
+		return !fc.equalStatus(existing.Status, newVal)
+	case "priority":
+		return !fc.equalPriority(existing.Priority, newVal)
+	case "issue_type":
+		return !fc.equalIssueType(existing.IssueType, newVal)
+	case "design":
+		return !fc.equalStr(existing.Design, newVal)
+	case "acceptance_criteria":
+		return !fc.equalStr(existing.AcceptanceCriteria, newVal)
+	case "notes":
+		return !fc.equalStr(existing.Notes, newVal)
+	case "assignee":
+		return !fc.equalStr(existing.Assignee, newVal)
+	case "external_ref":
+		return !fc.equalPtrStr(existing.ExternalRef, newVal)
+	default:
+		// Unknown field - treat as changed to be conservative
+		// This prevents skipping updates when new fields are added
+		return true
+	}
+}
+
+// issueDataChanged checks if any fields in the updates map differ from the existing issue
+// Returns true if any field changed, false if all fields match
+func issueDataChanged(existing *types.Issue, updates map[string]interface{}) bool {
+	fc := newFieldComparator()
+	
 	// Check each field in updates map
 	for key, newVal := range updates {
-		switch key {
-		case "title":
-			if !equalStr(existing.Title, newVal) {
-				return true
-			}
-		case "description":
-			if !equalStr(existing.Description, newVal) {
-				return true
-			}
-		case "status":
-			if !equalStatus(existing.Status, newVal) {
-				return true
-			}
-		case "priority":
-			p, ok := intFrom(newVal)
-			if !ok || existing.Priority != int(p) {
-				return true
-			}
-		case "issue_type":
-			if !equalIssueType(existing.IssueType, newVal) {
-				return true
-			}
-		case "design":
-			if !equalStr(existing.Design, newVal) {
-				return true
-			}
-		case "acceptance_criteria":
-			if !equalStr(existing.AcceptanceCriteria, newVal) {
-				return true
-			}
-		case "notes":
-			if !equalStr(existing.Notes, newVal) {
-				return true
-			}
-		case "assignee":
-			if !equalStr(existing.Assignee, newVal) {
-				return true
-			}
-		case "external_ref":
-			if !equalPtrStr(existing.ExternalRef, newVal) {
-				return true
-			}
-		default:
-			// Unknown field - treat as changed to be conservative
-			// This prevents skipping updates when new fields are added
+		if fc.checkFieldChanged(key, existing, newVal) {
 			return true
 		}
 	}
-
+	
 	return false // No changes detected
 }
 
