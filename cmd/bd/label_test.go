@@ -10,6 +10,111 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+type labelTestHelper struct {
+	s   *sqlite.SQLiteStorage
+	ctx context.Context
+	t   *testing.T
+}
+
+func (h *labelTestHelper) createIssue(title string, issueType types.IssueType, priority int) *types.Issue {
+	issue := &types.Issue{
+		Title:     title,
+		Priority:  priority,
+		IssueType: issueType,
+		Status:    types.StatusOpen,
+	}
+	if err := h.s.CreateIssue(h.ctx, issue, "test-user"); err != nil {
+		h.t.Fatalf("Failed to create issue: %v", err)
+	}
+	return issue
+}
+
+func (h *labelTestHelper) addLabel(issueID, label string) {
+	if err := h.s.AddLabel(h.ctx, issueID, label, "test-user"); err != nil {
+		h.t.Fatalf("Failed to add label '%s': %v", label, err)
+	}
+}
+
+func (h *labelTestHelper) addLabels(issueID string, labels []string) {
+	for _, label := range labels {
+		h.addLabel(issueID, label)
+	}
+}
+
+func (h *labelTestHelper) removeLabel(issueID, label string) {
+	if err := h.s.RemoveLabel(h.ctx, issueID, label, "test-user"); err != nil {
+		h.t.Fatalf("Failed to remove label '%s': %v", label, err)
+	}
+}
+
+func (h *labelTestHelper) getLabels(issueID string) []string {
+	labels, err := h.s.GetLabels(h.ctx, issueID)
+	if err != nil {
+		h.t.Fatalf("Failed to get labels: %v", err)
+	}
+	return labels
+}
+
+func (h *labelTestHelper) assertLabelCount(issueID string, expected int) {
+	labels := h.getLabels(issueID)
+	if len(labels) != expected {
+		h.t.Errorf("Expected %d labels, got %d", expected, len(labels))
+	}
+}
+
+func (h *labelTestHelper) assertHasLabel(issueID, expected string) {
+	labels := h.getLabels(issueID)
+	for _, l := range labels {
+		if l == expected {
+			return
+		}
+	}
+	h.t.Errorf("Expected label '%s' not found", expected)
+}
+
+func (h *labelTestHelper) assertHasLabels(issueID string, expected []string) {
+	labels := h.getLabels(issueID)
+	labelMap := make(map[string]bool)
+	for _, l := range labels {
+		labelMap[l] = true
+	}
+	for _, exp := range expected {
+		if !labelMap[exp] {
+			h.t.Errorf("Expected label '%s' not found", exp)
+		}
+	}
+}
+
+func (h *labelTestHelper) assertNotHasLabel(issueID, label string) {
+	labels := h.getLabels(issueID)
+	for _, l := range labels {
+		if l == label {
+			h.t.Errorf("Did not expect label '%s' but found it", label)
+		}
+	}
+}
+
+func (h *labelTestHelper) assertLabelEvent(issueID string, eventType types.EventType, labelName string) {
+	events, err := h.s.GetEvents(h.ctx, issueID, 100)
+	if err != nil {
+		h.t.Fatalf("Failed to get events: %v", err)
+	}
+	
+	expectedComment := ""
+	if eventType == types.EventLabelAdded {
+		expectedComment = "Added label: " + labelName
+	} else if eventType == types.EventLabelRemoved {
+		expectedComment = "Removed label: " + labelName
+	}
+	
+	for _, e := range events {
+		if e.EventType == eventType && e.Comment != nil && *e.Comment == expectedComment {
+			return
+		}
+	}
+	h.t.Errorf("Expected to find event %s for label %s", eventType, labelName)
+}
+
 func TestLabelCommands(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "bd-test-label-*")
 	if err != nil {
@@ -25,290 +130,69 @@ func TestLabelCommands(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
+	h := &labelTestHelper{s: s, ctx: ctx, t: t}
 
 	t.Run("add label to issue", func(t *testing.T) {
-		issue := &types.Issue{
-			Title:       "Test Issue",
-			Description: "Test description",
-			Priority:    1,
-			IssueType:   types.TypeBug,
-			Status:      types.StatusOpen,
-		}
-
-		if err := s.CreateIssue(ctx, issue, "test-user"); err != nil {
-			t.Fatalf("Failed to create issue: %v", err)
-		}
-
-		if err := s.AddLabel(ctx, issue.ID, "bug", "test-user"); err != nil {
-			t.Fatalf("Failed to add label: %v", err)
-		}
-
-		labels, err := s.GetLabels(ctx, issue.ID)
-		if err != nil {
-			t.Fatalf("Failed to get labels: %v", err)
-		}
-
-		if len(labels) != 1 {
-			t.Errorf("Expected 1 label, got %d", len(labels))
-		}
-		if labels[0] != "bug" {
-			t.Errorf("Expected label 'bug', got '%s'", labels[0])
-		}
+		issue := h.createIssue("Test Issue", types.TypeBug, 1)
+		h.addLabel(issue.ID, "bug")
+		h.assertLabelCount(issue.ID, 1)
+		h.assertHasLabel(issue.ID, "bug")
 	})
 
 	t.Run("add multiple labels", func(t *testing.T) {
-		issue := &types.Issue{
-			Title:       "Multi Label Issue",
-			Description: "Test description",
-			Priority:    1,
-			IssueType:   types.TypeFeature,
-			Status:      types.StatusOpen,
-		}
-
-		if err := s.CreateIssue(ctx, issue, "test-user"); err != nil {
-			t.Fatalf("Failed to create issue: %v", err)
-		}
-
+		issue := h.createIssue("Multi Label Issue", types.TypeFeature, 1)
 		labels := []string{"feature", "high-priority", "needs-review"}
-		for _, label := range labels {
-			if err := s.AddLabel(ctx, issue.ID, label, "test-user"); err != nil {
-				t.Fatalf("Failed to add label '%s': %v", label, err)
-			}
-		}
-
-		gotLabels, err := s.GetLabels(ctx, issue.ID)
-		if err != nil {
-			t.Fatalf("Failed to get labels: %v", err)
-		}
-
-		if len(gotLabels) != 3 {
-			t.Errorf("Expected 3 labels, got %d", len(gotLabels))
-		}
-
-		labelMap := make(map[string]bool)
-		for _, l := range gotLabels {
-			labelMap[l] = true
-		}
-
-		for _, expected := range labels {
-			if !labelMap[expected] {
-				t.Errorf("Expected label '%s' not found", expected)
-			}
-		}
+		h.addLabels(issue.ID, labels)
+		h.assertLabelCount(issue.ID, 3)
+		h.assertHasLabels(issue.ID, labels)
 	})
 
 	t.Run("add duplicate label is idempotent", func(t *testing.T) {
-		issue := &types.Issue{
-			Title:     "Duplicate Label Test",
-			Priority:  1,
-			IssueType: types.TypeTask,
-			Status:    types.StatusOpen,
-		}
-
-		if err := s.CreateIssue(ctx, issue, "test-user"); err != nil {
-			t.Fatalf("Failed to create issue: %v", err)
-		}
-
-		if err := s.AddLabel(ctx, issue.ID, "duplicate", "test-user"); err != nil {
-			t.Fatalf("Failed to add label first time: %v", err)
-		}
-
-		if err := s.AddLabel(ctx, issue.ID, "duplicate", "test-user"); err != nil {
-			t.Fatalf("Failed to add label second time: %v", err)
-		}
-
-		labels, err := s.GetLabels(ctx, issue.ID)
-		if err != nil {
-			t.Fatalf("Failed to get labels: %v", err)
-		}
-
-		if len(labels) != 1 {
-			t.Errorf("Expected 1 label after duplicate add, got %d", len(labels))
-		}
+		issue := h.createIssue("Duplicate Label Test", types.TypeTask, 1)
+		h.addLabel(issue.ID, "duplicate")
+		h.addLabel(issue.ID, "duplicate")
+		h.assertLabelCount(issue.ID, 1)
 	})
 
 	t.Run("remove label from issue", func(t *testing.T) {
-		issue := &types.Issue{
-			Title:     "Remove Label Test",
-			Priority:  1,
-			IssueType: types.TypeBug,
-			Status:    types.StatusOpen,
-		}
-
-		if err := s.CreateIssue(ctx, issue, "test-user"); err != nil {
-			t.Fatalf("Failed to create issue: %v", err)
-		}
-
-		if err := s.AddLabel(ctx, issue.ID, "temporary", "test-user"); err != nil {
-			t.Fatalf("Failed to add label: %v", err)
-		}
-
-		if err := s.RemoveLabel(ctx, issue.ID, "temporary", "test-user"); err != nil {
-			t.Fatalf("Failed to remove label: %v", err)
-		}
-
-		labels, err := s.GetLabels(ctx, issue.ID)
-		if err != nil {
-			t.Fatalf("Failed to get labels: %v", err)
-		}
-
-		if len(labels) != 0 {
-			t.Errorf("Expected 0 labels after removal, got %d", len(labels))
-		}
+		issue := h.createIssue("Remove Label Test", types.TypeBug, 1)
+		h.addLabel(issue.ID, "temporary")
+		h.removeLabel(issue.ID, "temporary")
+		h.assertLabelCount(issue.ID, 0)
 	})
 
 	t.Run("remove one of multiple labels", func(t *testing.T) {
-		issue := &types.Issue{
-			Title:     "Multi Remove Test",
-			Priority:  1,
-			IssueType: types.TypeTask,
-			Status:    types.StatusOpen,
-		}
-
-		if err := s.CreateIssue(ctx, issue, "test-user"); err != nil {
-			t.Fatalf("Failed to create issue: %v", err)
-		}
-
+		issue := h.createIssue("Multi Remove Test", types.TypeTask, 1)
 		labels := []string{"label1", "label2", "label3"}
-		for _, label := range labels {
-			if err := s.AddLabel(ctx, issue.ID, label, "test-user"); err != nil {
-				t.Fatalf("Failed to add label '%s': %v", label, err)
-			}
-		}
-
-		if err := s.RemoveLabel(ctx, issue.ID, "label2", "test-user"); err != nil {
-			t.Fatalf("Failed to remove label: %v", err)
-		}
-
-		gotLabels, err := s.GetLabels(ctx, issue.ID)
-		if err != nil {
-			t.Fatalf("Failed to get labels: %v", err)
-		}
-
-		if len(gotLabels) != 2 {
-			t.Errorf("Expected 2 labels, got %d", len(gotLabels))
-		}
-
-		for _, l := range gotLabels {
-			if l == "label2" {
-				t.Error("Expected label2 to be removed, but it's still there")
-			}
-		}
+		h.addLabels(issue.ID, labels)
+		h.removeLabel(issue.ID, "label2")
+		h.assertLabelCount(issue.ID, 2)
+		h.assertNotHasLabel(issue.ID, "label2")
 	})
 
 	t.Run("remove non-existent label is no-op", func(t *testing.T) {
-		issue := &types.Issue{
-			Title:     "Remove Non-Existent Test",
-			Priority:  1,
-			IssueType: types.TypeTask,
-			Status:    types.StatusOpen,
-		}
-
-		if err := s.CreateIssue(ctx, issue, "test-user"); err != nil {
-			t.Fatalf("Failed to create issue: %v", err)
-		}
-
-		if err := s.AddLabel(ctx, issue.ID, "exists", "test-user"); err != nil {
-			t.Fatalf("Failed to add label: %v", err)
-		}
-
-		if err := s.RemoveLabel(ctx, issue.ID, "does-not-exist", "test-user"); err != nil {
-			t.Fatalf("Failed to remove non-existent label: %v", err)
-		}
-
-		labels, err := s.GetLabels(ctx, issue.ID)
-		if err != nil {
-			t.Fatalf("Failed to get labels: %v", err)
-		}
-
-		if len(labels) != 1 {
-			t.Errorf("Expected 1 label to remain, got %d", len(labels))
-		}
+		issue := h.createIssue("Remove Non-Existent Test", types.TypeTask, 1)
+		h.addLabel(issue.ID, "exists")
+		h.removeLabel(issue.ID, "does-not-exist")
+		h.assertLabelCount(issue.ID, 1)
 	})
 
 	t.Run("get labels for issue with no labels", func(t *testing.T) {
-		issue := &types.Issue{
-			Title:     "No Labels Test",
-			Priority:  1,
-			IssueType: types.TypeTask,
-			Status:    types.StatusOpen,
-		}
-
-		if err := s.CreateIssue(ctx, issue, "test-user"); err != nil {
-			t.Fatalf("Failed to create issue: %v", err)
-		}
-
-		labels, err := s.GetLabels(ctx, issue.ID)
-		if err != nil {
-			t.Fatalf("Failed to get labels: %v", err)
-		}
-
-		if len(labels) != 0 {
-			t.Errorf("Expected 0 labels, got %d", len(labels))
-		}
+		issue := h.createIssue("No Labels Test", types.TypeTask, 1)
+		h.assertLabelCount(issue.ID, 0)
 	})
 
 	t.Run("label operations create events", func(t *testing.T) {
-		issue := &types.Issue{
-			Title:     "Event Test",
-			Priority:  1,
-			IssueType: types.TypeTask,
-			Status:    types.StatusOpen,
-		}
-
-		if err := s.CreateIssue(ctx, issue, "test-user"); err != nil {
-			t.Fatalf("Failed to create issue: %v", err)
-		}
-
-		if err := s.AddLabel(ctx, issue.ID, "test-label", "test-user"); err != nil {
-			t.Fatalf("Failed to add label: %v", err)
-		}
-
-		if err := s.RemoveLabel(ctx, issue.ID, "test-label", "test-user"); err != nil {
-			t.Fatalf("Failed to remove label: %v", err)
-		}
-
-		events, err := s.GetEvents(ctx, issue.ID, 100)
-		if err != nil {
-			t.Fatalf("Failed to get events: %v", err)
-		}
-
-		foundAdd := false
-		foundRemove := false
-		for _, e := range events {
-			if e.EventType == types.EventLabelAdded && e.Comment != nil && *e.Comment == "Added label: test-label" {
-				foundAdd = true
-			}
-			if e.EventType == types.EventLabelRemoved && e.Comment != nil && *e.Comment == "Removed label: test-label" {
-				foundRemove = true
-			}
-		}
-
-		if !foundAdd {
-			t.Error("Expected to find label_added event")
-		}
-		if !foundRemove {
-			t.Error("Expected to find label_removed event")
-		}
+		issue := h.createIssue("Event Test", types.TypeTask, 1)
+		h.addLabel(issue.ID, "test-label")
+		h.removeLabel(issue.ID, "test-label")
+		h.assertLabelEvent(issue.ID, types.EventLabelAdded, "test-label")
+		h.assertLabelEvent(issue.ID, types.EventLabelRemoved, "test-label")
 	})
 
 	t.Run("labels persist after issue update", func(t *testing.T) {
-		issue := &types.Issue{
-			Title:       "Persistence Test",
-			Description: "Original description",
-			Priority:    1,
-			IssueType:   types.TypeTask,
-			Status:      types.StatusOpen,
-		}
-
-		if err := s.CreateIssue(ctx, issue, "test-user"); err != nil {
-			t.Fatalf("Failed to create issue: %v", err)
-		}
-
-		if err := s.AddLabel(ctx, issue.ID, "persistent", "test-user"); err != nil {
-			t.Fatalf("Failed to add label: %v", err)
-		}
-
+		issue := h.createIssue("Persistence Test", types.TypeTask, 1)
+		h.addLabel(issue.ID, "persistent")
 		updates := map[string]interface{}{
 			"description": "Updated description",
 			"priority":    2,
@@ -316,18 +200,8 @@ func TestLabelCommands(t *testing.T) {
 		if err := s.UpdateIssue(ctx, issue.ID, updates, "test-user"); err != nil {
 			t.Fatalf("Failed to update issue: %v", err)
 		}
-
-		labels, err := s.GetLabels(ctx, issue.ID)
-		if err != nil {
-			t.Fatalf("Failed to get labels after update: %v", err)
-		}
-
-		if len(labels) != 1 {
-			t.Errorf("Expected 1 label after update, got %d", len(labels))
-		}
-		if labels[0] != "persistent" {
-			t.Errorf("Expected label 'persistent', got '%s'", labels[0])
-		}
+		h.assertLabelCount(issue.ID, 1)
+		h.assertHasLabel(issue.ID, "persistent")
 	})
 
 	t.Run("labels work with different issue types", func(t *testing.T) {
@@ -340,30 +214,11 @@ func TestLabelCommands(t *testing.T) {
 		}
 
 		for _, issueType := range issueTypes {
-			issue := &types.Issue{
-				Title:     "Type Test: " + string(issueType),
-				Priority:  1,
-				IssueType: issueType,
-				Status:    types.StatusOpen,
-			}
-
-			if err := s.CreateIssue(ctx, issue, "test-user"); err != nil {
-				t.Fatalf("Failed to create %s issue: %v", issueType, err)
-			}
-
+			issue := h.createIssue("Type Test: "+string(issueType), issueType, 1)
 			labelName := "type-" + string(issueType)
-			if err := s.AddLabel(ctx, issue.ID, labelName, "test-user"); err != nil {
-				t.Fatalf("Failed to add label to %s issue: %v", issueType, err)
-			}
-
-			labels, err := s.GetLabels(ctx, issue.ID)
-			if err != nil {
-				t.Fatalf("Failed to get labels for %s issue: %v", issueType, err)
-			}
-
-			if len(labels) != 1 || labels[0] != labelName {
-				t.Errorf("Label mismatch for %s issue: expected [%s], got %v", issueType, labelName, labels)
-			}
+			h.addLabel(issue.ID, labelName)
+			h.assertLabelCount(issue.ID, 1)
+			h.assertHasLabel(issue.ID, labelName)
 		}
 	})
 }
