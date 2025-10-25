@@ -2062,3 +2062,12 @@ func (s *SQLiteStorage) UnderlyingDB() *sql.DB {
 func (s *SQLiteStorage) UnderlyingConn(ctx context.Context) (*sql.Conn, error) {
 	return s.db.Conn(ctx)
 }
+
+// CheckpointWAL checkpoints the WAL file to flush changes to the main database file.
+// This updates the main .db file's modification time, which is important for staleness detection.
+// In WAL mode, writes go to the -wal file, leaving the main .db file untouched.
+// Checkpointing flushes the WAL to the main database file.
+func (s *SQLiteStorage) CheckpointWAL(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, "PRAGMA wal_checkpoint(FULL)")
+	return err
+}

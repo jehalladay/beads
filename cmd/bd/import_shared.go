@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -240,6 +241,13 @@ func importIssuesCore(ctx context.Context, dbPath string, store storage.Storage,
 	// Phase 7: Import comments
 	if err := importComments(ctx, sqliteStore, issues, opts); err != nil {
 		return nil, err
+	}
+
+	// Phase 8: Checkpoint WAL to update main .db file timestamp
+	// This ensures staleness detection sees the database as fresh
+	if err := sqliteStore.CheckpointWAL(ctx); err != nil {
+		// Non-fatal - just log warning
+		fmt.Fprintf(os.Stderr, "Warning: failed to checkpoint WAL: %v\n", err)
 	}
 
 	return result, nil
