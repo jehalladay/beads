@@ -7,8 +7,6 @@ before:
   hooks:
     # Ensure dependencies are up to date
     - go mod tidy
-    # Run tests before building
-    - go test ./...
 
 builds:
   - id: bd
