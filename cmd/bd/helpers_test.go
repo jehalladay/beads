@@ -62,7 +62,7 @@ func TestIsNumeric(t *testing.T) {
 	}
 }
 
-func TestGetWorktreeGitDir(t *testing.T) {
+func TestGetWorktreeGitDir(_ *testing.T) {
 	gitDir := getWorktreeGitDir()
 	// Just verify it doesn't panic and returns a string
 	_ = gitDir
