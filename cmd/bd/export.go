@@ -194,8 +194,8 @@ Output to stdout by default, or use -o flag for file output.`,
 			os.Exit(1)
 			}
 
-			// Set appropriate file permissions (0644: rw-r--r--)
-			if err := os.Chmod(finalPath, 0644); err != nil {
+			// Set appropriate file permissions (0600: rw-------)
+			if err := os.Chmod(finalPath, 0600); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to set file permissions: %v\n", err)
 			}
 		}

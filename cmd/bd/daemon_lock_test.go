@@ -84,7 +84,7 @@ func TestBackwardCompatibilityWithOldDaemon(t *testing.T) {
 	// Simulate old daemon: PID file exists but no lock file
 	pidFile := filepath.Join(beadsDir, "daemon.pid")
 	currentPID := os.Getpid()
-	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", currentPID)), 0644); err != nil {
+	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", currentPID)), 0600); err != nil {
 		t.Fatalf("Failed to write PID file: %v", err)
 	}
 

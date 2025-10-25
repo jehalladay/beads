@@ -176,7 +176,7 @@ func TestGetSocketPath(t *testing.T) {
 		localSocket := filepath.Join(beadsDir, "bd.sock")
 
 		// Create local socket file
-		if err := os.WriteFile(localSocket, []byte{}, 0644); err != nil {
+		if err := os.WriteFile(localSocket, []byte{}, 0600); err != nil {
 			t.Fatalf("Failed to create socket file: %v", err)
 		}
 		defer os.Remove(localSocket)
@@ -201,7 +201,7 @@ func TestGetSocketPath(t *testing.T) {
 		}
 		globalSocket := filepath.Join(globalBeadsDir, "bd.sock")
 
-		if err := os.WriteFile(globalSocket, []byte{}, 0644); err != nil {
+		if err := os.WriteFile(globalSocket, []byte{}, 0600); err != nil {
 			t.Fatalf("Failed to create fake global socket file: %v", err)
 		}
 

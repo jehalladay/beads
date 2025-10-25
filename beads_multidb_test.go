@@ -30,28 +30,28 @@ func TestFindAllDatabases(t *testing.T) {
 
 	// Root .beads
 	rootBeads := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(rootBeads, 0755); err != nil {
+	if err := os.MkdirAll(rootBeads, 0750); err != nil {
 		t.Fatal(err)
 	}
 	rootDB := filepath.Join(rootBeads, "test.db")
-	if err := os.WriteFile(rootDB, []byte("fake db"), 0644); err != nil {
+	if err := os.WriteFile(rootDB, []byte("fake db"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
 	// Project1 .beads
 	project1Dir := filepath.Join(tmpDir, "project1")
 	project1Beads := filepath.Join(project1Dir, ".beads")
-	if err := os.MkdirAll(project1Beads, 0755); err != nil {
+	if err := os.MkdirAll(project1Beads, 0750); err != nil {
 		t.Fatal(err)
 	}
 	project1DB := filepath.Join(project1Beads, "project1.db")
-	if err := os.WriteFile(project1DB, []byte("fake db"), 0644); err != nil {
+	if err := os.WriteFile(project1DB, []byte("fake db"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
 	// Subdir for working directory
 	subdir := filepath.Join(project1Dir, "subdir")
-	if err := os.MkdirAll(subdir, 0755); err != nil {
+	if err := os.MkdirAll(subdir, 0750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -107,11 +107,11 @@ func TestFindAllDatabases_Single(t *testing.T) {
 
 	// Create .beads directory with database
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	dbPath := filepath.Join(beadsDir, "test.db")
-	if err := os.WriteFile(dbPath, []byte("fake db"), 0644); err != nil {
+	if err := os.WriteFile(dbPath, []byte("fake db"), 0600); err != nil {
 		t.Fatal(err)
 	}
 

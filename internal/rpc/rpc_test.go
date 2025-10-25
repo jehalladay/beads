@@ -21,7 +21,7 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 
 	// Create .beads subdirectory so findDatabaseForCwd finds THIS database, not project's
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
@@ -126,7 +126,7 @@ func setupTestServerIsolated(t *testing.T) (tmpDir, beadsDir, dbPath, socketPath
 
 	// Create .beads subdirectory so findDatabaseForCwd finds THIS database, not project's
 	beadsDir = filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestDatabaseHandshake(t *testing.T) {
 
 	// Setup first daemon (db1)
 	beadsDir1 := filepath.Join(tmpDir1, ".beads")
-	os.MkdirAll(beadsDir1, 0755)
+	os.MkdirAll(beadsDir1, 0750)
 	dbPath1 := filepath.Join(beadsDir1, "db1.db")
 	socketPath1 := filepath.Join(beadsDir1, "bd.sock")
 	store1, err := sqlitestorage.New(dbPath1)
@@ -442,7 +442,7 @@ func TestDatabaseHandshake(t *testing.T) {
 
 	// Setup second daemon (db2)
 	beadsDir2 := filepath.Join(tmpDir2, ".beads")
-	os.MkdirAll(beadsDir2, 0755)
+	os.MkdirAll(beadsDir2, 0750)
 	dbPath2 := filepath.Join(beadsDir2, "db2.db")
 	socketPath2 := filepath.Join(beadsDir2, "bd.sock")
 	store2, err := sqlitestorage.New(dbPath2)

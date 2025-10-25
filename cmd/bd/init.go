@@ -101,7 +101,7 @@ bd.db
 # Keep JSONL exports (source of truth for git)
 !*.jsonl
 `
-			if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644); err != nil {
+			if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0600); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create .gitignore: %v\n", err)
 				// Non-fatal - continue anyway
 			}

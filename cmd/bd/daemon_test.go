@@ -116,7 +116,7 @@ func TestIsDaemonRunning_StalePIDFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	pidFile := filepath.Join(tmpDir, "test.pid")
 
-	if err := os.WriteFile(pidFile, []byte("99999"), 0644); err != nil {
+	if err := os.WriteFile(pidFile, []byte("99999"), 0600); err != nil {
 		t.Fatalf("Failed to write PID file: %v", err)
 	}
 
@@ -212,7 +212,7 @@ func TestDaemonPIDFileManagement(t *testing.T) {
 	pidFile := filepath.Join(tmpDir, "daemon.pid")
 
 	testPID := 12345
-	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(testPID)), 0644); err != nil {
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(testPID)), 0600); err != nil {
 		t.Fatalf("Failed to write PID file: %v", err)
 	}
 
@@ -612,7 +612,7 @@ func (s *mockDaemonServer) WaitReady(timeout time.Duration) error {
 }
 
 func (s *mockDaemonServer) Start(ctx context.Context) error {
-	if err := os.MkdirAll(filepath.Dir(s.socketPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.socketPath), 0750); err != nil {
 		return fmt.Errorf("failed to create socket directory: %w", err)
 	}
 

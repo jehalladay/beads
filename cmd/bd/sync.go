@@ -351,8 +351,8 @@ func exportToJSONL(ctx context.Context, jsonlPath string) error {
 		return fmt.Errorf("failed to replace JSONL file: %w", err)
 	}
 
-	// Set appropriate file permissions (0644: rw-r--r--)
-	if err := os.Chmod(jsonlPath, 0644); err != nil {
+	// Set appropriate file permissions (0600: rw-------)
+	if err := os.Chmod(jsonlPath, 0600); err != nil {
 		// Non-fatal warning
 		fmt.Fprintf(os.Stderr, "Warning: failed to set file permissions: %v\n", err)
 	}

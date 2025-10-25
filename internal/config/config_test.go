@@ -114,7 +114,7 @@ flush-debounce: 15s
 	
 	// Create .beads directory
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
 		t.Fatalf("failed to create .beads directory: %v", err)
 	}
 	
@@ -159,7 +159,7 @@ func TestConfigPrecedence(t *testing.T) {
 	// Create a config file with json: false
 	configContent := `json: false`
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
 		t.Fatalf("failed to create .beads directory: %v", err)
 	}
 	

@@ -28,7 +28,7 @@ func dialTestConn(t *testing.T, socketPath string) net.Conn {
 func TestConnectionLimits(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "test.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -150,7 +150,7 @@ func TestConnectionLimits(t *testing.T) {
 func TestRequestTimeout(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "test.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -207,7 +207,7 @@ func TestMemoryPressureDetection(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "test.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0750); err != nil {
 		t.Fatal(err)
 	}
 

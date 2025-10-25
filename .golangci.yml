@@ -43,8 +43,16 @@ issues:
   exclude:
     - "var-naming: avoid meaningless package names"
     - "exported.*SQLiteStorage.*stutters"
-    - "G201: SQL string formatting"
-    - "G301: Expect directory permissions"
-    - "G204: Subprocess launched"
-    - "G115: integer overflow conversion"
-    - "G304.*file inclusion via variable"
+    - "G201: SQL string formatting"  # Safe: SQL is constructed from constants
+    - "G204: Subprocess launched"     # Safe: git/bd commands from trusted sources
+    - "G115: integer overflow conversion"  # Safe: controlled conversions
+  exclude-rules:
+    # G304: File inclusion via variable in tests is safe (test data)
+    - path: _test\.go
+      linters:
+        - gosec
+      text: "G304.*file inclusion via variable"
+    # G302/G306: Directory permissions 0700/0750 are acceptable
+    - linters:
+        - gosec
+      text: "G302.*0700|G301.*0750"

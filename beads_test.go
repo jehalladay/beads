@@ -52,7 +52,7 @@ func TestFindDatabasePathInTree(t *testing.T) {
 
 	// Create .beads directory with a database file
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	err = os.MkdirAll(beadsDir, 0o755)
+	err = os.MkdirAll(beadsDir, 0o750)
 	if err != nil {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestFindDatabasePathInTree(t *testing.T) {
 
 	// Create a subdirectory and change to it
 	subDir := filepath.Join(tmpDir, "sub", "nested")
-	err = os.MkdirAll(subDir, 0o755)
+	err = os.MkdirAll(subDir, 0o750)
 	if err != nil {
 		t.Fatalf("Failed to create subdirectory: %v", err)
 	}
