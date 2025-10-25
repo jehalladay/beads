@@ -10,6 +10,8 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+const testIssueBD1 = "bd-1"
+
 func TestDetectCollisions(t *testing.T) {
 	// Create temporary database
 	tmpDir, err := os.MkdirTemp("", "collision-test-*")
@@ -29,7 +31,7 @@ func TestDetectCollisions(t *testing.T) {
 
 	// Setup: Create some existing issues in the database
 	existingIssue1 := &types.Issue{
-		ID:          "bd-1",
+		ID:          testIssueBD1,
 		Title:       "Existing issue 1",
 		Description: "This is an existing issue",
 		Status:      types.StatusOpen,
@@ -66,7 +68,7 @@ func TestDetectCollisions(t *testing.T) {
 			name: "exact match - idempotent import",
 			incomingIssues: []*types.Issue{
 				{
-					ID:          "bd-1",
+					ID:          testIssueBD1,
 					Title:       "Existing issue 1",
 					Description: "This is an existing issue",
 					Status:      types.StatusOpen,
@@ -98,7 +100,7 @@ func TestDetectCollisions(t *testing.T) {
 			name: "collision - same ID, different title",
 			incomingIssues: []*types.Issue{
 				{
-					ID:          "bd-1",
+					ID:          testIssueBD1,
 					Title:       "Modified title",
 					Description: "This is an existing issue",
 					Status:      types.StatusOpen,
@@ -113,7 +115,7 @@ func TestDetectCollisions(t *testing.T) {
 				if len(collisions) != 1 {
 					t.Fatalf("expected 1 collision, got %d", len(collisions))
 				}
-				if collisions[0].ID != "bd-1" {
+				if collisions[0].ID != testIssueBD1 {
 					t.Errorf("expected collision ID bd-1, got %s", collisions[0].ID)
 				}
 				if len(collisions[0].ConflictingFields) != 1 {
@@ -167,7 +169,7 @@ func TestDetectCollisions(t *testing.T) {
 			incomingIssues: []*types.Issue{
 				{
 					// Exact match
-					ID:          "bd-1",
+					ID:          testIssueBD1,
 					Title:       "Existing issue 1",
 					Description: "This is an existing issue",
 					Status:      types.StatusOpen,
@@ -201,7 +203,7 @@ func TestDetectCollisions(t *testing.T) {
 			name: "collision - estimated_minutes differs",
 			incomingIssues: []*types.Issue{
 				{
-					ID:               "bd-1",
+					ID:               testIssueBD1,
 					Title:            "Existing issue 1",
 					Description:      "This is an existing issue",
 					Status:           types.StatusOpen,
@@ -258,7 +260,7 @@ func TestCompareIssues(t *testing.T) {
 		{
 			name: "identical issues",
 			existing: &types.Issue{
-				ID:          "bd-1",
+				ID:          testIssueBD1,
 				Title:       "Test",
 				Description: "Test desc",
 				Status:      types.StatusOpen,
@@ -266,7 +268,7 @@ func TestCompareIssues(t *testing.T) {
 				IssueType:   types.TypeTask,
 			},
 			incoming: &types.Issue{
-				ID:          "bd-1",
+				ID:          testIssueBD1,
 				Title:       "Test",
 				Description: "Test desc",
 				Status:      types.StatusOpen,
@@ -278,7 +280,7 @@ func TestCompareIssues(t *testing.T) {
 		{
 			name: "different title",
 			existing: &types.Issue{
-				ID:          "bd-1",
+				ID:          testIssueBD1,
 				Title:       "Original",
 				Description: "Test",
 				Status:      types.StatusOpen,
@@ -286,7 +288,7 @@ func TestCompareIssues(t *testing.T) {
 				IssueType:   types.TypeTask,
 			},
 			incoming: &types.Issue{
-				ID:          "bd-1",
+				ID:          testIssueBD1,
 				Title:       "Modified",
 				Description: "Test",
 				Status:      types.StatusOpen,
@@ -298,7 +300,7 @@ func TestCompareIssues(t *testing.T) {
 		{
 			name: "different status and priority",
 			existing: &types.Issue{
-				ID:          "bd-1",
+				ID:          testIssueBD1,
 				Title:       "Test",
 				Description: "Test",
 				Status:      types.StatusOpen,
@@ -306,7 +308,7 @@ func TestCompareIssues(t *testing.T) {
 				IssueType:   types.TypeTask,
 			},
 			incoming: &types.Issue{
-				ID:          "bd-1",
+				ID:          testIssueBD1,
 				Title:       "Test",
 				Description: "Test",
 				Status:      types.StatusClosed,
@@ -318,7 +320,7 @@ func TestCompareIssues(t *testing.T) {
 		{
 			name: "estimated_minutes - both nil",
 			existing: &types.Issue{
-				ID:               "bd-1",
+				ID:               testIssueBD1,
 				Title:            "Test",
 				Description:      "Test",
 				Status:           types.StatusOpen,
@@ -327,7 +329,7 @@ func TestCompareIssues(t *testing.T) {
 				EstimatedMinutes: nil,
 			},
 			incoming: &types.Issue{
-				ID:               "bd-1",
+				ID:               testIssueBD1,
 				Title:            "Test",
 				Description:      "Test",
 				Status:           types.StatusOpen,
@@ -340,7 +342,7 @@ func TestCompareIssues(t *testing.T) {
 		{
 			name: "estimated_minutes - existing nil, incoming set",
 			existing: &types.Issue{
-				ID:               "bd-1",
+				ID:               testIssueBD1,
 				Title:            "Test",
 				Description:      "Test",
 				Status:           types.StatusOpen,
@@ -349,7 +351,7 @@ func TestCompareIssues(t *testing.T) {
 				EstimatedMinutes: nil,
 			},
 			incoming: &types.Issue{
-				ID:               "bd-1",
+				ID:               testIssueBD1,
 				Title:            "Test",
 				Description:      "Test",
 				Status:           types.StatusOpen,
@@ -362,7 +364,7 @@ func TestCompareIssues(t *testing.T) {
 		{
 			name: "estimated_minutes - same values",
 			existing: &types.Issue{
-				ID:               "bd-1",
+				ID:               testIssueBD1,
 				Title:            "Test",
 				Description:      "Test",
 				Status:           types.StatusOpen,
@@ -371,7 +373,7 @@ func TestCompareIssues(t *testing.T) {
 				EstimatedMinutes: intPtr(60),
 			},
 			incoming: &types.Issue{
-				ID:               "bd-1",
+				ID:               testIssueBD1,
 				Title:            "Test",
 				Description:      "Test",
 				Status:           types.StatusOpen,
@@ -710,7 +712,7 @@ func TestCountReferencesWordBoundary(t *testing.T) {
 			// Adjust expected based on actual counting logic
 			// countReferences skips the issue itself
 			expected := tt.expectedCount
-			if tt.issueID == "bd-1" {
+			if tt.issueID == testIssueBD1 {
 				expected = 1 // only bd-10's description
 			}
 

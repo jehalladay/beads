@@ -18,11 +18,13 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+const windowsOS = "windows"
+
 func makeSocketTempDir(t testing.TB) string {
 	t.Helper()
 
 	base := "/tmp"
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsOS {
 		base = os.TempDir()
 	} else if _, err := os.Stat(base); err != nil {
 		base = os.TempDir()

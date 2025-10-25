@@ -556,7 +556,7 @@ func TestAutoFlushJSONLContent(t *testing.T) {
 
 // TestAutoFlushErrorHandling tests error scenarios in flush operations
 func TestAutoFlushErrorHandling(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsOS {
 		t.Skip("chmod-based read-only directory behavior is not reliable on Windows")
 	}
 

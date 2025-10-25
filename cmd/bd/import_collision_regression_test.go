@@ -10,6 +10,11 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+const (
+	testIssueBD1 = "bd-1"
+	testIssueBD2 = "bd-2"
+)
+
 // TestRemapCollisionsRemapsImportedNotExisting verifies the bug fix where collision
 // resolution incorrectly modified existing issue dependencies.
 //
@@ -38,7 +43,7 @@ func TestRemapCollisionsRemapsImportedNotExisting(t *testing.T) {
 	// Step 1: Create existing issues with dependencies
 	existingIssues := []*types.Issue{
 		{
-			ID:          "bd-1",
+			ID:          testIssueBD1,
 			Title:       "Existing BD-1",
 			Description: "Original database issue 1, depends on bd-2",
 			Status:      types.StatusOpen,
@@ -46,7 +51,7 @@ func TestRemapCollisionsRemapsImportedNotExisting(t *testing.T) {
 			IssueType:   types.TypeTask,
 		},
 		{
-			ID:          "bd-2",
+			ID:          testIssueBD2,
 			Title:       "Existing BD-2",
 			Description: "Original database issue 2",
 			Status:      types.StatusOpen,
@@ -56,7 +61,7 @@ func TestRemapCollisionsRemapsImportedNotExisting(t *testing.T) {
 		{
 			ID:          "bd-3",
 			Title:       "Existing BD-3",
-			Description: "Original database issue 3, depends on bd-1",
+			Description: "Original database issue 3, depends on " + testIssueBD1,
 			Status:      types.StatusOpen,
 			Priority:    2,
 			IssueType:   types.TypeTask,
@@ -71,13 +76,13 @@ func TestRemapCollisionsRemapsImportedNotExisting(t *testing.T) {
 
 	// Add dependencies between existing issues
 	dep1 := &types.Dependency{
-		IssueID:     "bd-1",
-		DependsOnID: "bd-2",
+		IssueID:     testIssueBD1,
+		DependsOnID: testIssueBD2,
 		Type:        types.DepBlocks,
 	}
 	dep2 := &types.Dependency{
 		IssueID:     "bd-3",
-		DependsOnID: "bd-1",
+		DependsOnID: testIssueBD1,
 		Type:        types.DepBlocks,
 	}
 	if err := store.AddDependency(ctx, dep1, "test"); err != nil {
@@ -90,7 +95,7 @@ func TestRemapCollisionsRemapsImportedNotExisting(t *testing.T) {
 	// Step 2: Simulate importing issues with same IDs but different content
 	importedIssues := []*types.Issue{
 		{
-			ID:          "bd-1",
+			ID:          testIssueBD1,
 			Title:       "Imported BD-1",
 			Description: "From import",
 			Status:      types.StatusOpen,
@@ -98,7 +103,7 @@ func TestRemapCollisionsRemapsImportedNotExisting(t *testing.T) {
 			IssueType:   types.TypeTask,
 		},
 		{
-			ID:          "bd-2",
+			ID:          testIssueBD2,
 			Title:       "Imported BD-2",
 			Description: "From import",
 			Status:      types.StatusOpen,
@@ -172,7 +177,7 @@ func TestRemapCollisionsRemapsImportedNotExisting(t *testing.T) {
 		t.Errorf("Expected 1 dependency for bd-3, got %d", len(existingDeps3))
 	} else {
 		// Verify the dependency is correct
-		if existingDeps3[0].DependsOnID != "bd-1" {
+		if existingDeps3[0].DependsOnID != testIssueBD1 {
 			t.Errorf("Expected bd-3 → bd-1, got bd-3 → %s", existingDeps3[0].DependsOnID)
 		}
 	}
@@ -206,7 +211,7 @@ func TestRemapCollisionsDoesNotUpdateNonexistentDependencies(t *testing.T) {
 
 	// Step 1: Create existing issue with dependency
 	existing1 := &types.Issue{
-		ID:          "bd-1",
+		ID:          testIssueBD1,
 		Title:       "Existing BD-1",
 		Description: "Original database issue",
 		Status:      types.StatusOpen,
@@ -214,7 +219,7 @@ func TestRemapCollisionsDoesNotUpdateNonexistentDependencies(t *testing.T) {
 		IssueType:   types.TypeTask,
 	}
 	existing2 := &types.Issue{
-		ID:          "bd-2",
+		ID:          testIssueBD2,
 		Title:       "Existing BD-2",
 		Description: "Original database issue",
 		Status:      types.StatusOpen,
@@ -230,8 +235,8 @@ func TestRemapCollisionsDoesNotUpdateNonexistentDependencies(t *testing.T) {
 
 	// Add dependency between existing issues
 	existingDep := &types.Dependency{
-		IssueID:     "bd-1",
-		DependsOnID: "bd-2",
+		IssueID:     testIssueBD1,
+		DependsOnID: testIssueBD2,
 		Type:        types.DepBlocks,
 	}
 	if err := store.AddDependency(ctx, existingDep, "test"); err != nil {
@@ -241,7 +246,7 @@ func TestRemapCollisionsDoesNotUpdateNonexistentDependencies(t *testing.T) {
 	// Step 2: Import colliding issues (without dependencies in DB)
 	imported := []*types.Issue{
 		{
-			ID:          "bd-1",
+			ID:          testIssueBD1,
 			Title:       "Imported BD-1",
 			Description: "From import, will be remapped",
 			Status:      types.StatusOpen,
@@ -276,7 +281,7 @@ func TestRemapCollisionsDoesNotUpdateNonexistentDependencies(t *testing.T) {
 	if len(existingDeps) != 1 {
 		t.Errorf("Expected 1 dependency for existing bd-1, got %d (dependency should not be touched)", len(existingDeps))
 	} else {
-		if existingDeps[0].DependsOnID != "bd-2" {
+		if existingDeps[0].DependsOnID != testIssueBD2 {
 			t.Errorf("Expected bd-1 → bd-2, got bd-1 → %s", existingDeps[0].DependsOnID)
 		}
 	}

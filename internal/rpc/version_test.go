@@ -10,6 +10,8 @@ import (
 	sqlitestorage "github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
+const testVersion100 = "1.0.0"
+
 func TestVersionCompatibility(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -20,8 +22,8 @@ func TestVersionCompatibility(t *testing.T) {
 	}{
 		{
 			name:          "Exact version match",
-			serverVersion: "1.0.0",
-			clientVersion: "1.0.0",
+			serverVersion: testVersion100,
+			clientVersion: testVersion100,
 			shouldWork:    true,
 		},
 		{
@@ -39,7 +41,7 @@ func TestVersionCompatibility(t *testing.T) {
 		},
 		{
 			name:          "Different major versions - client newer",
-			serverVersion: "1.0.0",
+			serverVersion: testVersion100,
 			clientVersion: "2.0.0",
 			shouldWork:    false,
 			errorContains: "incompatible major versions",
@@ -47,13 +49,13 @@ func TestVersionCompatibility(t *testing.T) {
 		{
 			name:          "Different major versions - daemon newer",
 			serverVersion: "2.0.0",
-			clientVersion: "1.0.0",
+			clientVersion: testVersion100,
 			shouldWork:    false,
 			errorContains: "incompatible major versions",
 		},
 		{
 			name:          "Empty client version (legacy client)",
-			serverVersion: "1.0.0",
+			serverVersion: testVersion100,
 			clientVersion: "",
 			shouldWork:    true,
 		},
@@ -65,8 +67,8 @@ func TestVersionCompatibility(t *testing.T) {
 		},
 		{
 			name:          "Version without v prefix",
-			serverVersion: "1.0.0",
-			clientVersion: "1.0.0",
+			serverVersion: testVersion100,
+			clientVersion: testVersion100,
 			shouldWork:    true,
 		},
 		{
@@ -182,8 +184,8 @@ func TestHealthCheckIncludesVersionInfo(t *testing.T) {
 	defer store.Close()
 
 	// Set explicit versions
-	ServerVersion = "1.0.0"
-	ClientVersion = "1.0.0"
+	ServerVersion = testVersion100
+	ClientVersion = testVersion100
 
 	server := NewServer(socketPath, store)
 
@@ -246,7 +248,7 @@ func TestIncompatibleVersionInHealth(t *testing.T) {
 	defer store.Close()
 
 	// Set incompatible versions
-	ServerVersion = "1.0.0"
+	ServerVersion = testVersion100
 	ClientVersion = "2.0.0"
 
 	server := NewServer(socketPath, store)
@@ -304,7 +306,7 @@ func TestVersionCheckMessage(t *testing.T) {
 	}{
 		{
 			name:          "Major mismatch - daemon older",
-			serverVersion: "1.0.0",
+			serverVersion: testVersion100,
 			clientVersion: "2.0.0",
 			expectError:   true,
 			errorContains: "Daemon is older; upgrade and restart daemon",
@@ -312,13 +314,13 @@ func TestVersionCheckMessage(t *testing.T) {
 		{
 			name:          "Major mismatch - client older",
 			serverVersion: "2.0.0",
-			clientVersion: "1.0.0",
+			clientVersion: testVersion100,
 			expectError:   true,
 			errorContains: "Client is older; upgrade the bd CLI",
 		},
 		{
 			name:          "Minor mismatch - daemon older",
-			serverVersion: "1.0.0",
+			serverVersion: testVersion100,
 			clientVersion: "1.1.0",
 			expectError:   true,
 			errorContains: "daemon 1.0.0 is older than client 1.1.0",
@@ -326,7 +328,7 @@ func TestVersionCheckMessage(t *testing.T) {
 		{
 			name:          "Compatible versions",
 			serverVersion: "1.1.0",
-			clientVersion: "1.0.0",
+			clientVersion: testVersion100,
 			expectError:   false,
 		},
 	}
@@ -366,7 +368,7 @@ func TestPingAndHealthBypassVersionCheck(t *testing.T) {
 	defer store.Close()
 
 	// Set incompatible versions
-	ServerVersion = "1.0.0"
+	ServerVersion = testVersion100
 	ClientVersion = "2.0.0"
 
 	server := NewServer(socketPath, store)
@@ -440,8 +442,8 @@ func TestMetricsOperation(t *testing.T) {
 	}
 	defer store.Close()
 
-	ServerVersion = "1.0.0"
-	ClientVersion = "1.0.0"
+	ServerVersion = testVersion100
+	ClientVersion = testVersion100
 
 	server := NewServer(socketPath, store)
 

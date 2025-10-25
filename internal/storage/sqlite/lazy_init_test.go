@@ -9,6 +9,8 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+const testIssueCustom1 = "custom-1"
+
 // TestLazyCounterInitialization verifies that counters are initialized lazily
 // on first use, not by scanning the entire database on every CreateIssue
 func TestLazyCounterInitialization(t *testing.T) {
@@ -163,7 +165,7 @@ func TestLazyCounterInitializationMultiplePrefix(t *testing.T) {
 		t.Fatalf("CreateIssue failed: %v", err)
 	}
 
-	if customIssue.ID != "custom-1" {
+	if customIssue.ID != testIssueCustom1 {
 		t.Errorf("Expected custom-1, got %s", customIssue.ID)
 	}
 

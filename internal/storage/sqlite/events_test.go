@@ -7,6 +7,8 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+const testUserAlice = "alice"
+
 func TestAddComment(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -26,7 +28,7 @@ func TestAddComment(t *testing.T) {
 	}
 
 	// Add a comment
-	err = store.AddComment(ctx, issue.ID, "alice", "This is a test comment")
+	err = store.AddComment(ctx, issue.ID, testUserAlice, "This is a test comment")
 	if err != nil {
 		t.Fatalf("AddComment failed: %v", err)
 	}
@@ -55,7 +57,7 @@ func TestAddComment(t *testing.T) {
 		t.Fatal("Comment event not found")
 	}
 
-	if commentEvent.Actor != "alice" {
+	if commentEvent.Actor != testUserAlice {
 		t.Errorf("Expected actor 'alice', got '%s'", commentEvent.Actor)
 	}
 

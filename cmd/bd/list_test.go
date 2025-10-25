@@ -40,7 +40,7 @@ func (h *listTestHelper) createTestIssues() {
 			Priority:    1,
 			IssueType:   types.TypeFeature,
 			Status:      types.StatusInProgress,
-			Assignee:    "alice",
+			Assignee:    testUserAlice,
 		},
 		{
 			Title:       "Task Issue",
@@ -128,10 +128,10 @@ func TestListCommand(t *testing.T) {
 	})
 
 	t.Run("filter by assignee", func(t *testing.T) {
-		assignee := "alice"
+		assignee := testUserAlice
 		results := h.search(types.IssueFilter{Assignee: &assignee})
 		h.assertCount(len(results), 1, "issues for alice")
-		h.assertEqual("alice", results[0].Assignee, "assignee")
+		h.assertEqual(testUserAlice, results[0].Assignee, "assignee")
 	})
 
 	t.Run("filter by issue type", func(t *testing.T) {

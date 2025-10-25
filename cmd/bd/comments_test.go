@@ -11,6 +11,8 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+const testUserAlice = "alice"
+
 func TestCommentsCommand(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "bd-test-comments-*")
 	if err != nil {
@@ -41,7 +43,7 @@ func TestCommentsCommand(t *testing.T) {
 	}
 
 	t.Run("add comment", func(t *testing.T) {
-		comment, err := s.AddIssueComment(ctx, issue.ID, "alice", "This is a test comment")
+		comment, err := s.AddIssueComment(ctx, issue.ID, testUserAlice, "This is a test comment")
 		if err != nil {
 			t.Fatalf("Failed to add comment: %v", err)
 		}
@@ -49,7 +51,7 @@ func TestCommentsCommand(t *testing.T) {
 		if comment.IssueID != issue.ID {
 			t.Errorf("Expected issue ID %s, got %s", issue.ID, comment.IssueID)
 		}
-		if comment.Author != "alice" {
+		if comment.Author != testUserAlice {
 			t.Errorf("Expected author alice, got %s", comment.Author)
 		}
 		if comment.Text != "This is a test comment" {
