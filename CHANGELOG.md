@@ -7,6 +7,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2025-10-24
+
+### Added
+- **Git Hooks**: Automatic installation prompt during `bd init` (bd-51)
+  - Eliminates race condition between auto-flush and git commits
+  - Pre-commit hook: Flushes pending changes immediately before commit
+  - Post-merge hook: Imports updated JSONL after pull/merge
+  - Optional installation with Y/n prompt (defaults to yes)
+  - See [examples/git-hooks/README.md](examples/git-hooks/README.md) for details
+- **Duplicate Detection**: New `bd duplicates` command for finding and merging duplicate issues (bd-119, bd-203)
+  - Automated duplicate detection with content-based matching
+  - `--auto-merge` flag for batch merging duplicates
+  - `--dry-run` mode to preview merges before execution
+  - Helps maintain database cleanliness after imports
+- **External Reference Import**: Smart import matching using `external_ref` field (bd-66-74, GH #142)
+  - Issues with `external_ref` match by reference first, not content
+  - Enables hybrid workflows with Jira, GitHub, Linear
+  - Updates existing issues instead of creating duplicates
+  - Database index on `external_ref` for fast lookups
+- **Multi-Database Warning**: Detect and warn about nested beads databases (bd-75)
+  - Prevents accidental creation of multiple databases in hierarchy
+  - Helps users avoid confusion about which database is active
+
+### Fixed
+- **Critical**: Database reinitialization data loss bug (bd-130, DATABASE_REINIT_BUG.md)
+  - Fixed bug where removing `.beads/` and running `bd init` would lose git-tracked issues
+  - Now correctly imports from JSONL during initialization
+  - Added comprehensive tests (later reverted due to CI issues on Windows/Nix)
+- **Critical**: Foreign key constraint regression (bd-62, GH #144)
+  - Pinned modernc.org/sqlite to v1.38.2 to avoid FK violations
+  - Prevents database corruption from upstream regression
+- **Critical**: Install script safety (GH #143 by @marcodelpin)
+  - Prevents shell corruption from directory deletion during install
+  - Restored proper error codes for safer installation
+- **Bug**: Daemon auto-start reliability (bd-137)
+  - Daemon now responsive immediately, runs initial sync in background
+  - Fixes timeout issues when git pull is slow
+  - Skip daemon-running check for forked child process
+- **Bug**: Dependency timestamp churn during auto-import (bd-45, bd-137)
+  - Auto-import no longer updates timestamps on unchanged dependencies
+  - Eliminates perpetually dirty JSONL from metadata changes
+- **Bug**: Import reporting accuracy (bd-49, bd-88)
+  - `bd import` now correctly reports "X updated, Y unchanged" instead of "0 updated"
+  - Better visibility into import operation results
+- **Bug**: Memory database handling
+  - Fixed :memory: database connection with shared cache mode
+  - Proper URL construction for in-memory testing
+
+### Changed
+- **Removed**: Deprecated `bd repos` command
+  - Global daemon architecture removed in favor of per-project daemons
+  - Eliminated cross-project database confusion
+- **Documentation**: Major reorganization and improvements
+  - Condensed README, created specialized docs (QUICKSTART.md, ADVANCED.md, etc.)
+  - Enhanced "Why not GitHub Issues?" FAQ section
+  - Added Beadster to Community & Ecosystem section
+
+### Performance
+- Test coverage improvements: 46.0% → 57.7% (+11.7%)
+  - Added tests for RPC, storage, cmd/bd helpers
+  - New test files: coverage_test.go, helpers_test.go, epics_test.go
+
+### Community
+- Community contribution by @marcodelpin (install script safety fixes)
+- Dependabot integration for automated dependency updates
+
+## [0.16.0] - 2025-10-23
+
+### Added
+- **Automated Releases**: GoReleaser workflow for cross-platform binaries (bd-46)
+  - Automatic GitHub releases on version tags
+  - Linux, macOS, Windows binaries for amd64 and arm64
+  - Checksums and changelog generation included
+- **PyPI Automation**: Automated MCP server publishing to PyPI
+  - GitHub Actions workflow publishes beads-mcp on version tags
+  - Eliminates manual PyPI upload step
+- **Sandbox Mode**: `--sandbox` flag for Claude Code integration (bd-35)
+  - Isolated environment for AI agent experimentation
+  - Prevents production database modifications during testing
+
+### Fixed
+- **Critical**: Idempotent import timestamp churn (bd-84)
+  - Prevents timestamp updates when issue content unchanged
+  - Reduces JSONL churn and git noise from repeated imports
+- **Bug**: Windows CI test failures (bd-60, bd-99)
+  - Fixed path separator issues and file handling on Windows
+  - Skipped flaky tests to stabilize CI
+
+### Changed
+- **Configuration Migration**: Unified config management with Viper (bd-40-44, bd-78)
+  - Migrated from manual env var handling to Viper
+  - Bound all global flags to Viper for consistency
+  - Kept `bd config` independent from Viper for modularity
+  - Added comprehensive configuration tests
+- **Documentation Refactor**: Improved documentation structure
+  - Condensed main README
+  - Created specialized guides (QUICKSTART.md, CONFIG.md, etc.)
+  - Enhanced FAQ and community sections
+
+### Testing
+- Hardened `issueDataChanged` with type-safe comparisons
+- Improved test isolation and reliability
+
 ## [0.15.0] - 2025-10-23
 
 ### Added
