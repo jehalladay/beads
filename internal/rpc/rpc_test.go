@@ -223,6 +223,54 @@ func TestUpdateIssue(t *testing.T) {
 	}
 }
 
+func TestCloseIssue(t *testing.T) {
+	_, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	createArgs := &CreateArgs{
+		Title:     "Issue to Close",
+		IssueType: "task",
+		Priority:  2,
+	}
+
+	createResp, err := client.Create(createArgs)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	var issue types.Issue
+	json.Unmarshal(createResp.Data, &issue)
+
+	if issue.Status != "open" {
+		t.Errorf("Expected status 'open', got %s", issue.Status)
+	}
+
+	closeArgs := &CloseArgs{
+		ID:     issue.ID,
+		Reason: "Test completion",
+	}
+
+	closeResp, err := client.CloseIssue(closeArgs)
+	if err != nil {
+		t.Fatalf("CloseIssue failed: %v", err)
+	}
+
+	if !closeResp.Success {
+		t.Fatalf("Expected success, got error: %s", closeResp.Error)
+	}
+
+	var closedIssue types.Issue
+	json.Unmarshal(closeResp.Data, &closedIssue)
+
+	if closedIssue.Status != "closed" {
+		t.Errorf("Expected status 'closed', got %s", closedIssue.Status)
+	}
+
+	if closedIssue.ClosedAt == nil {
+		t.Error("Expected ClosedAt to be set, got nil")
+	}
+}
+
 func TestListIssues(t *testing.T) {
 	_, client, cleanup := setupTestServer(t)
 	defer cleanup()

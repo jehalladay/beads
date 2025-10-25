@@ -671,6 +671,60 @@ func TestUpdateIssue(t *testing.T) {
 	}
 }
 
+func TestUpdateIssueValidation(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	issue := &types.Issue{
+		Title:     "Test Issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+
+	err := store.CreateIssue(ctx, issue, "test-user")
+	if err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	// Test invalid issue type
+	updates := map[string]interface{}{
+		"issue_type": "invalid-type",
+	}
+	err = store.UpdateIssue(ctx, issue.ID, updates, "test-user")
+	if err == nil {
+		t.Error("Expected error for invalid issue_type, got nil")
+	}
+
+	// Test negative estimated_minutes
+	updates = map[string]interface{}{
+		"estimated_minutes": -10,
+	}
+	err = store.UpdateIssue(ctx, issue.ID, updates, "test-user")
+	if err == nil {
+		t.Error("Expected error for negative estimated_minutes, got nil")
+	}
+
+	// Test valid issue type
+	updates = map[string]interface{}{
+		"issue_type": string(types.TypeBug),
+	}
+	err = store.UpdateIssue(ctx, issue.ID, updates, "test-user")
+	if err != nil {
+		t.Errorf("Valid issue_type should not error: %v", err)
+	}
+
+	// Test valid estimated_minutes
+	updates = map[string]interface{}{
+		"estimated_minutes": 60,
+	}
+	err = store.UpdateIssue(ctx, issue.ID, updates, "test-user")
+	if err != nil {
+		t.Errorf("Valid estimated_minutes should not error: %v", err)
+	}
+}
+
 func TestCloseIssue(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -1407,5 +1461,99 @@ func TestInMemorySharedCache(t *testing.T) {
 
 	if retrieved2.Title != issue2.Title {
 		t.Errorf("Title mismatch: got %v, want %v", retrieved2.Title, issue2.Title)
+	}
+}
+
+func TestGetAllConfig(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Set multiple config values
+	err := store.SetConfig(ctx, "key1", "value1")
+	if err != nil {
+		t.Fatalf("SetConfig key1 failed: %v", err)
+	}
+
+	err = store.SetConfig(ctx, "key2", "value2")
+	if err != nil {
+		t.Fatalf("SetConfig key2 failed: %v", err)
+	}
+
+	// Get all config
+	allConfig, err := store.GetAllConfig(ctx)
+	if err != nil {
+		t.Fatalf("GetAllConfig failed: %v", err)
+	}
+
+	if len(allConfig) < 2 {
+		t.Errorf("Expected at least 2 config entries, got %d", len(allConfig))
+	}
+
+	if allConfig["key1"] != "value1" {
+		t.Errorf("Expected key1=value1, got %s", allConfig["key1"])
+	}
+
+	if allConfig["key2"] != "value2" {
+		t.Errorf("Expected key2=value2, got %s", allConfig["key2"])
+	}
+}
+
+func TestDeleteConfig(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Set a config value
+	err := store.SetConfig(ctx, "test-key", "test-value")
+	if err != nil {
+		t.Fatalf("SetConfig failed: %v", err)
+	}
+
+	// Verify it exists
+	value, err := store.GetConfig(ctx, "test-key")
+	if err != nil {
+		t.Fatalf("GetConfig failed: %v", err)
+	}
+	if value != "test-value" {
+		t.Errorf("Expected test-value, got %s", value)
+	}
+
+	// Delete it
+	err = store.DeleteConfig(ctx, "test-key")
+	if err != nil {
+		t.Fatalf("DeleteConfig failed: %v", err)
+	}
+
+	// Verify it's gone
+	value, err = store.GetConfig(ctx, "test-key")
+	if err != nil {
+		t.Fatalf("GetConfig failed: %v", err)
+	}
+	if value != "" {
+		t.Errorf("Expected empty value after deletion, got: %s", value)
+	}
+}
+
+func TestIsClosed(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Store should not be closed initially
+	if store.IsClosed() {
+		t.Error("Store should not be closed initially")
+	}
+
+	// Close the store
+	err := store.Close()
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Store should be closed now
+	if !store.IsClosed() {
+		t.Error("Store should be closed after calling Close()")
 	}
 }
