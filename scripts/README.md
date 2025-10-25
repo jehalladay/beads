@@ -2,6 +2,71 @@
 
 Utility scripts for maintaining the beads project.
 
+## release.sh (⭐ The Easy Button)
+
+**One-command release** from version bump to local installation.
+
+### Usage
+
+```bash
+# Full release (does everything)
+./scripts/release.sh 0.9.3
+
+# Preview what would happen
+./scripts/release.sh 0.9.3 --dry-run
+```
+
+### What It Does
+
+This master script automates the **entire release process**:
+
+1. ✅ Kills running daemons (avoids version conflicts)
+2. ✅ Runs tests and linting
+3. ✅ Bumps version in all files
+4. ✅ Commits and pushes version bump
+5. ✅ Creates and pushes git tag
+6. ✅ Updates Homebrew formula
+7. ✅ Upgrades local brew installation
+8. ✅ Verifies everything works
+
+**After this script completes, your system is running the new version!**
+
+### Examples
+
+```bash
+# Release version 0.9.3
+./scripts/release.sh 0.9.3
+
+# Preview a release (no changes made)
+./scripts/release.sh 1.0.0 --dry-run
+```
+
+### Prerequisites
+
+- Clean git working directory
+- All changes committed
+- golangci-lint installed
+- Homebrew installed (for local upgrade)
+- Push access to steveyegge/beads and steveyegge/homebrew-beads
+
+### Output
+
+The script provides colorful, step-by-step progress output:
+- 🟨 Yellow: Current step
+- 🟩 Green: Step completed
+- 🟥 Red: Errors
+- 🟦 Blue: Section headers
+
+### What Happens Next
+
+After the script finishes:
+- GitHub Actions builds binaries for all platforms (~5 minutes)
+- PyPI package is published automatically
+- Users can `brew upgrade bd` to get the new version
+- GitHub Release is created with binaries and changelog
+
+---
+
 ## bump-version.sh
 
 Bumps the version number across all beads components in a single command.

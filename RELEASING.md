@@ -2,7 +2,25 @@
 
 Quick guide for releasing a new version of beads.
 
-## Pre-Release Checklist
+## 🚀 The Easy Way (Recommended)
+
+Use the fully automated release script:
+
+```bash
+./scripts/release.sh 0.9.3
+```
+
+This does **everything**: version bump, tests, git tag, Homebrew update, and local installation.
+
+See [scripts/README.md](scripts/README.md#releasesh--the-easy-button) for details.
+
+---
+
+## 📋 The Manual Way
+
+If you prefer step-by-step control:
+
+### Pre-Release Checklist
 
 1. **Kill all running daemons (CRITICAL)**:
    ```bash
