@@ -1,6 +1,10 @@
 """MCP tools for beads issue tracker."""
 
+import asyncio
 import os
+import subprocess
+from contextvars import ContextVar
+from functools import lru_cache
 from typing import Annotated, TYPE_CHECKING
 
 from .bd_client import create_bd_client, BdClientBase, BdError
@@ -25,10 +29,15 @@ from .models import (
     UpdateIssueParams,
 )
 
-# Global client instance - initialized on first use
-_client: BdClientBase | None = None
-_version_checked: bool = False
-_client_registered: bool = False
+# ContextVar for request-scoped workspace routing
+current_workspace: ContextVar[str | None] = ContextVar('workspace', default=None)
+
+# Connection pool for per-project daemon sockets
+_connection_pool: dict[str, BdClientBase] = {}
+_pool_lock = asyncio.Lock()
+
+# Version checking state (per-pool client)
+_version_checked: set[str] = set()
 
 # Default constants
 DEFAULT_ISSUE_TYPE: IssueType = "task"
@@ -50,41 +59,108 @@ def _register_client_for_cleanup(client: BdClientBase) -> None:
         pass
 
 
-async def _get_client() -> BdClientBase:
-    """Get a BdClient instance, creating it on first use.
+def _resolve_workspace_root(path: str) -> str:
+    """Resolve workspace root to git repo root if inside a git repo.
+    
+    Args:
+        path: Directory path to resolve
+        
+    Returns:
+        Git repo root if inside git repo, otherwise the original path
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    
+    return os.path.abspath(path)
 
-    Performs version check on first initialization.
+
+@lru_cache(maxsize=128)
+def _canonicalize_path(path: str) -> str:
+    """Canonicalize workspace path to handle symlinks and git repos.
+    
+    This ensures that different paths pointing to the same project
+    (e.g., via symlinks) use the same daemon connection.
+    
+    Args:
+        path: Workspace directory path
+        
+    Returns:
+        Canonical path (handles symlinks and submodules correctly)
+    """
+    # 1. Resolve symlinks
+    real = os.path.realpath(path)
+    
+    # 2. Check for local .beads directory (submodule edge case)
+    # Submodules should use their own .beads, not the parent repo's
+    if os.path.exists(os.path.join(real, ".beads")):
+        return real
+    
+    # 3. Try to find git toplevel
+    # This ensures we connect to the right daemon for the git repo
+    return _resolve_workspace_root(real)
+
+
+async def _get_client() -> BdClientBase:
+    """Get a BdClient instance for the current workspace.
+    
+    Uses connection pool to manage per-project daemon sockets.
+    Workspace is determined by current_workspace ContextVar or BEADS_WORKING_DIR env.
+
+    Performs version check on first connection to each workspace.
     Uses daemon client if available, falls back to CLI client.
 
     Returns:
-        Configured BdClientBase instance (config loaded automatically)
+        Configured BdClientBase instance for the current workspace
 
     Raises:
-        BdError: If bd is not installed or version is incompatible
+        BdError: If no workspace is set, or bd is not installed, or version is incompatible
     """
-    global _client, _version_checked, _client_registered
-    if _client is None:
-        # Check if daemon should be used (default: yes)
-        use_daemon = os.environ.get("BEADS_USE_DAEMON", "1") == "1"
-        workspace_root = os.environ.get("BEADS_WORKING_DIR")
-        
-        _client = create_bd_client(
-            prefer_daemon=use_daemon,
-            working_dir=workspace_root
+    # Determine workspace from ContextVar or environment
+    workspace = current_workspace.get() or os.environ.get("BEADS_WORKING_DIR")
+    if not workspace:
+        raise BdError(
+            "No workspace set. Either provide workspace_root parameter or call set_context() first."
         )
-        
-        # Register for cleanup on first creation
-        if not _client_registered:
-            _register_client_for_cleanup(_client)
-            _client_registered = True
+    
+    # Canonicalize path to handle symlinks and deduplicate connections
+    canonical = _canonicalize_path(workspace)
+    
+    # Thread-safe connection pool access
+    async with _pool_lock:
+        if canonical not in _connection_pool:
+            # Create new client for this workspace
+            use_daemon = os.environ.get("BEADS_USE_DAEMON", "1") == "1"
+            
+            client = create_bd_client(
+                prefer_daemon=use_daemon,
+                working_dir=canonical
+            )
+            
+            # Register for cleanup
+            _register_client_for_cleanup(client)
+            
+            # Add to pool
+            _connection_pool[canonical] = client
+            
+        client = _connection_pool[canonical]
+    
+    # Check version once per workspace (only for CLI client)
+    if canonical not in _version_checked:
+        if hasattr(client, '_check_version'):
+            await client._check_version()
+        _version_checked.add(canonical)
 
-    # Check version once per server lifetime (only for CLI client)
-    if not _version_checked:
-        if hasattr(_client, '_check_version'):
-            await _client._check_version()
-        _version_checked = True
-
-    return _client
+    return client
 
 
 async def beads_ready_work(

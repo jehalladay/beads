@@ -26,6 +26,7 @@ from beads_mcp.tools import (
     beads_show_issue,
     beads_stats,
     beads_update_issue,
+    current_workspace,  # ContextVar for per-request workspace routing
 )
 
 # Setup logging for lifecycle events
@@ -96,8 +97,42 @@ signal.signal(signal.SIGINT, signal_handler)
 logger.info("beads-mcp server initialized with lifecycle management")
 
 
+def with_workspace(func: Callable[..., T]) -> Callable[..., T]:
+    """Decorator to set workspace context for the duration of a tool call.
+    
+    Extracts workspace_root parameter from tool call kwargs, resolves it,
+    and sets current_workspace ContextVar for the request duration.
+    Falls back to BEADS_WORKING_DIR if workspace_root not provided.
+    
+    This enables per-request workspace routing for multi-project support.
+    """
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        # Extract workspace_root parameter (if provided)
+        workspace_root = kwargs.get('workspace_root')
+        
+        # Determine workspace: parameter > env > None
+        workspace = workspace_root or os.environ.get("BEADS_WORKING_DIR")
+        
+        # Set ContextVar for this request
+        token = current_workspace.set(workspace)
+        
+        try:
+            # Execute tool with workspace context set
+            return await func(*args, **kwargs)
+        finally:
+            # Always reset ContextVar after tool completes
+            current_workspace.reset(token)
+    
+    return wrapper
+
+
 def require_context(func: Callable[..., T]) -> Callable[..., T]:
     """Decorator to enforce context has been set before write operations.
+    
+    Passes if either:
+    - workspace_root was provided on tool call (via ContextVar), OR
+    - BEADS_WORKING_DIR is set (from set_context)
     
     Only enforces if BEADS_REQUIRE_CONTEXT=1 is set in environment.
     This allows backward compatibility while adding safety for multi-repo setups.
@@ -106,9 +141,11 @@ def require_context(func: Callable[..., T]) -> Callable[..., T]:
     async def wrapper(*args, **kwargs):
         # Only enforce if explicitly enabled
         if os.environ.get("BEADS_REQUIRE_CONTEXT") == "1":
-            if not os.environ.get("BEADS_CONTEXT_SET"):
+            # Check ContextVar or environment
+            workspace = current_workspace.get() or os.environ.get("BEADS_WORKING_DIR")
+            if not workspace:
                 raise ValueError(
-                    "Context not set. Call set_context with your workspace root before performing write operations."
+                    "Context not set. Either provide workspace_root parameter or call set_context() first."
                 )
         return await func(*args, **kwargs)
     return wrapper
@@ -243,6 +280,7 @@ async def where_am_i(workspace_root: str | None = None) -> str:
 
 # Register all tools
 @mcp.tool(name="ready", description="Find tasks that have no blockers and are ready to be worked on.")
+@with_workspace
 async def ready_work(
     limit: int = 10,
     priority: int | None = None,
@@ -257,6 +295,7 @@ async def ready_work(
     name="list",
     description="List all issues with optional filters (status, priority, type, assignee).",
 )
+@with_workspace
 async def list_issues(
     status: IssueStatus | None = None,
     priority: int | None = None,
@@ -279,6 +318,7 @@ async def list_issues(
     name="show",
     description="Show detailed information about a specific issue including dependencies and dependents.",
 )
+@with_workspace
 async def show_issue(issue_id: str, workspace_root: str | None = None) -> Issue:
     """Show detailed information about a specific issue."""
     return await beads_show_issue(issue_id=issue_id)
@@ -289,6 +329,7 @@ async def show_issue(issue_id: str, workspace_root: str | None = None) -> Issue:
     description="""Create a new issue (bug, feature, task, epic, or chore) with optional design,
 acceptance criteria, and dependencies.""",
 )
+@with_workspace
 @require_context
 async def create_issue(
     title: str,
@@ -325,6 +366,7 @@ async def create_issue(
     description="""Update an existing issue's status, priority, assignee, description, design notes,
 or acceptance criteria. Use this to claim work (set status=in_progress).""",
 )
+@with_workspace
 @require_context
 async def update_issue(
     issue_id: str,
@@ -363,6 +405,7 @@ async def update_issue(
     name="close",
     description="Close (complete) an issue. Mark work as done when you've finished implementing/fixing it.",
 )
+@with_workspace
 @require_context
 async def close_issue(issue_id: str, reason: str = "Completed", workspace_root: str | None = None) -> list[Issue]:
     """Close (complete) an issue."""
@@ -373,6 +416,7 @@ async def close_issue(issue_id: str, reason: str = "Completed", workspace_root: 
     name="reopen",
     description="Reopen one or more closed issues. Sets status to 'open' and clears closed_at timestamp.",
 )
+@with_workspace
 @require_context
 async def reopen_issue(issue_ids: list[str], reason: str | None = None, workspace_root: str | None = None) -> list[Issue]:
     """Reopen one or more closed issues."""
@@ -384,6 +428,7 @@ async def reopen_issue(issue_ids: list[str], reason: str | None = None, workspac
     description="""Add a dependency between issues. Types: blocks (hard blocker),
 related (soft link), parent-child (epic/subtask), discovered-from (found during work).""",
 )
+@with_workspace
 @require_context
 async def add_dependency(
     issue_id: str,
@@ -403,6 +448,7 @@ async def add_dependency(
     name="stats",
     description="Get statistics: total issues, open, in_progress, closed, blocked, ready, and average lead time.",
 )
+@with_workspace
 async def stats(workspace_root: str | None = None) -> Stats:
     """Get statistics about tasks."""
     return await beads_stats()
@@ -412,6 +458,7 @@ async def stats(workspace_root: str | None = None) -> Stats:
     name="blocked",
     description="Get blocked issues showing what dependencies are blocking them from being worked on.",
 )
+@with_workspace
 async def blocked(workspace_root: str | None = None) -> list[BlockedIssue]:
     """Get blocked issues."""
     return await beads_blocked()
@@ -422,6 +469,7 @@ async def blocked(workspace_root: str | None = None) -> list[BlockedIssue]:
     description="""Initialize bd in current directory. Creates .beads/ directory and
 database with optional custom prefix for issue IDs.""",
 )
+@with_workspace
 @require_context
 async def init(prefix: str | None = None, workspace_root: str | None = None) -> str:
     """Initialize bd in current directory."""
@@ -432,6 +480,7 @@ async def init(prefix: str | None = None, workspace_root: str | None = None) -> 
     name="debug_env",
     description="Debug tool: Show environment and working directory information",
 )
+@with_workspace
 async def debug_env(workspace_root: str | None = None) -> str:
     """Debug tool to check working directory and environment variables."""
     info = []

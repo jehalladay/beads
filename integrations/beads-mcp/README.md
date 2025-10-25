@@ -130,12 +130,85 @@ Configure separate MCP servers for specific projects using `BEADS_WORKING_DIR`:
 
 ⚠️ **Problem**: AI may select the wrong MCP server for your workspace, causing commands to operate on the wrong database. Use single MCP server instead.
 
+## Multi-Project Support
+
+The MCP server supports managing multiple beads projects in a single session using per-request workspace routing.
+
+### Using `workspace_root` Parameter
+
+Every tool accepts an optional `workspace_root` parameter for explicit project targeting:
+
+```python
+# Query issues from different projects concurrently
+results = await asyncio.gather(
+    beads_ready_work(workspace_root="/Users/you/project-a"),
+    beads_ready_work(workspace_root="/Users/you/project-b"),
+)
+
+# Create issue in specific project
+await beads_create_issue(
+    title="Fix auth bug",
+    priority=1,
+    workspace_root="/Users/you/project-a"
+)
+```
+
+### Architecture
+
+**Connection Pool**: The MCP server maintains a connection pool keyed by canonical workspace path:
+- Each workspace gets its own daemon socket connection
+- Paths are canonicalized (symlinks resolved, git toplevel detected)
+- Concurrent requests use `asyncio.Lock` to prevent race conditions
+- No LRU eviction (keeps all connections open for session)
+
+**ContextVar Routing**: Per-request workspace context is managed via Python's `ContextVar`:
+- Each tool call sets the workspace for its duration
+- Properly isolated for concurrent calls (no cross-contamination)
+- Falls back to `BEADS_WORKING_DIR` if `workspace_root` not provided
+
+**Path Canonicalization**:
+- Symlinks are resolved to physical paths (prevents duplicate connections)
+- Git submodules with `.beads` directories use local context
+- Git toplevel is used for non-initialized directories
+- Results are cached for performance
+
+### Backward Compatibility
+
+The `set_context()` tool still works and sets a default workspace:
+
+```python
+# Old way (still supported)
+await set_context(workspace_root="/Users/you/project-a")
+await beads_ready_work()  # Uses project-a
+
+# New way (more flexible)
+await beads_ready_work(workspace_root="/Users/you/project-a")
+```
+
+### Concurrency Gotchas
+
+⚠️ **IMPORTANT**: Tool implementations must NOT spawn background tasks using `asyncio.create_task()`.
+
+**Why?** ContextVar doesn't propagate to spawned tasks, which can cause cross-project data leakage.
+
+**Solution**: Keep all tool logic synchronous or use sequential `await` calls.
+
+### Troubleshooting
+
+**Symlink aliasing**: Different paths to same project are deduplicated automatically via `realpath`.
+
+**Submodule handling**: Submodules with their own `.beads` directory are treated as separate projects.
+
+**Stale sockets**: Currently no health checks. Phase 2 will add retry-on-failure if monitoring shows need.
+
+**Version mismatches**: Daemon version is auto-checked since v0.16.0. Mismatched daemons are automatically restarted.
+
 ## Features
 
 **Resource:**
 - `beads://quickstart` - Quickstart guide for using beads
 
-**Tools:**
+**Tools (all support `workspace_root` parameter):**
 - `init` - Initialize bd in current directory
 - `create` - Create new issue (bug, feature, task, epic, chore)
 - `list` - List issues with filters (status, priority, type, assignee)
@@ -147,6 +220,7 @@ Configure separate MCP servers for specific projects using `BEADS_WORKING_DIR`:
 - `blocked` - Get blocked issues
 - `stats` - Get project statistics
 - `reopen` - Reopen a closed issue with optional reason
+- `set_context` - Set default workspace for subsequent calls (backward compatibility)
 
 
 ## Development

@@ -14,6 +14,31 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// countIssuesInJSONL counts the number of issues in a JSONL file
+func countIssuesInJSONL(path string) (int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	count := 0
+	decoder := json.NewDecoder(file)
+	for {
+		var issue types.Issue
+		if err := decoder.Decode(&issue); err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			// If we hit a decode error, stop counting but return what we have
+			// This handles partially corrupt files
+			break
+		}
+		count++
+	}
+	return count, nil
+}
+
 // validateExportPath checks if the output path is safe to write to
 func validateExportPath(path string) error {
 	// Get absolute path to normalize it
@@ -57,6 +82,7 @@ Output to stdout by default, or use -o flag for file output.`,
 		format, _ := cmd.Flags().GetString("format")
 		output, _ := cmd.Flags().GetString("output")
 		statusFilter, _ := cmd.Flags().GetString("status")
+		force, _ := cmd.Flags().GetBool("force")
 
 		if format != "jsonl" {
 			fmt.Fprintf(os.Stderr, "Error: only 'jsonl' format is currently supported\n")
@@ -93,6 +119,43 @@ Output to stdout by default, or use -o flag for file output.`,
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
+		}
+
+		// Safety check: prevent exporting empty database over non-empty JSONL
+		if len(issues) == 0 && output != "" && !force {
+			existingCount, err := countIssuesInJSONL(output)
+			if err != nil {
+				// If we can't read the file, it might not exist yet, which is fine
+				if !os.IsNotExist(err) {
+					fmt.Fprintf(os.Stderr, "Warning: failed to read existing JSONL: %v\n", err)
+				}
+			} else if existingCount > 0 {
+				fmt.Fprintf(os.Stderr, "Error: refusing to export empty database over non-empty JSONL file\n")
+				fmt.Fprintf(os.Stderr, "  Database has 0 issues, JSONL has %d issues\n", existingCount)
+				fmt.Fprintf(os.Stderr, "  This would result in data loss!\n")
+				fmt.Fprintf(os.Stderr, "Hint: Use --force to override this safety check, or delete the JSONL file first:\n")
+				fmt.Fprintf(os.Stderr, "  bd export -o %s --force\n", output)
+				fmt.Fprintf(os.Stderr, "  rm %s\n", output)
+				os.Exit(1)
+			}
+		}
+
+		// Warning: check if export would lose >50% of issues
+		if output != "" {
+			existingCount, err := countIssuesInJSONL(output)
+			if err == nil && existingCount > 0 {
+				lossPercent := float64(existingCount-len(issues)) / float64(existingCount) * 100
+				if lossPercent > 50 {
+					fmt.Fprintf(os.Stderr, "WARNING: Export would lose %.1f%% of issues!\n", lossPercent)
+					fmt.Fprintf(os.Stderr, "  Existing JSONL: %d issues\n", existingCount)
+					fmt.Fprintf(os.Stderr, "  Database: %d issues\n", len(issues))
+					fmt.Fprintf(os.Stderr, "  This suggests database staleness or corruption.\n")
+					fmt.Fprintf(os.Stderr, "Press Ctrl+C to abort, or Enter to continue: ")
+					// Read a line from stdin to wait for user confirmation
+					var response string
+					fmt.Scanln(&response)
+				}
+			}
 		}
 
 		// Sort by ID for consistent output
@@ -206,5 +269,6 @@ func init() {
 	exportCmd.Flags().StringP("format", "f", "jsonl", "Export format (jsonl)")
 	exportCmd.Flags().StringP("output", "o", "", "Output file (default: stdout)")
 	exportCmd.Flags().StringP("status", "s", "", "Filter by status")
+	exportCmd.Flags().Bool("force", false, "Force export even if database is empty")
 	rootCmd.AddCommand(exportCmd)
 }

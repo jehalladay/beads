@@ -689,6 +689,19 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 		return fmt.Errorf("failed to get issues: %w", err)
 	}
 
+	// Safety check: prevent exporting empty database over non-empty JSONL
+	if len(issues) == 0 {
+		existingCount, err := countIssuesInJSONL(jsonlPath)
+		if err != nil {
+			// If we can't read the file, it might not exist yet, which is fine
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("warning: failed to read existing JSONL: %w", err)
+			}
+		} else if existingCount > 0 {
+			return fmt.Errorf("refusing to export empty database over non-empty JSONL file (database: 0 issues, JSONL: %d issues). This would result in data loss", existingCount)
+		}
+	}
+
 	// Sort by ID for consistent output
 	sort.Slice(issues, func(i, j int) bool {
 		return issues[i].ID < issues[j].ID

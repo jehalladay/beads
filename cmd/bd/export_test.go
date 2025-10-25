@@ -12,6 +12,8 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+
+
 func TestExportCommand(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "bd-test-export-*")
 	if err != nil {
@@ -197,5 +199,59 @@ func TestExportCommand(t *testing.T) {
 		// On Unix/Mac, C:\Windows won't match, so we skip this assertion
 		// Just verify the function doesn't panic with Windows-style paths
 		_ = validateExportPath("C:\\Windows\\system32\\test.jsonl")
+	})
+
+	t.Run("prevent exporting empty database over non-empty JSONL", func(t *testing.T) {
+		exportPath := filepath.Join(tmpDir, "export_empty_check.jsonl")
+
+		// First, create a JSONL file with issues
+		file, err := os.Create(exportPath)
+		if err != nil {
+			t.Fatalf("Failed to create JSONL: %v", err)
+		}
+		encoder := json.NewEncoder(file)
+		for _, issue := range issues {
+			if err := encoder.Encode(issue); err != nil {
+				t.Fatalf("Failed to encode issue: %v", err)
+			}
+		}
+		file.Close()
+
+		// Verify file has issues
+		count, err := countIssuesInJSONL(exportPath)
+		if err != nil {
+			t.Fatalf("Failed to count issues: %v", err)
+		}
+		if count != 2 {
+			t.Fatalf("Expected 2 issues in JSONL, got %d", count)
+		}
+
+		// Create empty database
+		emptyDBPath := filepath.Join(tmpDir, "empty.db")
+		emptyStore, err := sqlite.New(emptyDBPath)
+		if err != nil {
+			t.Fatalf("Failed to create empty store: %v", err)
+		}
+		defer emptyStore.Close()
+
+		// Test using exportToJSONLWithStore directly (daemon code path)
+		err = exportToJSONLWithStore(ctx, emptyStore, exportPath)
+		if err == nil {
+			t.Error("Expected error when exporting empty database over non-empty JSONL")
+		} else {
+			expectedMsg := "refusing to export empty database over non-empty JSONL file (database: 0 issues, JSONL: 2 issues). This would result in data loss"
+			if err.Error() != expectedMsg {
+				t.Errorf("Unexpected error message:\nGot:      %q\nExpected: %q", err.Error(), expectedMsg)
+			}
+		}
+
+		// Verify JSONL file is unchanged
+		countAfter, err := countIssuesInJSONL(exportPath)
+		if err != nil {
+			t.Fatalf("Failed to count issues after failed export: %v", err)
+		}
+		if countAfter != 2 {
+			t.Errorf("JSONL file was modified! Expected 2 issues, got %d", countAfter)
+		}
 	})
 }
