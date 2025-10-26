@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -156,6 +155,17 @@ if err := store.Close(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to close database: %v\n", err)
 }
 
+// Check if we're in a git repo and hooks aren't installed
+// Do this BEFORE quiet mode return so hooks get installed for agents
+if isGitRepo() && !hooksInstalled() {
+	if quiet {
+		// Auto-install hooks silently in quiet mode (best default for agents)
+		_ = installGitHooks() // Ignore errors in quiet mode
+	} else {
+		// Defer to interactive prompt below
+	}
+}
+
 // Skip output if quiet mode
 if quiet {
 		return
@@ -170,30 +180,24 @@ if quiet {
 		fmt.Printf("  Issue prefix: %s\n", cyan(prefix))
 		fmt.Printf("  Issues will be named: %s\n\n", cyan(prefix+"-1, "+prefix+"-2, ..."))
 	
-	// Check if we're in a git repo and hooks aren't installed
+	// Interactive git hooks prompt for humans
 	if isGitRepo() && !hooksInstalled() {
-		if quiet {
-			// Auto-install hooks silently in quiet mode (best default for agents)
-			_ = installGitHooks() // Ignore errors in quiet mode
-		} else {
-			// Interactive prompt for humans
-			fmt.Printf("%s Git hooks not installed\n", yellow("⚠"))
-			fmt.Printf("  Install git hooks to prevent race conditions between commits and auto-flush.\n")
-			fmt.Printf("  Run: %s\n\n", cyan("./examples/git-hooks/install.sh"))
-			
-			// Prompt to install
-			fmt.Printf("Install git hooks now? [Y/n] ")
-			var response string
-			_, _ = fmt.Scanln(&response) // ignore EOF on empty input
-			response = strings.ToLower(strings.TrimSpace(response))
-			
-			if response == "" || response == "y" || response == "yes" {
-				if err := installGitHooks(); err != nil {
-					fmt.Fprintf(os.Stderr, "Error installing hooks: %v\n", err)
-					fmt.Printf("You can install manually with: %s\n\n", cyan("./examples/git-hooks/install.sh"))
-				} else {
-					fmt.Printf("%s Git hooks installed successfully!\n\n", green("✓"))
-				}
+		fmt.Printf("%s Git hooks not installed\n", yellow("⚠"))
+		fmt.Printf("  Install git hooks to prevent race conditions between commits and auto-flush.\n")
+		fmt.Printf("  Run: %s\n\n", cyan("./examples/git-hooks/install.sh"))
+		
+		// Prompt to install
+		fmt.Printf("Install git hooks now? [Y/n] ")
+		var response string
+		_, _ = fmt.Scanln(&response) // ignore EOF on empty input
+		response = strings.ToLower(strings.TrimSpace(response))
+		
+		if response == "" || response == "y" || response == "yes" {
+			if err := installGitHooks(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error installing hooks: %v\n", err)
+				fmt.Printf("You can install manually with: %s\n\n", cyan("./examples/git-hooks/install.sh"))
+			} else {
+				fmt.Printf("%s Git hooks installed successfully!\n\n", green("✓"))
 			}
 		}
 	}
@@ -235,20 +239,119 @@ func hooksInstalled() bool {
 	return true
 }
 
-// installGitHooks runs the install script
+// installGitHooks installs git hooks inline (no external dependencies)
 func installGitHooks() error {
-	// Find the install script
-	installScript := filepath.Join("examples", "git-hooks", "install.sh")
+	hooksDir := filepath.Join(".git", "hooks")
 	
-	// Check if script exists
-	if _, err := os.Stat(installScript); err != nil {
-		return fmt.Errorf("install script not found at %s", installScript)
+	// Ensure hooks directory exists
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		return fmt.Errorf("failed to create hooks directory: %w", err)
 	}
 	
-	// Run the install script
-	cmd := exec.Command("/bin/bash", installScript)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// pre-commit hook
+	preCommitPath := filepath.Join(hooksDir, "pre-commit")
+	preCommitContent := `#!/bin/sh
+#
+# bd (beads) pre-commit hook
+#
+# This hook ensures that any pending bd issue changes are flushed to
+# .beads/issues.jsonl before the commit is created, preventing the
+# race condition where daemon auto-flush fires after the commit.
+
+# Check if bd is available
+if ! command -v bd >/dev/null 2>&1; then
+    echo "Warning: bd command not found, skipping pre-commit flush" >&2
+    exit 0
+fi
+
+# Check if we're in a bd workspace
+if [ ! -d .beads ]; then
+    # Not a bd workspace, nothing to do
+    exit 0
+fi
+
+# Flush pending changes to JSONL
+# Use --flush-only to skip git operations (we're already in a git hook)
+# Suppress output unless there's an error
+if ! bd sync --flush-only >/dev/null 2>&1; then
+    echo "Error: Failed to flush bd changes to JSONL" >&2
+    echo "Run 'bd sync --flush-only' manually to diagnose" >&2
+    exit 1
+fi
+
+# If the JSONL file was modified, stage it
+if [ -f .beads/issues.jsonl ]; then
+    git add .beads/issues.jsonl 2>/dev/null || true
+fi
+
+exit 0
+`
 	
-	return cmd.Run()
+	// post-merge hook
+	postMergePath := filepath.Join(hooksDir, "post-merge")
+	postMergeContent := `#!/bin/sh
+#
+# bd (beads) post-merge hook
+#
+# This hook imports updated issues from .beads/issues.jsonl after a
+# git pull or merge, ensuring the database stays in sync with git.
+
+# Check if bd is available
+if ! command -v bd >/dev/null 2>&1; then
+    echo "Warning: bd command not found, skipping post-merge import" >&2
+    exit 0
+fi
+
+# Check if we're in a bd workspace
+if [ ! -d .beads ]; then
+    # Not a bd workspace, nothing to do
+    exit 0
+fi
+
+# Check if issues.jsonl exists and was updated
+if [ ! -f .beads/issues.jsonl ]; then
+    exit 0
+fi
+
+# Import the updated JSONL
+# The auto-import feature should handle this, but we force it here
+# to ensure immediate sync after merge
+if ! bd import -i .beads/issues.jsonl --resolve-collisions >/dev/null 2>&1; then
+    echo "Warning: Failed to import bd changes after merge" >&2
+    echo "Run 'bd import -i .beads/issues.jsonl --resolve-collisions' manually" >&2
+    # Don't fail the merge, just warn
+fi
+
+exit 0
+`
+	
+	// Backup existing hooks if present
+	for _, hookPath := range []string{preCommitPath, postMergePath} {
+		if _, err := os.Stat(hookPath); err == nil {
+			// Read existing hook to check if it's already a bd hook
+			content, err := os.ReadFile(hookPath)
+			if err == nil && strings.Contains(string(content), "bd (beads)") {
+				// Already a bd hook, skip backup
+				continue
+			}
+			
+			// Backup non-bd hook
+			backup := hookPath + ".backup"
+			if err := os.Rename(hookPath, backup); err != nil {
+				return fmt.Errorf("failed to backup existing hook: %w", err)
+			}
+		}
+	}
+	
+	// Write pre-commit hook
+	if err := os.WriteFile(preCommitPath, []byte(preCommitContent), 0755); err != nil {
+		return fmt.Errorf("failed to write pre-commit hook: %w", err)
+	}
+	
+	// Write post-merge hook
+	if err := os.WriteFile(postMergePath, []byte(postMergeContent), 0755); err != nil {
+		return fmt.Errorf("failed to write post-merge hook: %w", err)
+	}
+	
+	return nil
 }
