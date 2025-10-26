@@ -46,6 +46,8 @@ type (
 	IssueFilter = types.IssueFilter
 	// WorkFilter represents filtering criteria for work queries.
 	WorkFilter = types.WorkFilter
+	// SortPolicy determines how ready work is ordered.
+	SortPolicy = types.SortPolicy
 	// EpicStatus represents the status of an epic issue.
 	EpicStatus = types.EpicStatus
 )
@@ -73,6 +75,13 @@ const (
 	DepRelated        = types.DepRelated
 	DepParentChild    = types.DepParentChild
 	DepDiscoveredFrom = types.DepDiscoveredFrom
+)
+
+// SortPolicy constants
+const (
+	SortPolicyHybrid   = types.SortPolicyHybrid
+	SortPolicyPriority = types.SortPolicyPriority
+	SortPolicyOldest   = types.SortPolicyOldest
 )
 
 // EventType constants
