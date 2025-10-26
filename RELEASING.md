@@ -156,14 +156,14 @@ git pull
 git add Formula/bd.rb
 git commit -m "Update bd formula to v0.9.X"
 git push origin main
-```
 
-**IMPORTANT**: Install/upgrade locally to verify:
-```bash
+# CRITICAL: Verify the installation works
 brew update
 brew upgrade bd  # Or: brew reinstall bd
-bd version  # Should now show v0.9.X
+bd version  # MUST show v0.9.X - if not, the release is incomplete!
 ```
+
+**⚠️ DO NOT SKIP THE VERIFICATION STEP ABOVE** - This ensures users can actually install the new version.
 
 **Note**: Until this step is complete, users with Homebrew-installed bd will still have the old version.
 
