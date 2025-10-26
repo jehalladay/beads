@@ -200,8 +200,31 @@ class BdDaemonClient(BdClientBase):
 
         Raises:
             DaemonNotRunningError: If daemon is not running
+            DaemonConnectionError: If connection fails
+            DaemonError: If request fails
         """
         data = await self._send_request("ping", {})
+        return json.loads(data) if isinstance(data, str) else data
+
+    async def health(self) -> Dict[str, Any]:
+        """Get daemon health status.
+
+        Returns:
+            Dict with health info including:
+            - status: "healthy" | "degraded" | "unhealthy"
+            - version: daemon version string
+            - uptime: uptime in seconds
+            - cache_size: number of cached databases
+            - db_response_time_ms: database ping time
+            - active_connections: number of active connections
+            - memory_bytes: memory usage
+
+        Raises:
+            DaemonNotRunningError: If daemon is not running
+            DaemonConnectionError: If connection fails
+            DaemonError: If request fails
+        """
+        data = await self._send_request("health", {})
         return json.loads(data) if isinstance(data, str) else data
 
     async def init(self, params: Optional[InitParams] = None) -> str:

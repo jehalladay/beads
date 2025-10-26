@@ -110,12 +110,76 @@ def _canonicalize_path(path: str) -> str:
     return _resolve_workspace_root(real)
 
 
+async def _health_check_client(client: BdClientBase) -> bool:
+    """Check if a client is healthy and responsive.
+    
+    Args:
+        client: Client to health check
+        
+    Returns:
+        True if client is healthy, False otherwise
+    """
+    # Only health check daemon clients
+    if not hasattr(client, 'ping'):
+        return True
+    
+    try:
+        await client.ping()
+        return True
+    except Exception:
+        # Any exception means the client is stale/unhealthy
+        return False
+
+
+async def _reconnect_client(canonical: str, max_retries: int = 3) -> BdClientBase:
+    """Attempt to reconnect to daemon with exponential backoff.
+    
+    Args:
+        canonical: Canonical workspace path
+        max_retries: Maximum number of retry attempts (default: 3)
+        
+    Returns:
+        New client instance
+        
+    Raises:
+        BdError: If all reconnection attempts fail
+    """
+    use_daemon = os.environ.get("BEADS_USE_DAEMON", "1") == "1"
+    
+    for attempt in range(max_retries):
+        try:
+            client = create_bd_client(
+                prefer_daemon=use_daemon,
+                working_dir=canonical
+            )
+            
+            # Verify new client works
+            if await _health_check_client(client):
+                _register_client_for_cleanup(client)
+                return client
+                
+        except Exception:
+            if attempt < max_retries - 1:
+                # Exponential backoff: 0.1s, 0.2s, 0.4s
+                backoff = 0.1 * (2 ** attempt)
+                await asyncio.sleep(backoff)
+            continue
+    
+    raise BdError(
+        f"Failed to connect to daemon after {max_retries} attempts. "
+        "The daemon may be stopped or unresponsive."
+    )
+
+
 async def _get_client() -> BdClientBase:
     """Get a BdClient instance for the current workspace.
     
     Uses connection pool to manage per-project daemon sockets.
     Workspace is determined by current_workspace ContextVar or BEADS_WORKING_DIR env.
 
+    Performs health check before returning cached client.
+    On failure, drops from pool and attempts reconnection with exponential backoff.
+    
     Performs version check on first connection to each workspace.
     Uses daemon client if available, falls back to CLI client.
 
@@ -137,7 +201,19 @@ async def _get_client() -> BdClientBase:
     
     # Thread-safe connection pool access
     async with _pool_lock:
-        if canonical not in _connection_pool:
+        if canonical in _connection_pool:
+            # Health check cached client before returning
+            client = _connection_pool[canonical]
+            if not await _health_check_client(client):
+                # Stale connection - remove from pool and reconnect
+                del _connection_pool[canonical]
+                if canonical in _version_checked:
+                    _version_checked.remove(canonical)
+                
+                # Attempt reconnection with backoff
+                client = await _reconnect_client(canonical)
+                _connection_pool[canonical] = client
+        else:
             # Create new client for this workspace
             use_daemon = os.environ.get("BEADS_USE_DAEMON", "1") == "1"
             
@@ -151,8 +227,6 @@ async def _get_client() -> BdClientBase:
             
             # Add to pool
             _connection_pool[canonical] = client
-            
-        client = _connection_pool[canonical]
     
     # Check version once per workspace (only for CLI client)
     if canonical not in _version_checked:
