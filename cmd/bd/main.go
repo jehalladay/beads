@@ -2402,6 +2402,14 @@ func init() {
 }
 
 func main() {
+	// Handle --version flag (in addition to 'version' subcommand)
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-v" {
+			fmt.Printf("bd version %s (%s)\n", Version, Build)
+			return
+		}
+	}
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
