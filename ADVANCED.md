@@ -337,6 +337,7 @@ Understanding the role of each component:
 - **Process isolation** - Each project gets its own daemon for database safety
 - **LSP model** - Similar to language servers, one daemon per workspace
 - **No global daemon** - Removed in v0.16.0 to prevent cross-project pollution
+- **Exclusive lock support** - External tools can prevent daemon interference (see [EXCLUSIVE_LOCK.md](EXCLUSIVE_LOCK.md))
 
 ### MCP Server (Optional)
 - **Protocol adapter** - Translates MCP calls to daemon RPC or direct CLI

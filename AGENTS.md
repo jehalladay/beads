@@ -474,6 +474,35 @@ We're working toward 1.0. Key blockers tracked in bd. Run:
 bd dep tree bd-8  # Show 1.0 epic dependencies
 ```
 
+## Exclusive Lock Protocol (Advanced)
+
+**For external tools that need full database control** (e.g., CI/CD, deterministic execution systems):
+
+The bd daemon respects exclusive locks via `.beads/.exclusive-lock` file. When this lock exists:
+- Daemon skips all operations for the locked database
+- External tool has complete control over git sync and database operations
+- Stale locks (dead process) are automatically cleaned up
+
+**Use case:** Tools like VibeCoder that need deterministic execution without daemon interference.
+
+See [EXCLUSIVE_LOCK.md](EXCLUSIVE_LOCK.md) for:
+- Lock file format (JSON schema)
+- Creating and releasing locks (Go/shell examples)
+- Stale lock detection behavior
+- Integration testing guidance
+
+**Quick example:**
+```bash
+# Create lock
+echo '{"holder":"my-tool","pid":'$$',"hostname":"'$(hostname)'","started_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","version":"1.0.0"}' > .beads/.exclusive-lock
+
+# Do work...
+bd create "My issue" -p 1
+
+# Release lock
+rm .beads/.exclusive-lock
+```
+
 ## Common Tasks
 
 ### Adding a New Command

@@ -927,6 +927,21 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 			return
 		}
 
+		// Check for exclusive lock before processing database
+		beadsDir := filepath.Dir(jsonlPath)
+		skip, holder, err := types.ShouldSkipDatabase(beadsDir)
+		if skip {
+			if err != nil {
+				log.log("Skipping database (lock check failed: %v)", err)
+			} else {
+				log.log("Skipping database (locked by %s)", holder)
+			}
+			return
+		}
+		if holder != "" {
+			log.log("Removed stale lock (%s), proceeding with sync", holder)
+		}
+
 		if err := exportToJSONLWithStore(syncCtx, store, jsonlPath); err != nil {
 			log.log("Export failed: %v", err)
 			return
