@@ -438,7 +438,7 @@ func writeJSONL(path string, issues []*types.Issue) error {
 // normalizeGitPath converts a path to use forward slashes for git compatibility
 // Git always uses forward slashes internally, even on Windows
 func normalizeGitPath(path string) string {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsOS {
 		return filepath.ToSlash(path)
 	}
 	return path

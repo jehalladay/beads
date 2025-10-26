@@ -221,7 +221,7 @@ func TestCounterSyncAfterDeleteAll(t *testing.T) {
 	if err := store.CreateIssue(ctx, newIssue, "test"); err != nil {
 		t.Fatalf("Failed to create new issue: %v", err)
 	}
-	if newIssue.ID != "bd-1" {
+	if newIssue.ID != testIssueBD1 {
 		t.Errorf("Expected new issue to be bd-1, got %s", newIssue.ID)
 	}
 }

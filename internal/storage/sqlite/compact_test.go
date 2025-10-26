@@ -17,7 +17,7 @@ func TestGetTier1Candidates(t *testing.T) {
 	// Create test issues
 	// Old closed issue (eligible)
 	issue1 := &types.Issue{
-		ID:          "bd-1",
+		ID:          testIssueBD1,
 		Title:       "Old closed issue",
 		Description: "This is a test description",
 		Status:      "closed",
@@ -91,7 +91,7 @@ func TestGetTier1Candidates(t *testing.T) {
 		t.Errorf("Expected 1 candidate, got %d", len(candidates))
 	}
 
-	if len(candidates) > 0 && candidates[0].IssueID != "bd-1" {
+	if len(candidates) > 0 && candidates[0].IssueID != testIssueBD1 {
 		t.Errorf("Expected candidate bd-1, got %s", candidates[0].IssueID)
 	}
 }
@@ -145,7 +145,7 @@ func TestGetTier2Candidates(t *testing.T) {
 		t.Errorf("Expected 1 candidate, got %d", len(candidates))
 	}
 
-	if len(candidates) > 0 && candidates[0].IssueID != "bd-1" {
+	if len(candidates) > 0 && candidates[0].IssueID != testIssueBD1 {
 		t.Errorf("Expected candidate bd-1, got %s", candidates[0].IssueID)
 	}
 }
