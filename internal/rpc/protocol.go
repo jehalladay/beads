@@ -104,9 +104,10 @@ type ShowArgs struct {
 
 // ReadyArgs represents arguments for the ready operation
 type ReadyArgs struct {
-	Assignee string `json:"assignee,omitempty"`
-	Priority *int   `json:"priority,omitempty"`
-	Limit    int    `json:"limit,omitempty"`
+	Assignee   string `json:"assignee,omitempty"`
+	Priority   *int   `json:"priority,omitempty"`
+	Limit      int    `json:"limit,omitempty"`
+	SortPolicy string `json:"sort_policy,omitempty"`
 }
 
 // DepAddArgs represents arguments for adding a dependency

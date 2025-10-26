@@ -1177,9 +1177,10 @@ func (s *Server) handleReady(req *Request) Response {
 	}
 
 	wf := types.WorkFilter{
-		Status:   types.StatusOpen,
-		Priority: readyArgs.Priority,
-		Limit:    readyArgs.Limit,
+		Status:     types.StatusOpen,
+		Priority:   readyArgs.Priority,
+		Limit:      readyArgs.Limit,
+		SortPolicy: types.SortPolicy(readyArgs.SortPolicy),
 	}
 	if readyArgs.Assignee != "" {
 		wf.Assignee = &readyArgs.Assignee

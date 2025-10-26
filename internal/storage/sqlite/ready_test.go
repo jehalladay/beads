@@ -916,3 +916,181 @@ func TestExplainQueryPlanReadyWork(t *testing.T) {
 		t.Error("Query plan contains table scans - indexes may not be used efficiently")
 	}
 }
+
+// TestSortPolicyPriority tests strict priority-first sorting
+func TestSortPolicyPriority(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create issues with mixed ages and priorities
+	// Old issues (72 hours ago)
+	issueP0Old := &types.Issue{Title: "old-P0", Status: types.StatusOpen, Priority: 0, IssueType: types.TypeTask}
+	issueP2Old := &types.Issue{Title: "old-P2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	issueP1Old := &types.Issue{Title: "old-P1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	// Recent issues (12 hours ago)
+	issueP3New := &types.Issue{Title: "new-P3", Status: types.StatusOpen, Priority: 3, IssueType: types.TypeTask}
+	issueP1New := &types.Issue{Title: "new-P1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	// Create old issues first (to have older created_at)
+	store.CreateIssue(ctx, issueP0Old, "test-user")
+	store.CreateIssue(ctx, issueP2Old, "test-user")
+	store.CreateIssue(ctx, issueP1Old, "test-user")
+
+	// Create new issues
+	store.CreateIssue(ctx, issueP3New, "test-user")
+	store.CreateIssue(ctx, issueP1New, "test-user")
+
+	// Use priority sort policy
+	ready, err := store.GetReadyWork(ctx, types.WorkFilter{
+		Status:     types.StatusOpen,
+		SortPolicy: types.SortPolicyPriority,
+	})
+	if err != nil {
+		t.Fatalf("GetReadyWork failed: %v", err)
+	}
+
+	if len(ready) != 5 {
+		t.Fatalf("Expected 5 ready issues, got %d", len(ready))
+	}
+
+	// Verify strict priority ordering: P0, P1, P1, P2, P3
+	// Within same priority, older created_at comes first
+	expectedOrder := []struct {
+		title    string
+		priority int
+	}{
+		{"old-P0", 0},
+		{"old-P1", 1},
+		{"new-P1", 1},
+		{"old-P2", 2},
+		{"new-P3", 3},
+	}
+
+	for i, expected := range expectedOrder {
+		if ready[i].Title != expected.title {
+			t.Errorf("Position %d: expected %s, got %s", i, expected.title, ready[i].Title)
+		}
+		if ready[i].Priority != expected.priority {
+			t.Errorf("Position %d: expected P%d, got P%d", i, expected.priority, ready[i].Priority)
+		}
+	}
+}
+
+// TestSortPolicyOldest tests oldest-first sorting (ignoring priority)
+func TestSortPolicyOldest(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create issues in order: P2, P0, P1 (mixed priority, chronological creation)
+	issueP2 := &types.Issue{Title: "first-P2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	issueP0 := &types.Issue{Title: "second-P0", Status: types.StatusOpen, Priority: 0, IssueType: types.TypeTask}
+	issueP1 := &types.Issue{Title: "third-P1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, issueP2, "test-user")
+	store.CreateIssue(ctx, issueP0, "test-user")
+	store.CreateIssue(ctx, issueP1, "test-user")
+
+	// Use oldest sort policy
+	ready, err := store.GetReadyWork(ctx, types.WorkFilter{
+		Status:     types.StatusOpen,
+		SortPolicy: types.SortPolicyOldest,
+	})
+	if err != nil {
+		t.Fatalf("GetReadyWork failed: %v", err)
+	}
+
+	if len(ready) != 3 {
+		t.Fatalf("Expected 3 ready issues, got %d", len(ready))
+	}
+
+	// Should be sorted by creation time only (oldest first)
+	expectedTitles := []string{"first-P2", "second-P0", "third-P1"}
+	for i, expected := range expectedTitles {
+		if ready[i].Title != expected {
+			t.Errorf("Position %d: expected %s, got %s", i, expected, ready[i].Title)
+		}
+	}
+}
+
+// TestSortPolicyHybrid tests hybrid sort (default behavior)
+func TestSortPolicyHybrid(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create issues with different priorities
+	// All created recently (within 48 hours in test), so should sort by priority
+	issueP0 := &types.Issue{Title: "issue-P0", Status: types.StatusOpen, Priority: 0, IssueType: types.TypeTask}
+	issueP2 := &types.Issue{Title: "issue-P2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	issueP1 := &types.Issue{Title: "issue-P1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issueP3 := &types.Issue{Title: "issue-P3", Status: types.StatusOpen, Priority: 3, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, issueP2, "test-user")
+	store.CreateIssue(ctx, issueP0, "test-user")
+	store.CreateIssue(ctx, issueP3, "test-user")
+	store.CreateIssue(ctx, issueP1, "test-user")
+
+	// Use hybrid sort policy (explicit)
+	ready, err := store.GetReadyWork(ctx, types.WorkFilter{
+		Status:     types.StatusOpen,
+		SortPolicy: types.SortPolicyHybrid,
+	})
+	if err != nil {
+		t.Fatalf("GetReadyWork failed: %v", err)
+	}
+
+	if len(ready) != 4 {
+		t.Fatalf("Expected 4 ready issues, got %d", len(ready))
+	}
+
+	// Since all issues are created recently (< 48 hours in test context),
+	// hybrid sort should order by priority: P0, P1, P2, P3
+	expectedPriorities := []int{0, 1, 2, 3}
+	for i, expected := range expectedPriorities {
+		if ready[i].Priority != expected {
+			t.Errorf("Position %d: expected P%d, got P%d", i, expected, ready[i].Priority)
+		}
+	}
+}
+
+// TestSortPolicyDefault tests that empty sort policy defaults to hybrid
+func TestSortPolicyDefault(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test issues with different priorities
+	issueP1 := &types.Issue{Title: "issue-P1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issueP2 := &types.Issue{Title: "issue-P2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, issueP2, "test-user")
+	store.CreateIssue(ctx, issueP1, "test-user")
+
+	// Use default (empty) sort policy
+	ready, err := store.GetReadyWork(ctx, types.WorkFilter{
+		Status: types.StatusOpen,
+		// SortPolicy not specified - should default to hybrid
+	})
+	if err != nil {
+		t.Fatalf("GetReadyWork failed: %v", err)
+	}
+
+	if len(ready) != 2 {
+		t.Fatalf("Expected 2 ready issues, got %d", len(ready))
+	}
+
+	// Should behave like hybrid: since both are recent, sort by priority (P1 first)
+	if ready[0].Priority != 1 {
+		t.Errorf("Expected P1 first (hybrid default, recent by priority), got P%d", ready[0].Priority)
+	}
+	if ready[1].Priority != 2 {
+		t.Errorf("Expected P2 second, got P%d", ready[1].Priority)
+	}
+}

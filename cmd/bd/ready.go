@@ -19,10 +19,12 @@ var readyCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		limit, _ := cmd.Flags().GetInt("limit")
 		assignee, _ := cmd.Flags().GetString("assignee")
+		sortPolicy, _ := cmd.Flags().GetString("sort")
 
 		filter := types.WorkFilter{
 			// Leave Status empty to get both 'open' and 'in_progress' (bd-165)
-			Limit: limit,
+			Limit:      limit,
+			SortPolicy: types.SortPolicy(sortPolicy),
 		}
 		// Use Changed() to properly handle P0 (priority=0)
 		if cmd.Flags().Changed("priority") {
@@ -33,11 +35,18 @@ var readyCmd = &cobra.Command{
 			filter.Assignee = &assignee
 		}
 
+		// Validate sort policy
+		if !filter.SortPolicy.IsValid() {
+			fmt.Fprintf(os.Stderr, "Error: invalid sort policy '%s'. Valid values: hybrid, priority, oldest\n", sortPolicy)
+			os.Exit(1)
+		}
+
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			readyArgs := &rpc.ReadyArgs{
-				Assignee: assignee,
-				Limit:    limit,
+				Assignee:   assignee,
+				Limit:      limit,
+				SortPolicy: sortPolicy,
 			}
 			if cmd.Flags().Changed("priority") {
 				priority, _ := cmd.Flags().GetInt("priority")
@@ -283,6 +292,7 @@ func init() {
 	readyCmd.Flags().IntP("limit", "n", 10, "Maximum issues to show")
 	readyCmd.Flags().IntP("priority", "p", 0, "Filter by priority")
 	readyCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
+	readyCmd.Flags().StringP("sort", "s", "hybrid", "Sort policy: hybrid (default), priority, oldest")
 
 	rootCmd.AddCommand(readyCmd)
 	rootCmd.AddCommand(blockedCmd)

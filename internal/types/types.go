@@ -216,12 +216,41 @@ type IssueFilter struct {
 	Limit       int
 }
 
+// SortPolicy determines how ready work is ordered
+type SortPolicy string
+
+// Sort policy constants
+const (
+	// SortPolicyHybrid prioritizes recent issues by priority, older by age
+	// Recent = created within 48 hours
+	// This is the default for backwards compatibility
+	SortPolicyHybrid SortPolicy = "hybrid"
+
+	// SortPolicyPriority always sorts by priority first, then creation date
+	// Use for autonomous execution, CI/CD, priority-driven workflows
+	SortPolicyPriority SortPolicy = "priority"
+
+	// SortPolicyOldest always sorts by creation date (oldest first)
+	// Use for backlog clearing, preventing issue starvation
+	SortPolicyOldest SortPolicy = "oldest"
+)
+
+// IsValid checks if the sort policy value is valid
+func (s SortPolicy) IsValid() bool {
+	switch s {
+	case SortPolicyHybrid, SortPolicyPriority, SortPolicyOldest, "":
+		return true
+	}
+	return false
+}
+
 // WorkFilter is used to filter ready work queries
 type WorkFilter struct {
-	Status   Status
-	Priority *int
-	Assignee *string
-	Limit    int
+	Status     Status
+	Priority   *int
+	Assignee   *string
+	Limit      int
+	SortPolicy SortPolicy
 }
 
 // EpicStatus represents an epic with its completion status

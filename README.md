@@ -237,6 +237,11 @@ bd ready --limit 20
 bd ready --priority 1
 bd ready --assignee alice
 
+# Sort policies (hybrid is default)
+bd ready --sort priority    # Strict priority order (P0, P1, P2, P3)
+bd ready --sort oldest      # Oldest issues first (backlog clearing)
+bd ready --sort hybrid      # Recent by priority, old by age (default)
+
 # Show blocked issues
 bd blocked
 
