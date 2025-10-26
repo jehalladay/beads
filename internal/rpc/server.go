@@ -26,8 +26,8 @@ import (
 
 // ServerVersion is the version of this RPC server
 // This should match the bd CLI version for proper compatibility checks
-// It's set as a var so it can be initialized from main
-var ServerVersion = "0.9.10"
+// It's set dynamically by daemon.go from cmd/bd/version.go before starting the server
+var ServerVersion = "0.0.0" // Placeholder; overridden by daemon startup
 
 const (
 	statusUnhealthy = "unhealthy"

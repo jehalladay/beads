@@ -858,6 +858,9 @@ func setupDaemonLock(pidFile string, global bool, log daemonLogger) (io.Closer, 
 }
 
 func startRPCServer(ctx context.Context, socketPath string, store storage.Storage, log daemonLogger) (*rpc.Server, chan error, error) {
+	// Sync daemon version with CLI version
+	rpc.ServerVersion = Version
+	
 	server := rpc.NewServer(socketPath, store)
 	serverErrChan := make(chan error, 1)
 

@@ -123,6 +123,9 @@ var rootCmd = &cobra.Command{
 			noAutoImport = true
 		}
 
+		// Sync RPC client version with CLI version
+		rpc.ClientVersion = Version
+
 		// Set auto-flush based on flag (invert no-auto-flush)
 		autoFlushEnabled = !noAutoFlush
 

@@ -11,7 +11,8 @@ import (
 
 // ClientVersion is the version of this RPC client
 // This should match the bd CLI version for proper compatibility checks
-var ClientVersion = "0.9.10"
+// It's set dynamically by main.go from cmd/bd/version.go before making RPC calls
+var ClientVersion = "0.0.0" // Placeholder; overridden at startup
 
 // Client represents an RPC client that connects to the daemon
 type Client struct {
