@@ -1069,6 +1069,27 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 		}
 	}
 
+	// Check for multiple .db files (ambiguity error)
+	beadsDir := filepath.Dir(daemonDBPath)
+	matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
+	if err == nil && len(matches) > 1 {
+		// Filter out backup files
+		var validDBs []string
+		for _, match := range matches {
+			if filepath.Ext(filepath.Base(match)) != ".backup" {
+				validDBs = append(validDBs, match)
+			}
+		}
+		if len(validDBs) > 1 {
+			log.log("Error: Multiple database files found in %s:", beadsDir)
+			for _, db := range validDBs {
+				log.log("  - %s", filepath.Base(db))
+			}
+			log.log("Run 'bd init' to migrate to beads.db or manually remove old databases")
+			os.Exit(1)
+		}
+	}
+
 	log.log("Using database: %s", daemonDBPath)
 
 	store, err := sqlite.New(daemonDBPath)
@@ -1079,8 +1100,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 	defer func() { _ = store.Close() }()
 	log.log("Database opened: %s", daemonDBPath)
 
-	// Get workspace path (.beads directory)
-	beadsDir := filepath.Dir(daemonDBPath)
+	// Get workspace path (.beads directory) - beadsDir already defined above
 	// Get actual workspace root (parent of .beads)
 	workspacePath := filepath.Dir(beadsDir)
 	socketPath := filepath.Join(beadsDir, "bd.sock")

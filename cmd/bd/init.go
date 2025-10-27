@@ -44,13 +44,19 @@ and database file. Optionally specify a custom issue prefix.`,
 		prefix = strings.TrimRight(prefix, "-")
 
 		// Create database
-		// Use global dbPath if set via --db flag or BEADS_DB env var, otherwise default to .beads/{prefix}.db
+		// Use global dbPath if set via --db flag or BEADS_DB env var, otherwise default to .beads/beads.db
 		initDBPath := dbPath
 		if initDBPath == "" {
-		 initDBPath = filepath.Join(".beads", prefix+".db")
+		initDBPath = filepath.Join(".beads", "beads.db")
 		}
-		
-		// Determine if we should create .beads/ directory in CWD
+
+		// Migrate old database files if they exist
+	if err := migrateOldDatabases(initDBPath, quiet); err != nil {
+		fmt.Fprintf(os.Stderr, "Error during database migration: %v\n", err)
+		os.Exit(1)
+	}
+	
+	// Determine if we should create .beads/ directory in CWD
 		// Only create it if the database will be stored there
 	cwd, err := os.Getwd()
 		if err != nil {
@@ -351,6 +357,66 @@ exit 0
 	// Write post-merge hook
 	if err := os.WriteFile(postMergePath, []byte(postMergeContent), 0755); err != nil {
 		return fmt.Errorf("failed to write post-merge hook: %w", err)
+	}
+	
+	return nil
+}
+
+// migrateOldDatabases detects and migrates old database files to beads.db
+func migrateOldDatabases(targetPath string, quiet bool) error {
+	targetDir := filepath.Dir(targetPath)
+	targetName := filepath.Base(targetPath)
+	
+	// If target already exists, no migration needed
+	if _, err := os.Stat(targetPath); err == nil {
+		return nil
+	}
+	
+	// Create .beads directory if it doesn't exist
+	if err := os.MkdirAll(targetDir, 0750); err != nil {
+		return fmt.Errorf("failed to create .beads directory: %w", err)
+	}
+	
+	// Look for existing .db files in the .beads directory
+	pattern := filepath.Join(targetDir, "*.db")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return fmt.Errorf("failed to search for existing databases: %w", err)
+	}
+	
+	// Filter out the target file name and any backup files
+	var oldDBs []string
+	for _, match := range matches {
+		baseName := filepath.Base(match)
+		if baseName != targetName && !strings.HasSuffix(baseName, ".backup.db") {
+			oldDBs = append(oldDBs, match)
+		}
+	}
+	
+	if len(oldDBs) == 0 {
+		// No old databases to migrate
+		return nil
+	}
+	
+	if len(oldDBs) > 1 {
+		// Multiple databases found - ambiguous, require manual intervention
+		return fmt.Errorf("multiple database files found in %s: %v\nPlease manually rename the correct database to %s and remove others",
+			targetDir, oldDBs, targetName)
+	}
+	
+	// Migrate the single old database
+	oldDB := oldDBs[0]
+	if !quiet {
+		fmt.Fprintf(os.Stderr, "→ Migrating database: %s → %s\n", filepath.Base(oldDB), targetName)
+	}
+	
+	// Rename the old database to the new canonical name
+	if err := os.Rename(oldDB, targetPath); err != nil {
+		return fmt.Errorf("failed to migrate database %s to %s: %w", oldDB, targetPath, err)
+	}
+	
+	if !quiet {
+		fmt.Fprintf(os.Stderr, "✓ Database migration complete\n\n")
 	}
 	
 	return nil

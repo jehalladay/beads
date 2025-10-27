@@ -143,19 +143,10 @@ func TestInitCommand(t *testing.T) {
 				}
 			}
 
-			// Verify database was created
-			var dbPath string
-			if tt.prefix != "" {
-				expectedPrefix := strings.TrimRight(tt.prefix, "-")
-				dbPath = filepath.Join(beadsDir, expectedPrefix+".db")
-			} else {
-				// Should use directory name as prefix
-				dirName := filepath.Base(tmpDir)
-				dbPath = filepath.Join(beadsDir, dirName+".db")
-			}
-
+			// Verify database was created (always beads.db now)
+			dbPath := filepath.Join(beadsDir, "beads.db")
 			if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-				t.Errorf("Database file was not created at %s", dbPath)
+			t.Errorf("Database file was not created at %s", dbPath)
 			}
 
 			// Verify database has correct prefix
@@ -228,8 +219,8 @@ func TestInitAlreadyInitialized(t *testing.T) {
 		t.Fatalf("Second init failed: %v", err)
 	}
 
-	// Verify database still works
-	dbPath := filepath.Join(tmpDir, ".beads", "test.db")
+	// Verify database still works (always beads.db now)
+	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 	store, err := sqlite.New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open database after re-init: %v", err)

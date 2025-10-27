@@ -9,6 +9,7 @@ package beads
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -162,6 +163,7 @@ type DatabaseInfo struct {
 }
 
 // findDatabaseInTree walks up the directory tree looking for .beads/*.db
+// Prefers beads.db and returns an error (via stderr warning) if multiple .db files exist
 func findDatabaseInTree() string {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -172,11 +174,38 @@ func findDatabaseInTree() string {
 	for {
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
+			// Check for canonical beads.db first
+			canonicalDB := filepath.Join(beadsDir, "beads.db")
+			if _, err := os.Stat(canonicalDB); err == nil {
+				return canonicalDB
+			}
+
 			// Found .beads/ directory, look for *.db files
 			matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
 			if err == nil && len(matches) > 0 {
-				// Return first .db file found
-				return matches[0]
+				// Filter out backup files
+				var validDBs []string
+				for _, match := range matches {
+					baseName := filepath.Base(match)
+					// Skip backup files (e.g., beads.db.backup, bd.db.backup)
+					if filepath.Ext(baseName) != ".backup" {
+						validDBs = append(validDBs, match)
+					}
+				}
+
+				if len(validDBs) > 1 {
+					// Multiple databases found - this is ambiguous
+					// Print error to stderr but return the first one for backward compatibility
+					fmt.Fprintf(os.Stderr, "Warning: Multiple database files found in %s:\n", beadsDir)
+					for _, db := range validDBs {
+						fmt.Fprintf(os.Stderr, "  - %s\n", filepath.Base(db))
+					}
+					fmt.Fprintf(os.Stderr, "Run 'bd init' to migrate to beads.db or manually remove old databases.\n\n")
+				}
+
+				if len(validDBs) > 0 {
+					return validDBs[0]
+				}
 			}
 		}
 
