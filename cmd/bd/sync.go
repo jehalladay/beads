@@ -104,6 +104,23 @@ Use --import-only to just import from JSONL (useful after git pull).`,
 		if dryRun {
 			fmt.Println("→ [DRY RUN] Would export pending changes to JSONL")
 		} else {
+			// Pre-export integrity checks
+			if err := ensureStoreActive(); err == nil && store != nil {
+				if err := validatePreExport(ctx, store, jsonlPath); err != nil {
+					fmt.Fprintf(os.Stderr, "Pre-export validation failed: %v\n", err)
+					os.Exit(1)
+				}
+				if err := checkDuplicateIDs(ctx, store); err != nil {
+					fmt.Fprintf(os.Stderr, "Database corruption detected: %v\n", err)
+					os.Exit(1)
+				}
+				if orphaned, err := checkOrphanedDeps(ctx, store); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: orphaned dependency check failed: %v\n", err)
+				} else if len(orphaned) > 0 {
+					fmt.Fprintf(os.Stderr, "Warning: found %d orphaned dependencies: %v\n", len(orphaned), orphaned)
+				}
+			}
+
 			fmt.Println("→ Exporting pending changes to JSONL...")
 			if err := exportToJSONL(ctx, jsonlPath); err != nil {
 				fmt.Fprintf(os.Stderr, "Error exporting: %v\n", err)
@@ -144,11 +161,35 @@ Use --import-only to just import from JSONL (useful after git pull).`,
 					os.Exit(1)
 				}
 
+				// Count issues before import for validation
+				var beforeCount int
+				if err := ensureStoreActive(); err == nil && store != nil {
+					beforeCount, err = countDBIssues(ctx, store)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to count issues before import: %v\n", err)
+					}
+				}
+
 				// Step 4: Import updated JSONL after pull
 				fmt.Println("→ Importing updated JSONL...")
 				if err := importFromJSONL(ctx, jsonlPath, renameOnImport); err != nil {
 					fmt.Fprintf(os.Stderr, "Error importing: %v\n", err)
 					os.Exit(1)
+				}
+
+				// Validate import didn't cause data loss
+				if beforeCount > 0 {
+					if err := ensureStoreActive(); err == nil && store != nil {
+						afterCount, err := countDBIssues(ctx, store)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "Warning: failed to count issues after import: %v\n", err)
+						} else {
+							if err := validatePostImport(beforeCount, afterCount); err != nil {
+								fmt.Fprintf(os.Stderr, "Post-import validation failed: %v\n", err)
+								os.Exit(1)
+							}
+						}
+					}
 				}
 			}
 		}

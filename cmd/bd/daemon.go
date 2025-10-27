@@ -988,6 +988,25 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 			log.log("Removed stale lock (%s), proceeding with sync", holder)
 		}
 
+		// Integrity check: validate before export
+		if err := validatePreExport(syncCtx, store, jsonlPath); err != nil {
+			log.log("Pre-export validation failed: %v", err)
+			return
+		}
+
+		// Check for duplicate IDs (database corruption)
+		if err := checkDuplicateIDs(syncCtx, store); err != nil {
+			log.log("Duplicate ID check failed: %v", err)
+			return
+		}
+
+		// Check for orphaned dependencies (warns but doesn't fail)
+		if orphaned, err := checkOrphanedDeps(syncCtx, store); err != nil {
+			log.log("Orphaned dependency check failed: %v", err)
+		} else if len(orphaned) > 0 {
+			log.log("Found %d orphaned dependencies: %v", len(orphaned), orphaned)
+		}
+
 		if err := exportToJSONLWithStore(syncCtx, store, jsonlPath); err != nil {
 			log.log("Export failed: %v", err)
 			return
@@ -1017,19 +1036,30 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 		}
 		log.log("Pulled from remote")
 
-		// Flush any pending dirty issues to JSONL BEFORE importing
-		// This prevents the race condition where deletions get re-imported (bd-155)
-		if err := exportToJSONLWithStore(syncCtx, store, jsonlPath); err != nil {
-		 log.log("Pre-import flush failed: %v", err)
-		 return
+		// Count issues before import for validation
+	beforeCount, err := countDBIssues(syncCtx, store)
+	if err != nil {
+		log.log("Failed to count issues before import: %v", err)
+		return
 	}
-	log.log("Flushed pending changes before import")
 
 	if err := importToJSONLWithStore(syncCtx, store, jsonlPath); err != nil {
 		log.log("Import failed: %v", err)
 		return
 	}
 	log.log("Imported from JSONL")
+
+	// Validate import didn't cause data loss
+	afterCount, err := countDBIssues(syncCtx, store)
+	if err != nil {
+		log.log("Failed to count issues after import: %v", err)
+		return
+	}
+
+	if err := validatePostImport(beforeCount, afterCount); err != nil {
+		log.log("Post-import validation failed: %v", err)
+		return
+	}
 
 		if autoPush && autoCommit {
 			if err := gitPush(syncCtx); err != nil {

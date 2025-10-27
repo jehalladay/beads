@@ -34,9 +34,8 @@ func countIssuesInJSONL(path string) (int, error) {
 			if err.Error() == "EOF" {
 				break
 			}
-			// If we hit a decode error, stop counting but return what we have
-			// This handles partially corrupt files
-			break
+			// Return error for corrupt/invalid JSON
+			return count, fmt.Errorf("invalid JSON at issue %d: %w", count+1, err)
 		}
 		count++
 	}
