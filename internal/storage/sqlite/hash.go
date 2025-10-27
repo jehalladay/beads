@@ -71,3 +71,13 @@ func (s *SQLiteStorage) SetExportHash(ctx context.Context, issueID, contentHash 
 	
 	return nil
 }
+
+// ClearAllExportHashes removes all export hashes from the database.
+// This is primarily used for test isolation to force re-export of issues.
+func (s *SQLiteStorage) ClearAllExportHashes(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM export_hashes`)
+	if err != nil {
+		return fmt.Errorf("failed to clear export hashes: %w", err)
+	}
+	return nil
+}

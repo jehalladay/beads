@@ -117,6 +117,11 @@ func TestExportCommand(t *testing.T) {
 	t.Run("export includes labels", func(t *testing.T) {
 		exportPath := filepath.Join(tmpDir, "export_labels.jsonl")
 
+		// Clear export hashes to force re-export (test isolation)
+		if err := s.ClearAllExportHashes(ctx); err != nil {
+			t.Fatalf("Failed to clear export hashes: %v", err)
+		}
+
 		store = s
 		dbPath = testDB
 		exportCmd.Flags().Set("output", exportPath)
@@ -151,6 +156,11 @@ func TestExportCommand(t *testing.T) {
 
 	t.Run("export includes dependencies", func(t *testing.T) {
 		exportPath := filepath.Join(tmpDir, "export_deps.jsonl")
+
+		// Clear export hashes to force re-export (test isolation)
+		if err := s.ClearAllExportHashes(ctx); err != nil {
+			t.Fatalf("Failed to clear export hashes: %v", err)
+		}
 
 		store = s
 		dbPath = testDB
