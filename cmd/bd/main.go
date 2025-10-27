@@ -462,12 +462,12 @@ var rootCmd = &cobra.Command{
 
 // getDebounceDuration returns the auto-flush debounce duration
 // Configurable via config file or BEADS_FLUSH_DEBOUNCE env var (e.g., "500ms", "10s")
-// Defaults to 5 seconds if not set or invalid
+// Defaults to 1 second if not set or invalid
 func getDebounceDuration() time.Duration {
 	duration := config.GetDuration("flush-debounce")
 	if duration == 0 {
 		// If parsing failed, use default
-		return 5 * time.Second
+		return 1 * time.Second
 	}
 	return duration
 }
