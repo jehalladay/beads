@@ -185,17 +185,28 @@ func FindDaemonByWorkspace(workspacePath string) (*DaemonInfo, error) {
 	return nil, fmt.Errorf("no daemon found for workspace: %s", workspacePath)
 }
 
-// CleanupStaleSockets removes socket files for dead daemons
+// CleanupStaleSockets removes socket files and PID files for dead daemons
 func CleanupStaleSockets(daemons []DaemonInfo) (int, error) {
 	cleaned := 0
 	for _, daemon := range daemons {
 		if !daemon.Alive && daemon.SocketPath != "" {
+			// Remove stale socket file
 			if err := os.Remove(daemon.SocketPath); err != nil {
 				if !os.IsNotExist(err) {
 					return cleaned, fmt.Errorf("failed to remove stale socket %s: %w", daemon.SocketPath, err)
 				}
 			} else {
 				cleaned++
+			}
+
+			// Also remove associated PID file if it exists
+			socketDir := filepath.Dir(daemon.SocketPath)
+			pidFile := filepath.Join(socketDir, "daemon.pid")
+			if err := os.Remove(pidFile); err != nil {
+				// Ignore errors for PID file - it may not exist
+				if !os.IsNotExist(err) {
+					// Log warning but don't fail
+				}
 			}
 		}
 	}

@@ -38,6 +38,17 @@ uptime, last activity, and exclusive lock status.`,
 			os.Exit(1)
 		}
 
+		// Auto-cleanup stale sockets (unless --no-cleanup flag is set)
+		noCleanup, _ := cmd.Flags().GetBool("no-cleanup")
+		if !noCleanup {
+			cleaned, err := daemon.CleanupStaleSockets(daemons)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup stale sockets: %v\n", err)
+			} else if cleaned > 0 && !jsonOutput {
+				fmt.Fprintf(os.Stderr, "Cleaned up %d stale socket(s)\n", cleaned)
+			}
+		}
+
 		// Filter to only alive daemons
 		var aliveDaemons []daemon.DaemonInfo
 		for _, d := range daemons {
@@ -122,4 +133,5 @@ func init() {
 	// Flags for list command
 	daemonsListCmd.Flags().StringSlice("search", nil, "Directories to search for daemons (default: home, /tmp, cwd)")
 	daemonsListCmd.Flags().Bool("json", false, "Output in JSON format")
+	daemonsListCmd.Flags().Bool("no-cleanup", false, "Skip auto-cleanup of stale sockets")
 }
