@@ -207,7 +207,7 @@ bd merge bd-42 bd-43 --into bd-41 --dry-run            # Preview merge
    - Old way (two commands): `bd create "Found bug in auth" -t bug -p 1 --json` then `bd dep add <new-id> <current-id> --type discovered-from`
    - New way (one command): `bd create "Found bug in auth" -t bug -p 1 --deps discovered-from:<current-id> --json`
 5. **Complete**: `bd close <id> --reason "Implemented"`
-6. **Export**: Changes auto-sync to `.beads/issues.jsonl` (5-second debounce)
+6. **Sync at end of session**: `bd sync` (see "Agent Session Workflow" below)
 
 ### Issue Types
 
@@ -344,27 +344,48 @@ beads/
 
 ### Git Workflow
 
-**Auto-sync is now automatic!** bd automatically:
-- **Exports** to JSONL after any CRUD operation (5-second debounce)
+**Auto-sync provides batching!** bd automatically:
+- **Exports** to JSONL after CRUD operations (30-second debounce for batching)
 - **Imports** from JSONL when it's newer than DB (e.g., after `git pull`)
+- **Daemon commits/pushes** every 5 seconds (if `--auto-commit` / `--auto-push` enabled)
+
+The 30-second debounce provides a **transaction window** for batch operations - multiple issue changes within 30 seconds get flushed together, avoiding commit spam.
+
+### Agent Session Workflow
+
+**IMPORTANT for AI agents:** When you finish making issue changes, always run:
 
 ```bash
-# Make changes and create/update issues
-bd create "Fix bug" -p 1
-bd update bd-42 --status in_progress
-
-# JSONL is automatically updated after 5 seconds
-
-# Commit (JSONL is already up-to-date)
-git add .
-git commit -m "Your message"
-
-# After pull - JSONL is automatically imported
-git pull  # bd commands will auto-import the updated JSONL
-bd ready  # Fresh data from git!
+bd sync
 ```
 
-**Recommended**: Install git hooks to eliminate the race condition between auto-flush and commits:
+This immediately:
+1. Exports pending changes to JSONL (no 30s wait)
+2. Commits to git
+3. Pulls from remote
+4. Imports any updates
+5. Pushes to remote
+
+**Example agent session:**
+```bash
+# Make multiple changes (batched in 30-second window)
+bd create "Fix bug" -p 1
+bd create "Add tests" -p 1
+bd update bd-42 --status in_progress
+bd close bd-40 --reason "Completed"
+
+# Force immediate sync at end of session
+bd sync
+
+# Now safe to end session - everything is committed and pushed
+```
+
+**Why this matters:**
+- Without `bd sync`, changes sit in 30-second debounce window
+- User might think you pushed but JSONL is still dirty
+- `bd sync` forces immediate flush/commit/push
+
+**Alternative**: Install git hooks for automatic flush on commit:
 
 ```bash
 # One-time setup
@@ -372,14 +393,8 @@ bd ready  # Fresh data from git!
 ```
 
 This installs:
-- **pre-commit** - Flushes pending changes immediately before commit (eliminates 5-second wait)
+- **pre-commit** - Flushes pending changes immediately before commit (bypasses 30s debounce)
 - **post-merge** - Imports updated JSONL after pull/merge (guaranteed sync)
-
-Benefits:
-- ✅ No more dirty working tree after commits
-- ✅ Immediate flush (no 5-second debounce wait)
-- ✅ Automatic collision resolution on merge
-- ✅ Works alongside auto-sync
 
 See [examples/git-hooks/README.md](examples/git-hooks/README.md) for details.
 
