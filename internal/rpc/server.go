@@ -18,6 +18,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/autoimport"
 	"github.com/steveyegge/beads/internal/compact"
+	"github.com/steveyegge/beads/internal/importer"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -2126,7 +2127,7 @@ func (s *Server) SetLastImportTime(t time.Time) {
 }
 
 // checkAndAutoImportIfStale checks if JSONL is newer than last import and triggers auto-import
-// This fixes bd-158: daemon shows stale data after git pull
+// This fixes bd-132: daemon shows stale data after git pull
 func (s *Server) checkAndAutoImportIfStale(req *Request) error {
 	// Get storage for this request
 	store, err := s.getStorageForRequest(req)
@@ -2143,8 +2144,25 @@ func (s *Server) checkAndAutoImportIfStale(req *Request) error {
 	}
 	dbPath := sqliteStore.Path()
 	
-	// Check if JSONL is stale
+	// Fast path: Check if JSONL is stale using cheap mtime check
+	// This avoids reading/hashing JSONL on every request
 	isStale, err := autoimport.CheckStaleness(ctx, store, dbPath)
+	if err != nil || !isStale {
+		return err
+	}
+	
+	// Single-flight guard: Only allow one import at a time
+	// If import is already running, skip and let the request proceed
+	if !s.importMu.TryLock() {
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: auto-import already in progress, skipping\n")
+		}
+		return nil
+	}
+	defer s.importMu.Unlock()
+	
+	// Double-check staleness after acquiring lock (another goroutine may have imported)
+	isStale, err = autoimport.CheckStaleness(ctx, store, dbPath)
 	if err != nil || !isStale {
 		return err
 	}
@@ -2157,19 +2175,80 @@ func (s *Server) checkAndAutoImportIfStale(req *Request) error {
 	notify := autoimport.NewStderrNotifier(os.Getenv("BD_DEBUG") != "")
 	
 	importFunc := func(ctx context.Context, issues []*types.Issue) (created, updated int, idMapping map[string]string, err error) {
-		// Use daemon's import via RPC - just return dummy values for now
-		// Real implementation would trigger proper import through the storage layer
-		// For now, log a notice - full implementation tracked in bd-128
-		fmt.Fprintf(os.Stderr, "Notice: JSONL updated externally (e.g., git pull), auto-import in daemon pending full implementation\n")
-		return 0, 0, nil, nil
+		// Use the importer package to perform the actual import
+		result, err := importer.ImportIssues(ctx, dbPath, store, issues, importer.Options{
+			ResolveCollisions: true, // Auto-resolve collisions for auto-import
+			RenameOnImport:    true, // Auto-rename prefix mismatches
+			// Note: SkipPrefixValidation is false by default, so we validate and rename
+		})
+		if err != nil {
+			return 0, 0, nil, err
+		}
+		return result.Created, result.Updated, result.IDMapping, nil
 	}
 	
 	onChanged := func(needsFullExport bool) {
-		// Daemon will handle export via its own mechanism
-		// Mark dirty for next sync cycle
+		// When IDs are remapped, trigger export so JSONL reflects the new IDs
+		if needsFullExport {
+			// Use a goroutine to avoid blocking the import
+			go func() {
+				if err := s.triggerExport(ctx, store, dbPath); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to export after auto-import: %v\n", err)
+				}
+			}()
+		}
 	}
 	
-	return autoimport.AutoImportIfNewer(ctx, store, dbPath, notify, importFunc, onChanged)
+	err = autoimport.AutoImportIfNewer(ctx, store, dbPath, notify, importFunc, onChanged)
+	if err == nil {
+		// Update last import time on success
+		s.lastImportTime = time.Now()
+	}
+	return err
+}
+
+// triggerExport exports all issues to JSONL after auto-import remaps IDs
+func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPath string) error {
+	// Find JSONL path using database directory
+	dbDir := filepath.Dir(dbPath)
+	pattern := filepath.Join(dbDir, "*.jsonl")
+	matches, err := filepath.Glob(pattern)
+	var jsonlPath string
+	if err == nil && len(matches) > 0 {
+		jsonlPath = matches[0]
+	} else {
+		jsonlPath = filepath.Join(dbDir, "issues.jsonl")
+	}
+
+	// Get all issues from storage
+	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+	if !ok {
+		return fmt.Errorf("storage is not SQLiteStorage")
+	}
+
+	// Export to JSONL (this will update the file with remapped IDs)
+	allIssues, err := sqliteStore.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		return fmt.Errorf("failed to fetch issues for export: %w", err)
+	}
+
+	// Write to JSONL file
+	// Note: We reuse the export logic from the daemon's existing export mechanism
+	// For now, this is a simple implementation - could be refactored to share with cmd/bd
+	file, err := os.Create(jsonlPath) // #nosec G304 - controlled path from config
+	if err != nil {
+		return fmt.Errorf("failed to create JSONL file: %w", err)
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	for _, issue := range allIssues {
+		if err := encoder.Encode(issue); err != nil {
+			return fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
+		}
+	}
+
+	return nil
 }
 
 // findJSONLPath finds the JSONL file path for the request's repository

@@ -577,8 +577,26 @@ func (m *MemoryStorage) GetAllDependencyRecords(ctx context.Context) (map[string
 	return result, nil
 }
 
+// GetDirtyIssueHash returns the hash for dirty issue tracking
+func (m *MemoryStorage) GetDirtyIssueHash(ctx context.Context, issueID string) (string, error) {
+	// Memory storage doesn't track dirty hashes, return empty string
+	return "", nil
+}
+
+// GetExportHash returns the hash for export tracking
+func (m *MemoryStorage) GetExportHash(ctx context.Context, issueID string) (string, error) {
+	// Memory storage doesn't track export hashes, return empty string
+	return "", nil
+}
+
+// SetExportHash sets the hash for export tracking
+func (m *MemoryStorage) SetExportHash(ctx context.Context, issueID, hash string) error {
+	// Memory storage doesn't track export hashes, no-op
+	return nil
+}
+
 // GetDependencyTree gets the dependency tree for an issue
-func (m *MemoryStorage) GetDependencyTree(ctx context.Context, issueID string, maxDepth int, showAllPaths bool) ([]*types.TreeNode, error) {
+func (m *MemoryStorage) GetDependencyTree(ctx context.Context, issueID string, maxDepth int, showAllPaths bool, reverse bool) ([]*types.TreeNode, error) {
 	// Simplified implementation - just return direct dependencies
 	deps, err := m.GetDependencies(ctx, issueID)
 	if err != nil {

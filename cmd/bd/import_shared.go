@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/importer"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -194,60 +194,37 @@ type ImportResult struct {
 // - Reading and parsing JSONL into issues slice
 // - Displaying results to the user
 // - Setting metadata (e.g., last_import_hash)
+// importIssuesCore is a thin wrapper around the internal/importer package
+// It converts between cmd/bd types and internal/importer types
 func importIssuesCore(ctx context.Context, dbPath string, store storage.Storage, issues []*types.Issue, opts ImportOptions) (*ImportResult, error) {
+	// Convert options to importer.Options
+	importerOpts := importer.Options{
+		ResolveCollisions:    opts.ResolveCollisions,
+		DryRun:               opts.DryRun,
+		SkipUpdate:           opts.SkipUpdate,
+		Strict:               opts.Strict,
+		RenameOnImport:       opts.RenameOnImport,
+		SkipPrefixValidation: opts.SkipPrefixValidation,
+	}
+
+	// Call the importer package
+	importerResult, err := importer.ImportIssues(ctx, dbPath, store, issues, importerOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert result back to ImportResult
 	result := &ImportResult{
-		IDMapping:        make(map[string]string),
-		MismatchPrefixes: make(map[string]int),
-	}
-
-	// Phase 1: Get or create SQLite store
-	sqliteStore, needCloseStore, err := getOrCreateStore(ctx, dbPath, store)
-	if err != nil {
-		return nil, err
-	}
-	if needCloseStore {
-		defer func() { _ = sqliteStore.Close() }()
-	}
-
-	// Phase 2: Check and handle prefix mismatches
-	if err := handlePrefixMismatch(ctx, sqliteStore, issues, opts, result); err != nil {
-		return result, err
-	}
-
-	// Phase 3: Detect and resolve collisions
-	issues, err = handleCollisions(ctx, sqliteStore, issues, opts, result)
-	if err != nil {
-		return result, err
-	}
-	if opts.DryRun && result.Collisions == 0 {
-		return result, nil
-	}
-
-	// Phase 4: Upsert issues (create new or update existing)
-	if err := upsertIssues(ctx, sqliteStore, issues, opts, result); err != nil {
-		return nil, err
-	}
-
-	// Phase 5: Import dependencies
-	if err := importDependencies(ctx, sqliteStore, issues, opts); err != nil {
-		return nil, err
-	}
-
-	// Phase 6: Import labels
-	if err := importLabels(ctx, sqliteStore, issues, opts); err != nil {
-		return nil, err
-	}
-
-	// Phase 7: Import comments
-	if err := importComments(ctx, sqliteStore, issues, opts); err != nil {
-		return nil, err
-	}
-
-	// Phase 8: Checkpoint WAL to update main .db file timestamp
-	// This ensures staleness detection sees the database as fresh
-	if err := sqliteStore.CheckpointWAL(ctx); err != nil {
-		// Non-fatal - just log warning
-		fmt.Fprintf(os.Stderr, "Warning: failed to checkpoint WAL: %v\n", err)
+		Created:          importerResult.Created,
+		Updated:          importerResult.Updated,
+		Unchanged:        importerResult.Unchanged,
+		Skipped:          importerResult.Skipped,
+		Collisions:       importerResult.Collisions,
+		IDMapping:        importerResult.IDMapping,
+		CollisionIDs:     importerResult.CollisionIDs,
+		PrefixMismatch:   importerResult.PrefixMismatch,
+		ExpectedPrefix:   importerResult.ExpectedPrefix,
+		MismatchPrefixes: importerResult.MismatchPrefixes,
 	}
 
 	return result, nil
@@ -255,8 +232,13 @@ func importIssuesCore(ctx context.Context, dbPath string, store storage.Storage,
 
 
 
-// renameImportedIssuePrefixes renames all issues and their references to match the target prefix
+// renameImportedIssuePrefixes is a wrapper around importer.RenameImportedIssuePrefixes
 func renameImportedIssuePrefixes(issues []*types.Issue, targetPrefix string) error {
+	return importer.RenameImportedIssuePrefixes(issues, targetPrefix)
+}
+
+// Deprecated: use importer.RenameImportedIssuePrefixes
+func renameImportedIssuePrefixesOld(issues []*types.Issue, targetPrefix string) error {
 	// Build a mapping of old IDs to new IDs
 	idMapping := make(map[string]string)
 	
