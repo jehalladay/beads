@@ -116,6 +116,11 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to migrate compacted_at_commit column: %w", err)
 	}
 
+	// Migrate existing databases to add export_hashes table (bd-164)
+	if err := migrateExportHashesTable(db); err != nil {
+		return nil, fmt.Errorf("failed to migrate export_hashes table: %w", err)
+	}
+
 	// Convert to absolute path for consistency
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -144,7 +149,6 @@ func migrateDirtyIssuesTable(db *sql.DB) error {
 			CREATE TABLE dirty_issues (
 				issue_id TEXT PRIMARY KEY,
 				marked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				content_hash TEXT,
 				FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
 			);
 			CREATE INDEX idx_dirty_issues_marked_at ON dirty_issues(marked_at);
@@ -481,7 +485,38 @@ func migrateCompactedAtCommitColumn(db *sql.DB) error {
 	return nil
 }
 
+// migrateExportHashesTable ensures the export_hashes table exists for timestamp-only dedup (bd-164)
+func migrateExportHashesTable(db *sql.DB) error {
+	// Check if export_hashes table exists
+	var tableName string
+	err := db.QueryRow(`
+		SELECT name FROM sqlite_master
+		WHERE type='table' AND name='export_hashes'
+	`).Scan(&tableName)
 
+	if err == sql.ErrNoRows {
+		// Table doesn't exist, create it
+		_, err := db.Exec(`
+			CREATE TABLE export_hashes (
+				issue_id TEXT PRIMARY KEY,
+				content_hash TEXT NOT NULL,
+				exported_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+			)
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to create export_hashes table: %w", err)
+		}
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to check export_hashes table: %w", err)
+	}
+
+	// Table already exists
+	return nil
+}
 
 // getNextIDForPrefix atomically generates the next ID for a given prefix
 // Uses the issue_counters table for atomic, cross-process ID generation

@@ -56,6 +56,10 @@ type Storage interface {
 	ClearDirtyIssues(ctx context.Context) error // WARNING: Race condition (bd-52), use ClearDirtyIssuesByID
 	ClearDirtyIssuesByID(ctx context.Context, issueIDs []string) error
 
+	// Export hash tracking (for timestamp-only dedup, bd-164)
+	GetExportHash(ctx context.Context, issueID string) (string, error)
+	SetExportHash(ctx context.Context, issueID, contentHash string) error
+
 	// Config
 	SetConfig(ctx context.Context, key, value string) error
 	GetConfig(ctx context.Context, key string) (string, error)

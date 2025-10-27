@@ -46,13 +46,13 @@ func computeIssueContentHash(issue *types.Issue) (string, error) {
 // shouldSkipExport checks if an issue should be skipped during export because
 // it only has timestamp changes (no actual content changes).
 func shouldSkipExport(ctx context.Context, store storage.Storage, issue *types.Issue) (bool, error) {
-	// Get the stored hash from dirty_issues table
-	storedHash, err := store.GetDirtyIssueHash(ctx, issue.ID)
+	// Get the stored hash from export_hashes table (last exported state)
+	storedHash, err := store.GetExportHash(ctx, issue.ID)
 	if err != nil {
 		return false, err
 	}
 	
-	// If no hash stored, we must export (first export or old data)
+	// If no hash stored, we must export (first export)
 	if storedHash == "" {
 		return false, nil
 	}
@@ -296,6 +296,15 @@ Output to stdout by default, or use -o flag for file output.`,
 				fmt.Fprintf(os.Stderr, "Error encoding issue %s: %v\n", issue.ID, err)
 				os.Exit(1)
 			}
+			
+			// Save content hash after successful export (bd-164)
+			contentHash, err := computeIssueContentHash(issue)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to compute hash for %s: %v\n", issue.ID, err)
+			} else if err := store.SetExportHash(ctx, issue.ID, contentHash); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save export hash for %s: %v\n", issue.ID, err)
+			}
+			
 			exportedIDs = append(exportedIDs, issue.ID)
 		}
 		
