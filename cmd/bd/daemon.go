@@ -1100,6 +1100,42 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 	defer func() { _ = store.Close() }()
 	log.log("Database opened: %s", daemonDBPath)
 
+	// Validate schema version matches daemon version
+	versionCtx := context.Background()
+	dbVersion, err := store.GetMetadata(versionCtx, "bd_version")
+	if err != nil && err.Error() != "metadata key not found: bd_version" {
+		log.log("Error: failed to read database version: %v", err)
+		os.Exit(1)
+	}
+	
+	if dbVersion != "" && dbVersion != Version {
+		log.log("Error: Database schema version mismatch")
+		log.log("  Database version: %s", dbVersion)
+		log.log("  Daemon version: %s", Version)
+		log.log("")
+		log.log("The database was created with a different version of bd.")
+		log.log("This may cause compatibility issues.")
+		log.log("")
+		log.log("Options:")
+		log.log("  1. Upgrade/downgrade bd to match database version: %s", dbVersion)
+		log.log("  2. Run 'bd init' to update the database to the current version")
+		log.log("  3. Set BEADS_IGNORE_VERSION_MISMATCH=1 to proceed anyway (not recommended)")
+		log.log("")
+		
+		// Allow override via environment variable for emergencies
+		if os.Getenv("BEADS_IGNORE_VERSION_MISMATCH") != "1" {
+			os.Exit(1)
+		}
+		log.log("Warning: Proceeding despite version mismatch (BEADS_IGNORE_VERSION_MISMATCH=1)")
+	} else if dbVersion == "" {
+		// Old database without version metadata - set it now
+		log.log("Warning: Database missing version metadata, setting to %s", Version)
+		if err := store.SetMetadata(versionCtx, "bd_version", Version); err != nil {
+			log.log("Error: failed to set database version: %v", err)
+			os.Exit(1)
+		}
+	}
+
 	// Get workspace path (.beads directory) - beadsDir already defined above
 	// Get actual workspace root (parent of .beads)
 	workspacePath := filepath.Dir(beadsDir)
