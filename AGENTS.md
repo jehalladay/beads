@@ -581,9 +581,10 @@ rm .beads/.exclusive-lock
 ## Pro Tips for Agents
 
 - Always use `--json` flags for programmatic use
+- **Always run `bd sync` at end of session** to flush/commit/push immediately
 - Link discoveries with `discovered-from` to maintain context
 - Check `bd ready` before asking "what next?"
-- Auto-sync is automatic! JSONL updates after CRUD ops, imports after git pull
+- Auto-sync batches changes in 30-second window - use `bd sync` to force immediate flush
 - Use `--no-auto-flush` or `--no-auto-import` to disable automatic sync if needed
 - Use `bd dep tree` to understand complex dependencies
 - Priority 0-1 issues are usually more important than 2-4
