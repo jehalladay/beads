@@ -212,3 +212,25 @@ func CleanupStaleSockets(daemons []DaemonInfo) (int, error) {
 	}
 	return cleaned, nil
 }
+
+// StopDaemon gracefully stops a daemon by sending shutdown command via RPC
+// Falls back to SIGTERM if RPC fails
+func StopDaemon(daemon DaemonInfo) error {
+	if !daemon.Alive {
+		return fmt.Errorf("daemon is not running")
+	}
+
+	// Try graceful shutdown via RPC first
+	client, err := rpc.TryConnectWithTimeout(daemon.SocketPath, 500*time.Millisecond)
+	if err == nil && client != nil {
+		defer client.Close()
+		if err := client.Shutdown(); err == nil {
+			// Wait a bit for daemon to shut down
+			time.Sleep(200 * time.Millisecond)
+			return nil
+		}
+	}
+
+	// Fallback to SIGTERM if RPC failed
+	return killProcess(daemon.PID)
+}

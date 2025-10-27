@@ -19,7 +19,9 @@ var daemonsCmd = &cobra.Command{
 Subcommands:
   list    - Show all running daemons
   health  - Check health of all daemons
-  killall - Stop all running daemons`,
+  stop    - Stop a specific daemon by workspace path or PID
+  restart - Restart a specific daemon (not yet implemented)
+  killall - Stop all running daemons (not yet implemented)`,
 }
 
 var daemonsListCmd = &cobra.Command{
@@ -122,6 +124,76 @@ func formatDaemonRelativeTime(t time.Time) string {
 		return fmt.Sprintf("%.1fh ago", d.Hours())
 	}
 	return fmt.Sprintf("%.1fd ago", d.Hours()/24)
+}
+
+var daemonsStopCmd = &cobra.Command{
+	Use:   "stop <workspace-path|pid>",
+	Short: "Stop a specific bd daemon",
+	Long: `Stop a specific bd daemon gracefully by workspace path or PID.
+Sends shutdown command via RPC, with SIGTERM fallback if RPC fails.`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		target := args[0]
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+
+		// Discover all daemons
+		daemons, err := daemon.DiscoverDaemons(nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error discovering daemons: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Find matching daemon by workspace path or PID
+		var targetDaemon *daemon.DaemonInfo
+		for _, d := range daemons {
+			if d.WorkspacePath == target || fmt.Sprintf("%d", d.PID) == target {
+				targetDaemon = &d
+				break
+			}
+		}
+
+		if targetDaemon == nil {
+			if jsonOutput {
+				outputJSON(map[string]string{"error": "daemon not found"})
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: daemon not found for %s\n", target)
+			}
+			os.Exit(1)
+		}
+
+		// Stop the daemon
+		if err := daemon.StopDaemon(*targetDaemon); err != nil {
+			if jsonOutput {
+				outputJSON(map[string]string{"error": err.Error()})
+			} else {
+				fmt.Fprintf(os.Stderr, "Error stopping daemon: %v\n", err)
+			}
+			os.Exit(1)
+		}
+
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"workspace": targetDaemon.WorkspacePath,
+				"pid":       targetDaemon.PID,
+				"stopped":   true,
+			})
+		} else {
+			fmt.Printf("Stopped daemon for %s (PID %d)\n", targetDaemon.WorkspacePath, targetDaemon.PID)
+		}
+	},
+}
+
+var daemonsRestartCmd = &cobra.Command{
+	Use:   "restart <workspace-path|pid>",
+	Short: "Restart a specific bd daemon",
+	Long: `Restart a specific bd daemon by workspace path or PID.
+Stops the daemon gracefully, then starts a new one.`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Fprintf(os.Stderr, "Error: restart not yet implemented\n")
+		fmt.Fprintf(os.Stderr, "Use 'bd daemons stop <target>' then 'bd daemon' to restart manually\n")
+		os.Exit(1)
+	},
 }
 
 var daemonsHealthCmd = &cobra.Command{
@@ -254,6 +326,8 @@ func init() {
 	// Add subcommands
 	daemonsCmd.AddCommand(daemonsListCmd)
 	daemonsCmd.AddCommand(daemonsHealthCmd)
+	daemonsCmd.AddCommand(daemonsStopCmd)
+	daemonsCmd.AddCommand(daemonsRestartCmd)
 	
 	// Flags for list command
 	daemonsListCmd.Flags().StringSlice("search", nil, "Directories to search for daemons (default: home, /tmp, cwd)")
@@ -263,4 +337,10 @@ func init() {
 	// Flags for health command
 	daemonsHealthCmd.Flags().StringSlice("search", nil, "Directories to search for daemons (default: home, /tmp, cwd)")
 	daemonsHealthCmd.Flags().Bool("json", false, "Output in JSON format")
+
+	// Flags for stop command
+	daemonsStopCmd.Flags().Bool("json", false, "Output in JSON format")
+
+	// Flags for restart command
+	daemonsRestartCmd.Flags().Bool("json", false, "Output in JSON format")
 }

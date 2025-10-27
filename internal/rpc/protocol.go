@@ -31,6 +31,7 @@ const (
 	OpExport          = "export"
 	OpImport          = "import"
 	OpEpicStatus      = "epic_status"
+	OpShutdown        = "shutdown"
 )
 
 // Request represents an RPC request from client to daemon

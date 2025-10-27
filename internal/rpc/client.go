@@ -209,6 +209,12 @@ func (c *Client) Health() (*HealthResponse, error) {
 	return &health, nil
 }
 
+// Shutdown sends a graceful shutdown request to the daemon
+func (c *Client) Shutdown() error {
+	_, err := c.Execute(OpShutdown, nil)
+	return err
+}
+
 // Metrics retrieves daemon metrics
 func (c *Client) Metrics() (*MetricsSnapshot, error) {
 	resp, err := c.Execute(OpMetrics, nil)

@@ -688,6 +688,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleImport(req)
 	case OpEpicStatus:
 		resp = s.handleEpicStatus(req)
+	case OpShutdown:
+		resp = s.handleShutdown(req)
 	default:
 		s.metrics.RecordError(req.Operation)
 		return Response{
@@ -2090,6 +2092,21 @@ func (s *Server) handleEpicStatus(req *Request) Response {
 	return Response{
 		Success: true,
 		Data:    data,
+	}
+}
+
+func (s *Server) handleShutdown(_ *Request) Response {
+	// Schedule shutdown in a goroutine so we can return a response first
+	go func() {
+		time.Sleep(100 * time.Millisecond) // Give time for response to be sent
+		if err := s.Stop(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error during shutdown: %v\n", err)
+		}
+	}()
+
+	return Response{
+		Success: true,
+		Data:    json.RawMessage(`{"message":"Daemon shutting down"}`),
 	}
 }
 
