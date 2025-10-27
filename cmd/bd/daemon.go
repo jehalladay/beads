@@ -29,7 +29,7 @@ var daemonCmd = &cobra.Command{
 	Long: `Run a background daemon that automatically syncs issues with git remote.
 
 The daemon will:
-- Poll for changes at configurable intervals (default: 5 minutes)
+- Poll for changes at configurable intervals (default: 10 seconds)
 - Export pending database changes to JSONL
 - Auto-commit changes if --auto-commit flag set
 - Auto-push commits if --auto-push flag set
@@ -172,7 +172,7 @@ Use --health to check daemon health and metrics.`,
 }
 
 func init() {
-	daemonCmd.Flags().Duration("interval", 5*time.Minute, "Sync check interval")
+	daemonCmd.Flags().Duration("interval", 10*time.Second, "Sync check interval")
 	daemonCmd.Flags().Bool("auto-commit", false, "Automatically commit changes")
 	daemonCmd.Flags().Bool("auto-push", false, "Automatically push commits")
 	daemonCmd.Flags().Bool("stop", false, "Stop running daemon")
@@ -969,16 +969,24 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 		}
 
 		if err := gitPull(syncCtx); err != nil {
-			log.log("Pull failed: %v", err)
-			return
+		log.log("Pull failed: %v", err)
+		return
 		}
 		log.log("Pulled from remote")
 
-		if err := importToJSONLWithStore(syncCtx, store, jsonlPath); err != nil {
-			log.log("Import failed: %v", err)
-			return
-		}
-		log.log("Imported from JSONL")
+		// Flush any pending dirty issues to JSONL BEFORE importing
+		// This prevents the race condition where deletions get re-imported (bd-155)
+		if err := exportToJSONLWithStore(syncCtx, store, jsonlPath); err != nil {
+		 log.log("Pre-import flush failed: %v", err)
+		 return
+	}
+	log.log("Flushed pending changes before import")
+
+	if err := importToJSONLWithStore(syncCtx, store, jsonlPath); err != nil {
+		log.log("Import failed: %v", err)
+		return
+	}
+	log.log("Imported from JSONL")
 
 		if autoPush && autoCommit {
 			if err := gitPush(syncCtx); err != nil {

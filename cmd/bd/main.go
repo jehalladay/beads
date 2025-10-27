@@ -147,22 +147,36 @@ var rootCmd = &cobra.Command{
 				// Special case for import: if we found a database but there's a local .beads/
 				// directory without a database, prefer creating a local database
 				if cmd.Name() == cmdImport && localBeadsDir != "" {
-					if _, err := os.Stat(localBeadsDir); err == nil {
-						// Check if found database is NOT in the local .beads/ directory
-						if !strings.HasPrefix(dbPath, localBeadsDir+string(filepath.Separator)) {
-							// Use local .beads/vc.db instead for import
-							dbPath = filepath.Join(localBeadsDir, "vc.db")
+				if _, err := os.Stat(localBeadsDir); err == nil {
+				// Check if found database is NOT in the local .beads/ directory
+				if !strings.HasPrefix(dbPath, localBeadsDir+string(filepath.Separator)) {
+				// Look for existing .db file in local .beads/ directory
+				matches, _ := filepath.Glob(filepath.Join(localBeadsDir, "*.db"))
+				 if len(matches) > 0 {
+				   dbPath = matches[0]
+				   } else {
+							// No database exists yet - will be created by import
+							// Use generic name that will be renamed after prefix detection
+							dbPath = filepath.Join(localBeadsDir, "bd.db")
 						}
 					}
 				}
+			}
 			} else {
-				// For import command, allow creating database if .beads/ directory exists
-				if cmd.Name() == cmdImport && localBeadsDir != "" {
-					if _, err := os.Stat(localBeadsDir); err == nil {
+			// For import command, allow creating database if .beads/ directory exists
+			if cmd.Name() == cmdImport && localBeadsDir != "" {
+			if _, err := os.Stat(localBeadsDir); err == nil {
+			// Look for existing .db file in local .beads/ directory
+			matches, _ := filepath.Glob(filepath.Join(localBeadsDir, "*.db"))
+			 if len(matches) > 0 {
+			   dbPath = matches[0]
+					} else {
 						// .beads/ directory exists - set dbPath for import to create
-						dbPath = filepath.Join(localBeadsDir, "vc.db")
+						// Use generic name that will be renamed after prefix detection
+						dbPath = filepath.Join(localBeadsDir, "bd.db")
 					}
 				}
+			}
 
 				// If dbPath still not set, error out
 				if dbPath == "" {
