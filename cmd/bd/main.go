@@ -1759,12 +1759,88 @@ func resolveIssueID(ctx context.Context, id string) (*types.Issue, string, error
 var showCmd = &cobra.Command{
 	Use:   "show [id...]",
 	Short: "Show issue details",
-	Args:  cobra.MinimumNArgs(1),
+	Long:  `Show detailed information for one or more issues.
+
+Examples:
+  bd show bd-42                  # Show single issue
+  bd show bd-1 bd-2 bd-3         # Show multiple issues
+  bd show --all-issues           # Show all issues (may be expensive)
+  bd show --priority 0 --priority 1   # Show all P0 and P1 issues
+  bd show -p 0 -p 1              # Short form`,
+	Args: func(cmd *cobra.Command, args []string) error {
+		allIssues, _ := cmd.Flags().GetBool("all-issues")
+		priorities, _ := cmd.Flags().GetIntSlice("priority")
+		if !allIssues && len(priorities) == 0 && len(args) == 0 {
+			return fmt.Errorf("requires at least 1 issue ID, or use --all-issues, or --priority flag")
+		}
+		return nil
+	},
 	Run: func(cmd *cobra.Command, args []string) {
+		allIssues, _ := cmd.Flags().GetBool("all-issues")
+		priorities, _ := cmd.Flags().GetIntSlice("priority")
+
+		// Build list of issue IDs to show
+		var issueIDs []string
+
+		// If --all-issues or --priority is used, fetch matching issues
+		if allIssues || len(priorities) > 0 {
+			ctx := context.Background()
+
+			if daemonClient != nil {
+				// Daemon mode - not yet supported
+				fmt.Fprintf(os.Stderr, "Error: --all-issues and --priority not yet supported in daemon mode\n")
+				fmt.Fprintf(os.Stderr, "Use --no-daemon flag or specify issue IDs directly\n")
+				os.Exit(1)
+			} else {
+				// Direct mode - fetch all issues
+				filter := types.IssueFilter{}
+				issues, err := store.SearchIssues(ctx, "", filter)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error searching issues: %v\n", err)
+					os.Exit(1)
+				}
+
+				// Filter by priority if specified
+				if len(priorities) > 0 {
+					priorityMap := make(map[int]bool)
+					for _, p := range priorities {
+						priorityMap[p] = true
+					}
+
+					filtered := make([]*types.Issue, 0)
+					for _, issue := range issues {
+						if priorityMap[issue.Priority] {
+							filtered = append(filtered, issue)
+						}
+					}
+					issues = filtered
+				}
+
+				// Extract IDs
+				for _, issue := range issues {
+					issueIDs = append(issueIDs, issue.ID)
+				}
+
+				// Warn if showing many issues
+				if len(issueIDs) > 20 && !jsonOutput {
+					yellow := color.New(color.FgYellow).SprintFunc()
+					fmt.Fprintf(os.Stderr, "%s Showing %d issues (this may take a while)\n\n", yellow("⚠"), len(issueIDs))
+				}
+			}
+		} else {
+			// Use provided IDs
+			issueIDs = args
+		}
+
+		// Sort issue IDs for consistent ordering when showing multiple issues
+		if len(issueIDs) > 1 {
+			sort.Strings(issueIDs)
+		}
+
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			allDetails := []interface{}{}
-			for idx, id := range args {
+			for idx, id := range issueIDs {
 				showArgs := &rpc.ShowArgs{ID: id}
 				resp, err := daemonClient.Show(showArgs)
 				if err != nil {
@@ -1901,16 +1977,16 @@ var showCmd = &cobra.Command{
 		// Direct mode
 		ctx := context.Background()
 		allDetails := []interface{}{}
-		for idx, id := range args {
-			issue, resolvedID, err := resolveIssueID(ctx, id)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
-				continue
-			}
-			if issue == nil {
-				fmt.Fprintf(os.Stderr, "Issue %s not found\n", resolvedID)
-				continue
-			}
+	for idx, id := range issueIDs {
+		 issue, resolvedID, err := resolveIssueID(ctx, id)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
+		  continue
+		}
+		if issue == nil {
+		 fmt.Fprintf(os.Stderr, "Issue %s not found\n", resolvedID)
+		continue
+		}
 
 			if jsonOutput {
 				// Include labels, dependencies, and comments in JSON output
@@ -2042,6 +2118,8 @@ var showCmd = &cobra.Command{
 }
 
 func init() {
+	showCmd.Flags().Bool("all-issues", false, "Show all issues (WARNING: may be expensive for large databases)")
+	showCmd.Flags().IntSliceP("priority", "p", []int{}, "Show issues with specified priority (can be used multiple times, e.g., -p 0 -p 1)")
 	rootCmd.AddCommand(showCmd)
 }
 
