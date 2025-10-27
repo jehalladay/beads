@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -67,10 +66,7 @@ func TestFallbackToDirectModeEnablesFlush(t *testing.T) {
 	testDBPath := filepath.Join(beadsDir, "test.db")
 
 	// Seed database with issues
-	setupStore, err := sqlite.New(testDBPath)
-	if err != nil {
-		t.Fatalf("failed to create seed store: %v", err)
-	}
+	setupStore := newTestStore(t, testDBPath)
 
 	ctx := context.Background()
 	target := &types.Issue{

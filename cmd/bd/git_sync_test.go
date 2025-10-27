@@ -45,10 +45,7 @@ func TestGitPullSyncIntegration(t *testing.T) {
 	}
 	
 	clone1DBPath := filepath.Join(clone1BeadsDir, "test.db")
-	clone1Store, err := sqlite.New(clone1DBPath)
-	if err != nil {
-		t.Fatalf("Failed to create clone1 database: %v", err)
-	}
+	clone1Store := newTestStore(t, clone1DBPath)
 	defer clone1Store.Close()
 	
 	ctx := context.Background()
@@ -94,10 +91,7 @@ func TestGitPullSyncIntegration(t *testing.T) {
 	// Initialize empty database in clone2
 	clone2BeadsDir := filepath.Join(clone2Dir, ".beads")
 	clone2DBPath := filepath.Join(clone2BeadsDir, "test.db")
-	clone2Store, err := sqlite.New(clone2DBPath)
-	if err != nil {
-		t.Fatalf("Failed to create clone2 database: %v", err)
-	}
+	clone2Store := newTestStore(t, clone2DBPath)
 	defer clone2Store.Close()
 	
 	if err := clone2Store.SetMetadata(ctx, "issue_prefix", "test"); err != nil {
@@ -141,10 +135,7 @@ func TestGitPullSyncIntegration(t *testing.T) {
 		
 		// In real usage, auto-import would trigger on next bd command
 		// For this test, we'll manually import to simulate that behavior
-		newStore, err := sqlite.New(clone2DBPath)
-		if err != nil {
-			t.Fatalf("Failed to reopen database: %v", err)
-		}
+		newStore := newTestStore(t, clone2DBPath)
 		// Don't defer close - we'll reassign to clone2Store for the next test
 		
 		// Manually import to simulate auto-import behavior

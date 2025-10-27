@@ -85,10 +85,7 @@ func TestVersionCompatibility(t *testing.T) {
 			tmpDir, _, dbPath, socketPath, cleanup := setupTestServerIsolated(t)
 			defer cleanup()
 
-			store, err := sqlitestorage.New(dbPath)
-			if err != nil {
-				t.Fatalf("Failed to create store: %v", err)
-			}
+			store := newTestStore(t, dbPath)
 			defer store.Close()
 
 			// Override server version

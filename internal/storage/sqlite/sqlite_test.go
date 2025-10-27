@@ -1301,6 +1301,11 @@ func TestInMemoryDatabase(t *testing.T) {
 	}
 	defer store.Close()
 
+	// Set issue_prefix (bd-166)
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
 	// Verify we can create and retrieve an issue
 	issue := &types.Issue{
 		Title:       "Test in-memory issue",
@@ -1343,6 +1348,11 @@ func TestInMemorySharedCache(t *testing.T) {
 		t.Fatalf("failed to create first in-memory storage: %v", err)
 	}
 	defer store1.Close()
+
+	// Set issue_prefix (bd-166)
+	if err := store1.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
 
 	// Create an issue in the first connection
 	issue := &types.Issue{

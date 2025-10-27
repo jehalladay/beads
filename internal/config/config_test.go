@@ -37,7 +37,7 @@ func TestDefaults(t *testing.T) {
 		{"no-auto-import", false, func(k string) interface{} { return GetBool(k) }},
 		{"db", "", func(k string) interface{} { return GetString(k) }},
 		{"actor", "", func(k string) interface{} { return GetString(k) }},
-		{"flush-debounce", 5 * time.Second, func(k string) interface{} { return GetDuration(k) }},
+		{"flush-debounce", 30 * time.Second, func(k string) interface{} { return GetDuration(k) }},
 		{"auto-start-daemon", true, func(k string) interface{} { return GetBool(k) }},
 	}
 	

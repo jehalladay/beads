@@ -435,10 +435,7 @@ func TestDatabaseHandshake(t *testing.T) {
 	os.MkdirAll(beadsDir1, 0750)
 	dbPath1 := filepath.Join(beadsDir1, "db1.db")
 	socketPath1 := filepath.Join(beadsDir1, "bd.sock")
-	store1, err := sqlitestorage.New(dbPath1)
-	if err != nil {
-		t.Fatalf("Failed to create store 1: %v", err)
-	}
+	store1 := newTestStore(t, dbPath1)
 	defer store1.Close()
 
 	server1 := NewServer(socketPath1, store1, tmpDir1, dbPath1)
@@ -453,10 +450,7 @@ func TestDatabaseHandshake(t *testing.T) {
 	os.MkdirAll(beadsDir2, 0750)
 	dbPath2 := filepath.Join(beadsDir2, "db2.db")
 	socketPath2 := filepath.Join(beadsDir2, "bd.sock")
-	store2, err := sqlitestorage.New(dbPath2)
-	if err != nil {
-		t.Fatalf("Failed to create store 2: %v", err)
-	}
+	store2 := newTestStore(t, dbPath2)
 	defer store2.Close()
 
 	server2 := NewServer(socketPath2, store2, tmpDir2, dbPath2)

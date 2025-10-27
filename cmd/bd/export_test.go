@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -22,10 +21,7 @@ func TestExportCommand(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	testDB := filepath.Join(tmpDir, "test.db")
-	s, err := sqlite.New(testDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := newTestStore(t, testDB)
 	defer s.Close()
 
 	ctx := context.Background()
@@ -228,10 +224,7 @@ func TestExportCommand(t *testing.T) {
 
 		// Create empty database
 		emptyDBPath := filepath.Join(tmpDir, "empty.db")
-		emptyStore, err := sqlite.New(emptyDBPath)
-		if err != nil {
-			t.Fatalf("Failed to create empty store: %v", err)
-		}
+		emptyStore := newTestStore(t, emptyDBPath)
 		defer emptyStore.Close()
 
 		// Test using exportToJSONLWithStore directly (daemon code path)

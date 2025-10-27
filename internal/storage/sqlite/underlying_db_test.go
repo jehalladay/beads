@@ -20,10 +20,7 @@ func TestUnderlyingDB_BasicAccess(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := New(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
+	store := newTestStore(t, dbPath)
 	defer store.Close()
 
 	// Get underlying DB
@@ -53,10 +50,7 @@ func TestUnderlyingDB_CreateExtensionTable(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := New(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
+	store := newTestStore(t, dbPath)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -145,10 +139,7 @@ func TestUnderlyingDB_ConcurrentAccess(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := New(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
+	store := newTestStore(t, dbPath)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -243,10 +234,7 @@ func TestUnderlyingDB_LongTxDoesNotDeadlock(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := New(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
+	store := newTestStore(t, dbPath)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -297,10 +285,7 @@ func TestUnderlyingConn_BasicAccess(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := New(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
+	store := newTestStore(t, dbPath)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -333,10 +318,7 @@ func TestUnderlyingConn_DDLOperations(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := New(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
+	store := newTestStore(t, dbPath)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -417,10 +399,7 @@ func TestUnderlyingConn_ContextCancellation(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := New(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
+	store := newTestStore(t, dbPath)
 	defer store.Close()
 
 	// Create a context that's already canceled
@@ -444,10 +423,7 @@ func TestUnderlyingConn_MultipleConnections(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := New(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
+	store := newTestStore(t, dbPath)
 	defer store.Close()
 
 	ctx := context.Background()

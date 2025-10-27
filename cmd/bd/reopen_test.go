@@ -101,10 +101,7 @@ func TestReopenCommand(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	testDB := filepath.Join(tmpDir, "test.db")
-	s, err := sqlite.New(testDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := newTestStore(t, testDB)
 	defer s.Close()
 
 	ctx := context.Background()
