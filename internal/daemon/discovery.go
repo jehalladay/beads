@@ -234,3 +234,100 @@ func StopDaemon(daemon DaemonInfo) error {
 	// Fallback to SIGTERM if RPC failed
 	return killProcess(daemon.PID)
 }
+
+// KillAllFailure represents a failure to kill a specific daemon
+type KillAllFailure struct {
+	Workspace string `json:"workspace"`
+	PID       int    `json:"pid"`
+	Error     string `json:"error"`
+}
+
+// KillAllResults contains results from KillAllDaemons
+type KillAllResults struct {
+	Stopped  int              `json:"stopped"`
+	Failed   int              `json:"failed"`
+	Failures []KillAllFailure `json:"failures,omitempty"`
+}
+
+// KillAllDaemons stops all provided daemons, using force if RPC/SIGTERM fail
+func KillAllDaemons(daemons []DaemonInfo, force bool) KillAllResults {
+	results := KillAllResults{
+		Failures: []KillAllFailure{},
+	}
+
+	for _, daemon := range daemons {
+		if !daemon.Alive {
+			continue
+		}
+
+		if err := stopDaemonWithTimeout(daemon); err != nil {
+			if force {
+				// Try force kill
+				if err := forceKillProcess(daemon.PID); err != nil {
+					results.Failed++
+					results.Failures = append(results.Failures, KillAllFailure{
+						Workspace: daemon.WorkspacePath,
+						PID:       daemon.PID,
+						Error:     err.Error(),
+					})
+					continue
+				}
+			} else {
+				results.Failed++
+				results.Failures = append(results.Failures, KillAllFailure{
+					Workspace: daemon.WorkspacePath,
+					PID:       daemon.PID,
+					Error:     err.Error(),
+				})
+				continue
+			}
+		}
+		results.Stopped++
+	}
+
+	return results
+}
+
+// stopDaemonWithTimeout tries RPC shutdown, then SIGTERM with timeout, then SIGKILL
+func stopDaemonWithTimeout(daemon DaemonInfo) error {
+	// Try RPC shutdown first (2 second timeout)
+	client, err := rpc.TryConnectWithTimeout(daemon.SocketPath, 2*time.Second)
+	if err == nil && client != nil {
+		defer client.Close()
+		if err := client.Shutdown(); err == nil {
+			// Wait and verify process died
+			time.Sleep(500 * time.Millisecond)
+			if !isProcessAlive(daemon.PID) {
+				return nil
+			}
+		}
+	}
+
+	// Try SIGTERM with 3 second timeout
+	if err := killProcess(daemon.PID); err != nil {
+		return fmt.Errorf("SIGTERM failed: %w", err)
+	}
+
+	// Wait up to 3 seconds for process to die
+	for i := 0; i < 30; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if !isProcessAlive(daemon.PID) {
+			return nil
+		}
+	}
+
+	// SIGTERM timeout, try SIGKILL with 1 second timeout
+	if err := forceKillProcess(daemon.PID); err != nil {
+		return fmt.Errorf("SIGKILL failed: %w", err)
+	}
+
+	// Wait up to 1 second for process to die
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if !isProcessAlive(daemon.PID) {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("process %d did not die after SIGKILL", daemon.PID)
+}

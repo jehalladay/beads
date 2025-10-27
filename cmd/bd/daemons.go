@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -20,8 +24,9 @@ Subcommands:
   list    - Show all running daemons
   health  - Check health of all daemons
   stop    - Stop a specific daemon by workspace path or PID
-  restart - Restart a specific daemon (not yet implemented)
-  killall - Stop all running daemons (not yet implemented)`,
+  logs    - View daemon logs
+  killall - Stop all running daemons
+  restart - Restart a specific daemon (not yet implemented)`,
 }
 
 var daemonsListCmd = &cobra.Command{
@@ -196,6 +201,206 @@ Stops the daemon gracefully, then starts a new one.`,
 	},
 }
 
+var daemonsLogsCmd = &cobra.Command{
+	Use:   "logs <workspace-path|pid>",
+	Short: "View logs for a specific bd daemon",
+	Long: `View logs for a specific bd daemon by workspace path or PID.
+Supports tail mode (last N lines) and follow mode (like tail -f).`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		target := args[0]
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+		follow, _ := cmd.Flags().GetBool("follow")
+		lines, _ := cmd.Flags().GetInt("lines")
+
+		// Discover all daemons
+		daemons, err := daemon.DiscoverDaemons(nil)
+		if err != nil {
+			if jsonOutput {
+				outputJSON(map[string]string{"error": err.Error()})
+			} else {
+				fmt.Fprintf(os.Stderr, "Error discovering daemons: %v\n", err)
+			}
+			os.Exit(1)
+		}
+
+		// Find matching daemon by workspace path or PID
+		var targetDaemon *daemon.DaemonInfo
+		for _, d := range daemons {
+			if d.WorkspacePath == target || fmt.Sprintf("%d", d.PID) == target {
+				targetDaemon = &d
+				break
+			}
+		}
+
+		if targetDaemon == nil {
+			if jsonOutput {
+				outputJSON(map[string]string{"error": "daemon not found"})
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: daemon not found for %s\n", target)
+			}
+			os.Exit(1)
+		}
+
+		// Determine log file path
+		logPath := filepath.Join(filepath.Dir(targetDaemon.SocketPath), "daemon.log")
+
+		// Check if log file exists
+		if _, err := os.Stat(logPath); err != nil {
+			if jsonOutput {
+				outputJSON(map[string]string{"error": "log file not found"})
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: log file not found: %s\n", logPath)
+			}
+			os.Exit(1)
+		}
+
+		if jsonOutput {
+			// JSON mode: read entire file
+			content, err := os.ReadFile(logPath)
+			if err != nil {
+				outputJSON(map[string]string{"error": err.Error()})
+				os.Exit(1)
+			}
+			outputJSON(map[string]interface{}{
+				"workspace": targetDaemon.WorkspacePath,
+				"log_path":  logPath,
+				"content":   string(content),
+			})
+			return
+		}
+
+		// Human-readable mode
+		if follow {
+			tailFollow(logPath)
+		} else {
+			if err := tailLines(logPath, lines); err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading log file: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	},
+}
+
+func tailLines(filePath string, n int) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Read all lines
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	// Print last N lines
+	start := 0
+	if len(lines) > n {
+		start = len(lines) - n
+	}
+	for i := start; i < len(lines); i++ {
+		fmt.Println(lines[i])
+	}
+
+	return nil
+}
+
+func tailFollow(filePath string) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening log file: %v\n", err)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	// Seek to end
+	file.Seek(0, io.SeekEnd)
+
+	reader := bufio.NewReader(file)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				// Wait for more content
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "Error reading log file: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(strings.TrimRight(line, "\n\r") + "\n")
+	}
+}
+
+var daemonsKillallCmd = &cobra.Command{
+	Use:   "killall",
+	Short: "Stop all running bd daemons",
+	Long: `Stop all running bd daemons gracefully via RPC, falling back to SIGTERM/SIGKILL.
+Uses escalating shutdown strategy: RPC (2s) → SIGTERM (3s) → SIGKILL (1s).`,
+	Run: func(cmd *cobra.Command, args []string) {
+		searchRoots, _ := cmd.Flags().GetStringSlice("search")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+		force, _ := cmd.Flags().GetBool("force")
+
+		// Discover all daemons
+		daemons, err := daemon.DiscoverDaemons(searchRoots)
+		if err != nil {
+			if jsonOutput {
+				outputJSON(map[string]string{"error": err.Error()})
+			} else {
+				fmt.Fprintf(os.Stderr, "Error discovering daemons: %v\n", err)
+			}
+			os.Exit(1)
+		}
+
+		// Filter to alive daemons only
+		var aliveDaemons []daemon.DaemonInfo
+		for _, d := range daemons {
+			if d.Alive {
+				aliveDaemons = append(aliveDaemons, d)
+			}
+		}
+
+		if len(aliveDaemons) == 0 {
+			if jsonOutput {
+				outputJSON(map[string]interface{}{
+					"stopped": 0,
+					"failed":  0,
+				})
+			} else {
+				fmt.Println("No running daemons found")
+			}
+			return
+		}
+
+		// Kill all daemons
+		results := daemon.KillAllDaemons(aliveDaemons, force)
+
+		if jsonOutput {
+			outputJSON(results)
+		} else {
+			fmt.Printf("Stopped: %d\n", results.Stopped)
+			fmt.Printf("Failed:  %d\n", results.Failed)
+			if len(results.Failures) > 0 {
+				fmt.Println("\nFailures:")
+				for _, f := range results.Failures {
+					fmt.Printf("  %s (PID %d): %s\n", f.Workspace, f.PID, f.Error)
+				}
+			}
+		}
+
+		if results.Failed > 0 {
+			os.Exit(1)
+		}
+	},
+}
+
 var daemonsHealthCmd = &cobra.Command{
 	Use:   "health",
 	Short: "Check health of all bd daemons",
@@ -327,6 +532,8 @@ func init() {
 	daemonsCmd.AddCommand(daemonsListCmd)
 	daemonsCmd.AddCommand(daemonsHealthCmd)
 	daemonsCmd.AddCommand(daemonsStopCmd)
+	daemonsCmd.AddCommand(daemonsLogsCmd)
+	daemonsCmd.AddCommand(daemonsKillallCmd)
 	daemonsCmd.AddCommand(daemonsRestartCmd)
 	
 	// Flags for list command
@@ -340,6 +547,16 @@ func init() {
 
 	// Flags for stop command
 	daemonsStopCmd.Flags().Bool("json", false, "Output in JSON format")
+
+	// Flags for logs command
+	daemonsLogsCmd.Flags().BoolP("follow", "f", false, "Follow log output (like tail -f)")
+	daemonsLogsCmd.Flags().IntP("lines", "n", 50, "Number of lines to show from end of log")
+	daemonsLogsCmd.Flags().Bool("json", false, "Output in JSON format")
+
+	// Flags for killall command
+	daemonsKillallCmd.Flags().StringSlice("search", nil, "Directories to search for daemons (default: home, /tmp, cwd)")
+	daemonsKillallCmd.Flags().Bool("json", false, "Output in JSON format")
+	daemonsKillallCmd.Flags().Bool("force", false, "Use SIGKILL immediately if graceful shutdown fails")
 
 	// Flags for restart command
 	daemonsRestartCmd.Flags().Bool("json", false, "Output in JSON format")
