@@ -1121,8 +1121,8 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 		log.log("This may cause compatibility issues.")
 		log.log("")
 		log.log("Options:")
-		log.log("  1. Upgrade/downgrade bd to match database version: %s", dbVersion)
-		log.log("  2. Run 'bd init' to update the database to the current version")
+		log.log("  1. Run 'bd migrate' to update the database to the current version")
+		log.log("  2. Upgrade/downgrade bd to match database version: %s", dbVersion)
 		log.log("  3. Set BEADS_IGNORE_VERSION_MISMATCH=1 to proceed anyway (not recommended)")
 		log.log("")
 		

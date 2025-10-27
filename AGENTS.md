@@ -198,6 +198,11 @@ bd duplicates --dry-run                                # Preview merge operation
 # Merge specific duplicate issues
 bd merge <source-id...> --into <target-id> --json      # Consolidate duplicates
 bd merge bd-42 bd-43 --into bd-41 --dry-run            # Preview merge
+
+# Migrate databases after version upgrade
+bd migrate                                             # Detect and migrate old databases
+bd migrate --dry-run                                   # Preview migration
+bd migrate --cleanup --yes                             # Migrate and remove old files
 ```
 
 ### Managing Daemons

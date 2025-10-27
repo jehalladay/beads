@@ -1032,7 +1032,8 @@ func checkVersionMismatch() {
 		} else if cmp > 0 {
 			// Binary is newer than database
 			fmt.Fprintf(os.Stderr, "%s\n", yellow("⚠️  Your binary appears NEWER than the database."))
-			fmt.Fprintf(os.Stderr, "%s\n\n", yellow("⚠️  The database will be upgraded automatically."))
+			fmt.Fprintf(os.Stderr, "%s\n", yellow("⚠️  Run 'bd migrate' to check for and migrate old database files."))
+			fmt.Fprintf(os.Stderr, "%s\n\n", yellow("⚠️  The current database version will be updated automatically."))
 			// Update stored version to current
 			_ = store.SetMetadata(ctx, "bd_version", Version)
 		}

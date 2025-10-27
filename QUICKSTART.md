@@ -94,6 +94,21 @@ You can use project-specific databases:
 ./bd --db ./my-project.db create "Task"
 ```
 
+## Migrating Databases
+
+After upgrading bd, use `bd migrate` to check for and migrate old database files:
+
+```bash
+# Check for migration opportunities
+./bd migrate --dry-run
+
+# Migrate old databases to beads.db
+./bd migrate
+
+# Migrate and clean up old files
+./bd migrate --cleanup --yes
+```
+
 ## Next Steps
 
 - Add labels: `./bd create "Task" -l "backend,urgent"`
