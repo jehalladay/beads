@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -163,7 +164,7 @@ type DatabaseInfo struct {
 }
 
 // findDatabaseInTree walks up the directory tree looking for .beads/*.db
-// Prefers beads.db and returns an error (via stderr warning) if multiple .db files exist
+// Prefers config.json, falls back to beads.db, and returns an error if multiple .db files exist
 func findDatabaseInTree() string {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -174,7 +175,15 @@ func findDatabaseInTree() string {
 	for {
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
-			// Check for canonical beads.db first
+			// Check for config.json first (single source of truth)
+			if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
+				dbPath := cfg.DatabasePath(beadsDir)
+				if _, err := os.Stat(dbPath); err == nil {
+					return dbPath
+				}
+			}
+
+			// Fall back to canonical beads.db for backward compatibility
 			canonicalDB := filepath.Join(beadsDir, "beads.db")
 			if _, err := os.Stat(canonicalDB); err == nil {
 				return canonicalDB

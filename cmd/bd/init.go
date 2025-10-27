@@ -9,6 +9,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
@@ -104,8 +105,9 @@ bd.sock
 db.sqlite
 bd.db
 
-# Keep JSONL exports (source of truth for git)
+# Keep JSONL exports and config (source of truth for git)
 !*.jsonl
+!config.json
 `
 			if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0600); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create .gitignore: %v\n", err)
@@ -137,6 +139,15 @@ bd.db
 		if err := store.SetMetadata(ctx, "bd_version", Version); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to store version metadata: %v\n", err)
 		// Non-fatal - continue anyway
+		}
+
+		// Create config.json for explicit configuration
+		if useLocalBeads {
+			cfg := configfile.DefaultConfig(Version)
+			if err := cfg.Save(localBeadsDir); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to create config.json: %v\n", err)
+				// Non-fatal - continue anyway
+			}
 		}
 
 		// Check if git has existing issues to import (fresh clone scenario)

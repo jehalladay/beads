@@ -1,7 +1,8 @@
 # Test bd init command
 bd init --prefix test
 stdout 'initialized successfully'
-exists .beads/test.db
+exists .beads/beads.db
+exists .beads/config.json
 exists .beads/.gitignore
 grep '^\*\.db$' .beads/.gitignore
 grep '^\*\.db-journal$' .beads/.gitignore
@@ -11,3 +12,4 @@ grep '^daemon\.log$' .beads/.gitignore
 grep '^daemon\.pid$' .beads/.gitignore
 grep '^bd\.sock$' .beads/.gitignore
 grep '^!\*\.jsonl$' .beads/.gitignore
+grep '^!config\.json$' .beads/.gitignore
