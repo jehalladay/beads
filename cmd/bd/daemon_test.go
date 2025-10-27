@@ -132,7 +132,8 @@ func TestIsDaemonRunning_CurrentProcess(t *testing.T) {
 
 	// Acquire the daemon lock to simulate a running daemon
 	beadsDir := filepath.Dir(pidFile)
-	lock, err := acquireDaemonLock(beadsDir, false)
+	dbPath := filepath.Join(beadsDir, "beads.db")
+	lock, err := acquireDaemonLock(beadsDir, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to acquire daemon lock: %v", err)
 	}

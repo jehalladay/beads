@@ -1,15 +1,25 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var ErrDaemonLocked = errors.New("daemon lock already held by another process")
+
+// DaemonLockInfo represents the metadata stored in the daemon.lock file
+type DaemonLockInfo struct {
+	PID        int       `json:"pid"`
+	Database   string    `json:"database"`
+	Version    string    `json:"version"`
+	StartedAt  time.Time `json:"started_at"`
+}
 
 // DaemonLock represents a held lock on the daemon.lock file
 type DaemonLock struct {
@@ -30,7 +40,8 @@ func (l *DaemonLock) Close() error {
 
 // acquireDaemonLock attempts to acquire an exclusive lock on daemon.lock
 // Returns ErrDaemonLocked if another daemon is already running
-func acquireDaemonLock(beadsDir string, _ bool) (*DaemonLock, error) {
+// dbPath is the full path to the database file (e.g., /path/to/.beads/beads.db)
+func acquireDaemonLock(beadsDir string, dbPath string) (*DaemonLock, error) {
 	lockPath := filepath.Join(beadsDir, "daemon.lock")
 
 	// Open or create the lock file
@@ -48,10 +59,19 @@ func acquireDaemonLock(beadsDir string, _ bool) (*DaemonLock, error) {
 		return nil, fmt.Errorf("cannot lock file: %w", err)
 	}
 
-	// Write our PID to the lock file for debugging (optional)
+	// Write JSON metadata to the lock file
+	lockInfo := DaemonLockInfo{
+		PID:       os.Getpid(),
+		Database:  dbPath,
+		Version:   Version,
+		StartedAt: time.Now().UTC(),
+	}
+	
 	_ = f.Truncate(0)
 	_, _ = f.Seek(0, 0)
-	_, _ = fmt.Fprintf(f, "%d\n", os.Getpid())
+	encoder := json.NewEncoder(f)
+	encoder.SetIndent("", "  ")
+	_ = encoder.Encode(lockInfo)
 	_ = f.Sync()
 
 	// Also write PID file for Windows compatibility (can't read locked files on Windows)
@@ -80,16 +100,23 @@ func tryDaemonLock(beadsDir string) (running bool, pid int) {
 	if err := flockExclusive(f); err != nil {
 		if err == ErrDaemonLocked {
 			// Lock is held - daemon is running
-			// Try to read PID for display (best effort)
-			_, _ = f.Seek(0, 0) // Seek to beginning before reading
-			data := make([]byte, 32)
-			n, _ := f.Read(data)
-			if n > 0 {
-				_, _ = fmt.Sscanf(string(data[:n]), "%d", &pid)
-			}
-			// Fallback to PID file if we couldn't read PID from lock file
-			if pid == 0 {
-				_, pid = checkPIDFile(beadsDir)
+			// Try to read PID from JSON format (best effort)
+			_, _ = f.Seek(0, 0)
+			var lockInfo DaemonLockInfo
+			if err := json.NewDecoder(f).Decode(&lockInfo); err == nil {
+				pid = lockInfo.PID
+			} else {
+				// Fallback: try reading as plain integer (old format)
+				_, _ = f.Seek(0, 0)
+				data := make([]byte, 32)
+				n, _ := f.Read(data)
+				if n > 0 {
+					_, _ = fmt.Sscanf(string(data[:n]), "%d", &pid)
+				}
+				// Fallback to PID file if we couldn't read PID from lock file
+				if pid == 0 {
+					_, pid = checkPIDFile(beadsDir)
+				}
 			}
 			return true, pid
 		}
@@ -100,6 +127,55 @@ func tryDaemonLock(beadsDir string) (running bool, pid int) {
 	// We got the lock - no daemon running
 	// Release immediately (file close will do this)
 	return false, 0
+}
+
+// readDaemonLockInfo reads and parses the daemon lock file
+// Returns lock info if available, or error if file doesn't exist or can't be parsed
+func readDaemonLockInfo(beadsDir string) (*DaemonLockInfo, error) {
+	lockPath := filepath.Join(beadsDir, "daemon.lock")
+	
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		return nil, err
+	}
+	
+	var lockInfo DaemonLockInfo
+	if err := json.Unmarshal(data, &lockInfo); err != nil {
+		// Try parsing as old format (plain PID)
+		var pid int
+		if _, err := fmt.Sscanf(string(data), "%d", &pid); err == nil {
+			return &DaemonLockInfo{PID: pid}, nil
+		}
+		return nil, fmt.Errorf("cannot parse lock file: %w", err)
+	}
+	
+	return &lockInfo, nil
+}
+
+// validateDaemonLock validates that the running daemon matches expected parameters
+// Returns error if validation fails (mismatch detected)
+func validateDaemonLock(beadsDir string, expectedDB string) error {
+	lockInfo, err := readDaemonLockInfo(beadsDir)
+	if err != nil {
+		// No lock file or can't read - not an error for validation
+		return nil
+	}
+	
+	// Validate database path if specified in lock
+	if lockInfo.Database != "" && expectedDB != "" {
+		if lockInfo.Database != expectedDB {
+			return fmt.Errorf("daemon database mismatch: daemon uses %s but expected %s", lockInfo.Database, expectedDB)
+		}
+	}
+	
+	// Version mismatch is a warning, not a hard error (handled elsewhere)
+	// But we return the info for caller to decide
+	if lockInfo.Version != "" && lockInfo.Version != Version {
+		// Not a hard error - version compatibility check happens via RPC
+		// This is just informational
+	}
+	
+	return nil
 }
 
 // checkPIDFile checks if a daemon is running by reading the PID file.

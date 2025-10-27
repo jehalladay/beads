@@ -829,9 +829,9 @@ func setupDaemonLogger(logPath string) (*lumberjack.Logger, daemonLogger) {
 	return logF, logger
 }
 
-func setupDaemonLock(pidFile string, global bool, log daemonLogger) (io.Closer, error) {
+func setupDaemonLock(pidFile string, dbPath string, log daemonLogger) (io.Closer, error) {
 	beadsDir := filepath.Dir(pidFile)
-	lock, err := acquireDaemonLock(beadsDir, global)
+	lock, err := acquireDaemonLock(beadsDir, dbPath)
 	if err != nil {
 		if err == ErrDaemonLocked {
 			log.log("Daemon already running (lock held), exiting")
@@ -1044,7 +1044,22 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 	logF, log := setupDaemonLogger(logPath)
 	defer func() { _ = logF.Close() }()
 
-	lock, err := setupDaemonLock(pidFile, global, log)
+	// Determine database path first (needed for lock file metadata)
+	daemonDBPath := ""
+	if !global {
+		daemonDBPath = dbPath
+		if daemonDBPath == "" {
+			if foundDB := beads.FindDatabasePath(); foundDB != "" {
+				daemonDBPath = foundDB
+			} else {
+				log.log("Error: no beads database found")
+				log.log("Hint: run 'bd init' to create a database or set BEADS_DB environment variable")
+				os.Exit(1)
+			}
+		}
+	}
+
+	lock, err := setupDaemonLock(pidFile, daemonDBPath, log)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -1056,17 +1071,6 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 	if global {
 		runGlobalDaemon(log)
 		return
-	}
-
-	daemonDBPath := dbPath
-	if daemonDBPath == "" {
-		if foundDB := beads.FindDatabasePath(); foundDB != "" {
-			daemonDBPath = foundDB
-		} else {
-			log.log("Error: no beads database found")
-			log.log("Hint: run 'bd init' to create a database or set BEADS_DB environment variable")
-			os.Exit(1)
-		}
 	}
 
 	// Check for multiple .db files (ambiguity error)

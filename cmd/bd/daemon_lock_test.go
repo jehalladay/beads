@@ -17,15 +17,17 @@ func TestDaemonLockPreventsMultipleInstances(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	dbPath := filepath.Join(beadsDir, "beads.db")
+
 	// Acquire lock
-	lock1, err := acquireDaemonLock(beadsDir, false)
+	lock1, err := acquireDaemonLock(beadsDir, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to acquire first lock: %v", err)
 	}
 	defer lock1.Close()
 
 	// Try to acquire lock again - should fail
-	lock2, err := acquireDaemonLock(beadsDir, false)
+	lock2, err := acquireDaemonLock(beadsDir, dbPath)
 	if err != ErrDaemonLocked {
 		if lock2 != nil {
 			lock2.Close()
@@ -37,7 +39,7 @@ func TestDaemonLockPreventsMultipleInstances(t *testing.T) {
 	lock1.Close()
 
 	// Now should be able to acquire lock
-	lock3, err := acquireDaemonLock(beadsDir, false)
+	lock3, err := acquireDaemonLock(beadsDir, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to acquire lock after release: %v", err)
 	}
@@ -51,6 +53,8 @@ func TestTryDaemonLockDetectsRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	dbPath := filepath.Join(beadsDir, "beads.db")
+
 	// Initially no daemon running
 	running, _ := tryDaemonLock(beadsDir)
 	if running {
@@ -58,7 +62,7 @@ func TestTryDaemonLockDetectsRunning(t *testing.T) {
 	}
 
 	// Acquire lock
-	lock, err := acquireDaemonLock(beadsDir, false)
+	lock, err := acquireDaemonLock(beadsDir, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to acquire lock: %v", err)
 	}
@@ -104,6 +108,78 @@ func TestBackwardCompatibilityWithOldDaemon(t *testing.T) {
 	running, _ = tryDaemonLock(beadsDir)
 	if running {
 		t.Fatal("Expected no daemon running after PID file removed")
+	}
+}
+
+func TestDaemonLockJSONFormat(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	dbPath := filepath.Join(beadsDir, "beads.db")
+
+	// Acquire lock
+	lock, err := acquireDaemonLock(beadsDir, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to acquire lock: %v", err)
+	}
+	defer lock.Close()
+
+	// Read the lock file and verify JSON format
+	lockInfo, err := readDaemonLockInfo(beadsDir)
+	if err != nil {
+		t.Fatalf("Failed to read lock info: %v", err)
+	}
+
+	if lockInfo.PID != os.Getpid() {
+		t.Errorf("Expected PID %d, got %d", os.Getpid(), lockInfo.PID)
+	}
+
+	if lockInfo.Database != dbPath {
+		t.Errorf("Expected database %s, got %s", dbPath, lockInfo.Database)
+	}
+
+	if lockInfo.Version != Version {
+		t.Errorf("Expected version %s, got %s", Version, lockInfo.Version)
+	}
+
+	if lockInfo.StartedAt.IsZero() {
+		t.Error("Expected non-zero StartedAt timestamp")
+	}
+}
+
+func TestValidateDaemonLock(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	dbPath := filepath.Join(beadsDir, "beads.db")
+
+	// No lock file - validation should pass
+	if err := validateDaemonLock(beadsDir, dbPath); err != nil {
+		t.Errorf("Expected no error when no lock file exists, got: %v", err)
+	}
+
+	// Acquire lock with correct database
+	lock, err := acquireDaemonLock(beadsDir, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to acquire lock: %v", err)
+	}
+	defer lock.Close()
+
+	// Validation should pass with matching database
+	if err := validateDaemonLock(beadsDir, dbPath); err != nil {
+		t.Errorf("Expected no error with matching database, got: %v", err)
+	}
+
+	// Validation should fail with different database
+	wrongDB := filepath.Join(beadsDir, "wrong.db")
+	if err := validateDaemonLock(beadsDir, wrongDB); err == nil {
+		t.Error("Expected error with mismatched database")
 	}
 }
 

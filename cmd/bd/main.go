@@ -269,18 +269,30 @@ var rootCmd = &cobra.Command{
 						daemonStatus.Detail = fmt.Sprintf("version mismatch (daemon: %s, client: %s) and restart failed",
 							health.Version, Version)
 					} else {
-						// Daemon is healthy and compatible - use it
-						daemonClient = client
-						daemonStatus.Mode = cmdDaemon
-						daemonStatus.Connected = true
-						daemonStatus.Degraded = false
-						daemonStatus.Health = health.Status
-						if os.Getenv("BD_DEBUG") != "" {
-							fmt.Fprintf(os.Stderr, "Debug: connected to daemon at %s (health: %s)\n", socketPath, health.Status)
+						// Daemon is healthy and compatible - validate database path
+						beadsDir := filepath.Dir(dbPath)
+						if err := validateDaemonLock(beadsDir, dbPath); err != nil {
+							_ = client.Close()
+							daemonStatus.FallbackReason = FallbackHealthFailed
+							daemonStatus.Detail = fmt.Sprintf("daemon lock validation failed: %v", err)
+							if os.Getenv("BD_DEBUG") != "" {
+								fmt.Fprintf(os.Stderr, "Debug: daemon lock validation failed: %v\n", err)
+							}
+							// Fall through to direct mode
+						} else {
+							// Daemon is healthy, compatible, and validated - use it
+							daemonClient = client
+							daemonStatus.Mode = cmdDaemon
+							daemonStatus.Connected = true
+							daemonStatus.Degraded = false
+							daemonStatus.Health = health.Status
+							if os.Getenv("BD_DEBUG") != "" {
+								fmt.Fprintf(os.Stderr, "Debug: connected to daemon at %s (health: %s)\n", socketPath, health.Status)
+							}
+							// Warn if using daemon with git worktrees
+							warnWorktreeDaemon(dbPath)
+							return // Skip direct storage initialization
 						}
-						// Warn if using daemon with git worktrees
-						warnWorktreeDaemon(dbPath)
-						return // Skip direct storage initialization
 					}
 				} else {
 					// Health check failed or daemon unhealthy
