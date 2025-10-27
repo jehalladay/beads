@@ -1079,8 +1079,11 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 	defer func() { _ = store.Close() }()
 	log.log("Database opened: %s", daemonDBPath)
 
-	workspacePath := filepath.Dir(daemonDBPath)
-	socketPath := filepath.Join(workspacePath, "bd.sock")
+	// Get workspace path (.beads directory)
+	beadsDir := filepath.Dir(daemonDBPath)
+	// Get actual workspace root (parent of .beads)
+	workspacePath := filepath.Dir(beadsDir)
+	socketPath := filepath.Join(beadsDir, "bd.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
