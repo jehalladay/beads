@@ -286,8 +286,8 @@ func (h *createIssuesTestHelper) assertNoAutoGenID(issues []*types.Issue, wantEr
 		if issue == nil {
 			continue
 		}
-		hasCustomID := issue.ID != "" && (issue.ID == "custom-1" || issue.ID == "custom-2" || 
-			issue.ID == "duplicate-id" || issue.ID == "existing-id")
+		hasCustomID := issue.ID != "" && (issue.ID == "bd-100" || issue.ID == "bd-200" || 
+			issue.ID == "bd-999" || issue.ID == "bd-existing")
 		if !hasCustomID && issue.ID != "" {
 			h.t.Errorf("issue %d: ID should not be auto-generated on error, got %s", i, issue.ID)
 		}
@@ -346,21 +346,21 @@ func TestCreateIssues(t *testing.T) {
 			},
 		},
 		{
-			name: "mixed ID assignment - explicit and auto-generated",
-			issues: []*types.Issue{
-				h.newIssue("custom-1", "Custom ID 1", types.StatusOpen, 1, types.TypeTask, nil),
-				h.newIssue("", "Auto ID", types.StatusOpen, 1, types.TypeTask, nil),
-				h.newIssue("custom-2", "Custom ID 2", types.StatusOpen, 1, types.TypeTask, nil),
-			},
-			wantErr: false,
-			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {
-				h.assertCount(issues, 3)
-				h.assertEqual("custom-1", issues[0].ID, "ID")
-				if issues[1].ID == "" || issues[1].ID == "custom-1" || issues[1].ID == "custom-2" {
-					t.Errorf("expected auto-generated ID, got %s", issues[1].ID)
-				}
-				h.assertEqual("custom-2", issues[2].ID, "ID")
-			},
+		name: "mixed ID assignment - explicit and auto-generated",
+		issues: []*types.Issue{
+		h.newIssue("bd-100", "Custom ID 1", types.StatusOpen, 1, types.TypeTask, nil),
+		h.newIssue("", "Auto ID", types.StatusOpen, 1, types.TypeTask, nil),
+		h.newIssue("bd-200", "Custom ID 2", types.StatusOpen, 1, types.TypeTask, nil),
+		},
+		wantErr: false,
+		checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {
+		h.assertCount(issues, 3)
+		h.assertEqual("bd-100", issues[0].ID, "ID")
+		if issues[1].ID == "" || issues[1].ID == "bd-100" || issues[1].ID == "bd-200" {
+		t.Errorf("expected auto-generated ID, got %s", issues[1].ID)
+		}
+		h.assertEqual("bd-200", issues[2].ID, "ID")
+		},
 		},
 		{
 			name: "validation error - missing title",
@@ -384,13 +384,13 @@ func TestCreateIssues(t *testing.T) {
 			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
 		},
 		{
-			name: "duplicate ID error",
-			issues: []*types.Issue{
-				h.newIssue("duplicate-id", "First issue", types.StatusOpen, 1, types.TypeTask, nil),
-				h.newIssue("duplicate-id", "Second issue", types.StatusOpen, 1, types.TypeTask, nil),
-			},
-			wantErr: true,
-			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
+		name: "duplicate ID error",
+		issues: []*types.Issue{
+		h.newIssue("bd-999", "First issue", types.StatusOpen, 1, types.TypeTask, nil),
+		h.newIssue("bd-999", "Second issue", types.StatusOpen, 1, types.TypeTask, nil),
+		},
+		wantErr: true,
+		checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
 		},
 		{
 			name: "closed_at invariant - open status with closed_at",
@@ -506,7 +506,7 @@ func TestCreateIssuesRollback(t *testing.T) {
 	t.Run("rollback on conflict with existing ID", func(t *testing.T) {
 		// Create an issue with explicit ID
 		existingIssue := &types.Issue{
-			ID:        "existing-id",
+			ID:        "bd-existing",
 			Title:     "Existing issue",
 			Status:    types.StatusOpen,
 			Priority:  1,
@@ -526,7 +526,7 @@ func TestCreateIssuesRollback(t *testing.T) {
 				IssueType: types.TypeTask,
 			},
 			{
-				ID:        "existing-id",
+				ID:        "bd-existing",
 				Title:     "Conflict",
 				Status:    types.StatusOpen,
 				Priority:  1,

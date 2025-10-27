@@ -29,6 +29,11 @@ func TestDetectCollisions(t *testing.T) {
 
 	ctx := context.Background()
 
+	// Set issue prefix to prevent "database not initialized" errors
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
 	// Setup: Create some existing issues in the database
 	existingIssue1 := &types.Issue{
 		ID:          testIssueBD1,
@@ -531,6 +536,11 @@ func TestScoreCollisions(t *testing.T) {
 
 	ctx := context.Background()
 
+	// Set issue prefix to prevent "database not initialized" errors
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
 	// Setup: Create issues with various reference patterns
 	issue1 := &types.Issue{
 		ID:          "bd-1",
@@ -800,6 +810,11 @@ func TestRemapCollisions(t *testing.T) {
 	defer store.Close()
 
 	ctx := context.Background()
+
+	// Set issue prefix to prevent "database not initialized" errors
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
 
 	// Setup: Create an existing issue in the database with a high ID number
 	// This ensures that when we remap bd-2 and bd-3, they get new IDs that don't conflict
