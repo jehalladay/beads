@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -25,17 +26,27 @@ func TestRepairMultiplePrefixes(t *testing.T) {
 	}
 
 	// Create issues with multiple prefixes (simulating corruption)
-	// We'll manually create issues with different prefixes
-	issues := []*types.Issue{
-		{ID: "test-1", Title: "Test issue 1", Status: "open", Priority: 2, IssueType: "task"},
-		{ID: "test-2", Title: "Test issue 2", Status: "open", Priority: 2, IssueType: "task"},
-		{ID: "old-1", Title: "Old issue 1", Status: "open", Priority: 2, IssueType: "task"},
-		{ID: "old-2", Title: "Old issue 2", Status: "open", Priority: 2, IssueType: "task"},
-		{ID: "another-1", Title: "Another issue 1", Status: "open", Priority: 2, IssueType: "task"},
+	// We need to directly insert into the database to bypass prefix validation
+	db := store.UnderlyingDB()
+	
+	now := time.Now()
+	issues := []struct {
+		ID    string
+		Title string
+	}{
+		{"test-1", "Test issue 1"},
+		{"test-2", "Test issue 2"},
+		{"old-1", "Old issue 1"},
+		{"old-2", "Old issue 2"},
+		{"another-1", "Another issue 1"},
 	}
 
 	for _, issue := range issues {
-		if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO issues (id, title, status, priority, issue_type, created_at, updated_at)
+			VALUES (?, ?, 'open', 2, 'task', ?, ?)
+		`, issue.ID, issue.Title, now, now)
+		if err != nil {
 			t.Fatalf("failed to create issue %s: %v", issue.ID, err)
 		}
 	}
