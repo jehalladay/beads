@@ -30,7 +30,6 @@ type HaikuClient struct {
 	client         anthropic.Client
 	model          anthropic.Model
 	tier1Template  *template.Template
-	tier2Template  *template.Template
 	maxRetries     int
 	initialBackoff time.Duration
 }
@@ -52,16 +51,10 @@ func NewHaikuClient(apiKey string) (*HaikuClient, error) {
 		return nil, fmt.Errorf("failed to parse tier1 template: %w", err)
 	}
 
-	tier2Tmpl, err := template.New("tier2").Parse(tier2PromptTemplate)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse tier2 template: %w", err)
-	}
-
 	return &HaikuClient{
 		client:         client,
 		model:          defaultModel,
 		tier1Template:  tier1Tmpl,
-		tier2Template:  tier2Tmpl,
 		maxRetries:     maxRetries,
 		initialBackoff: initialBackoff,
 	}, nil
@@ -70,16 +63,6 @@ func NewHaikuClient(apiKey string) (*HaikuClient, error) {
 // SummarizeTier1 creates a structured summary of an issue (Summary, Key Decisions, Resolution).
 func (h *HaikuClient) SummarizeTier1(ctx context.Context, issue *types.Issue) (string, error) {
 	prompt, err := h.renderTier1Prompt(issue)
-	if err != nil {
-		return "", fmt.Errorf("failed to render prompt: %w", err)
-	}
-
-	return h.callWithRetry(ctx, prompt)
-}
-
-// SummarizeTier2 creates an ultra-compressed single-paragraph summary (≤150 words).
-func (h *HaikuClient) SummarizeTier2(ctx context.Context, issue *types.Issue) (string, error) {
-	prompt, err := h.renderTier2Prompt(issue)
 	if err != nil {
 		return "", fmt.Errorf("failed to render prompt: %w", err)
 	}
@@ -186,26 +169,6 @@ func (h *HaikuClient) renderTier1Prompt(issue *types.Issue) (string, error) {
 	return string(w.buf), nil
 }
 
-type tier2Data struct {
-	Title              string
-	CurrentDescription string
-}
-
-func (h *HaikuClient) renderTier2Prompt(issue *types.Issue) (string, error) {
-	var buf []byte
-	w := &bytesWriter{buf: buf}
-
-	data := tier2Data{
-		Title:              issue.Title,
-		CurrentDescription: issue.Description,
-	}
-
-	if err := h.tier2Template.Execute(w, data); err != nil {
-		return "", err
-	}
-	return string(w.buf), nil
-}
-
 type bytesWriter struct {
 	buf []byte
 }
@@ -243,17 +206,3 @@ Provide a summary in this exact format:
 **Key Decisions:** [Brief bullet points of only the most important technical choices]
 
 **Resolution:** [One sentence on final outcome and lasting impact]`
-
-const tier2PromptTemplate = `You are performing ultra-compression on a closed software issue. The issue has already been summarized once. Your task is to create a single concise paragraph (≤150 words) that captures the essence.
-
-**Title:** {{.Title}}
-
-**Current Summary:**
-{{.CurrentDescription}}
-
-Provide a single paragraph that covers:
-- What was built/fixed
-- Why it mattered
-- Any lasting impact or decisions
-
-Keep it under 150 words while retaining the most important context.`

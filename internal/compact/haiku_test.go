@@ -90,38 +90,6 @@ func TestRenderTier1Prompt(t *testing.T) {
 	}
 }
 
-func TestRenderTier2Prompt(t *testing.T) {
-	client, err := NewHaikuClient("test-key")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	issue := &types.Issue{
-		ID:          "bd-1",
-		Title:       "Fix authentication bug",
-		Description: "**Summary:** Fixed OAuth login flow by adding proper error handling.",
-		Status:      types.StatusClosed,
-	}
-
-	prompt, err := client.renderTier2Prompt(issue)
-	if err != nil {
-		t.Fatalf("failed to render prompt: %v", err)
-	}
-
-	if !strings.Contains(prompt, "Fix authentication bug") {
-		t.Error("prompt should contain title")
-	}
-	if !strings.Contains(prompt, "Fixed OAuth login flow") {
-		t.Error("prompt should contain current description")
-	}
-	if !strings.Contains(prompt, "150 words") {
-		t.Error("prompt should contain word limit")
-	}
-	if !strings.Contains(prompt, "ultra-compression") {
-		t.Error("prompt should indicate ultra-compression")
-	}
-}
-
 func TestRenderTier1Prompt_HandlesEmptyFields(t *testing.T) {
 	client, err := NewHaikuClient("test-key")
 	if err != nil {

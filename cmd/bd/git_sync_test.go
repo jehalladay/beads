@@ -296,13 +296,3 @@ func verifyIssueClosed(t *testing.T, store *sqlite.SQLiteStorage, issueID string
 		t.Errorf("Expected issue %s to be closed, got status %s", issueID, issue.Status)
 	}
 }
-
-func verifyIssueOpen(t *testing.T, store *sqlite.SQLiteStorage, issueID string) {
-	issue, err := store.GetIssue(context.Background(), issueID)
-	if err != nil {
-		t.Fatalf("Failed to get issue %s: %v", issueID, err)
-	}
-	if issue.Status != types.StatusOpen {
-		t.Errorf("Expected issue %s to be open, got status %s", issueID, issue.Status)
-	}
-}

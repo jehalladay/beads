@@ -147,14 +147,6 @@ func Set(key string, value interface{}) {
 // 	return v.BindPFlag(key, flag)
 // }
 
-// FileUsed returns the path to the active configuration file.
-func FileUsed() string {
-	if v == nil {
-		return ""
-	}
-	return v.ConfigFileUsed()
-}
-
 // AllSettings returns all configuration settings as a map
 func AllSettings() map[string]interface{} {
 	if v == nil {
