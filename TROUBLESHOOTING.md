@@ -185,7 +185,7 @@ git commit
 bd import -i .beads/issues.jsonl  # Sync to SQLite
 ```
 
-See [TEXT_FORMATS.md](TEXT_FORMATS.md) for detailed merge strategies.
+See [ADVANCED.md](ADVANCED.md) for detailed merge strategies.
 
 ### ID collisions after branch merge
 
@@ -498,4 +498,4 @@ If none of these solutions work:
 - **[ADVANCED.md](ADVANCED.md)** - Advanced features
 - **[FAQ.md](FAQ.md)** - Frequently asked questions
 - **[INSTALLING.md](INSTALLING.md)** - Installation guide
-- **[TEXT_FORMATS.md](TEXT_FORMATS.md)** - JSONL format and merge strategies
+- **[ADVANCED.md](ADVANCED.md)** - JSONL format and merge strategies

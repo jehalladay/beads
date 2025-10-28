@@ -444,7 +444,7 @@ For advanced usage, see:
 - **[ADVANCED.md](ADVANCED.md)** - Prefix renaming, merging duplicates, daemon configuration
 - **[CONFIG.md](CONFIG.md)** - Configuration system for integrations
 - **[EXTENDING.md](EXTENDING.md)** - Database extension patterns
-- **[TEXT_FORMATS.md](TEXT_FORMATS.md)** - JSONL format and merge strategies
+- **[ADVANCED.md](ADVANCED.md)** - JSONL format and merge strategies
 
 ## Documentation
 
@@ -457,7 +457,7 @@ For advanced usage, see:
 - **[LABELS.md](LABELS.md)** - Complete label system guide
 - **[CONFIG.md](CONFIG.md)** - Configuration system
 - **[EXTENDING.md](EXTENDING.md)** - Database extension patterns
-- **[TEXT_FORMATS.md](TEXT_FORMATS.md)** - JSONL format analysis
+- **[ADVANCED.md](ADVANCED.md)** - JSONL format analysis
 - **[PLUGIN.md](PLUGIN.md)** - Claude Code plugin documentation
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guidelines
 - **[SECURITY.md](SECURITY.md)** - Security policy

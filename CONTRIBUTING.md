@@ -84,7 +84,7 @@ go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 golangci-lint run ./...
 ```
 
-**Note**: The linter currently reports ~100 warnings. These are documented false positives and idiomatic Go patterns (deferred cleanup, Cobra interface requirements, etc.). See [LINTING.md](LINTING.md) for details. When contributing, focus on avoiding *new* issues rather than the baseline warnings.
+**Note**: The linter currently reports ~100 warnings. These are documented false positives and idiomatic Go patterns (deferred cleanup, Cobra interface requirements, etc.). See [docs/LINTING.md](docs/LINTING.md) for details. When contributing, focus on avoiding *new* issues rather than the baseline warnings.
 
 CI will automatically run linting on all pull requests.
 

@@ -368,7 +368,7 @@ bd show bd-41 --json  # Verify merged content
 ### Code Standards
 
 - **Go version**: 1.21+
-- **Linting**: `golangci-lint run ./...` (baseline warnings documented in LINTING.md)
+- **Linting**: `golangci-lint run ./...` (baseline warnings documented in [docs/LINTING.md](docs/LINTING.md))
 - **Testing**: All new features need tests (`go test ./...`)
 - **Documentation**: Update relevant .md files
 
@@ -617,14 +617,14 @@ rm .beads/.exclusive-lock
 
 - Check existing issues: `bd list`
 - Look at recent commits: `git log --oneline -20`
-- Read the docs: README.md, TEXT_FORMATS.md, EXTENDING.md
+- Read the docs: README.md, ADVANCED.md, EXTENDING.md
 - Create an issue if unsure: `bd create "Question: ..." -t task -p 2`
 
 ## Important Files
 
 - **README.md** - Main documentation (keep this updated!)
 - **EXTENDING.md** - Database extension guide
-- **TEXT_FORMATS.md** - JSONL format analysis
+- **ADVANCED.md** - JSONL format analysis
 - **CONTRIBUTING.md** - Contribution guidelines
 - **SECURITY.md** - Security policy
 

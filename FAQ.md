@@ -203,7 +203,7 @@ For true multi-agent coordination, you'd need additional tooling (like locks or 
 - ✅ **Scriptable**: Use `jq`, `grep`, or any text tools
 - ✅ **Portable**: Export/import between databases
 
-See [TEXT_FORMATS.md](TEXT_FORMATS.md) for detailed analysis.
+See [ADVANCED.md](ADVANCED.md) for detailed analysis.
 
 ### How do I handle merge conflicts?
 

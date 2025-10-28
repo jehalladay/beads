@@ -527,5 +527,5 @@ bd import -i .beads/issues.jsonl
 
 - [README.md](README.md) - Main documentation
 - [AGENTS.md](AGENTS.md) - AI agent integration guide
-- [WORKFLOW.md](WORKFLOW.md) - Team workflow patterns
-- [TEXT_FORMATS.md](TEXT_FORMATS.md) - JSONL format details
+- [AGENTS.md](AGENTS.md) - Team workflow patterns
+- [ADVANCED.md](ADVANCED.md) - JSONL format details
