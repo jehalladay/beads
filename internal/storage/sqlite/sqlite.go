@@ -1170,8 +1170,14 @@ func manageClosedAt(oldIssue *types.Issue, updates map[string]interface{}, setCl
 		return setClauses, args
 	}
 
-	newStatus, ok := statusVal.(string)
-	if !ok {
+	// Handle both string and types.Status
+	var newStatus string
+	switch v := statusVal.(type) {
+	case string:
+		newStatus = v
+	case types.Status:
+		newStatus = string(v)
+	default:
 		return setClauses, args
 	}
 

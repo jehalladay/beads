@@ -181,16 +181,19 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 			updates["acceptance_criteria"] = issue.AcceptanceCriteria
 			updates["notes"] = issue.Notes
 
+			// bd-206: closed_at is managed automatically by UpdateIssue based on status
+			// No need to set it explicitly here
+
 			if issue.Assignee != "" {
-				updates["assignee"] = issue.Assignee
+			updates["assignee"] = issue.Assignee
 			} else {
-				updates["assignee"] = nil
+			updates["assignee"] = nil
 			}
 
 			if issue.ExternalRef != nil && *issue.ExternalRef != "" {
-				updates["external_ref"] = *issue.ExternalRef
+			updates["external_ref"] = *issue.ExternalRef
 			} else {
-				updates["external_ref"] = nil
+			updates["external_ref"] = nil
 			}
 
 			// bd-88: Only update if data actually changed (prevents timestamp churn)

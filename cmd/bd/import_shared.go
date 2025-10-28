@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/steveyegge/beads/internal/importer"
 	"github.com/steveyegge/beads/internal/storage"
@@ -114,6 +115,29 @@ func (fc *fieldComparator) equalPriority(existing int, newVal interface{}) bool 
 	return existing == int(p)
 }
 
+// equalTime compares *time.Time field
+func (fc *fieldComparator) equalTime(existing *time.Time, newVal interface{}) bool {
+	switch t := newVal.(type) {
+	case *time.Time:
+		if existing == nil && t == nil {
+			return true
+		}
+		if existing == nil || t == nil {
+			return false
+		}
+		return existing.Equal(*t)
+	case time.Time:
+		if existing == nil {
+			return false
+		}
+		return existing.Equal(t)
+	case nil:
+		return existing == nil
+	default:
+		return false
+	}
+}
+
 // checkFieldChanged checks if a specific field has changed
 func (fc *fieldComparator) checkFieldChanged(key string, existing *types.Issue, newVal interface{}) bool {
 	switch key {
@@ -137,6 +161,8 @@ func (fc *fieldComparator) checkFieldChanged(key string, existing *types.Issue, 
 		return !fc.equalStr(existing.Assignee, newVal)
 	case "external_ref":
 		return !fc.equalPtrStr(existing.ExternalRef, newVal)
+	case "closed_at":
+		return !fc.equalTime(existing.ClosedAt, newVal)
 	default:
 		// Unknown field - treat as changed to be conservative
 		// This prevents skipping updates when new fields are added
