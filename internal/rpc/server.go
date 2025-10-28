@@ -2112,20 +2112,6 @@ func (s *Server) handleShutdown(_ *Request) Response {
 	}
 }
 
-// GetLastImportTime returns the last JSONL import timestamp
-func (s *Server) GetLastImportTime() time.Time {
-	s.importMu.RLock()
-	defer s.importMu.RUnlock()
-	return s.lastImportTime
-}
-
-// SetLastImportTime updates the last JSONL import timestamp
-func (s *Server) SetLastImportTime(t time.Time) {
-	s.importMu.Lock()
-	defer s.importMu.Unlock()
-	s.lastImportTime = t
-}
-
 // checkAndAutoImportIfStale checks if JSONL is newer than last import and triggers auto-import
 // This fixes bd-132: daemon shows stale data after git pull
 func (s *Server) checkAndAutoImportIfStale(req *Request) error {
@@ -2249,25 +2235,4 @@ func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPat
 	}
 
 	return nil
-}
-
-// findJSONLPath finds the JSONL file path for the request's repository
-func (s *Server) findJSONLPath(req *Request) string {
-	// Extract repo root from request's working directory
-	// For now, use a simple heuristic: look for .beads/ in request's cwd
-	beadsDir := filepath.Join(req.Cwd, ".beads")
-	
-	// Try canonical filenames in order
-	candidates := []string{
-		filepath.Join(beadsDir, "beads.jsonl"),
-		filepath.Join(beadsDir, "issues.jsonl"),
-	}
-	
-	for _, path := range candidates {
-		if _, err := os.Stat(path); err == nil {
-			return path
-		}
-	}
-	
-	return ""
 }
