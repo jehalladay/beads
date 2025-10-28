@@ -384,7 +384,56 @@ func clearAutoFlushState() {
 //
 // Error handling: Returns error on any failure. Cleanup is guaranteed via defer.
 // Thread-safe: No shared state access. Safe to call from multiple goroutines.
-func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) error {
+// computeIssueContentHash computes a SHA256 hash of an issue's content, excluding timestamps.
+// This is used for detecting timestamp-only changes during export deduplication (bd-159).
+func computeIssueContentHash(issue *types.Issue) (string, error) {
+	// Clone issue and zero out timestamps to exclude them from hash
+	normalized := *issue
+	normalized.CreatedAt = time.Time{}
+	normalized.UpdatedAt = time.Time{}
+	
+	// Also zero out ClosedAt if present
+	if normalized.ClosedAt != nil {
+		zeroTime := time.Time{}
+		normalized.ClosedAt = &zeroTime
+	}
+	
+	// Serialize to JSON
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return "", err
+	}
+	
+	// SHA256 hash
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:]), nil
+}
+
+// shouldSkipExport checks if an issue should be skipped during export because
+// it only has timestamp changes (no actual content changes) (bd-159).
+func shouldSkipExport(ctx context.Context, issue *types.Issue) (bool, error) {
+	// Get the stored hash from export_hashes table (last exported state)
+	storedHash, err := store.GetExportHash(ctx, issue.ID)
+	if err != nil {
+		return false, err
+	}
+	
+	// If no hash stored, we must export (first export)
+	if storedHash == "" {
+		return false, nil
+	}
+	
+	// Compute current hash
+	currentHash, err := computeIssueContentHash(issue)
+	if err != nil {
+		return false, err
+	}
+	
+	// If hashes match, only timestamps changed - skip export
+	return currentHash == storedHash, nil
+}
+
+func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error) {
 	// Sort issues by ID for consistent output
 	sort.Slice(issues, func(i, j int) bool {
 		return issues[i].ID < issues[j].ID
@@ -394,7 +443,7 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) error {
 	tempPath := fmt.Sprintf("%s.tmp.%d", jsonlPath, os.Getpid())
 	f, err := os.Create(tempPath)
 	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 
 	// Ensure cleanup on failure
@@ -405,24 +454,62 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) error {
 		}
 	}()
 
-	// Write all issues as JSONL
+	// Write all issues as JSONL (with timestamp-only deduplication for bd-159)
+	ctx := context.Background()
 	encoder := json.NewEncoder(f)
+	skippedCount := 0
+	exportedIDs := make([]string, 0, len(issues))
+	
 	for _, issue := range issues {
-		if err := encoder.Encode(issue); err != nil {
-			return fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
+		// Check if this is only a timestamp change (bd-159)
+		skip, err := shouldSkipExport(ctx, issue)
+		if err != nil {
+			// Log warning but continue - don't fail export on hash check errors
+			if os.Getenv("BD_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "Debug: failed to check if %s should skip: %v\n", issue.ID, err)
+			}
+			skip = false
 		}
+		
+		if skip {
+			skippedCount++
+			continue
+		}
+		
+		if err := encoder.Encode(issue); err != nil {
+			return nil, fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
+		}
+		
+		// Save content hash after successful export (bd-159)
+		contentHash, err := computeIssueContentHash(issue)
+		if err != nil {
+			if os.Getenv("BD_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "Debug: failed to compute hash for %s: %v\n", issue.ID, err)
+			}
+		} else if err := store.SetExportHash(ctx, issue.ID, contentHash); err != nil {
+			if os.Getenv("BD_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "Debug: failed to save export hash for %s: %v\n", issue.ID, err)
+			}
+		}
+		
+		exportedIDs = append(exportedIDs, issue.ID)
+	}
+	
+	// Report skipped issues if any (helps debugging bd-159)
+	if skippedCount > 0 && os.Getenv("BD_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "Debug: auto-flush skipped %d issue(s) with timestamp-only changes\n", skippedCount)
 	}
 
 	// Close temp file before renaming
 	if err := f.Close(); err != nil {
-		return fmt.Errorf("failed to close temp file: %w", err)
+		return nil, fmt.Errorf("failed to close temp file: %w", err)
 	}
 	f = nil // Prevent defer cleanup
 
 	// Atomic rename
 	if err := os.Rename(tempPath, jsonlPath); err != nil {
 		_ = os.Remove(tempPath) // Clean up on rename failure
-		return fmt.Errorf("failed to rename file: %w", err)
+		return nil, fmt.Errorf("failed to rename file: %w", err)
 	}
 
 	// Set appropriate file permissions (0644: rw-r--r--)
@@ -433,7 +520,7 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) error {
 		}
 	}
 
-	return nil
+	return exportedIDs, nil
 }
 
 // flushToJSONL exports dirty issues to JSONL using incremental updates
@@ -603,15 +690,19 @@ func flushToJSONL() {
 	}
 
 	// Write atomically using common helper
-	if err := writeJSONLAtomic(jsonlPath, issues); err != nil {
+	exportedIDs, err := writeJSONLAtomic(jsonlPath, issues)
+	if err != nil {
 		recordFailure(err)
 		return
 	}
 
-	// Clear only the dirty issues that were actually exported (fixes bd-52 race condition)
-	if err := store.ClearDirtyIssuesByID(ctx, dirtyIDs); err != nil {
-		// Don't fail the whole flush for this, but warn
-		fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty issues: %v\n", err)
+	// Clear only the dirty issues that were actually exported (fixes bd-52 race condition, bd-159)
+	// Don't clear issues that were skipped due to timestamp-only changes
+	if len(exportedIDs) > 0 {
+		if err := store.ClearDirtyIssuesByID(ctx, exportedIDs); err != nil {
+			// Don't fail the whole flush for this, but warn
+			fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty issues: %v\n", err)
+		}
 	}
 
 	// Store hash of exported JSONL (fixes bd-84: enables hash-based auto-import)

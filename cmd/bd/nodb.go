@@ -188,7 +188,7 @@ func writeIssuesToJSONL(memStore *memory.MemoryStorage, beadsDir string) error {
 	issues := memStore.GetAllIssues()
 
 	// Write atomically using common helper (handles temp file + rename + permissions)
-	if err := writeJSONLAtomic(jsonlPath, issues); err != nil {
+	if _, err := writeJSONLAtomic(jsonlPath, issues); err != nil {
 		return err
 	}
 

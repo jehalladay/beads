@@ -2,70 +2,17 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
-
-// computeIssueContentHash computes a SHA256 hash of an issue's content, excluding timestamps.
-// This is used for detecting timestamp-only changes during export deduplication.
-func computeIssueContentHash(issue *types.Issue) (string, error) {
-	// Clone issue and zero out timestamps to exclude them from hash
-	normalized := *issue
-	normalized.CreatedAt = time.Time{}
-	normalized.UpdatedAt = time.Time{}
-	
-	// Also zero out ClosedAt if present
-	if normalized.ClosedAt != nil {
-		zeroTime := time.Time{}
-		normalized.ClosedAt = &zeroTime
-	}
-	
-	// Serialize to JSON
-	data, err := json.Marshal(normalized)
-	if err != nil {
-		return "", err
-	}
-	
-	// SHA256 hash
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:]), nil
-}
-
-// shouldSkipExport checks if an issue should be skipped during export because
-// it only has timestamp changes (no actual content changes).
-func shouldSkipExport(ctx context.Context, store storage.Storage, issue *types.Issue) (bool, error) {
-	// Get the stored hash from export_hashes table (last exported state)
-	storedHash, err := store.GetExportHash(ctx, issue.ID)
-	if err != nil {
-		return false, err
-	}
-	
-	// If no hash stored, we must export (first export)
-	if storedHash == "" {
-		return false, nil
-	}
-	
-	// Compute current hash
-	currentHash, err := computeIssueContentHash(issue)
-	if err != nil {
-		return false, err
-	}
-	
-	// If hashes match, only timestamps changed - skip export
-	return currentHash == storedHash, nil
-}
 
 // countIssuesInJSONL counts the number of issues in a JSONL file
 func countIssuesInJSONL(path string) (int, error) {
@@ -281,7 +228,7 @@ Output to stdout by default, or use -o flag for file output.`,
 		skippedCount := 0
 		for _, issue := range issues {
 			// Check if this is only a timestamp change (bd-164)
-			skip, err := shouldSkipExport(ctx, store, issue)
+			skip, err := shouldSkipExport(ctx, issue)
 			if err != nil {
 				// Log warning but continue - don't fail export on hash check errors
 				fmt.Fprintf(os.Stderr, "Warning: failed to check if %s should skip: %v\n", issue.ID, err)
