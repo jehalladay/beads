@@ -2,29 +2,17 @@ package main
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestReadyWork(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
-	
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	sqliteStore, err := sqlite.New(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sqliteStore.Close()
-
+	sqliteStore := newTestStore(t, dbPath)
 	ctx := context.Background()
 	
 	// Create issues with different states
@@ -142,17 +130,7 @@ func TestReadyWork(t *testing.T) {
 func TestReadyWorkWithAssignee(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
-	
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	sqliteStore, err := sqlite.New(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sqliteStore.Close()
-
+	sqliteStore := newTestStore(t, dbPath)
 	ctx := context.Background()
 	
 	// Create issues with different assignees
@@ -226,17 +204,7 @@ func TestReadyCommandInit(t *testing.T) {
 func TestReadyWorkInProgress(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
-	
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	sqliteStore, err := sqlite.New(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sqliteStore.Close()
-
+	sqliteStore := newTestStore(t, dbPath)
 	ctx := context.Background()
 	
 	// Create in-progress issue (should be in ready work)

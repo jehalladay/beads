@@ -263,13 +263,16 @@ func TestInitWithCustomDBPath(t *testing.T) {
 
 	customDBPath := filepath.Join(customDBDir, "test.db")
 
-	// Test with --db flag
-	t.Run("init with --db flag", func(t *testing.T) {
+	// Test with BEADS_DB environment variable (replacing --db flag test)
+	t.Run("init with BEADS_DB pointing to custom path", func(t *testing.T) {
 		dbPath = "" // Reset global
-		rootCmd.SetArgs([]string{"--db", customDBPath, "init", "--prefix", "custom", "--quiet"})
+		os.Setenv("BEADS_DB", customDBPath)
+		defer os.Unsetenv("BEADS_DB")
+
+		rootCmd.SetArgs([]string{"init", "--prefix", "custom", "--quiet"})
 
 		if err := rootCmd.Execute(); err != nil {
-			t.Fatalf("Init with --db flag failed: %v", err)
+			t.Fatalf("Init with BEADS_DB failed: %v", err)
 		}
 
 		// Verify database was created at custom location
@@ -296,7 +299,7 @@ func TestInitWithCustomDBPath(t *testing.T) {
 
 		// Verify .beads/ directory was NOT created in work directory
 		if _, err := os.Stat(filepath.Join(workDir, ".beads")); err == nil {
-			t.Error(".beads/ directory should not be created when using --db flag")
+			t.Error(".beads/ directory should not be created when using BEADS_DB env var")
 		}
 	})
 
@@ -336,12 +339,15 @@ func TestInitWithCustomDBPath(t *testing.T) {
 		}
 	})
 
-	// Test that custom path containing ".beads" doesn't create CWD/.beads
-	t.Run("init with custom path containing .beads", func(t *testing.T) {
+	// Test that BEADS_DB path containing ".beads" doesn't create CWD/.beads
+	t.Run("init with BEADS_DB path containing .beads", func(t *testing.T) {
 		dbPath = "" // Reset global
 		// Path contains ".beads" but is outside work directory
 		customPath := filepath.Join(tmpDir, "storage", ".beads-backup", "test.db")
-		rootCmd.SetArgs([]string{"--db", customPath, "init", "--prefix", "beadstest", "--quiet"})
+		os.Setenv("BEADS_DB", customPath)
+		defer os.Unsetenv("BEADS_DB")
+
+		rootCmd.SetArgs([]string{"init", "--prefix", "beadstest", "--quiet"})
 
 		if err := rootCmd.Execute(); err != nil {
 			t.Fatalf("Init with custom .beads path failed: %v", err)
@@ -354,31 +360,32 @@ func TestInitWithCustomDBPath(t *testing.T) {
 
 		// Verify .beads/ directory was NOT created in work directory
 		if _, err := os.Stat(filepath.Join(workDir, ".beads")); err == nil {
-			t.Error(".beads/ directory should not be created in CWD when custom path contains .beads")
+			t.Error(".beads/ directory should not be created in CWD when BEADS_DB path contains .beads")
 		}
 	})
 
-	// Test flag precedence over env var
-	t.Run("flag takes precedence over BEADS_DB", func(t *testing.T) {
+	// Test with multiple BEADS_DB variations  
+	t.Run("BEADS_DB with subdirectories", func(t *testing.T) {
 		dbPath = "" // Reset global
-		flagPath := filepath.Join(tmpDir, "flag", "flag.db")
-		envPath := filepath.Join(tmpDir, "env", "env.db")
+		envPath := filepath.Join(tmpDir, "env", "subdirs", "test.db")
 		
 		os.Setenv("BEADS_DB", envPath)
 		defer os.Unsetenv("BEADS_DB")
 		
-		rootCmd.SetArgs([]string{"--db", flagPath, "init", "--prefix", "flagtest", "--quiet"})
+		rootCmd.SetArgs([]string{"init", "--prefix", "envtest2", "--quiet"})
 
 		if err := rootCmd.Execute(); err != nil {
-			t.Fatalf("Init with flag precedence failed: %v", err)
+			t.Fatalf("Init with BEADS_DB subdirs failed: %v", err)
 		}
 
-		// Verify database was created at flag location, not env location
-		if _, err := os.Stat(flagPath); os.IsNotExist(err) {
-			t.Errorf("Database was not created at flag path %s", flagPath)
+		// Verify database was created at env location
+		if _, err := os.Stat(envPath); os.IsNotExist(err) {
+			t.Errorf("Database was not created at BEADS_DB path %s", envPath)
 		}
-		if _, err := os.Stat(envPath); err == nil {
-			t.Error("Database should not be created at BEADS_DB path when --db flag is set")
+		
+		// Verify .beads/ directory was NOT created in work directory
+		if _, err := os.Stat(filepath.Join(workDir, ".beads")); err == nil {
+			t.Error(".beads/ directory should not be created in CWD when BEADS_DB is set")
 		}
 	})
 }

@@ -129,24 +129,19 @@ func TestGitPullSyncIntegration(t *testing.T) {
 	
 	// Test auto-import in non-daemon mode
 	t.Run("NonDaemonAutoImport", func(t *testing.T) {
-		// Close and reopen the store to trigger auto-import on next command
-		// (Auto-import happens in ensureStoreActive in direct mode)
-		clone2Store.Close()
-		
-		// In real usage, auto-import would trigger on next bd command
-		// For this test, we'll manually import to simulate that behavior
-		newStore := newTestStore(t, clone2DBPath)
-		// Don't defer close - we'll reassign to clone2Store for the next test
+		// Use a temporary local store for this test
+		localStore := newTestStore(t, clone2DBPath)
+		defer localStore.Close()
 		
 		// Manually import to simulate auto-import behavior
 		startTime := time.Now()
-		if err := importJSONLToStore(ctx, newStore, clone2DBPath, clone2JSONLPath); err != nil {
+		if err := importJSONLToStore(ctx, localStore, clone2DBPath, clone2JSONLPath); err != nil {
 			t.Fatalf("Failed to auto-import: %v", err)
 		}
 		elapsed := time.Since(startTime)
 		
 		// Verify priority was updated
-		issue, err := newStore.GetIssue(ctx, issueID)
+		issue, err := localStore.GetIssue(ctx, issueID)
 		if err != nil {
 			t.Fatalf("Failed to get issue: %v", err)
 		}
@@ -158,9 +153,6 @@ func TestGitPullSyncIntegration(t *testing.T) {
 		if elapsed > 100*time.Millisecond {
 			t.Logf("Info: import took %v", elapsed)
 		}
-		
-		// Update clone2Store reference for next test
-		clone2Store = newStore
 	})
 	
 	// Test bd sync --import-only command
@@ -183,13 +175,17 @@ func TestGitPullSyncIntegration(t *testing.T) {
 		// Clone2 pulls
 		runGitCmd(t, clone2Dir, "pull")
 		
+		// Use a fresh store for import
+		syncStore := newTestStore(t, clone2DBPath)
+		defer syncStore.Close()
+		
 		// Manually trigger import via in-process equivalent
-		if err := importJSONLToStore(ctx, clone2Store, clone2DBPath, clone2JSONLPath); err != nil {
+		if err := importJSONLToStore(ctx, syncStore, clone2DBPath, clone2JSONLPath); err != nil {
 			t.Fatalf("Failed to import via sync: %v", err)
 		}
 		
 		// Verify priority was updated back to 1
-		issue, err := clone2Store.GetIssue(ctx, issueID)
+		issue, err := syncStore.GetIssue(ctx, issueID)
 		if err != nil {
 			t.Fatalf("Failed to get issue: %v", err)
 		}

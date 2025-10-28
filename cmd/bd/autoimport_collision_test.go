@@ -32,6 +32,12 @@ func createTestDBWithIssues(t *testing.T, issues []*types.Issue) (string, *sqlit
 	t.Cleanup(func() { testStore.Close() })
 
 	ctx := context.Background()
+	
+	// Set issue_prefix to prevent "database not initialized" errors
+	if err := testStore.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set issue_prefix: %v", err)
+	}
+	
 	for _, issue := range issues {
 		if err := testStore.CreateIssue(ctx, issue, "test"); err != nil {
 			t.Fatalf("Failed to create issue %s: %v", issue.ID, err)

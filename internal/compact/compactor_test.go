@@ -38,6 +38,13 @@ func createClosedIssue(t *testing.T, store *sqlite.SQLiteStorage, id string) *ty
 	t.Helper()
 
 	ctx := context.Background()
+	
+	// Get the configured prefix to determine actor
+	prefix, err := store.GetConfig(ctx, "issue_prefix")
+	if err != nil {
+		prefix = "bd" // fallback
+	}
+	
 	now := time.Now()
 	closedAt := now.Add(-1 * time.Second)
 	issue := &types.Issue{
@@ -91,7 +98,7 @@ Testing strategy:
 		ClosedAt:   &closedAt,
 	}
 
-	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+	if err := store.CreateIssue(ctx, issue, prefix); err != nil {
 		t.Fatalf("failed to create issue: %v", err)
 	}
 
@@ -131,7 +138,7 @@ func TestCompactTier1_DryRun(t *testing.T) {
 	store := setupTestStorage(t)
 	defer store.Close()
 
-	issue := createClosedIssue(t, store, "test-1")
+	issue := createClosedIssue(t, store, "bd-1")
 
 	config := &Config{DryRun: true}
 	c, err := New(store, "", config)
@@ -162,9 +169,16 @@ func TestCompactTier1_IneligibleIssue(t *testing.T) {
 	defer store.Close()
 
 	ctx := context.Background()
+	
+	// Get the configured prefix to determine actor
+	prefix, err := store.GetConfig(ctx, "issue_prefix")
+	if err != nil {
+		prefix = "bd" // fallback
+	}
+	
 	now := time.Now()
 	issue := &types.Issue{
-		ID:          "test-open",
+		ID:          "bd-open",
 		Title:       "Open Issue",
 		Description: "Should not be compacted",
 		Status:      types.StatusOpen,
@@ -173,7 +187,7 @@ func TestCompactTier1_IneligibleIssue(t *testing.T) {
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+	if err := store.CreateIssue(ctx, issue, prefix); err != nil {
 		t.Fatalf("failed to create issue: %v", err)
 	}
 
@@ -187,7 +201,7 @@ func TestCompactTier1_IneligibleIssue(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for ineligible issue, got nil")
 	}
-	if err.Error() != "issue test-open is not eligible for Tier 1 compaction: issue is not closed" {
+	if err.Error() != "issue bd-open is not eligible for Tier 1 compaction: issue is not closed" {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -200,7 +214,7 @@ func TestCompactTier1_WithAPI(t *testing.T) {
 	store := setupTestStorage(t)
 	defer store.Close()
 
-	issue := createClosedIssue(t, store, "test-api")
+	issue := createClosedIssue(t, store, "bd-api")
 
 	c, err := New(store, "", &Config{Concurrency: 1})
 	if err != nil {
@@ -235,8 +249,8 @@ func TestCompactTier1Batch_DryRun(t *testing.T) {
 	store := setupTestStorage(t)
 	defer store.Close()
 
-	issue1 := createClosedIssue(t, store, "test-batch-1")
-	issue2 := createClosedIssue(t, store, "test-batch-2")
+	issue1 := createClosedIssue(t, store, "bd-batch-1")
+	issue2 := createClosedIssue(t, store, "bd-batch-2")
 
 	config := &Config{DryRun: true, Concurrency: 2}
 	c, err := New(store, "", config)
@@ -268,12 +282,19 @@ func TestCompactTier1Batch_WithIneligible(t *testing.T) {
 	store := setupTestStorage(t)
 	defer store.Close()
 
-	closedIssue := createClosedIssue(t, store, "test-closed")
+	closedIssue := createClosedIssue(t, store, "bd-closed")
 
 	ctx := context.Background()
+	
+	// Get the configured prefix to determine actor
+	prefix, err := store.GetConfig(ctx, "issue_prefix")
+	if err != nil {
+		prefix = "bd" // fallback
+	}
+	
 	now := time.Now()
 	openIssue := &types.Issue{
-		ID:          "test-open",
+		ID:          "bd-open",
 		Title:       "Open Issue",
 		Description: "Should not be compacted",
 		Status:      types.StatusOpen,
@@ -282,7 +303,7 @@ func TestCompactTier1Batch_WithIneligible(t *testing.T) {
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	if err := store.CreateIssue(ctx, openIssue, "test"); err != nil {
+	if err := store.CreateIssue(ctx, openIssue, prefix); err != nil {
 		t.Fatalf("failed to create issue: %v", err)
 	}
 
@@ -323,9 +344,9 @@ func TestCompactTier1Batch_WithAPI(t *testing.T) {
 	store := setupTestStorage(t)
 	defer store.Close()
 
-	issue1 := createClosedIssue(t, store, "test-api-batch-1")
-	issue2 := createClosedIssue(t, store, "test-api-batch-2")
-	issue3 := createClosedIssue(t, store, "test-api-batch-3")
+	issue1 := createClosedIssue(t, store, "bd-api-batch-1")
+	issue2 := createClosedIssue(t, store, "bd-api-batch-2")
+	issue3 := createClosedIssue(t, store, "bd-api-batch-3")
 
 	c, err := New(store, "", &Config{Concurrency: 2})
 	if err != nil {
@@ -369,7 +390,7 @@ func TestMockAPI_CompactTier1(t *testing.T) {
 	store := setupTestStorage(t)
 	defer store.Close()
 
-	issue := createClosedIssue(t, store, "test-mock")
+	issue := createClosedIssue(t, store, "bd-mock")
 
 	c, err := New(store, "", &Config{DryRun: true, Concurrency: 1})
 	if err != nil {
@@ -388,9 +409,16 @@ func TestBatchOperations_ErrorHandling(t *testing.T) {
 	defer store.Close()
 
 	ctx := context.Background()
-	closedIssue := createClosedIssue(t, store, "test-closed")
+	
+	// Get the configured prefix to determine actor
+	prefix, err := store.GetConfig(ctx, "issue_prefix")
+	if err != nil {
+		prefix = "bd" // fallback
+	}
+	
+	closedIssue := createClosedIssue(t, store, "bd-closed")
 	openIssue := &types.Issue{
-		ID:          "test-open",
+		ID:          "bd-open",
 		Title:       "Open",
 		Description: "Open issue",
 		Status:      types.StatusOpen,
@@ -399,7 +427,7 @@ func TestBatchOperations_ErrorHandling(t *testing.T) {
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
-	if err := store.CreateIssue(ctx, openIssue, "test"); err != nil {
+	if err := store.CreateIssue(ctx, openIssue, prefix); err != nil {
 		t.Fatalf("failed to create open issue: %v", err)
 	}
 

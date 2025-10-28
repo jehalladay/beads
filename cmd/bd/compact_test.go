@@ -27,6 +27,11 @@ func TestCompactDryRun(t *testing.T) {
 
 	ctx := context.Background()
 	
+	// Set issue_prefix to prevent "database not initialized" errors
+	if err := sqliteStore.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set issue_prefix: %v", err)
+	}
+	
 	// Create a closed issue
 	issue := &types.Issue{
 		ID:          "test-1",
@@ -149,6 +154,11 @@ func TestCompactStats(t *testing.T) {
 	defer sqliteStore.Close()
 
 	ctx := context.Background()
+	
+	// Set issue_prefix to prevent "database not initialized" errors
+	if err := sqliteStore.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set issue_prefix: %v", err)
+	}
 	
 	// Create mix of issues - some eligible, some not
 	issues := []*types.Issue{
