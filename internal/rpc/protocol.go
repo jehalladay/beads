@@ -187,9 +187,6 @@ type HealthResponse struct {
 	ClientVersion  string  `json:"client_version,omitempty"` // Client version from request
 	Compatible     bool    `json:"compatible"`               // Whether versions are compatible
 	Uptime         float64 `json:"uptime_seconds"`
-	CacheSize      int     `json:"cache_size"`
-	CacheHits      int64   `json:"cache_hits"`
-	CacheMisses    int64   `json:"cache_misses"`
 	DBResponseTime float64 `json:"db_response_ms"`
 	ActiveConns    int32   `json:"active_connections"`
 	MaxConns       int     `json:"max_connections"`

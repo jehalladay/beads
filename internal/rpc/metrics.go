@@ -23,9 +23,6 @@ type Metrics struct {
 	totalConns    int64
 	rejectedConns int64
 
-	// Cache metrics (handled separately via atomic in Server)
-	cacheEvictions int64
-
 	// System start time (for uptime calculation)
 	startTime time.Time
 }
@@ -76,13 +73,8 @@ func (m *Metrics) RecordRejectedConnection() {
 	atomic.AddInt64(&m.rejectedConns, 1)
 }
 
-// RecordCacheEviction records a cache eviction event
-func (m *Metrics) RecordCacheEviction() {
-	atomic.AddInt64(&m.cacheEvictions, 1)
-}
-
 // Snapshot returns a point-in-time snapshot of all metrics
-func (m *Metrics) Snapshot(cacheHits, cacheMisses int64, cacheSize, activeConns int) MetricsSnapshot {
+func (m *Metrics) Snapshot(activeConns int) MetricsSnapshot {
 	// Copy data under a short critical section
 	m.mu.RLock()
 
@@ -161,10 +153,6 @@ func (m *Metrics) Snapshot(cacheHits, cacheMisses int64, cacheSize, activeConns 
 		Timestamp:      time.Now(),
 		UptimeSeconds:  uptimeSeconds,
 		Operations:     operations,
-		CacheHits:      cacheHits,
-		CacheMisses:    cacheMisses,
-		CacheSize:      cacheSize,
-		CacheEvictions: atomic.LoadInt64(&m.cacheEvictions),
 		TotalConns:     atomic.LoadInt64(&m.totalConns),
 		ActiveConns:    activeConns,
 		RejectedConns:  atomic.LoadInt64(&m.rejectedConns),
@@ -179,10 +167,6 @@ type MetricsSnapshot struct {
 	Timestamp      time.Time          `json:"timestamp"`
 	UptimeSeconds  float64            `json:"uptime_seconds"`
 	Operations     []OperationMetrics `json:"operations"`
-	CacheHits      int64              `json:"cache_hits"`
-	CacheMisses    int64              `json:"cache_misses"`
-	CacheSize      int                `json:"cache_size"`
-	CacheEvictions int64              `json:"cache_evictions"`
 	TotalConns     int64              `json:"total_connections"`
 	ActiveConns    int                `json:"active_connections"`
 	RejectedConns  int64              `json:"rejected_connections"`

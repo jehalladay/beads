@@ -12,8 +12,6 @@ import (
 	"runtime"
 	"sync/atomic"
 	"time"
-
-	"github.com/steveyegge/beads/internal/storage"
 )
 
 // Start starts the RPC server and listens for connections

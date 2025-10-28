@@ -78,22 +78,8 @@ func (s *Server) validateDatabaseBinding(req *Request) error {
 		return nil
 	}
 
-	// For multi-database daemons: If a cwd is provided, verify the client expects
-	// the database that would be selected for that cwd
-	var daemonDB string
-	if req.Cwd != "" {
-		// Use the database discovery logic to find which DB would be used
-		dbPath := s.findDatabaseForCwd(req.Cwd)
-		if dbPath != "" {
-			daemonDB = dbPath
-		} else {
-			// No database found for cwd, will fall back to default storage
-			daemonDB = s.storage.Path()
-		}
-	} else {
-		// No cwd provided, use default storage
-		daemonDB = s.storage.Path()
-	}
+	// Local daemon always uses single storage
+	daemonDB := s.storage.Path()
 
 	// Normalize both paths for comparison (resolve symlinks, clean paths)
 	expectedPath, err := filepath.EvalSymlinks(req.ExpectedDB)
@@ -312,10 +298,6 @@ func (s *Server) handleHealth(req *Request) Response {
 		status = "degraded"
 	}
 
-	s.cacheMu.RLock()
-	cacheSize := len(s.storageCache)
-	s.cacheMu.RUnlock()
-
 	// Check version compatibility
 	compatible := true
 	if req.ClientVersion != "" {
@@ -330,9 +312,6 @@ func (s *Server) handleHealth(req *Request) Response {
 		ClientVersion:  req.ClientVersion,
 		Compatible:     compatible,
 		Uptime:         time.Since(s.startTime).Seconds(),
-		CacheSize:      cacheSize,
-		CacheHits:      atomic.LoadInt64(&s.cacheHits),
-		CacheMisses:    atomic.LoadInt64(&s.cacheMisses),
 		DBResponseTime: dbResponseMs,
 		ActiveConns:    atomic.LoadInt32(&s.activeConns),
 		MaxConns:       s.maxConns,
@@ -352,14 +331,7 @@ func (s *Server) handleHealth(req *Request) Response {
 }
 
 func (s *Server) handleMetrics(_ *Request) Response {
-	s.cacheMu.RLock()
-	cacheSize := len(s.storageCache)
-	s.cacheMu.RUnlock()
-
 	snapshot := s.metrics.Snapshot(
-		atomic.LoadInt64(&s.cacheHits),
-		atomic.LoadInt64(&s.cacheMisses),
-		cacheSize,
 		int(atomic.LoadInt32(&s.activeConns)),
 	)
 

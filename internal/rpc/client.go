@@ -74,8 +74,8 @@ func TryConnectWithTimeout(socketPath string, dialTimeout time.Duration) (*Clien
 	}
 
 	if os.Getenv("BD_DEBUG") != "" {
-		fmt.Fprintf(os.Stderr, "Debug: connected to daemon (status: %s, uptime: %.1fs, cache: %d)\n",
-			health.Status, health.Uptime, health.CacheSize)
+		fmt.Fprintf(os.Stderr, "Debug: connected to daemon (status: %s, uptime: %.1fs)\n",
+			health.Status, health.Uptime)
 	}
 
 	return client, nil

@@ -4,11 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -198,59 +196,6 @@ func TestRequestTimeout(t *testing.T) {
 	if _, err := conn.Read(buf); err == nil {
 		t.Error("expected connection to be closed due to timeout")
 	}
-}
-
-func TestMemoryPressureDetection(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("memory pressure detection thresholds are not reliable on Windows")
-	}
-
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, ".beads", "test.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0750); err != nil {
-		t.Fatal(err)
-	}
-
-	store, err := sqlite.New(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	socketPath := filepath.Join(tmpDir, "test.sock")
-
-	srv := NewServer(socketPath, store, tmpDir, dbPath)
-
-	// Add some entries to cache
-	srv.cacheMu.Lock()
-	for i := 0; i < 10; i++ {
-		path := fmt.Sprintf("/test/path/%d", i)
-		srv.storageCache[path] = &StorageCacheEntry{
-			store:      store,
-			lastAccess: time.Now().Add(-time.Duration(i) * time.Minute),
-		}
-	}
-	initialSize := len(srv.storageCache)
-	srv.cacheMu.Unlock()
-
-	// Trigger aggressive eviction directly (should evict 50% of entries)
-	srv.aggressiveEviction()
-
-	// Check that some entries were evicted
-	srv.cacheMu.RLock()
-	finalSize := len(srv.storageCache)
-	srv.cacheMu.RUnlock()
-
-	if finalSize >= initialSize {
-		t.Errorf("expected cache eviction, but size went from %d to %d", initialSize, finalSize)
-	}
-
-	expectedSize := initialSize / 2
-	if finalSize != expectedSize {
-		t.Errorf("expected exactly %d entries after evicting 50%%, got %d", expectedSize, finalSize)
-	}
-
-	t.Logf("Cache evicted: %d -> %d entries", initialSize, finalSize)
 }
 
 func TestHealthResponseIncludesLimits(t *testing.T) {

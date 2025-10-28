@@ -386,15 +386,6 @@ func showDaemonHealth(global bool) {
 
 	fmt.Printf("  Version: %s\n", health.Version)
 	fmt.Printf("  Uptime: %s\n", formatUptime(health.Uptime))
-	fmt.Printf("  Cache Size: %d databases\n", health.CacheSize)
-	fmt.Printf("  Cache Hits: %d\n", health.CacheHits)
-	fmt.Printf("  Cache Misses: %d\n", health.CacheMisses)
-
-	if health.CacheHits+health.CacheMisses > 0 {
-		hitRate := float64(health.CacheHits) / float64(health.CacheHits+health.CacheMisses) * 100
-		fmt.Printf("  Cache Hit Rate: %.1f%%\n", hitRate)
-	}
-
 	fmt.Printf("  DB Response Time: %.2f ms\n", health.DBResponseTime)
 
 	if health.Error != "" {
@@ -454,17 +445,6 @@ func showDaemonMetrics(global bool) {
 
 	fmt.Printf("Uptime: %.1f seconds (%.1f minutes)\n", metrics.UptimeSeconds, metrics.UptimeSeconds/60)
 	fmt.Printf("Timestamp: %s\n\n", metrics.Timestamp.Format(time.RFC3339))
-
-	// Cache metrics
-	fmt.Printf("Cache Metrics:\n")
-	fmt.Printf("  Size: %d databases\n", metrics.CacheSize)
-	fmt.Printf("  Hits: %d\n", metrics.CacheHits)
-	fmt.Printf("  Misses: %d\n", metrics.CacheMisses)
-	if metrics.CacheHits+metrics.CacheMisses > 0 {
-		hitRate := float64(metrics.CacheHits) / float64(metrics.CacheHits+metrics.CacheMisses) * 100
-		fmt.Printf("  Hit Rate: %.1f%%\n", hitRate)
-	}
-	fmt.Printf("  Evictions: %d\n\n", metrics.CacheEvictions)
 
 	// Connection metrics
 	fmt.Printf("Connection Metrics:\n")

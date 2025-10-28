@@ -52,16 +52,6 @@ func TestMetricsRecording(t *testing.T) {
 			t.Errorf("Expected rejected count to increase by 1, got %d -> %d", before, after)
 		}
 	})
-
-	t.Run("record cache eviction", func(t *testing.T) {
-		before := m.cacheEvictions
-		m.RecordCacheEviction()
-		after := m.cacheEvictions
-
-		if after != before+1 {
-			t.Errorf("Expected eviction count to increase by 1, got %d -> %d", before, after)
-		}
-	})
 }
 
 func TestMetricsSnapshot(t *testing.T) {
@@ -74,10 +64,9 @@ func TestMetricsSnapshot(t *testing.T) {
 	m.RecordError("create")
 	m.RecordConnection()
 	m.RecordRejectedConnection()
-	m.RecordCacheEviction()
 
 	// Take snapshot
-	snapshot := m.Snapshot(100, 10, 50, 3)
+	snapshot := m.Snapshot(3)
 
 	t.Run("basic metrics", func(t *testing.T) {
 		if snapshot.TotalConns < 1 {
@@ -85,18 +74,6 @@ func TestMetricsSnapshot(t *testing.T) {
 		}
 		if snapshot.RejectedConns < 1 {
 			t.Error("Expected at least 1 rejected connection")
-		}
-		if snapshot.CacheEvictions < 1 {
-			t.Error("Expected at least 1 cache eviction")
-		}
-		if snapshot.CacheHits != 100 {
-			t.Errorf("Expected 100 cache hits, got %d", snapshot.CacheHits)
-		}
-		if snapshot.CacheMisses != 10 {
-			t.Errorf("Expected 10 cache misses, got %d", snapshot.CacheMisses)
-		}
-		if snapshot.CacheSize != 50 {
-			t.Errorf("Expected cache size 50, got %d", snapshot.CacheSize)
 		}
 		if snapshot.ActiveConns != 3 {
 			t.Errorf("Expected 3 active connections, got %d", snapshot.ActiveConns)
