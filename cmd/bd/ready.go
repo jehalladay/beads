@@ -20,6 +20,7 @@ var readyCmd = &cobra.Command{
 		limit, _ := cmd.Flags().GetInt("limit")
 		assignee, _ := cmd.Flags().GetString("assignee")
 		sortPolicy, _ := cmd.Flags().GetString("sort")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 
 		filter := types.WorkFilter{
 			// Leave Status empty to get both 'open' and 'in_progress' (bd-165)
@@ -293,6 +294,7 @@ func init() {
 	readyCmd.Flags().IntP("priority", "p", 0, "Filter by priority")
 	readyCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
 	readyCmd.Flags().StringP("sort", "s", "hybrid", "Sort policy: hybrid (default), priority, oldest")
+	readyCmd.Flags().Bool("json", false, "Output JSON format")
 
 	rootCmd.AddCommand(readyCmd)
 	rootCmd.AddCommand(blockedCmd)

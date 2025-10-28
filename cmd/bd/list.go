@@ -46,6 +46,7 @@ var listCmd = &cobra.Command{
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		titleSearch, _ := cmd.Flags().GetString("title")
 	idFilter, _ := cmd.Flags().GetString("id")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 
 		// Normalize labels: trim, dedupe, remove empty
 		labels = normalizeLabels(labels)
@@ -211,6 +212,7 @@ func init() {
 	listCmd.Flags().IntP("limit", "n", 0, "Limit results")
 	listCmd.Flags().String("format", "", "Output format: 'digraph' (for golang.org/x/tools/cmd/digraph), 'dot' (Graphviz), or Go template")
 	listCmd.Flags().Bool("all", false, "Show all issues (default behavior; flag provided for CLI familiarity)")
+	listCmd.Flags().Bool("json", false, "Output JSON format")
 	rootCmd.AddCommand(listCmd)
 }
 

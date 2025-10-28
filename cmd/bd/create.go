@@ -63,6 +63,7 @@ var createCmd = &cobra.Command{
 		externalRef, _ := cmd.Flags().GetString("external-ref")
 		deps, _ := cmd.Flags().GetStringSlice("deps")
 		forceCreate, _ := cmd.Flags().GetBool("force")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 
 		// Validate explicit ID format if provided (prefix-number)
 		if explicitID != "" {
@@ -245,5 +246,6 @@ func init() {
 	createCmd.Flags().String("external-ref", "", "External reference (e.g., 'gh-9', 'jira-ABC')")
 	createCmd.Flags().StringSlice("deps", []string{}, "Dependencies in format 'type:id' or 'id' (e.g., 'discovered-from:bd-20,blocks:bd-15' or 'bd-20')")
 	createCmd.Flags().Bool("force", false, "Force creation even if prefix doesn't match database prefix")
+	createCmd.Flags().Bool("json", false, "Output JSON format")
 	rootCmd.AddCommand(createCmd)
 }
