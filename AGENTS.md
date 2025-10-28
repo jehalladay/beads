@@ -151,6 +151,13 @@ bd create -f feature-plan.md --json
 bd update <id> [<id>...] --status in_progress --json
 bd update <id> [<id>...] --priority 1 --json
 
+# Edit issue fields in $EDITOR (HUMANS ONLY - not for agents)
+bd edit <id>                    # Edit description
+bd edit <id> --title            # Edit title
+bd edit <id> --design           # Edit design notes
+bd edit <id> --notes            # Edit notes
+bd edit <id> --acceptance       # Edit acceptance criteria
+
 # Link discovered work (old way)
 bd dep add <discovered-id> <parent-id> --type discovered-from
 
