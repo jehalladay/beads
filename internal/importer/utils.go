@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // IssueDataChanged checks if an issue's data has changed from the database version
@@ -144,7 +145,7 @@ func RenameImportedIssuePrefixes(issues []*types.Issue, targetPrefix string) err
 	idMapping := make(map[string]string)
 
 	for _, issue := range issues {
-		oldPrefix := extractPrefix(issue.ID)
+		oldPrefix := utils.ExtractIssuePrefix(issue.ID)
 		if oldPrefix == "" {
 			return fmt.Errorf("cannot rename issue %s: malformed ID (no hyphen found)", issue.ID)
 		}

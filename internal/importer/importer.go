@@ -10,6 +10,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // Options contains import configuration
@@ -154,7 +155,7 @@ func handlePrefixMismatch(ctx context.Context, sqliteStore *sqlite.SQLiteStorage
 
 	// Analyze prefixes in imported issues
 	for _, issue := range issues {
-		prefix := extractPrefix(issue.ID)
+		prefix := utils.ExtractIssuePrefix(issue.ID)
 		if prefix != configuredPrefix {
 			result.PrefixMismatch = true
 			result.MismatchPrefixes[prefix]++
@@ -163,7 +164,7 @@ func handlePrefixMismatch(ctx context.Context, sqliteStore *sqlite.SQLiteStorage
 
 	// If prefix mismatch detected and not handling it, return error or warning
 	if result.PrefixMismatch && !opts.RenameOnImport && !opts.DryRun && !opts.SkipPrefixValidation {
-		return fmt.Errorf("prefix mismatch detected: database uses '%s-' but found issues with prefixes: %v (use --rename-on-import to automatically fix)", configuredPrefix, getPrefixList(result.MismatchPrefixes))
+		return fmt.Errorf("prefix mismatch detected: database uses '%s-' but found issues with prefixes: %v (use --rename-on-import to automatically fix)", configuredPrefix, GetPrefixList(result.MismatchPrefixes))
 	}
 
 	// Handle rename-on-import if requested
@@ -437,15 +438,7 @@ func importComments(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issu
 
 // Helper functions
 
-func extractPrefix(issueID string) string {
-	parts := strings.SplitN(issueID, "-", 2)
-	if len(parts) < 2 {
-		return ""
-	}
-	return parts[0]
-}
-
-func getPrefixList(prefixes map[string]int) []string {
+func GetPrefixList(prefixes map[string]int) []string {
 	var result []string
 	keys := make([]string, 0, len(prefixes))
 	for k := range prefixes {

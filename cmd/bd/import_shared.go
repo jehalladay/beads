@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/steveyegge/beads/internal/importer"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // fieldComparator handles comparison logic for a specific field type
@@ -115,29 +115,6 @@ func (fc *fieldComparator) equalPriority(existing int, newVal interface{}) bool 
 	return existing == int(p)
 }
 
-// equalTime compares *time.Time field
-func (fc *fieldComparator) equalTime(existing *time.Time, newVal interface{}) bool {
-	switch t := newVal.(type) {
-	case *time.Time:
-		if existing == nil && t == nil {
-			return true
-		}
-		if existing == nil || t == nil {
-			return false
-		}
-		return existing.Equal(*t)
-	case time.Time:
-		if existing == nil {
-			return false
-		}
-		return existing.Equal(t)
-	case nil:
-		return existing == nil
-	default:
-		return false
-	}
-}
-
 // checkFieldChanged checks if a specific field has changed
 func (fc *fieldComparator) checkFieldChanged(key string, existing *types.Issue, newVal interface{}) bool {
 	switch key {
@@ -161,8 +138,6 @@ func (fc *fieldComparator) checkFieldChanged(key string, existing *types.Issue, 
 		return !fc.equalStr(existing.Assignee, newVal)
 	case "external_ref":
 		return !fc.equalPtrStr(existing.ExternalRef, newVal)
-	case "closed_at":
-		return !fc.equalTime(existing.ClosedAt, newVal)
 	default:
 		// Unknown field - treat as changed to be conservative
 		// This prevents skipping updates when new fields are added
@@ -220,10 +195,8 @@ type ImportResult struct {
 // - Reading and parsing JSONL into issues slice
 // - Displaying results to the user
 // - Setting metadata (e.g., last_import_hash)
-// importIssuesCore is a thin wrapper around the internal/importer package
-// It converts between cmd/bd types and internal/importer types
 func importIssuesCore(ctx context.Context, dbPath string, store storage.Storage, issues []*types.Issue, opts ImportOptions) (*ImportResult, error) {
-	// Convert options to importer.Options
+	// Convert ImportOptions to importer.Options
 	importerOpts := importer.Options{
 		ResolveCollisions:    opts.ResolveCollisions,
 		DryRun:               opts.DryRun,
@@ -233,27 +206,156 @@ func importIssuesCore(ctx context.Context, dbPath string, store storage.Storage,
 		SkipPrefixValidation: opts.SkipPrefixValidation,
 	}
 
-	// Call the importer package
-	importerResult, err := importer.ImportIssues(ctx, dbPath, store, issues, importerOpts)
+	// Delegate to the importer package
+	result, err := importer.ImportIssues(ctx, dbPath, store, issues, importerOpts)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert result back to ImportResult
-	result := &ImportResult{
-		Created:          importerResult.Created,
-		Updated:          importerResult.Updated,
-		Unchanged:        importerResult.Unchanged,
-		Skipped:          importerResult.Skipped,
-		Collisions:       importerResult.Collisions,
-		IDMapping:        importerResult.IDMapping,
-		CollisionIDs:     importerResult.CollisionIDs,
-		PrefixMismatch:   importerResult.PrefixMismatch,
-		ExpectedPrefix:   importerResult.ExpectedPrefix,
-		MismatchPrefixes: importerResult.MismatchPrefixes,
-	}
+	// Convert importer.Result to ImportResult
+	return &ImportResult{
+		Created:          result.Created,
+		Updated:          result.Updated,
+		Unchanged:        result.Unchanged,
+		Skipped:          result.Skipped,
+		Collisions:       result.Collisions,
+		IDMapping:        result.IDMapping,
+		CollisionIDs:     result.CollisionIDs,
+		PrefixMismatch:   result.PrefixMismatch,
+		ExpectedPrefix:   result.ExpectedPrefix,
+		MismatchPrefixes: result.MismatchPrefixes,
+	}, nil
+}
 
-	return result, nil
+
+
+// renameImportedIssuePrefixes renames all issues and their references to match the target prefix
+func renameImportedIssuePrefixes(issues []*types.Issue, targetPrefix string) error {
+	// Build a mapping of old IDs to new IDs
+	idMapping := make(map[string]string)
+
+	for _, issue := range issues {
+		oldPrefix := utils.ExtractIssuePrefix(issue.ID)
+		if oldPrefix == "" {
+			return fmt.Errorf("cannot rename issue %s: malformed ID (no hyphen found)", issue.ID)
+		}
+
+		if oldPrefix != targetPrefix {
+			// Extract the numeric part
+			numPart := strings.TrimPrefix(issue.ID, oldPrefix+"-")
+			
+			// Validate that the numeric part is actually numeric
+			if numPart == "" || !isNumeric(numPart) {
+				return fmt.Errorf("cannot rename issue %s: non-numeric suffix '%s'", issue.ID, numPart)
+			}
+			
+			newID := fmt.Sprintf("%s-%s", targetPrefix, numPart)
+			idMapping[issue.ID] = newID
+		}
+	}
+	
+	// Now update all issues and their references
+	for _, issue := range issues {
+		// Update the issue ID itself if it needs renaming
+		if newID, ok := idMapping[issue.ID]; ok {
+			issue.ID = newID
+		}
+		
+		// Update all text references in issue fields
+		issue.Title = replaceIDReferences(issue.Title, idMapping)
+		issue.Description = replaceIDReferences(issue.Description, idMapping)
+		if issue.Design != "" {
+			issue.Design = replaceIDReferences(issue.Design, idMapping)
+		}
+		if issue.AcceptanceCriteria != "" {
+			issue.AcceptanceCriteria = replaceIDReferences(issue.AcceptanceCriteria, idMapping)
+		}
+		if issue.Notes != "" {
+			issue.Notes = replaceIDReferences(issue.Notes, idMapping)
+		}
+		
+		// Update dependency references
+		for i := range issue.Dependencies {
+			if newID, ok := idMapping[issue.Dependencies[i].IssueID]; ok {
+				issue.Dependencies[i].IssueID = newID
+			}
+			if newID, ok := idMapping[issue.Dependencies[i].DependsOnID]; ok {
+				issue.Dependencies[i].DependsOnID = newID
+			}
+		}
+		
+		// Update comment references
+		for i := range issue.Comments {
+			issue.Comments[i].Text = replaceIDReferences(issue.Comments[i].Text, idMapping)
+		}
+	}
+	
+	return nil
+}
+
+// replaceIDReferences replaces all old issue ID references with new ones in text
+// Uses boundary-aware matching to avoid partial replacements (e.g., wy-1 inside wy-10)
+func replaceIDReferences(text string, idMapping map[string]string) string {
+	if len(idMapping) == 0 {
+		return text
+	}
+	
+	// Sort old IDs by length descending to handle longer IDs first
+	// This prevents "wy-1" from being replaced inside "wy-10"
+	oldIDs := make([]string, 0, len(idMapping))
+	for oldID := range idMapping {
+		oldIDs = append(oldIDs, oldID)
+	}
+	sort.Slice(oldIDs, func(i, j int) bool {
+		return len(oldIDs[i]) > len(oldIDs[j])
+	})
+	
+	result := text
+	for _, oldID := range oldIDs {
+		newID := idMapping[oldID]
+		// Replace with boundary checking
+		result = replaceBoundaryAware(result, oldID, newID)
+	}
+	return result
+}
+
+// replaceBoundaryAware replaces oldID with newID only when surrounded by boundaries
+func replaceBoundaryAware(text, oldID, newID string) string {
+	if !strings.Contains(text, oldID) {
+		return text
+	}
+	
+	var result strings.Builder
+	result.Grow(len(text))
+	
+	for i := 0; i < len(text); {
+		// Check if we match oldID at this position
+		if strings.HasPrefix(text[i:], oldID) {
+			// Check boundaries before and after
+			beforeOK := i == 0 || isBoundary(text[i-1])
+			afterOK := (i+len(oldID) >= len(text)) || isBoundary(text[i+len(oldID)])
+			
+			if beforeOK && afterOK {
+				// Valid match - replace
+				result.WriteString(newID)
+				i += len(oldID)
+				continue
+			}
+		}
+		
+		// Not a match or invalid boundaries - keep original character
+		result.WriteByte(text[i])
+		i++
+	}
+	
+	return result.String()
+}
+
+// isBoundary returns true if the character is not part of an issue ID
+func isBoundary(c byte) bool {
+	// Issue IDs contain: lowercase letters, digits, and hyphens
+	// Boundaries are anything else (space, punctuation, etc.)
+	return (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-'
 }
 
 // isNumeric returns true if the string contains only digits
@@ -264,29 +366,4 @@ func isNumeric(s string) bool {
 		}
 	}
 	return true
-}
-
-// extractPrefix extracts the prefix from an issue ID (e.g., "bd-123" -> "bd")
-func extractPrefix(issueID string) string {
-	parts := strings.SplitN(issueID, "-", 2)
-	if len(parts) < 2 {
-		return "" // No prefix found
-	}
-	return parts[0]
-}
-
-// getPrefixList formats a map of prefix counts into a sorted list of strings
-func getPrefixList(prefixes map[string]int) []string {
-	var result []string
-	keys := make([]string, 0, len(prefixes))
-	for k := range prefixes {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, prefix := range keys {
-		count := prefixes[prefix]
-		result = append(result, fmt.Sprintf("%s- (%d issues)", prefix, count))
-	}
-	return result
 }
