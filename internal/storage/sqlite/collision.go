@@ -2,9 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -23,7 +23,8 @@ type CollisionDetail struct {
 	IncomingIssue     *types.Issue  // The issue from the import file
 	ExistingIssue     *types.Issue  // The issue currently in the database
 	ConflictingFields []string      // List of field names that differ
-	ReferenceScore    int           // Number of references to this issue (for scoring)
+	ReferenceScore    int           // Number of references to this issue (for scoring) - DEPRECATED
+	RemapIncoming     bool          // If true, remap incoming; if false, remap existing
 }
 
 // DetectCollisions compares incoming JSONL issues against DB state
@@ -146,31 +147,62 @@ func equalStringPtr(a, b *string) bool {
 	return *a == *b
 }
 
-// ScoreCollisions calculates reference scores for all colliding issues and sorts them
-// by score ascending (fewest references first). This minimizes the total number of
-// updates needed during renumbering - issues with fewer references are renumbered first.
+// hashIssueContent creates a deterministic hash of an issue's content.
+// Uses all substantive fields (excluding timestamps and ID) to ensure
+// that identical content produces identical hashes across all clones.
+func hashIssueContent(issue *types.Issue) string {
+	h := sha256.New()
+	
+	// Hash all substantive fields in a stable order
+	h.Write([]byte(issue.Title))
+	h.Write([]byte{0}) // separator
+	h.Write([]byte(issue.Description))
+	h.Write([]byte{0})
+	h.Write([]byte(issue.Design))
+	h.Write([]byte{0})
+	h.Write([]byte(issue.AcceptanceCriteria))
+	h.Write([]byte{0})
+	h.Write([]byte(issue.Notes))
+	h.Write([]byte{0})
+	h.Write([]byte(issue.Status))
+	h.Write([]byte{0})
+	h.Write([]byte(fmt.Sprintf("%d", issue.Priority)))
+	h.Write([]byte{0})
+	h.Write([]byte(issue.IssueType))
+	h.Write([]byte{0})
+	h.Write([]byte(issue.Assignee))
+	h.Write([]byte{0})
+	
+	if issue.ExternalRef != nil {
+		h.Write([]byte(*issue.ExternalRef))
+	}
+	
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// ScoreCollisions determines which version of each colliding issue to keep vs. remap.
+// Uses deterministic content-based hashing to ensure all clones make the same decision.
 //
-// Reference score = text mentions + dependency references
+// Decision process:
+//  1. Hash both versions (existing and incoming) based on content
+//  2. Keep the version with the lexicographically LOWER hash
+//  3. Mark the other version for remapping
+//
+// This ensures:
+//  - Deterministic: same collision always produces same result
+//  - Symmetric: works regardless of which clone syncs first
+//  - Idempotent: converges to same state across all clones
 func ScoreCollisions(ctx context.Context, s *SQLiteStorage, collisions []*CollisionDetail, allIssues []*types.Issue) error {
-	// Get all dependency records for efficient lookup
-	allDeps, err := s.GetAllDependencyRecords(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get dependency records: %w", err)
-	}
-
-	// Calculate reference score for each collision
+	// Determine which version to keep for each collision
 	for _, collision := range collisions {
-		score, err := countReferences(collision.ID, allIssues, allDeps)
-		if err != nil {
-			return fmt.Errorf("failed to count references for %s: %w", collision.ID, err)
-		}
-		collision.ReferenceScore = score
+		existingHash := hashIssueContent(collision.ExistingIssue)
+		incomingHash := hashIssueContent(collision.IncomingIssue)
+		
+		// Keep the version with lower hash (deterministic winner)
+		// If incoming has lower hash, we need to remap existing and keep incoming
+		// If existing has lower hash, we need to remap incoming and keep existing
+		collision.RemapIncoming = existingHash < incomingHash
 	}
-
-	// Sort collisions by reference score ascending (fewest first)
-	sort.Slice(collisions, func(i, j int) bool {
-		return collisions[i].ReferenceScore < collisions[j].ReferenceScore
-	})
 
 	return nil
 }
@@ -286,9 +318,15 @@ func deduplicateIncomingIssues(issues []*types.Issue) []*types.Issue {
 	return result
 }
 
-// RemapCollisions handles ID remapping for colliding issues
-// Takes sorted collisions (fewest references first) and remaps them to new IDs
-// Returns a map of old ID -> new ID for reporting
+// RemapCollisions handles ID remapping for colliding issues based on content hash.
+// For each collision, either the incoming or existing issue is remapped (determined by ScoreCollisions).
+// Returns a map of old ID -> new ID for reporting.
+//
+// Process:
+//  1. If RemapIncoming=true: remap incoming issue, keep existing
+//  2. If RemapIncoming=false: remap existing issue, replace with incoming
+//
+// This ensures deterministic, symmetric collision resolution across all clones.
 //
 // NOTE: This function is not atomic - it performs multiple separate database operations.
 // If an error occurs partway through, some issues may be created without their references
@@ -302,7 +340,7 @@ func RemapCollisions(ctx context.Context, s *SQLiteStorage, collisions []*Collis
 		return nil, fmt.Errorf("failed to sync ID counters: %w", err)
 	}
 
-	// For each collision (in order of ascending reference score)
+	// Process each collision based on which version should be remapped
 	for _, collision := range collisions {
 		oldID := collision.ID
 
@@ -317,16 +355,40 @@ func RemapCollisions(ctx context.Context, s *SQLiteStorage, collisions []*Collis
 		}
 		newID := fmt.Sprintf("%s-%d", prefix, nextID)
 
-		// Record mapping
-		idMapping[oldID] = newID
-
-		// Update the issue ID in the incoming issue
-		collision.IncomingIssue.ID = newID
-
-		// Create the issue with new ID
-		// Note: CreateIssue will use the ID we set
-		if err := s.CreateIssue(ctx, collision.IncomingIssue, "import-remap"); err != nil {
-			return nil, fmt.Errorf("failed to create remapped issue %s -> %s: %w", oldID, newID, err)
+		if collision.RemapIncoming {
+			// Incoming has higher hash -> remap incoming, keep existing
+			// Record mapping
+			idMapping[oldID] = newID
+			
+			// Update incoming issue ID
+			collision.IncomingIssue.ID = newID
+			
+			// Create incoming issue with new ID
+			if err := s.CreateIssue(ctx, collision.IncomingIssue, "import-remap"); err != nil {
+				return nil, fmt.Errorf("failed to create remapped incoming issue %s -> %s: %w", oldID, newID, err)
+			}
+		} else {
+			// Existing has higher hash -> remap existing, replace with incoming
+			// First, remap the existing issue to new ID
+			idMapping[oldID] = newID
+			
+			// Create a copy of existing issue with new ID
+			existingCopy := *collision.ExistingIssue
+			existingCopy.ID = newID
+			
+			if err := s.CreateIssue(ctx, &existingCopy, "import-remap"); err != nil {
+				return nil, fmt.Errorf("failed to create remapped existing issue %s -> %s: %w", oldID, newID, err)
+			}
+			
+			// Delete the existing issue with old ID
+			if err := s.DeleteIssue(ctx, oldID); err != nil {
+				return nil, fmt.Errorf("failed to delete old existing issue %s: %w", oldID, err)
+			}
+			
+			// Create incoming issue with original ID (replaces the deleted one)
+			if err := s.CreateIssue(ctx, collision.IncomingIssue, "import-replace"); err != nil {
+				return nil, fmt.Errorf("failed to create incoming issue %s: %w", oldID, err)
+			}
 		}
 	}
 
