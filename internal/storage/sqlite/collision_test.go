@@ -998,3 +998,146 @@ func BenchmarkReplaceIDReferencesMultipleTexts(b *testing.B) {
 		}
 	})
 }
+
+// TestDetectCollisionsReadOnly verifies that DetectCollisions does not modify the database
+func TestDetectCollisionsReadOnly(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "collision-readonly-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
+	// Create an issue in the database
+	dbIssue := &types.Issue{
+		ID:          "bd-1",
+		Title:       "Original issue",
+		Description: "Original content",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, dbIssue, "test"); err != nil {
+		t.Fatalf("failed to create DB issue: %v", err)
+	}
+
+	// Create incoming issue with SAME CONTENT but DIFFERENT ID (rename scenario)
+	incomingIssue := &types.Issue{
+		ID:          "bd-100",
+		Title:       "Original issue",
+		Description: "Original content",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeTask,
+	}
+
+	// Call DetectCollisions
+	result, err := DetectCollisions(ctx, store, []*types.Issue{incomingIssue})
+	if err != nil {
+		t.Fatalf("DetectCollisions failed: %v", err)
+	}
+
+	// Verify rename was detected
+	if len(result.Renames) != 1 {
+		t.Fatalf("expected 1 rename, got %d", len(result.Renames))
+	}
+	if result.Renames[0].OldID != "bd-1" {
+		t.Errorf("expected OldID bd-1, got %s", result.Renames[0].OldID)
+	}
+	if result.Renames[0].NewID != "bd-100" {
+		t.Errorf("expected NewID bd-100, got %s", result.Renames[0].NewID)
+	}
+
+	// CRITICAL: Verify the old issue still exists in the database (not deleted)
+	oldIssue, err := store.GetIssue(ctx, "bd-1")
+	if err != nil {
+		t.Fatalf("failed to get old issue: %v", err)
+	}
+	if oldIssue == nil {
+		t.Fatal("old issue bd-1 was deleted - DetectCollisions is not read-only!")
+	}
+	if oldIssue.Title != "Original issue" {
+		t.Errorf("old issue was modified - expected title 'Original issue', got '%s'", oldIssue.Title)
+	}
+}
+
+// TestApplyCollisionResolution verifies that ApplyCollisionResolution correctly applies renames
+func TestApplyCollisionResolution(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "apply-resolution-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
+	// Create an issue to be renamed
+	oldIssue := &types.Issue{
+		ID:          "bd-1",
+		Title:       "Issue to rename",
+		Description: "Content",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, oldIssue, "test"); err != nil {
+		t.Fatalf("failed to create old issue: %v", err)
+	}
+
+	// Create a collision result with a rename
+	newIssue := &types.Issue{
+		ID:          "bd-100",
+		Title:       "Issue to rename",
+		Description: "Content",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeTask,
+	}
+	result := &CollisionResult{
+		Renames: []*RenameDetail{
+			{
+				OldID: "bd-1",
+				NewID: "bd-100",
+				Issue: newIssue,
+			},
+		},
+	}
+
+	// Apply the resolution
+	emptyMapping := make(map[string]string)
+	if err := ApplyCollisionResolution(ctx, store, result, emptyMapping); err != nil {
+		t.Fatalf("ApplyCollisionResolution failed: %v", err)
+	}
+
+	// Verify old issue was deleted
+	oldDeleted, err := store.GetIssue(ctx, "bd-1")
+	if err != nil {
+		t.Fatalf("failed to check old issue: %v", err)
+	}
+	if oldDeleted != nil {
+		t.Error("old issue bd-1 was not deleted")
+	}
+}

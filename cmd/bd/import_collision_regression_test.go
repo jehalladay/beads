@@ -141,45 +141,52 @@ func TestRemapCollisionsRemapsImportedNotExisting(t *testing.T) {
 		t.Fatalf("RemapCollisions failed: %v", err)
 	}
 
-	// Step 5: Verify existing issue dependencies are preserved
-	t.Logf("\n=== Verifying Existing Issue Dependencies ===")
+	// Step 5: Verify dependencies are preserved on remapped issues
+	// With content-hash scoring, all existing issues get remapped to new IDs
+	t.Logf("\n=== Verifying Dependencies Preserved on Remapped Issues ===")
+	t.Logf("ID Mappings: %v", idMapping)
 
-	// Check bd-1 → bd-2 dependency (created before import)
-	existingDeps1, _ := store.GetDependencyRecords(ctx, "bd-1")
-	t.Logf("bd-1 dependencies: %d (expected: 1)", len(existingDeps1))
-
-	if len(existingDeps1) == 0 {
-		t.Errorf("BUG CONFIRMED: Existing bd-1 has ZERO dependencies after import!")
-		t.Errorf("  Expected: bd-1 → bd-2 (created by test before import)")
-		t.Errorf("  Actual: All dependencies deleted by updateDependencyReferences()")
-	} else if len(existingDeps1) != 1 {
-		t.Errorf("Expected 1 dependency for bd-1, got %d", len(existingDeps1))
-	} else {
-		// Verify the dependency is correct
-		if existingDeps1[0].DependsOnID != "bd-2" {
-			t.Errorf("Expected bd-1 → bd-2, got bd-1 → %s", existingDeps1[0].DependsOnID)
-		}
+	// The new bd-1, bd-2, bd-3 (incoming issues) should have NO dependencies
+	newBD1Deps, _ := store.GetDependencyRecords(ctx, "bd-1")
+	if len(newBD1Deps) != 0 {
+		t.Errorf("Expected 0 dependencies for new bd-1 (incoming), got %d", len(newBD1Deps))
 	}
 
-	// Check bd-3 → bd-1 dependency (created before import)
-	existingDeps3, _ := store.GetDependencyRecords(ctx, "bd-3")
-	t.Logf("bd-3 dependencies: %d (expected: 1)", len(existingDeps3))
-
-	if len(existingDeps3) == 0 {
-		t.Errorf("BUG CONFIRMED: Existing bd-3 has ZERO dependencies after import!")
-		t.Errorf("  Expected: bd-3 → bd-1 (created by test before import)")
-		t.Errorf("  Actual: All dependencies deleted by updateDependencyReferences()")
-	} else if len(existingDeps3) != 1 {
-		t.Errorf("Expected 1 dependency for bd-3, got %d", len(existingDeps3))
-	} else {
-		// Verify the dependency is correct
-		if existingDeps3[0].DependsOnID != testIssueBD1 {
-			t.Errorf("Expected bd-3 → bd-1, got bd-3 → %s", existingDeps3[0].DependsOnID)
-		}
+	newBD3Deps, _ := store.GetDependencyRecords(ctx, "bd-3")
+	if len(newBD3Deps) != 0 {
+		t.Errorf("Expected 0 dependencies for new bd-3 (incoming), got %d", len(newBD3Deps))
 	}
 
-	t.Logf("\nID Mappings: %v", idMapping)
-	t.Logf("Fix verified: Existing issue dependencies preserved during collision resolution")
+	// The remapped issues should have their dependencies preserved
+	remappedBD1 := idMapping["bd-1"]  // Old bd-1 → new ID
+	remappedBD2 := idMapping["bd-2"]  // Old bd-2 → new ID
+	remappedBD3 := idMapping["bd-3"]  // Old bd-3 → new ID
+
+	// Check remapped bd-1's dependency (was bd-1 → bd-2, now should be remappedBD1 → remappedBD2)
+	remappedBD1Deps, _ := store.GetDependencyRecords(ctx, remappedBD1)
+	t.Logf("%s dependencies: %d (expected: 1)", remappedBD1, len(remappedBD1Deps))
+	
+	if len(remappedBD1Deps) != 1 {
+		t.Errorf("Expected 1 dependency for remapped %s (preserved from old bd-1), got %d",
+			remappedBD1, len(remappedBD1Deps))
+	} else if remappedBD1Deps[0].DependsOnID != remappedBD2 {
+		t.Errorf("Expected %s → %s, got %s → %s", 
+			remappedBD1, remappedBD2, remappedBD1, remappedBD1Deps[0].DependsOnID)
+	}
+
+	// Check remapped bd-3's dependency (was bd-3 → bd-1, now should be remappedBD3 → remappedBD1)
+	remappedBD3Deps, _ := store.GetDependencyRecords(ctx, remappedBD3)
+	t.Logf("%s dependencies: %d (expected: 1)", remappedBD3, len(remappedBD3Deps))
+	
+	if len(remappedBD3Deps) != 1 {
+		t.Errorf("Expected 1 dependency for remapped %s (preserved from old bd-3), got %d",
+			remappedBD3, len(remappedBD3Deps))
+	} else if remappedBD3Deps[0].DependsOnID != remappedBD1 {
+		t.Errorf("Expected %s → %s, got %s → %s", 
+			remappedBD3, remappedBD1, remappedBD3, remappedBD3Deps[0].DependsOnID)
+	}
+
+	t.Logf("Fix verified: Dependencies preserved correctly on remapped issues with content-hash scoring")
 }
 
 // TestRemapCollisionsDoesNotUpdateNonexistentDependencies verifies that
@@ -264,32 +271,37 @@ func TestRemapCollisionsDoesNotUpdateNonexistentDependencies(t *testing.T) {
 		t.Fatalf("RemapCollisions failed: %v", err)
 	}
 
-	// Step 3: Verify existing dependency is untouched
-	existingDeps, err := store.GetDependencyRecords(ctx, "bd-1")
-	if err != nil {
-		t.Fatalf("failed to get dependencies for bd-1: %v", err)
-	}
-
-	if len(existingDeps) != 1 {
-		t.Errorf("Expected 1 dependency for existing bd-1, got %d (dependency should not be touched)", len(existingDeps))
-	} else {
-		if existingDeps[0].DependsOnID != testIssueBD2 {
-			t.Errorf("Expected bd-1 → bd-2, got bd-1 → %s", existingDeps[0].DependsOnID)
-		}
-	}
-
-	// Verify the remapped issue exists but has no dependencies
-	// (because dependencies are imported later in Phase 5)
+	// Step 3: Verify dependencies are preserved correctly
+	// With content-hash scoring: existing hash > incoming hash, so RemapIncoming=false
+	// This means: existing bd-1 → remapped to new ID, incoming bd-1 takes over bd-1
+	
+	// The remapped issue (old bd-1) should have its dependency preserved
 	remappedID := idMapping["bd-1"]
 	remappedDeps, err := store.GetDependencyRecords(ctx, remappedID)
 	if err != nil {
 		t.Fatalf("failed to get dependencies for %s: %v", remappedID, err)
 	}
 
-	if len(remappedDeps) != 0 {
-		t.Errorf("Expected 0 dependencies for remapped %s (dependencies added later), got %d",
+	if len(remappedDeps) != 1 {
+		t.Errorf("Expected 1 dependency for remapped %s (preserved from old bd-1), got %d",
 			remappedID, len(remappedDeps))
+	} else {
+		// The dependency should now be remappedID → bd-2 (updated from bd-1 → bd-2)
+		if remappedDeps[0].DependsOnID != testIssueBD2 {
+			t.Errorf("Expected %s → bd-2, got %s → %s", remappedID, remappedID, remappedDeps[0].DependsOnID)
+		}
 	}
 
-	t.Logf("Verified: updateDependencyReferences is effectively a no-op when no remapped dependencies exist")
+	// The new bd-1 (incoming issue) should have no dependencies
+	// (because dependencies are imported later in Phase 5)
+	newBD1Deps, err := store.GetDependencyRecords(ctx, "bd-1")
+	if err != nil {
+		t.Fatalf("failed to get dependencies for bd-1: %v", err)
+	}
+
+	if len(newBD1Deps) != 0 {
+		t.Errorf("Expected 0 dependencies for new bd-1 (dependencies added later), got %d", len(newBD1Deps))
+	}
+
+	t.Logf("Verified: Dependencies preserved correctly during collision resolution with content-hash scoring")
 }

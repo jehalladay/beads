@@ -189,6 +189,7 @@ func handlePrefixMismatch(ctx context.Context, sqliteStore *sqlite.SQLiteStorage
 
 // handleCollisions detects and resolves ID collisions
 func handleCollisions(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues []*types.Issue, opts Options, result *Result) ([]*types.Issue, error) {
+	// Phase 1: Detect (read-only)
 	collisionResult, err := sqlite.DetectCollisions(ctx, sqliteStore, issues)
 	if err != nil {
 		return nil, fmt.Errorf("collision detection failed: %w", err)
@@ -215,12 +216,12 @@ func handleCollisions(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, is
 			return nil, fmt.Errorf("failed to get existing issues for collision resolution: %w", err)
 		}
 
-		// Score collisions
+		// Phase 2: Score collisions
 		if err := sqlite.ScoreCollisions(ctx, sqliteStore, collisionResult.Collisions, allExistingIssues); err != nil {
 			return nil, fmt.Errorf("failed to score collisions: %w", err)
 		}
 
-		// Remap collisions
+		// Phase 3: Remap collisions
 		idMapping, err := sqlite.RemapCollisions(ctx, sqliteStore, collisionResult.Collisions, allExistingIssues)
 		if err != nil {
 			return nil, fmt.Errorf("failed to remap collisions: %w", err)
@@ -243,8 +244,20 @@ func handleCollisions(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, is
 		return filteredIssues, nil
 	}
 
+	// Phase 4: Apply renames (deletions of old IDs) if any were detected
+	if len(collisionResult.Renames) > 0 && !opts.DryRun {
+		// Build mapping for renames: oldID -> newID
+		renameMapping := make(map[string]string)
+		for _, rename := range collisionResult.Renames {
+			renameMapping[rename.OldID] = rename.NewID
+		}
+		if err := sqlite.ApplyCollisionResolution(ctx, sqliteStore, collisionResult, renameMapping); err != nil {
+			return nil, fmt.Errorf("failed to apply rename resolutions: %w", err)
+		}
+	}
+
 	if opts.DryRun {
-		result.Created = len(collisionResult.NewIssues)
+		result.Created = len(collisionResult.NewIssues) + len(collisionResult.Renames)
 		result.Unchanged = len(collisionResult.ExactMatches)
 	}
 
