@@ -70,7 +70,7 @@ func runEventDrivenLoop(
 		}
 	}()
 
-	// Optional: Periodic health check (not a sync poll)
+	// Optional: Periodic health check and dropped events safety net
 	healthTicker := time.NewTicker(60 * time.Second)
 	defer healthTicker.Stop()
 
@@ -79,6 +79,13 @@ func runEventDrivenLoop(
 		case <-healthTicker.C:
 			// Periodic health validation (not sync)
 			checkDaemonHealth(ctx, store, log)
+			
+			// Safety net: check for dropped mutation events
+			dropped := server.ResetDroppedEventsCount()
+			if dropped > 0 {
+				log.log("WARNING: %d mutation events were dropped, triggering export", dropped)
+				exportDebouncer.Trigger()
+			}
 
 		case sig := <-sigChan:
 			if isReloadSignal(sig) {

@@ -47,7 +47,8 @@ type Server struct {
 	// Auto-import single-flight guard
 	importInProgress atomic.Bool
 	// Mutation events for event-driven daemon
-	mutationChan chan MutationEvent
+	mutationChan    chan MutationEvent
+	droppedEvents   atomic.Int64 // Counter for dropped mutation events
 }
 
 // MutationEvent represents a database mutation for event-driven sync
@@ -105,11 +106,22 @@ func (s *Server) emitMutation(eventType, issueID string) {
 	}:
 		// Event sent successfully
 	default:
-		// Channel full, event dropped (not critical - sync will happen eventually)
+		// Channel full, increment dropped events counter
+		s.droppedEvents.Add(1)
 	}
 }
 
 // MutationChan returns the mutation event channel for the daemon to consume
 func (s *Server) MutationChan() <-chan MutationEvent {
 	return s.mutationChan
+}
+
+// DroppedEventsCount returns the number of dropped mutation events
+func (s *Server) DroppedEventsCount() int64 {
+	return s.droppedEvents.Load()
+}
+
+// ResetDroppedEventsCount resets the dropped events counter and returns the previous value
+func (s *Server) ResetDroppedEventsCount() int64 {
+	return s.droppedEvents.Swap(0)
 }
