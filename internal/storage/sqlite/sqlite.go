@@ -636,6 +636,16 @@ func (s *SQLiteStorage) getNextIDForPrefix(ctx context.Context, prefix string) (
 	return nextID, nil
 }
 
+// AllocateNextID generates the next issue ID for a given prefix.
+// This is a public wrapper around getNextIDForPrefix for use by other packages.
+func (s *SQLiteStorage) AllocateNextID(ctx context.Context, prefix string) (string, error) {
+	nextID, err := s.getNextIDForPrefix(ctx, prefix)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s-%d", prefix, nextID), nil
+}
+
 // SyncAllCounters synchronizes all ID counters based on existing issues in the database
 // This scans all issues and updates counters to prevent ID collisions with auto-generated IDs
 // Note: This unconditionally overwrites counter values, allowing them to decrease after deletions

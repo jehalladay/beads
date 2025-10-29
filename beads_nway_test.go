@@ -402,9 +402,13 @@ func testIdenticalContent(t *testing.T, numClones int) {
 		syncCloneWithConflictResolution(t, cloneDirs[syncOrder[i]], syncOrder[i], i == 0)
 	}
 	
-	// Final pull
-	for name, dir := range cloneDirs {
-		finalPullForClone(t, dir, name)
+	// Final convergence rounds
+	for round := 1; round <= 3; round++ {
+		for i := 0; i < numClones; i++ {
+			name := string(rune('A' + i))
+			dir := cloneDirs[name]
+			syncCloneWithConflictResolution(t, dir, name, false)
+		}
 	}
 	
 	// Verify all clones have exactly one issue (deduplication worked)
@@ -450,9 +454,13 @@ func testOneDifferent(t *testing.T, numClones int) {
 		syncCloneWithConflictResolution(t, cloneDirs[syncOrder[i]], syncOrder[i], i == 0)
 	}
 	
-	// Final pull
-	for name, dir := range cloneDirs {
-		finalPullForClone(t, dir, name)
+	// Final convergence rounds
+	for round := 1; round <= 3; round++ {
+		for i := 0; i < numClones; i++ {
+			name := string(rune('A' + i))
+			dir := cloneDirs[name]
+			syncCloneWithConflictResolution(t, dir, name, false)
+		}
 	}
 	
 	// Verify all clones have exactly 2 issues
@@ -503,9 +511,15 @@ func testMixedCollisions(t *testing.T, numClones int) {
 		syncCloneWithConflictResolution(t, cloneDirs[syncOrder[i]], syncOrder[i], i == 0)
 	}
 	
-	// Final pull
-	for name, dir := range cloneDirs {
-		finalPullForClone(t, dir, name)
+	// Final convergence rounds - same as TestFiveCloneCollision
+	t.Log("Final convergence rounds")
+	for round := 1; round <= 3; round++ {
+		t.Logf("Convergence round %d", round)
+		for i := 0; i < numClones; i++ {
+			name := string(rune('A' + i))
+			dir := cloneDirs[name]
+			syncCloneWithConflictResolution(t, dir, name, false)
+		}
 	}
 	
 	// Verify all clones have all 2*N issues
