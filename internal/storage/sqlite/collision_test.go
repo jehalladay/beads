@@ -802,14 +802,14 @@ func BenchmarkReplaceIDReferencesWithCache(b *testing.B) {
 		"Also bd-6, bd-7, bd-8, bd-9, and bd-10 are referenced here."
 
 	// Pre-compile the cache (this is done once in real usage)
-	cache, err := buildReplacementCache(idMapping)
+	cache, err := BuildReplacementCache(idMapping)
 	if err != nil {
 		b.Fatalf("failed to build cache: %v", err)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = replaceIDReferencesWithCache(text, cache)
+		_ = ReplaceIDReferencesWithCache(text, cache)
 	}
 }
 
@@ -838,11 +838,11 @@ func BenchmarkReplaceIDReferencesMultipleTexts(b *testing.B) {
 	})
 
 	b.Run("with cache", func(b *testing.B) {
-		cache, _ := buildReplacementCache(idMapping)
+		cache, _ := BuildReplacementCache(idMapping)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			for _, text := range texts {
-				_ = replaceIDReferencesWithCache(text, cache)
+				_ = ReplaceIDReferencesWithCache(text, cache)
 			}
 		}
 	})
