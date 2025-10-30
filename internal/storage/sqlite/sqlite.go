@@ -737,6 +737,44 @@ func (s *SQLiteStorage) SyncAllCounters(ctx context.Context) error {
 // The database should ALWAYS have issue_prefix config set explicitly (by 'bd init' or auto-import)
 // Never derive prefix from filename - it leads to silent data corruption
 
+// getIDMode returns the ID generation mode from config (sequential or hash).
+// Defaults to "sequential" for backward compatibility if not set.
+func getIDMode(ctx context.Context, conn *sql.Conn) string {
+	var mode string
+	err := conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "id_mode").Scan(&mode)
+	if err != nil || mode == "" {
+		return "sequential" // Default to sequential for backward compatibility
+	}
+	return mode
+}
+
+// nextSequentialID atomically increments and returns the next sequential ID number.
+// Must be called inside an IMMEDIATE transaction on the same connection.
+// Implements lazy initialization: if counter doesn't exist, initializes from existing issues.
+func nextSequentialID(ctx context.Context, conn *sql.Conn, prefix string) (int, error) {
+	var nextID int
+	
+	// The query handles three cases atomically:
+	// 1. Counter doesn't exist: initialize from MAX(existing IDs) or 1, then return that + 1
+	// 2. Counter exists but lower than max ID: update to max and return max + 1
+	// 3. Counter exists and correct: just increment and return next ID
+	err := conn.QueryRowContext(ctx, `
+		INSERT INTO issue_counters (prefix, last_id)
+		SELECT ?, COALESCE(MAX(CAST(substr(id, LENGTH(?) + 2) AS INTEGER)), 0) + 1
+		FROM issues
+		WHERE id LIKE ? || '-%'
+		  AND substr(id, LENGTH(?) + 2) GLOB '[0-9]*'
+		  AND instr(substr(id, LENGTH(?) + 2), '.') = 0
+		ON CONFLICT(prefix) DO UPDATE SET
+			last_id = last_id + 1
+		RETURNING last_id
+	`, prefix, prefix, prefix, prefix, prefix).Scan(&nextID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to generate next sequential ID for prefix %s: %w", prefix, err)
+	}
+	return nextID, nil
+}
+
 // generateHashID creates a hash-based ID for a top-level issue.
 // For child issues, use the parent ID with a numeric suffix (e.g., "bd-a3f8e9a2.1").
 // Includes a nonce parameter to handle collisions.
@@ -813,27 +851,39 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 
 	// Generate ID if not set (inside transaction to prevent race conditions)
 	if issue.ID == "" {
-		// Generate hash-based ID with collision detection (bd-168)
-		// Try up to 10 times with different nonces to avoid collisions
-		var err error
-		for nonce := 0; nonce < 10; nonce++ {
-			candidate := generateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, nonce)
-			
-			// Check if this ID already exists
-			var count int
-			err = conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
-			if err != nil {
-				return fmt.Errorf("failed to check for ID collision: %w", err)
-			}
-			
-			if count == 0 {
-				issue.ID = candidate
-				break
-			}
-		}
+		// Check id_mode config to determine ID generation strategy
+		idMode := getIDMode(ctx, conn)
 		
-		if issue.ID == "" {
-			return fmt.Errorf("failed to generate unique ID after 10 attempts")
+		if idMode == "hash" {
+			// Generate hash-based ID with collision detection (bd-168)
+			// Try up to 10 times with different nonces to avoid collisions
+			var err error
+			for nonce := 0; nonce < 10; nonce++ {
+				candidate := generateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, nonce)
+				
+				// Check if this ID already exists
+				var count int
+				err = conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
+				if err != nil {
+					return fmt.Errorf("failed to check for ID collision: %w", err)
+				}
+				
+				if count == 0 {
+					issue.ID = candidate
+					break
+				}
+			}
+			
+			if issue.ID == "" {
+				return fmt.Errorf("failed to generate unique ID after 10 attempts")
+			}
+		} else {
+			// Default: generate sequential ID using counter
+			nextID, err := nextSequentialID(ctx, conn, prefix)
+			if err != nil {
+				return err
+			}
+			issue.ID = fmt.Sprintf("%s-%d", prefix, nextID)
 		}
 	} else {
 		// Validate that explicitly provided ID matches the configured prefix (bd-177)
@@ -947,7 +997,10 @@ func generateBatchIDs(ctx context.Context, conn *sql.Conn, issues []*types.Issue
 		return fmt.Errorf("failed to get config: %w", err)
 	}
 
-	// Validate explicitly provided IDs and generate hash IDs for those that need them
+	// Check id_mode config to determine ID generation strategy
+	idMode := getIDMode(ctx, conn)
+
+	// Validate explicitly provided IDs and generate IDs for those that need them
 	expectedPrefix := prefix + "-"
 	usedIDs := make(map[string]bool)
 	
@@ -962,39 +1015,55 @@ func generateBatchIDs(ctx context.Context, conn *sql.Conn, issues []*types.Issue
 		}
 	}
 	
-	// Second pass: generate IDs for issues that need them, with collision detection
-	for i := range issues {
-		if issues[i].ID == "" {
-			// Generate hash-based ID with collision detection (bd-168)
-			var generated bool
-			for nonce := 0; nonce < 10; nonce++ {
-				candidate := generateHashID(prefix, issues[i].Title, issues[i].Description, actor, issues[i].CreatedAt, nonce)
-				
-				// Check if this ID is already used in this batch or in the database
-				if usedIDs[candidate] {
-					continue
+	// Second pass: generate IDs for issues that need them
+	if idMode == "hash" {
+		// Hash mode: generate with collision detection
+		for i := range issues {
+			if issues[i].ID == "" {
+				var generated bool
+				for nonce := 0; nonce < 10; nonce++ {
+					candidate := generateHashID(prefix, issues[i].Title, issues[i].Description, actor, issues[i].CreatedAt, nonce)
+					
+					// Check if this ID is already used in this batch or in the database
+					if usedIDs[candidate] {
+						continue
+					}
+					
+					var count int
+					err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
+					if err != nil {
+						return fmt.Errorf("failed to check for ID collision: %w", err)
+					}
+					
+					if count == 0 {
+						issues[i].ID = candidate
+						usedIDs[candidate] = true
+						generated = true
+						break
+					}
 				}
 				
-				var count int
-				err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
-				if err != nil {
-					return fmt.Errorf("failed to check for ID collision: %w", err)
+				if !generated {
+					return fmt.Errorf("failed to generate unique ID for issue %d after 10 attempts", i)
 				}
-				
-				if count == 0 {
-					issues[i].ID = candidate
-					usedIDs[candidate] = true
-					generated = true
-					break
-				}
-			}
-			
-			if !generated {
-				return fmt.Errorf("failed to generate unique ID for issue %d after 10 attempts", i)
 			}
 		}
-		
-		// Compute content hash if not already set (bd-95)
+	} else {
+		// Sequential mode: allocate sequential IDs for all issues that need them
+		for i := range issues {
+			if issues[i].ID == "" {
+				nextID, err := nextSequentialID(ctx, conn, prefix)
+				if err != nil {
+					return fmt.Errorf("failed to generate sequential ID for issue %d: %w", i, err)
+				}
+				issues[i].ID = fmt.Sprintf("%s-%d", prefix, nextID)
+				usedIDs[issues[i].ID] = true
+			}
+		}
+	}
+	
+	// Compute content hashes
+	for i := range issues {
 		if issues[i].ContentHash == "" {
 			issues[i].ContentHash = issues[i].ComputeContentHash()
 		}

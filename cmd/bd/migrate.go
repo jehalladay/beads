@@ -356,6 +356,22 @@ This command:
 						color.Green("✓ Migrated %d issues to hash-based IDs\n", len(mapping))
 					}
 				}
+				
+				// Set id_mode=hash after successful migration (not in dry-run)
+				if !dryRun {
+					store, err := sqlite.New(targetPath)
+					if err == nil {
+						ctx := context.Background()
+						if err := store.SetConfig(ctx, "id_mode", "hash"); err != nil {
+							if !jsonOutput {
+								fmt.Fprintf(os.Stderr, "Warning: failed to set id_mode=hash: %v\n", err)
+							}
+						} else if !jsonOutput {
+							color.Green("✓ Switched database to hash ID mode\n")
+						}
+						store.Close()
+					}
+				}
 			} else {
 				store.Close()
 				if !jsonOutput {
