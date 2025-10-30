@@ -802,14 +802,14 @@ func BenchmarkReplaceIDReferencesWithCache(b *testing.B) {
 		"Also bd-6, bd-7, bd-8, bd-9, and bd-10 are referenced here."
 
 	// Pre-compile the cache (this is done once in real usage)
-	cache, err := buildReplacementCache(idMapping)
+	cache, err := BuildReplacementCache(idMapping)
 	if err != nil {
 		b.Fatalf("failed to build cache: %v", err)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = replaceIDReferencesWithCache(text, cache)
+		_ = ReplaceIDReferencesWithCache(text, cache)
 	}
 }
 
@@ -838,11 +838,11 @@ func BenchmarkReplaceIDReferencesMultipleTexts(b *testing.B) {
 	})
 
 	b.Run("with cache", func(b *testing.B) {
-		cache, _ := buildReplacementCache(idMapping)
+		cache, _ := BuildReplacementCache(idMapping)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			for _, text := range texts {
-				_ = replaceIDReferencesWithCache(text, cache)
+				_ = ReplaceIDReferencesWithCache(text, cache)
 			}
 		}
 	})
@@ -920,6 +920,160 @@ func TestDetectCollisionsReadOnly(t *testing.T) {
 	if oldIssue.Title != "Original issue" {
 		t.Errorf("old issue was modified - expected title 'Original issue', got '%s'", oldIssue.Title)
 	}
+}
+
+// TestSymmetricCollision tests that hash-based collision resolution is deterministic and symmetric.
+// Two issues with same ID but different content should always resolve the same way,
+// regardless of which one is treated as "existing" vs "incoming".
+func TestSymmetricCollision(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "symmetric-collision-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
+	// Create two issues with same ID but different content
+	issueA := &types.Issue{
+		ID:          "test-1",
+		Title:       "Issue from clone A",
+		Description: "Content from clone A",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeTask,
+	}
+
+	issueB := &types.Issue{
+		ID:          "test-1",
+		Title:       "Issue from clone B",
+		Description: "Content from clone B",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeTask,
+	}
+
+	// Compute content hashes
+	hashA := hashIssueContent(issueA)
+	hashB := hashIssueContent(issueB)
+
+	t.Logf("Hash A: %s", hashA)
+	t.Logf("Hash B: %s", hashB)
+
+	// Test Case 1: A is existing, B is incoming
+	collision1 := &CollisionDetail{
+		ID:            "test-1",
+		ExistingIssue: issueA,
+		IncomingIssue: issueB,
+	}
+
+	err = ScoreCollisions(ctx, store, []*CollisionDetail{collision1}, []*types.Issue{issueA, issueB})
+	if err != nil {
+		t.Fatalf("ScoreCollisions (case 1) failed: %v", err)
+	}
+
+	remapIncoming1 := collision1.RemapIncoming
+	t.Logf("Case 1 (A existing, B incoming): RemapIncoming=%v", remapIncoming1)
+
+	// Test Case 2: B is existing, A is incoming (reversed)
+	collision2 := &CollisionDetail{
+		ID:            "test-1",
+		ExistingIssue: issueB,
+		IncomingIssue: issueA,
+	}
+
+	err = ScoreCollisions(ctx, store, []*CollisionDetail{collision2}, []*types.Issue{issueA, issueB})
+	if err != nil {
+		t.Fatalf("ScoreCollisions (case 2) failed: %v", err)
+	}
+
+	remapIncoming2 := collision2.RemapIncoming
+	t.Logf("Case 2 (B existing, A incoming): RemapIncoming=%v", remapIncoming2)
+
+	// CRITICAL VERIFICATION: The decision must be symmetric
+	// If A < B (hashA < hashB), then:
+	//   - Case 1: Keep existing (A), remap incoming (B) → RemapIncoming=true
+	//   - Case 2: Remap incoming (A), keep existing (B) → RemapIncoming=true
+	// If B < A (hashB < hashA), then:
+	//   - Case 1: Remap existing (A), keep incoming (B) → RemapIncoming=false
+	//   - Case 2: Keep existing (B), remap incoming (A) → RemapIncoming=false
+	//
+	// In both cases, the SAME version wins (the one with lower hash)
+
+	var expectedWinner, expectedLoser *types.Issue
+	if hashA < hashB {
+		expectedWinner = issueA
+		expectedLoser = issueB
+	} else {
+		expectedWinner = issueB
+		expectedLoser = issueA
+	}
+
+	t.Logf("Expected winner: %s (hash: %s)", expectedWinner.Title, hashIssueContent(expectedWinner))
+	t.Logf("Expected loser: %s (hash: %s)", expectedLoser.Title, hashIssueContent(expectedLoser))
+
+	// Verify that RemapIncoming decisions lead to correct winner
+	// Case 1: A existing, B incoming
+	//   - If RemapIncoming=true: keep A (existing), remap B (incoming)
+	//   - If RemapIncoming=false: keep B (incoming), remap A (existing)
+	// Case 2: B existing, A incoming
+	//   - If RemapIncoming=true: keep B (existing), remap A (incoming)
+	//   - If RemapIncoming=false: keep A (incoming), remap B (existing)
+	
+	// The winner should be the one with lower hash
+	if expectedWinner.Title == issueA.Title {
+		// A should win in both cases
+		// Case 1: A is existing, so RemapIncoming should be true (remap B)
+		if !remapIncoming1 {
+			t.Errorf("Case 1: Expected A to win (RemapIncoming=true to remap B), but got RemapIncoming=false")
+		}
+		// Case 2: A is incoming, so RemapIncoming should be false (keep A, remap B existing)
+		if remapIncoming2 {
+			t.Errorf("Case 2: Expected A to win (RemapIncoming=false to keep A), but got RemapIncoming=true")
+		}
+	} else {
+		// B should win in both cases
+		// Case 1: B is incoming, so RemapIncoming should be false (keep B, remap A existing)
+		if remapIncoming1 {
+			t.Errorf("Case 1: Expected B to win (RemapIncoming=false to keep B), but got RemapIncoming=true")
+		}
+		// Case 2: B is existing, so RemapIncoming should be true (remap A)
+		if !remapIncoming2 {
+			t.Errorf("Case 2: Expected B to win (RemapIncoming=true to remap A), but got RemapIncoming=false")
+		}
+	}
+
+	// Final check: Same winner in both cases
+	var winner1, winner2 *types.Issue
+	if remapIncoming1 {
+		winner1 = collision1.ExistingIssue // A
+	} else {
+		winner1 = collision1.IncomingIssue // B
+	}
+
+	if remapIncoming2 {
+		winner2 = collision2.ExistingIssue // B
+	} else {
+		winner2 = collision2.IncomingIssue // A
+	}
+
+	if winner1.Title != winner2.Title {
+		t.Errorf("SYMMETRY VIOLATION: Different winners! Case 1 winner: %s, Case 2 winner: %s",
+			winner1.Title, winner2.Title)
+	}
+
+	t.Logf("✓ SUCCESS: Collision resolution is symmetric - same winner in both cases: %s", winner1.Title)
 }
 
 // TestApplyCollisionResolution verifies that ApplyCollisionResolution correctly applies renames

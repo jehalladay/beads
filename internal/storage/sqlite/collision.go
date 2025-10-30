@@ -335,11 +335,37 @@ func deduplicateIncomingIssues(issues []*types.Issue) []*types.Issue {
 //
 // This ensures deterministic, symmetric collision resolution across all clones.
 //
-// NOTE: This function is not atomic - it performs multiple separate database operations.
-// If an error occurs partway through, some issues may be created without their references
-// being updated. This is a known limitation that requires storage layer refactoring to fix.
-// See issue bd-25 for transaction support.
-func RemapCollisions(ctx context.Context, s *SQLiteStorage, collisions []*CollisionDetail, _ []*types.Issue) (map[string]string, error) {
+// The function automatically retries up to 3 times on UNIQUE constraint failures,
+// syncing counters between retries to handle concurrent ID allocation.
+func RemapCollisions(ctx context.Context, s *SQLiteStorage, collisions []*CollisionDetail, incomingIssues []*types.Issue) (map[string]string, error) {
+	const maxRetries = 3
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		idMapping, err := remapCollisionsOnce(ctx, s, collisions, incomingIssues)
+		if err == nil {
+			return idMapping, nil
+		}
+
+		lastErr = err
+
+		if !isUniqueConstraintError(err) {
+			return nil, err
+		}
+
+		if attempt < maxRetries-1 {
+			if syncErr := s.SyncAllCounters(ctx); syncErr != nil {
+				return nil, fmt.Errorf("retry %d: UNIQUE constraint error, counter sync failed: %w (original error: %v)", attempt+1, syncErr, err)
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("failed after %d retries due to UNIQUE constraint violations: %w", maxRetries, lastErr)
+}
+
+// remapCollisionsOnce performs a single attempt at collision resolution.
+// This is the actual implementation that RemapCollisions wraps with retry logic.
+func remapCollisionsOnce(ctx context.Context, s *SQLiteStorage, collisions []*CollisionDetail, _ []*types.Issue) (map[string]string, error) {
 	idMapping := make(map[string]string)
 
 	// Sync counters before remapping to avoid ID collisions
@@ -478,7 +504,7 @@ func RemapCollisions(ctx context.Context, s *SQLiteStorage, collisions []*Collis
 func updateReferences(ctx context.Context, s *SQLiteStorage, idMapping map[string]string) error {
 	// Pre-compile all regexes once for the entire operation
 	// This avoids recompiling the same patterns for each text field
-	cache, err := buildReplacementCache(idMapping)
+	cache, err := BuildReplacementCache(idMapping)
 	if err != nil {
 		return fmt.Errorf("failed to build replacement cache: %w", err)
 	}
@@ -494,25 +520,25 @@ func updateReferences(ctx context.Context, s *SQLiteStorage, idMapping map[strin
 		updates := make(map[string]interface{})
 
 		// Update description using cached regexes
-		newDesc := replaceIDReferencesWithCache(issue.Description, cache)
+		newDesc := ReplaceIDReferencesWithCache(issue.Description, cache)
 		if newDesc != issue.Description {
 			updates["description"] = newDesc
 		}
 
 		// Update design using cached regexes
-		newDesign := replaceIDReferencesWithCache(issue.Design, cache)
+		newDesign := ReplaceIDReferencesWithCache(issue.Design, cache)
 		if newDesign != issue.Design {
 			updates["design"] = newDesign
 		}
 
 		// Update notes using cached regexes
-		newNotes := replaceIDReferencesWithCache(issue.Notes, cache)
+		newNotes := ReplaceIDReferencesWithCache(issue.Notes, cache)
 		if newNotes != issue.Notes {
 			updates["notes"] = newNotes
 		}
 
 		// Update acceptance criteria using cached regexes
-		newAC := replaceIDReferencesWithCache(issue.AcceptanceCriteria, cache)
+		newAC := ReplaceIDReferencesWithCache(issue.AcceptanceCriteria, cache)
 		if newAC != issue.AcceptanceCriteria {
 			updates["acceptance_criteria"] = newAC
 		}
@@ -542,9 +568,9 @@ type idReplacementCache struct {
 	regex       *regexp.Regexp
 }
 
-// buildReplacementCache pre-compiles all regex patterns for an ID mapping
+// BuildReplacementCache pre-compiles all regex patterns for an ID mapping
 // This cache should be created once per ID mapping and reused for all text replacements
-func buildReplacementCache(idMapping map[string]string) ([]*idReplacementCache, error) {
+func BuildReplacementCache(idMapping map[string]string) ([]*idReplacementCache, error) {
 	cache := make([]*idReplacementCache, 0, len(idMapping))
 	i := 0
 	for oldID, newID := range idMapping {
@@ -566,9 +592,9 @@ func buildReplacementCache(idMapping map[string]string) ([]*idReplacementCache, 
 	return cache, nil
 }
 
-// replaceIDReferencesWithCache replaces all occurrences of old IDs with new IDs using a pre-compiled cache
+// ReplaceIDReferencesWithCache replaces all occurrences of old IDs with new IDs using a pre-compiled cache
 // Uses a two-phase approach to avoid replacement conflicts: first replace with placeholders, then replace with new IDs
-func replaceIDReferencesWithCache(text string, cache []*idReplacementCache) string {
+func ReplaceIDReferencesWithCache(text string, cache []*idReplacementCache) string {
 	if len(cache) == 0 || text == "" {
 		return text
 	}
@@ -593,16 +619,16 @@ func replaceIDReferencesWithCache(text string, cache []*idReplacementCache) stri
 // placeholders, then replace placeholders with new IDs
 //
 // Note: This function compiles regexes on every call. For better performance when
-// processing multiple text fields with the same ID mapping, use buildReplacementCache()
-// and replaceIDReferencesWithCache() instead.
+// processing multiple text fields with the same ID mapping, use BuildReplacementCache()
+// and ReplaceIDReferencesWithCache() instead.
 func replaceIDReferences(text string, idMapping map[string]string) string {
 	// Build cache (compiles regexes)
-	cache, err := buildReplacementCache(idMapping)
+	cache, err := BuildReplacementCache(idMapping)
 	if err != nil {
 		// Fallback to no replacement if regex compilation fails
 		return text
 	}
-	return replaceIDReferencesWithCache(text, cache)
+	return ReplaceIDReferencesWithCache(text, cache)
 }
 
 // updateDependencyReferences updates dependency records to use new IDs
