@@ -665,6 +665,37 @@ func (s *SQLiteStorage) getNextChildNumber(ctx context.Context, parentID string)
 	return nextChild, nil
 }
 
+// GetNextChildID generates the next hierarchical child ID for a given parent
+// Returns formatted ID as parentID.{counter} (e.g., bd-a3f8e9.1 or bd-a3f8e9.1.5)
+// Works at any depth (max 3 levels)
+func (s *SQLiteStorage) GetNextChildID(ctx context.Context, parentID string) (string, error) {
+	// Validate parent exists
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, parentID).Scan(&count)
+	if err != nil {
+		return "", fmt.Errorf("failed to check parent existence: %w", err)
+	}
+	if count == 0 {
+		return "", fmt.Errorf("parent issue %s does not exist", parentID)
+	}
+	
+	// Calculate current depth by counting dots
+	depth := strings.Count(parentID, ".")
+	if depth >= 3 {
+		return "", fmt.Errorf("maximum hierarchy depth (3) exceeded for parent %s", parentID)
+	}
+	
+	// Get next child number atomically
+	nextNum, err := s.getNextChildNumber(ctx, parentID)
+	if err != nil {
+		return "", err
+	}
+	
+	// Format as parentID.counter
+	childID := fmt.Sprintf("%s.%d", parentID, nextNum)
+	return childID, nil
+}
+
 // SyncAllCounters synchronizes all ID counters based on existing issues in the database
 // This scans all issues and updates counters to prevent ID collisions with auto-generated IDs
 // Note: This unconditionally overwrites counter values, allowing them to decrease after deletions
@@ -807,9 +838,26 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	} else {
 		// Validate that explicitly provided ID matches the configured prefix (bd-177)
 		// This prevents wrong-prefix bugs when IDs are manually specified
+		// Support both top-level (bd-a3f8e9) and hierarchical (bd-a3f8e9.1) IDs
 		expectedPrefix := prefix + "-"
 		if !strings.HasPrefix(issue.ID, expectedPrefix) {
 			return fmt.Errorf("issue ID '%s' does not match configured prefix '%s'", issue.ID, prefix)
+		}
+		
+		// For hierarchical IDs (bd-a3f8e9.1), validate parent exists
+		if strings.Contains(issue.ID, ".") {
+			// Extract parent ID (everything before the last dot)
+			lastDot := strings.LastIndex(issue.ID, ".")
+			parentID := issue.ID[:lastDot]
+			
+			var parentCount int
+			err = conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, parentID).Scan(&parentCount)
+			if err != nil {
+				return fmt.Errorf("failed to check parent existence: %w", err)
+			}
+			if parentCount == 0 {
+				return fmt.Errorf("parent issue %s does not exist", parentID)
+			}
 		}
 	}
 
