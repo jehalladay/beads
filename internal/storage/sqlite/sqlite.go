@@ -646,6 +646,23 @@ func (s *SQLiteStorage) AllocateNextID(ctx context.Context, prefix string) (stri
 	return fmt.Sprintf("%s-%d", prefix, nextID), nil
 }
 
+// getNextChildNumber atomically generates the next child number for a parent ID
+// Uses the child_counters table for atomic, cross-process child ID generation
+func (s *SQLiteStorage) getNextChildNumber(ctx context.Context, parentID string) (int, error) {
+	var nextChild int
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO child_counters (parent_id, last_child)
+		VALUES (?, 1)
+		ON CONFLICT(parent_id) DO UPDATE SET
+			last_child = last_child + 1
+		RETURNING last_child
+	`, parentID).Scan(&nextChild)
+	if err != nil {
+		return 0, fmt.Errorf("failed to generate next child number for parent %s: %w", parentID, err)
+	}
+	return nextChild, nil
+}
+
 // SyncAllCounters synchronizes all ID counters based on existing issues in the database
 // This scans all issues and updates counters to prevent ID collisions with auto-generated IDs
 // Note: This unconditionally overwrites counter values, allowing them to decrease after deletions

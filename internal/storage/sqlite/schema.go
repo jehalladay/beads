@@ -135,6 +135,14 @@ CREATE TABLE IF NOT EXISTS issue_counters (
     last_id INTEGER NOT NULL DEFAULT 0
 );
 
+-- Child counters table (for hierarchical ID generation)
+-- Tracks sequential child numbers per parent issue
+CREATE TABLE IF NOT EXISTS child_counters (
+    parent_id TEXT PRIMARY KEY,
+    last_child INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (parent_id) REFERENCES issues(id) ON DELETE CASCADE
+);
+
 -- Issue snapshots table (for compaction)
 CREATE TABLE IF NOT EXISTS issue_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
