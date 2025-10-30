@@ -222,36 +222,37 @@ Output to stdout by default, or use -o flag for file output.`,
 			out = tempFile
 		}
 
-		// Write JSONL (with timestamp-only deduplication for bd-164)
+		// Write JSONL (timestamp-only deduplication DISABLED due to bd-160)
 		encoder := json.NewEncoder(out)
 		exportedIDs := make([]string, 0, len(issues))
 		skippedCount := 0
 		for _, issue := range issues {
-			// Check if this is only a timestamp change (bd-164)
-			skip, err := shouldSkipExport(ctx, issue)
-			if err != nil {
-				// Log warning but continue - don't fail export on hash check errors
-				fmt.Fprintf(os.Stderr, "Warning: failed to check if %s should skip: %v\n", issue.ID, err)
-				skip = false
-			}
-			
-			if skip {
-				skippedCount++
-				continue
-			}
+			// DISABLED: timestamp-only deduplication causes data loss (bd-160)
+			// The export_hashes table gets out of sync with JSONL after git operations,
+			// causing exports to skip issues that aren't actually in the file.
+			// 
+			// skip, err := shouldSkipExport(ctx, issue)
+			// if err != nil {
+			// 	fmt.Fprintf(os.Stderr, "Warning: failed to check if %s should skip: %v\n", issue.ID, err)
+			// 	skip = false
+			// }
+			// if skip {
+			// 	skippedCount++
+			// 	continue
+			// }
 			
 			if err := encoder.Encode(issue); err != nil {
 				fmt.Fprintf(os.Stderr, "Error encoding issue %s: %v\n", issue.ID, err)
 				os.Exit(1)
 			}
 			
-			// Save content hash after successful export (bd-164)
-			contentHash, err := computeIssueContentHash(issue)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to compute hash for %s: %v\n", issue.ID, err)
-			} else if err := store.SetExportHash(ctx, issue.ID, contentHash); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to save export hash for %s: %v\n", issue.ID, err)
-			}
+			// DISABLED: export hash tracking (bd-160)
+			// contentHash, err := computeIssueContentHash(issue)
+			// if err != nil {
+			// 	fmt.Fprintf(os.Stderr, "Warning: failed to compute hash for %s: %v\n", issue.ID, err)
+			// } else if err := store.SetExportHash(ctx, issue.ID, contentHash); err != nil {
+			// 	fmt.Fprintf(os.Stderr, "Warning: failed to save export hash for %s: %v\n", issue.ID, err)
+			// }
 			
 			exportedIDs = append(exportedIDs, issue.ID)
 		}

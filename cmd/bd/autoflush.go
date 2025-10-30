@@ -454,43 +454,40 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error)
 		}
 	}()
 
-	// Write all issues as JSONL (with timestamp-only deduplication for bd-159)
-	ctx := context.Background()
+	// Write all issues as JSONL (timestamp-only deduplication DISABLED - bd-160)
 	encoder := json.NewEncoder(f)
 	skippedCount := 0
 	exportedIDs := make([]string, 0, len(issues))
 	
 	for _, issue := range issues {
-		// Check if this is only a timestamp change (bd-159)
-		skip, err := shouldSkipExport(ctx, issue)
-		if err != nil {
-			// Log warning but continue - don't fail export on hash check errors
-			if os.Getenv("BD_DEBUG") != "" {
-				fmt.Fprintf(os.Stderr, "Debug: failed to check if %s should skip: %v\n", issue.ID, err)
-			}
-			skip = false
-		}
-		
-		if skip {
-			skippedCount++
-			continue
-		}
+		// DISABLED: timestamp-only deduplication causes data loss (bd-160)
+		// skip, err := shouldSkipExport(ctx, issue)
+		// if err != nil {
+		// 	if os.Getenv("BD_DEBUG") != "" {
+		// 		fmt.Fprintf(os.Stderr, "Debug: failed to check if %s should skip: %v\n", issue.ID, err)
+		// 	}
+		// 	skip = false
+		// }
+		// if skip {
+		// 	skippedCount++
+		// 	continue
+		// }
 		
 		if err := encoder.Encode(issue); err != nil {
 			return nil, fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
 		}
 		
-		// Save content hash after successful export (bd-159)
-		contentHash, err := computeIssueContentHash(issue)
-		if err != nil {
-			if os.Getenv("BD_DEBUG") != "" {
-				fmt.Fprintf(os.Stderr, "Debug: failed to compute hash for %s: %v\n", issue.ID, err)
-			}
-		} else if err := store.SetExportHash(ctx, issue.ID, contentHash); err != nil {
-			if os.Getenv("BD_DEBUG") != "" {
-				fmt.Fprintf(os.Stderr, "Debug: failed to save export hash for %s: %v\n", issue.ID, err)
-			}
-		}
+		// DISABLED: export hash tracking (bd-160)
+		// contentHash, err := computeIssueContentHash(issue)
+		// if err != nil {
+		// 	if os.Getenv("BD_DEBUG") != "" {
+		// 		fmt.Fprintf(os.Stderr, "Debug: failed to compute hash for %s: %v\n", issue.ID, err)
+		// 	}
+		// } else if err := store.SetExportHash(ctx, issue.ID, contentHash); err != nil {
+		// 	if os.Getenv("BD_DEBUG") != "" {
+		// 		fmt.Fprintf(os.Stderr, "Debug: failed to save export hash for %s: %v\n", issue.ID, err)
+		// 	}
+		// }
 		
 		exportedIDs = append(exportedIDs, issue.ID)
 	}
