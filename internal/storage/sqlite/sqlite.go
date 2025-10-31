@@ -777,7 +777,7 @@ func nextSequentialID(ctx context.Context, conn *sql.Conn, prefix string) (int, 
 
 // generateHashID creates a hash-based ID for a top-level issue.
 // For child issues, use the parent ID with a numeric suffix (e.g., "bd-a3f8e9.1").
-// Starts with 6 chars, expands to 7/8 on collision (length parameter).
+// Supports adaptive length from 4-8 chars based on database size (bd-ea2a13).
 // Includes a nonce parameter to handle same-length collisions.
 func generateHashID(prefix, title, description, creator string, timestamp time.Time, length, nonce int) string {
 	// Combine inputs into a stable content string
@@ -787,10 +787,15 @@ func generateHashID(prefix, title, description, creator string, timestamp time.T
 	// Hash the content
 	hash := sha256.Sum256([]byte(content))
 	
-	// Use variable length (6, 7, or 8 hex chars)
-	// length determines how many bytes to use (3, 3.5, or 4)
+	// Use variable length (4-8 hex chars)
+	// length determines how many bytes to use (2, 2.5, 3, 3.5, or 4)
 	var shortHash string
 	switch length {
+	case 4:
+		shortHash = hex.EncodeToString(hash[:2])
+	case 5:
+		// 2.5 bytes: use 3 bytes but take only first 5 chars
+		shortHash = hex.EncodeToString(hash[:3])[:5]
 	case 6:
 		shortHash = hex.EncodeToString(hash[:3])
 	case 7:
@@ -868,10 +873,24 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		idMode := getIDMode(ctx, conn)
 		
 		if idMode == "hash" {
-			// Generate hash-based ID with progressive length fallback (bd-7c87cf24)
-			// Start with 6 chars, expand to 7/8 on collision
+			// Generate hash-based ID with adaptive length based on database size (bd-ea2a13)
+			// Start with length determined by database size, expand on collision
 			var err error
-			for length := 6; length <= 8; length++ {
+			
+			// Get adaptive base length based on current database size
+			baseLength, err := GetAdaptiveIDLength(ctx, conn, prefix)
+			if err != nil {
+				// Fallback to 6 on error
+				baseLength = 6
+			}
+			
+			// Try baseLength, baseLength+1, baseLength+2, up to max of 8
+			maxLength := 8
+			if baseLength > maxLength {
+				baseLength = maxLength
+			}
+			
+			for length := baseLength; length <= maxLength; length++ {
 				// Try up to 10 nonces at each length
 				for nonce := 0; nonce < 10; nonce++ {
 					candidate := generateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, length, nonce)
@@ -896,7 +915,7 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 			}
 			
 			if issue.ID == "" {
-				return fmt.Errorf("failed to generate unique ID after trying lengths 6-8 with 10 nonces each")
+				return fmt.Errorf("failed to generate unique ID after trying lengths %d-%d with 10 nonces each", baseLength, maxLength)
 			}
 		} else {
 			// Default: generate sequential ID using counter
@@ -1038,12 +1057,25 @@ func generateBatchIDs(ctx context.Context, conn *sql.Conn, issues []*types.Issue
 	
 	// Second pass: generate IDs for issues that need them
 	if idMode == "hash" {
-		// Hash mode: generate with progressive length fallback (bd-7c87cf24)
+		// Hash mode: generate with adaptive length based on database size (bd-ea2a13)
+		// Get adaptive base length based on current database size
+		baseLength, err := GetAdaptiveIDLength(ctx, conn, prefix)
+		if err != nil {
+			// Fallback to 6 on error
+			baseLength = 6
+		}
+		
+		// Try baseLength, baseLength+1, baseLength+2, up to max of 8
+		maxLength := 8
+		if baseLength > maxLength {
+			baseLength = maxLength
+		}
+		
 		for i := range issues {
 			if issues[i].ID == "" {
 				var generated bool
-				// Try lengths 6, 7, 8 with progressive fallback
-				for length := 6; length <= 8 && !generated; length++ {
+				// Try lengths from baseLength to maxLength with progressive fallback
+				for length := baseLength; length <= maxLength && !generated; length++ {
 					for nonce := 0; nonce < 10; nonce++ {
 						candidate := generateHashID(prefix, issues[i].Title, issues[i].Description, actor, issues[i].CreatedAt, length, nonce)
 						
