@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2025-10-30
+
+### Added
+- **Hash-Based IDs**: New collision-resistant ID system (bd-168, bd-166, bd-167)
+  - 6-character hash IDs with progressive 7/8-char fallback on collision
+  - Opt-in via `.beads/config.toml` with `id_mode = "hash"`
+  - Migration tool: `bd migrate --to-hash-ids` for existing databases
+  - Prefix-optional ID parsing (e.g., `bd-abc123` or just `abc123`)
+  - Hierarchical child ID generation for discovered-from relationships
+- **Substring ID Matching**: All bd commands now support partial ID matching (bd-170)
+  - `bd show abc` matches any ID containing "abc" (e.g., `bd-abc123`)
+  - Ambiguous matches show helpful error with all candidates
+- **Daemon Registry**: Multi-daemon management for multiple workspaces (bd-07b8c8)
+  - `bd daemons list` shows all running daemons across workspaces
+  - `bd daemons health` detects version mismatches and stale sockets
+  - `bd daemons logs <workspace>` for per-daemon log viewing
+  - `bd daemons killall` to restart all daemons after upgrades
+
+### Fixed
+- **Test Stability**: Deprecated sequence-ID collision tests
+  - Kept `TestFiveCloneCollision` for hash-ID multi-clone testing
+  - Fixed `TestTwoCloneCollision` to use merge instead of rebase
+- **Linting**: golangci-lint v2.5.0 compatibility
+  - Added `version: 2` field to `.golangci.yml`
+  - Renamed `exclude` to `exclude-patterns` for v3 format
+
+### Changed
+- **Multiple bd Detection**: Warning when multiple bd binaries in PATH (PR #182)
+  - Prevents confusion from version conflicts
+  - Shows locations of all bd binaries found
+
 ## [0.17.7] - 2025-10-26
 
 ### Fixed
