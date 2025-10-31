@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // normalizeLabels trims whitespace, removes empty strings, and deduplicates labels
@@ -313,6 +314,31 @@ func (s *Server) handleList(req *Request) Response {
 	}
 
 	data, _ := json.Marshal(issues)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func (s *Server) handleResolveID(req *Request) Response {
+	var args ResolveIDArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid resolve_id args: %v", err),
+		}
+	}
+
+	ctx := s.reqCtx(req)
+	resolvedID, err := utils.ResolvePartialID(ctx, s.storage, args.ID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to resolve ID: %v", err),
+		}
+	}
+
+	data, _ := json.Marshal(resolvedID)
 	return Response{
 		Success: true,
 		Data:    data,

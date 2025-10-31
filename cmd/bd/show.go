@@ -20,10 +20,35 @@ var showCmd = &cobra.Command{
 	Short: "Show issue details",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		ctx := context.Background()
+		
+		// Resolve partial IDs first
+		var resolvedIDs []string
+		if daemonClient != nil {
+			// In daemon mode, resolve via RPC
+			for _, id := range args {
+				resolveArgs := &rpc.ResolveIDArgs{ID: id}
+				resp, err := daemonClient.ResolveID(resolveArgs)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error resolving ID %s: %v\n", id, err)
+					os.Exit(1)
+				}
+				resolvedIDs = append(resolvedIDs, string(resp.Data))
+			}
+		} else {
+			// In direct mode, resolve via storage
+			var err error
+			resolvedIDs, err = utils.ResolvePartialIDs(ctx, store, args)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			allDetails := []interface{}{}
-			for idx, id := range args {
+			for idx, id := range resolvedIDs {
 				showArgs := &rpc.ShowArgs{ID: id}
 				resp, err := daemonClient.Show(showArgs)
 				if err != nil {
@@ -158,22 +183,15 @@ var showCmd = &cobra.Command{
 		}
 
 		// Direct mode
-		ctx := context.Background()
 		allDetails := []interface{}{}
-		for idx, id := range args {
-			fullID, err := utils.ResolvePartialID(ctx, store, id)
+		for idx, id := range resolvedIDs {
+			issue, err := store.GetIssue(ctx, id)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-				continue
-			}
-			
-			issue, err := store.GetIssue(ctx, fullID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", fullID, err)
+				fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
 				continue
 			}
 			if issue == nil {
-				fmt.Fprintf(os.Stderr, "Issue %s not found\n", fullID)
+				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
 				continue
 			}
 
@@ -360,10 +378,33 @@ var updateCmd = &cobra.Command{
 			return
 		}
 
+		ctx := context.Background()
+		
+		// Resolve partial IDs first
+		var resolvedIDs []string
+		if daemonClient != nil {
+			for _, id := range args {
+				resolveArgs := &rpc.ResolveIDArgs{ID: id}
+				resp, err := daemonClient.ResolveID(resolveArgs)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error resolving ID %s: %v\n", id, err)
+					os.Exit(1)
+				}
+				resolvedIDs = append(resolvedIDs, string(resp.Data))
+			}
+		} else {
+			var err error
+			resolvedIDs, err = utils.ResolvePartialIDs(ctx, store, args)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			updatedIssues := []*types.Issue{}
-			for _, id := range args {
+			for _, id := range resolvedIDs {
 				updateArgs := &rpc.UpdateArgs{ID: id}
 
 				// Map updates to RPC args
@@ -416,28 +457,21 @@ var updateCmd = &cobra.Command{
 		}
 
 		// Direct mode
-		ctx := context.Background()
 		updatedIssues := []*types.Issue{}
-		for _, id := range args {
-			fullID, err := utils.ResolvePartialID(ctx, store, id)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-				continue
-			}
-			
-			if err := store.UpdateIssue(ctx, fullID, updates, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", fullID, err)
-				continue
-			}
+		for _, id := range resolvedIDs {
+		 if err := store.UpdateIssue(ctx, id, updates, actor); err != nil {
+		 fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, err)
+		 continue
+		}
 
-			if jsonOutput {
-				issue, _ := store.GetIssue(ctx, fullID)
+		if jsonOutput {
+				issue, _ := store.GetIssue(ctx, id)
 				if issue != nil {
 					updatedIssues = append(updatedIssues, issue)
 				}
 			} else {
 				green := color.New(color.FgGreen).SprintFunc()
-				fmt.Printf("%s Updated issue: %s\n", green("✓"), fullID)
+				fmt.Printf("%s Updated issue: %s\n", green("✓"), id)
 			}
 		}
 
@@ -658,10 +692,33 @@ var closeCmd = &cobra.Command{
 			reason = "Closed"
 		}
 
+		ctx := context.Background()
+		
+		// Resolve partial IDs first
+		var resolvedIDs []string
+		if daemonClient != nil {
+			for _, id := range args {
+				resolveArgs := &rpc.ResolveIDArgs{ID: id}
+				resp, err := daemonClient.ResolveID(resolveArgs)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error resolving ID %s: %v\n", id, err)
+					os.Exit(1)
+				}
+				resolvedIDs = append(resolvedIDs, string(resp.Data))
+			}
+		} else {
+			var err error
+			resolvedIDs, err = utils.ResolvePartialIDs(ctx, store, args)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			closedIssues := []*types.Issue{}
-			for _, id := range args {
+			for _, id := range resolvedIDs {
 				closeArgs := &rpc.CloseArgs{
 					ID:     id,
 					Reason: reason,
@@ -690,27 +747,20 @@ var closeCmd = &cobra.Command{
 		}
 
 		// Direct mode
-		ctx := context.Background()
 		closedIssues := []*types.Issue{}
-		for _, id := range args {
-			fullID, err := utils.ResolvePartialID(ctx, store, id)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-				continue
-			}
-			
-			if err := store.CloseIssue(ctx, fullID, reason, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", fullID, err)
+		for _, id := range resolvedIDs {
+			if err := store.CloseIssue(ctx, id, reason, actor); err != nil {
+				fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
 				continue
 			}
 			if jsonOutput {
-				issue, _ := store.GetIssue(ctx, fullID)
+				issue, _ := store.GetIssue(ctx, id)
 				if issue != nil {
 					closedIssues = append(closedIssues, issue)
 				}
 			} else {
 				green := color.New(color.FgGreen).SprintFunc()
-				fmt.Printf("%s Closed %s: %s\n", green("✓"), fullID, reason)
+				fmt.Printf("%s Closed %s: %s\n", green("✓"), id, reason)
 			}
 		}
 

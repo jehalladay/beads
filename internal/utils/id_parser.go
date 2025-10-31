@@ -29,32 +29,47 @@ func ParseIssueID(input string, prefix string) string {
 // ResolvePartialID resolves a potentially partial issue ID to a full ID.
 // Supports:
 // - Full IDs: "bd-a3f8e9" or "a3f8e9" → "bd-a3f8e9"
-// - Partial IDs: "a3f8" → "bd-a3f8e9" (if unique match, requires hash IDs)
+// - Without hyphen: "bda3f8e9" or "wya3f8e9" → "bd-a3f8e9"
+// - Partial IDs: "a3f8" → "bd-a3f8e9" (if unique match)
 // - Hierarchical: "a3f8e9.1" → "bd-a3f8e9.1"
 //
 // Returns an error if:
 // - No issue found matching the ID
 // - Multiple issues match (ambiguous prefix)
-//
-// Note: Partial ID matching (shorter prefixes) requires hash-based IDs (bd-165).
-// For now, this primarily handles prefix-optional input (bd-a3f8e9 vs a3f8e9).
 func ResolvePartialID(ctx context.Context, store storage.Storage, input string) (string, error) {
 	// Get the configured prefix
 	prefix, err := store.GetConfig(ctx, "issue_prefix")
 	if err != nil || prefix == "" {
-		prefix = "bd-"
+		prefix = "bd"
 	}
 	
-	// Ensure the input has the prefix
-	parsedID := ParseIssueID(input, prefix)
+	// Ensure prefix has hyphen for ID format
+	prefixWithHyphen := prefix
+	if !strings.HasSuffix(prefix, "-") {
+		prefixWithHyphen = prefix + "-"
+	}
+	
+	// Normalize input:
+	// 1. If it has the full prefix with hyphen (bd-a3f8e9), use as-is
+	// 2. Otherwise, add prefix with hyphen (handles both bare hashes and prefix-without-hyphen cases)
+	
+	var normalizedID string
+	
+	if strings.HasPrefix(input, prefixWithHyphen) {
+		// Already has prefix with hyphen: "bd-a3f8e9"
+		normalizedID = input
+	} else {
+		// Bare hash or prefix without hyphen: "a3f8e9", "07b8c8", "bda3f8e9" → all get prefix with hyphen added
+		normalizedID = prefixWithHyphen + input
+	}
 	
 	// First try exact match
-	_, err = store.GetIssue(ctx, parsedID)
-	if err == nil {
-		return parsedID, nil
+	issue, err := store.GetIssue(ctx, normalizedID)
+	if err == nil && issue != nil {
+		return normalizedID, nil
 	}
 	
-	// If exact match failed, try prefix search
+	// If exact match failed, try substring search
 	filter := types.IssueFilter{}
 	
 	issues, err := store.SearchIssues(ctx, "", filter)
@@ -62,9 +77,14 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 		return "", fmt.Errorf("failed to search issues: %w", err)
 	}
 	
+	// Extract the hash part for substring matching
+	hashPart := strings.TrimPrefix(normalizedID, prefix)
+	
 	var matches []string
 	for _, issue := range issues {
-		if strings.HasPrefix(issue.ID, parsedID) {
+		issueHash := strings.TrimPrefix(issue.ID, prefix)
+		// Check if the issue hash contains the input hash as substring
+		if strings.Contains(issueHash, hashPart) {
 			matches = append(matches, issue.ID)
 		}
 	}

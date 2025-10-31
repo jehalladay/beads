@@ -26,11 +26,46 @@ var depAddCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		depType, _ := cmd.Flags().GetString("type")
 
+		ctx := context.Background()
+		
+		// Resolve partial IDs first
+		var fromID, toID string
+		if daemonClient != nil {
+			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
+			resp, err := daemonClient.ResolveID(resolveArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+			fromID = string(resp.Data)
+			
+			resolveArgs = &rpc.ResolveIDArgs{ID: args[1]}
+			resp, err = daemonClient.ResolveID(resolveArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving dependency ID %s: %v\n", args[1], err)
+				os.Exit(1)
+			}
+			toID = string(resp.Data)
+		} else {
+			var err error
+			fromID, err = utils.ResolvePartialID(ctx, store, args[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+			
+			toID, err = utils.ResolvePartialID(ctx, store, args[1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving dependency ID %s: %v\n", args[1], err)
+				os.Exit(1)
+			}
+		}
+
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			depArgs := &rpc.DepAddArgs{
-				FromID:  args[0],
-				ToID:    args[1],
+				FromID:  fromID,
+				ToID:    toID,
 				DepType: depType,
 			}
 
@@ -52,23 +87,9 @@ var depAddCmd = &cobra.Command{
 		}
 
 		// Direct mode
-		ctx := context.Background()
-		
-		fullFromID, err := utils.ResolvePartialID(ctx, store, args[0])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
-			os.Exit(1)
-		}
-		
-		fullToID, err := utils.ResolvePartialID(ctx, store, args[1])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving dependency ID %s: %v\n", args[1], err)
-			os.Exit(1)
-		}
-		
 		dep := &types.Dependency{
-			IssueID:     fullFromID,
-			DependsOnID: fullToID,
+			IssueID:     fromID,
+			DependsOnID: toID,
 			Type:        types.DependencyType(depType),
 		}
 
@@ -108,8 +129,8 @@ var depAddCmd = &cobra.Command{
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
 				"status":        "added",
-				"issue_id":      fullFromID,
-				"depends_on_id": fullToID,
+				"issue_id":      fromID,
+				"depends_on_id": toID,
 				"type":          depType,
 			})
 			return
@@ -117,7 +138,7 @@ var depAddCmd = &cobra.Command{
 
 		green := color.New(color.FgGreen).SprintFunc()
 		fmt.Printf("%s Added dependency: %s depends on %s (%s)\n",
-			green("✓"), fullFromID, fullToID, depType)
+			green("✓"), fromID, toID, depType)
 	},
 }
 
@@ -126,11 +147,46 @@ var depRemoveCmd = &cobra.Command{
 	Short: "Remove a dependency",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		ctx := context.Background()
+		
+		// Resolve partial IDs first
+		var fromID, toID string
+		if daemonClient != nil {
+			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
+			resp, err := daemonClient.ResolveID(resolveArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+			fromID = string(resp.Data)
+			
+			resolveArgs = &rpc.ResolveIDArgs{ID: args[1]}
+			resp, err = daemonClient.ResolveID(resolveArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving dependency ID %s: %v\n", args[1], err)
+				os.Exit(1)
+			}
+			toID = string(resp.Data)
+		} else {
+			var err error
+			fromID, err = utils.ResolvePartialID(ctx, store, args[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+			
+			toID, err = utils.ResolvePartialID(ctx, store, args[1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving dependency ID %s: %v\n", args[1], err)
+				os.Exit(1)
+			}
+		}
+
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			depArgs := &rpc.DepRemoveArgs{
-				FromID: args[0],
-				ToID:   args[1],
+				FromID: fromID,
+				ToID:   toID,
 			}
 
 			resp, err := daemonClient.RemoveDependency(depArgs)
@@ -146,24 +202,13 @@ var depRemoveCmd = &cobra.Command{
 
 			green := color.New(color.FgGreen).SprintFunc()
 			fmt.Printf("%s Removed dependency: %s no longer depends on %s\n",
-				green("✓"), args[0], args[1])
+				green("✓"), fromID, toID)
 			return
 		}
 
 		// Direct mode
-		ctx := context.Background()
-		
-		fullFromID, err := utils.ResolvePartialID(ctx, store, args[0])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
-			os.Exit(1)
-		}
-		
-		fullToID, err := utils.ResolvePartialID(ctx, store, args[1])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving dependency ID %s: %v\n", args[1], err)
-			os.Exit(1)
-		}
+		fullFromID := fromID
+		fullToID := toID
 		
 		if err := store.RemoveDependency(ctx, fullFromID, fullToID, actor); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -193,6 +238,27 @@ var depTreeCmd = &cobra.Command{
 	Short: "Show dependency tree",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		ctx := context.Background()
+		
+		// Resolve partial ID first
+		var fullID string
+		if daemonClient != nil {
+			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
+			resp, err := daemonClient.ResolveID(resolveArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+			fullID = string(resp.Data)
+		} else {
+			var err error
+			fullID, err = utils.ResolvePartialID(ctx, store, args[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+		}
+		
 		// If daemon is running but doesn't support this command, use direct storage
 		if daemonClient != nil && store == nil {
 			var err error
@@ -210,14 +276,6 @@ var depTreeCmd = &cobra.Command{
 
 		if maxDepth < 1 {
 			fmt.Fprintf(os.Stderr, "Error: --max-depth must be >= 1\n")
-			os.Exit(1)
-		}
-
-		ctx := context.Background()
-		
-		fullID, err := utils.ResolvePartialID(ctx, store, args[0])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", args[0], err)
 			os.Exit(1)
 		}
 		

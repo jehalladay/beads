@@ -24,11 +24,33 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 		reason, _ := cmd.Flags().GetString("reason")
 
 		ctx := context.Background()
+		
+		// Resolve partial IDs first
+		var resolvedIDs []string
+		if daemonClient != nil {
+			for _, id := range args {
+				resolveArgs := &rpc.ResolveIDArgs{ID: id}
+				resp, err := daemonClient.ResolveID(resolveArgs)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error resolving ID %s: %v\n", id, err)
+					os.Exit(1)
+				}
+				resolvedIDs = append(resolvedIDs, string(resp.Data))
+			}
+		} else {
+			var err error
+			resolvedIDs, err = utils.ResolvePartialIDs(ctx, store, args)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		
 		reopenedIssues := []*types.Issue{}
 		
 		// If daemon is running, use RPC
 		if daemonClient != nil {
-			for _, id := range args {
+			for _, id := range resolvedIDs {
 				openStatus := string(types.StatusOpen)
 				updateArgs := &rpc.UpdateArgs{
 					ID:     id,

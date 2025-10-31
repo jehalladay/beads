@@ -25,6 +25,7 @@ const (
 	OpCommentList     = "comment_list"
 	OpCommentAdd      = "comment_add"
 	OpBatch           = "batch"
+	OpResolveID       = "resolve_id"
 
 	OpCompact         = "compact"
 	OpCompactStats    = "compact_stats"
@@ -101,6 +102,11 @@ type ListArgs struct {
 
 // ShowArgs represents arguments for the show operation
 type ShowArgs struct {
+	ID string `json:"id"`
+}
+
+// ResolveIDArgs represents arguments for the resolve_id operation
+type ResolveIDArgs struct {
 	ID string `json:"id"`
 }
 

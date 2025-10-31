@@ -81,20 +81,31 @@ var labelAddCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		issueIDs, label := parseLabelArgs(args)
 		
-		// Resolve partial IDs if in direct mode
-		if daemonClient == nil {
-			ctx := context.Background()
-			resolvedIDs := make([]string, 0, len(issueIDs))
-			for _, id := range issueIDs {
-				fullID, err := utils.ResolvePartialID(ctx, store, id)
+		// Resolve partial IDs
+		ctx := context.Background()
+		resolvedIDs := make([]string, 0, len(issueIDs))
+		for _, id := range issueIDs {
+			var fullID string
+			var err error
+			
+			if daemonClient != nil {
+				resolveArgs := &rpc.ResolveIDArgs{ID: id}
+				resp, err := daemonClient.ResolveID(resolveArgs)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
 					continue
 				}
-				resolvedIDs = append(resolvedIDs, fullID)
+				fullID = string(resp.Data)
+			} else {
+				fullID, err = utils.ResolvePartialID(ctx, store, id)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+					continue
+				}
 			}
-			issueIDs = resolvedIDs
+			resolvedIDs = append(resolvedIDs, fullID)
 		}
+		issueIDs = resolvedIDs
 		
 		processBatchLabelOperation(issueIDs, label, "added",
 			func(issueID, lbl string) error {
@@ -115,20 +126,31 @@ var labelRemoveCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		issueIDs, label := parseLabelArgs(args)
 		
-		// Resolve partial IDs if in direct mode
-		if daemonClient == nil {
-			ctx := context.Background()
-			resolvedIDs := make([]string, 0, len(issueIDs))
-			for _, id := range issueIDs {
-				fullID, err := utils.ResolvePartialID(ctx, store, id)
+		// Resolve partial IDs
+		ctx := context.Background()
+		resolvedIDs := make([]string, 0, len(issueIDs))
+		for _, id := range issueIDs {
+			var fullID string
+			var err error
+			
+			if daemonClient != nil {
+				resolveArgs := &rpc.ResolveIDArgs{ID: id}
+				resp, err := daemonClient.ResolveID(resolveArgs)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
 					continue
 				}
-				resolvedIDs = append(resolvedIDs, fullID)
+				fullID = string(resp.Data)
+			} else {
+				fullID, err = utils.ResolvePartialID(ctx, store, id)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+					continue
+				}
 			}
-			issueIDs = resolvedIDs
+			resolvedIDs = append(resolvedIDs, fullID)
 		}
+		issueIDs = resolvedIDs
 		
 		processBatchLabelOperation(issueIDs, label, "removed",
 			func(issueID, lbl string) error {
@@ -146,20 +168,28 @@ var labelListCmd = &cobra.Command{
 	Short: "List labels for an issue",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		issueID := args[0]
-
 		ctx := context.Background()
-		var labels []string
 		
-		// Resolve partial ID if in direct mode
-		if daemonClient == nil {
-			fullID, err := utils.ResolvePartialID(ctx, store, issueID)
+		// Resolve partial ID first
+		var issueID string
+		if daemonClient != nil {
+			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
+			resp, err := daemonClient.ResolveID(resolveArgs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", issueID, err)
+				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
 				os.Exit(1)
 			}
-			issueID = fullID
+			issueID = string(resp.Data)
+		} else {
+			var err error
+			issueID, err = utils.ResolvePartialID(ctx, store, args[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
 		}
+
+		var labels []string
 
 		// Use daemon if available
 		if daemonClient != nil {

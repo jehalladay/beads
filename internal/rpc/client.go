@@ -255,6 +255,11 @@ func (c *Client) Show(args *ShowArgs) (*Response, error) {
 	return c.Execute(OpShow, args)
 }
 
+// ResolveID resolves a partial issue ID to a full ID via the daemon
+func (c *Client) ResolveID(args *ResolveIDArgs) (*Response, error) {
+	return c.Execute(OpResolveID, args)
+}
+
 // Ready gets ready work via the daemon
 func (c *Client) Ready(args *ReadyArgs) (*Response, error) {
 	return c.Execute(OpReady, args)

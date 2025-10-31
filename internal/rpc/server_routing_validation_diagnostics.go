@@ -168,6 +168,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleList(req)
 	case OpShow:
 		resp = s.handleShow(req)
+	case OpResolveID:
+		resp = s.handleResolveID(req)
 	case OpReady:
 		resp = s.handleReady(req)
 	case OpStats:
