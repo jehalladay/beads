@@ -43,6 +43,7 @@ Example:
 
 		sourceIDs := args
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 
 		// Validate merge operation
 		if err := validateMerge(targetID, sourceIDs); err != nil {
@@ -96,6 +97,7 @@ Example:
 func init() {
 	mergeCmd.Flags().String("into", "", "Target issue ID to merge into (required)")
 	mergeCmd.Flags().Bool("dry-run", false, "Validate without making changes")
+	mergeCmd.Flags().Bool("json", false, "Output JSON format")
 	rootCmd.AddCommand(mergeCmd)
 }
 

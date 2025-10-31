@@ -20,6 +20,7 @@ var showCmd = &cobra.Command{
 	Short: "Show issue details",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 		ctx := context.Background()
 		
 		// Resolve partial IDs first
@@ -329,6 +330,7 @@ var updateCmd = &cobra.Command{
 	Short: "Update one or more issues",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 		updates := make(map[string]interface{})
 
 		if cmd.Flags().Changed("status") {
@@ -691,6 +693,7 @@ var closeCmd = &cobra.Command{
 		if reason == "" {
 			reason = "Closed"
 		}
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 
 		ctx := context.Background()
 		
@@ -776,6 +779,7 @@ var closeCmd = &cobra.Command{
 }
 
 func init() {
+	showCmd.Flags().Bool("json", false, "Output JSON format")
 	rootCmd.AddCommand(showCmd)
 
 	updateCmd.Flags().StringP("status", "s", "", "New status")
@@ -789,6 +793,7 @@ func init() {
 	updateCmd.Flags().String("acceptance-criteria", "", "DEPRECATED: use --acceptance")
 	_ = updateCmd.Flags().MarkHidden("acceptance-criteria")
 	updateCmd.Flags().String("external-ref", "", "External reference (e.g., 'gh-9', 'jira-ABC')")
+	updateCmd.Flags().Bool("json", false, "Output JSON format")
 	rootCmd.AddCommand(updateCmd)
 
 	editCmd.Flags().Bool("title", false, "Edit the title")
@@ -799,5 +804,6 @@ func init() {
 	rootCmd.AddCommand(editCmd)
 
 	closeCmd.Flags().StringP("reason", "r", "", "Reason for closing")
+	closeCmd.Flags().Bool("json", false, "Output JSON format")
 	rootCmd.AddCommand(closeCmd)
 }

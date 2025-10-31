@@ -22,7 +22,7 @@ var labelCmd = &cobra.Command{
 }
 
 // Helper function to process label operations for multiple issues
-func processBatchLabelOperation(issueIDs []string, label string, operation string, 
+func processBatchLabelOperation(issueIDs []string, label string, operation string, jsonOut bool,
 	daemonFunc func(string, string) error, storeFunc func(context.Context, string, string, string) error) {
 	ctx := context.Background()
 	results := []map[string]interface{}{}
@@ -40,7 +40,7 @@ func processBatchLabelOperation(issueIDs []string, label string, operation strin
 			continue
 		}
 
-		if jsonOutput {
+		if jsonOut {
 			results = append(results, map[string]interface{}{
 				"status":   operation,
 				"issue_id": issueID,
@@ -62,7 +62,7 @@ func processBatchLabelOperation(issueIDs []string, label string, operation strin
 		markDirtyAndScheduleFlush()
 	}
 
-	if jsonOutput && len(results) > 0 {
+	if jsonOut && len(results) > 0 {
 		outputJSON(results)
 	}
 }
@@ -79,6 +79,7 @@ var labelAddCmd = &cobra.Command{
 	Short: "Add a label to one or more issues",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 		issueIDs, label := parseLabelArgs(args)
 		
 		// Resolve partial IDs
@@ -107,7 +108,7 @@ var labelAddCmd = &cobra.Command{
 		}
 		issueIDs = resolvedIDs
 		
-		processBatchLabelOperation(issueIDs, label, "added",
+		processBatchLabelOperation(issueIDs, label, "added", jsonOutput,
 			func(issueID, lbl string) error {
 				_, err := daemonClient.AddLabel(&rpc.LabelAddArgs{ID: issueID, Label: lbl})
 				return err
@@ -124,6 +125,7 @@ var labelRemoveCmd = &cobra.Command{
 	Short: "Remove a label from one or more issues",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 		issueIDs, label := parseLabelArgs(args)
 		
 		// Resolve partial IDs
@@ -152,7 +154,7 @@ var labelRemoveCmd = &cobra.Command{
 		}
 		issueIDs = resolvedIDs
 		
-		processBatchLabelOperation(issueIDs, label, "removed",
+		processBatchLabelOperation(issueIDs, label, "removed", jsonOutput,
 			func(issueID, lbl string) error {
 				_, err := daemonClient.RemoveLabel(&rpc.LabelRemoveArgs{ID: issueID, Label: lbl})
 				return err
@@ -168,6 +170,7 @@ var labelListCmd = &cobra.Command{
 	Short: "List labels for an issue",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 		ctx := context.Background()
 		
 		// Resolve partial ID first
@@ -242,6 +245,7 @@ var labelListAllCmd = &cobra.Command{
 	Use:   "list-all",
 	Short: "List all unique labels in the database",
 	Run: func(cmd *cobra.Command, args []string) {
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 		ctx := context.Background()
 
 		var issues []*types.Issue
@@ -342,6 +346,11 @@ var labelListAllCmd = &cobra.Command{
 }
 
 func init() {
+	labelAddCmd.Flags().Bool("json", false, "Output JSON format")
+	labelRemoveCmd.Flags().Bool("json", false, "Output JSON format")
+	labelListCmd.Flags().Bool("json", false, "Output JSON format")
+	labelListAllCmd.Flags().Bool("json", false, "Output JSON format")
+	
 	labelCmd.AddCommand(labelAddCmd)
 	labelCmd.AddCommand(labelRemoveCmd)
 	labelCmd.AddCommand(labelListCmd)

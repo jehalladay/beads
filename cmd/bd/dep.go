@@ -25,6 +25,7 @@ var depAddCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		depType, _ := cmd.Flags().GetString("type")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 
 		ctx := context.Background()
 		
@@ -147,6 +148,7 @@ var depRemoveCmd = &cobra.Command{
 	Short: "Remove a dependency",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 		ctx := context.Background()
 		
 		// Resolve partial IDs first
@@ -238,6 +240,7 @@ var depTreeCmd = &cobra.Command{
 	Short: "Show dependency tree",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 		ctx := context.Background()
 		
 		// Resolve partial ID first
@@ -338,6 +341,8 @@ var depCyclesCmd = &cobra.Command{
 	Use:   "cycles",
 	Short: "Detect dependency cycles",
 	Run: func(cmd *cobra.Command, args []string) {
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+		
 		// If daemon is running but doesn't support this command, use direct storage
 		if daemonClient != nil && store == nil {
 			var err error
@@ -385,9 +390,17 @@ var depCyclesCmd = &cobra.Command{
 
 func init() {
 	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks|related|parent-child|discovered-from)")
+	depAddCmd.Flags().Bool("json", false, "Output JSON format")
+	
+	depRemoveCmd.Flags().Bool("json", false, "Output JSON format")
+	
 	depTreeCmd.Flags().Bool("show-all-paths", false, "Show all paths to nodes (no deduplication for diamond dependencies)")
 	depTreeCmd.Flags().IntP("max-depth", "d", 50, "Maximum tree depth to display (safety limit)")
 	depTreeCmd.Flags().Bool("reverse", false, "Show dependent tree (what was discovered from this) instead of dependency tree (what blocks this)")
+	depTreeCmd.Flags().Bool("json", false, "Output JSON format")
+	
+	depCyclesCmd.Flags().Bool("json", false, "Output JSON format")
+	
 	depCmd.AddCommand(depAddCmd)
 	depCmd.AddCommand(depRemoveCmd)
 	depCmd.AddCommand(depTreeCmd)
