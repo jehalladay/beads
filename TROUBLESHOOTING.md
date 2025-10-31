@@ -187,19 +187,24 @@ bd import -i .beads/issues.jsonl  # Sync to SQLite
 
 See [ADVANCED.md](ADVANCED.md) for detailed merge strategies.
 
-### ID collisions after branch merge
+### Git merge conflicts in JSONL
 
-When merging branches where different issues were created with the same ID:
+**With hash-based IDs (v0.20.1+), ID collisions don't occur.** Different issues get different hash IDs.
+
+If git shows a conflict in `.beads/issues.jsonl`, it's because the same issue was modified on both branches:
 
 ```bash
-# Check for collisions
+# Preview what will be updated
 bd import -i .beads/issues.jsonl --dry-run
 
-# Automatically resolve collisions
-bd import -i .beads/issues.jsonl --resolve-collisions
+# Resolve git conflict (keep newer version or manually merge)
+git checkout --theirs .beads/issues.jsonl  # Or --ours, or edit manually
+
+# Import updates the database
+bd import -i .beads/issues.jsonl
 ```
 
-See [ADVANCED.md#handling-import-collisions](ADVANCED.md#handling-import-collisions) for details.
+See [ADVANCED.md#handling-git-merge-conflicts](ADVANCED.md#handling-git-merge-conflicts) for details.
 
 ### Permission denied on git hooks
 

@@ -90,7 +90,7 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 	}
 
 	// Detect and resolve collisions
-	issues, err = handleCollisions(ctx, sqliteStore, issues, opts, result)
+	issues, err = detectUpdates(ctx, sqliteStore, issues, opts, result)
 	if err != nil {
 		return result, err
 	}
@@ -193,8 +193,8 @@ func handlePrefixMismatch(ctx context.Context, sqliteStore *sqlite.SQLiteStorage
 	return nil
 }
 
-// handleCollisions detects and resolves ID collisions
-func handleCollisions(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues []*types.Issue, opts Options, result *Result) ([]*types.Issue, error) {
+// detectUpdates detects same-ID scenarios (which are updates with hash IDs, not collisions)
+func detectUpdates(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues []*types.Issue, opts Options, result *Result) ([]*types.Issue, error) {
 	// Phase 1: Detect (read-only)
 	collisionResult, err := sqlite.DetectCollisions(ctx, sqliteStore, issues)
 	if err != nil {
@@ -423,7 +423,7 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 		// Phase 2: New content - check for ID collision
 		if existingWithID, found := dbByID[incoming.ID]; found {
 			// ID exists but different content - this is a collision
-			// The collision should have been handled earlier by handleCollisions
+			// The update should have been detected earlier by detectUpdates
 			// If we reach here, it means collision wasn't resolved - treat as update
 			if !opts.SkipUpdate {
 				// Build updates map

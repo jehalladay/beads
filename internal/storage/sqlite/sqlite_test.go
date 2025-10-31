@@ -1045,9 +1045,9 @@ func TestGetStatistics(t *testing.T) {
 // does not affect normal usage where WAL mode handles typical concurrent operations.
 // For very high concurrency needs, consider using CGO-enabled sqlite3 driver or PostgreSQL.
 
-// TestParallelIssueCreation verifies that parallel issue creation doesn't cause ID collisions
-// This is a regression test for bd-89 (GH-6) where race conditions in ID generation caused
-// UNIQUE constraint failures when creating issues rapidly in parallel.
+// TestParallelIssueCreation verifies that parallel issue creation works correctly with hash IDs
+// This is a regression test for bd-89 (GH-6). With hash-based IDs, parallel creation works
+// naturally since each issue gets a unique random hash - no coordination needed.
 func TestParallelIssueCreation(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()

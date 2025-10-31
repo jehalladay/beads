@@ -286,12 +286,11 @@ When two developers create new issues:
 
 Git may show a conflict, but resolution is simple: **keep both lines** (both changes are compatible).
 
-For ID collisions (same ID, different content):
-```bash
-bd import -i .beads/issues.jsonl --resolve-collisions
-```
+**With hash-based IDs (v0.20.1+), same-ID scenarios are updates, not collisions:**
 
-See [ADVANCED.md#handling-import-collisions](ADVANCED.md#handling-import-collisions) for details.
+If you import an issue with the same ID but different fields, bd treats it as an update to the existing issue. This is normal behavior - hash IDs remain stable, so same ID = same issue being updated.
+
+For git conflicts where the same issue was modified on both branches, manually resolve the JSONL conflict (usually keeping the newer `updated_at` timestamp), then `bd import` will apply the update.
 
 ## Migration Questions
 

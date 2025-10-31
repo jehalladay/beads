@@ -836,9 +836,9 @@ func TestAutoImportDisabled(t *testing.T) {
 	storeMutex.Unlock()
 }
 
-// TestAutoImportWithCollision tests that auto-import detects collisions and preserves local changes
-func TestAutoImportWithCollision(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "bd-test-collision-*")
+// TestAutoImportWithUpdate tests that auto-import detects same-ID updates and applies them
+func TestAutoImportWithUpdate(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "bd-test-update-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -877,7 +877,7 @@ func TestAutoImportWithCollision(t *testing.T) {
 		t.Fatalf("Failed to create issue: %v", err)
 	}
 
-	// Create JSONL with same ID but status=open (conflict)
+	// Create JSONL with same ID but status=open (update scenario)
 	jsonlIssue := &types.Issue{
 		ID:        "test-col-1",
 		Title:     "Remote version",
@@ -911,9 +911,9 @@ func TestAutoImportWithCollision(t *testing.T) {
 	}
 }
 
-// TestAutoImportNoCollision tests happy path with no conflicts
-func TestAutoImportNoCollision(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "bd-test-nocoll-*")
+// TestAutoImportNoUpdate tests happy path with no updates needed
+func TestAutoImportNoUpdate(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "bd-test-noupdate-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
