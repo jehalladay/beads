@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.1] - 2025-10-31
+
+### Breaking Changes
+
+- **Hash-Based IDs Now Default**: Sequential IDs (bd-1, bd-2) replaced with hash-based IDs (bd-a1b2, bd-f14c)
+  - 4-character hashes for 0-500 issues
+  - 5-character hashes for 500-1,500 issues  
+  - 6-character hashes for 1,500-10,000 issues
+  - Progressive length extension prevents collisions with birthday paradox math
+  - **Migration required**: Run `bd migrate` to upgrade schema (removes `issue_counters` table)
+  - Existing databases continue working - migration is opt-in
+  - Dramatically reduces merge conflicts in multi-worker/multi-branch workflows
+  - Eliminates ID collision issues when multiple agents create issues concurrently
+
+### Removed
+
+- **Sequential ID Generation**: Removed `SyncAllCounters()`, `AllocateNextID()`, and collision remapping logic (bd-c7af, bd-8e05, bd-4c74)
+  - Hash IDs handle collisions by extending hash length, not remapping
+  - `issue_counters` table removed from schema
+  - `--resolve-collisions` flag removed from import (no longer needed)
+  - 400+ lines of obsolete collision handling code removed
+
+### Changed
+
+- **Collision Handling**: Automatic hash extension on collision instead of ID remapping
+  - Much simpler and more reliable than sequential remapping
+  - No cross-branch coordination needed
+  - Birthday paradox ensures extremely low collision rates
+
+### Migration Notes
+
+**For users upgrading from 0.20.0 or earlier:**
+
+1. Run `bd migrate` to detect and upgrade old database schemas
+2. Database continues to work without migration, but you'll see warnings
+3. Hash IDs provide better multi-worker reliability at the cost of non-numeric IDs
+4. Old sequential IDs like `bd-152` become hash IDs like `bd-f14c`
+
+See README.md for hash ID format details and birthday paradox collision analysis.
+
 ## [0.20.0] - 2025-10-30
 
 ### Added
