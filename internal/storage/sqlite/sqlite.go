@@ -1571,44 +1571,17 @@ func (s *SQLiteStorage) RenameDependencyPrefix(ctx context.Context, oldPrefix, n
 	return nil
 }
 
-// RenameCounterPrefix updates the prefix in the issue_counters table
+// RenameCounterPrefix is a no-op with hash-based IDs (bd-8e05)
+// Kept for backward compatibility with rename-prefix command
 func (s *SQLiteStorage) RenameCounterPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	var lastID int
-	err = tx.QueryRowContext(ctx, `SELECT last_id FROM issue_counters WHERE prefix = ?`, oldPrefix).Scan(&lastID)
-	if err != nil && err != sql.ErrNoRows {
-		return fmt.Errorf("failed to get old counter: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx, `DELETE FROM issue_counters WHERE prefix = ?`, oldPrefix)
-	if err != nil {
-		return fmt.Errorf("failed to delete old counter: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO issue_counters (prefix, last_id)
-		VALUES (?, ?)
-		ON CONFLICT(prefix) DO UPDATE SET last_id = MAX(last_id, excluded.last_id)
-	`, newPrefix, lastID)
-	if err != nil {
-		return fmt.Errorf("failed to create new counter: %w", err)
-	}
-
-	return tx.Commit()
+	// Hash-based IDs don't use counters, so nothing to update
+	return nil
 }
 
-// ResetCounter deletes the counter for a prefix, forcing it to be recalculated from max ID
-// This is used by renumber to ensure the counter matches the actual max ID after renumbering
+// ResetCounter is a no-op with hash-based IDs (bd-8e05)
+// Kept for backward compatibility
 func (s *SQLiteStorage) ResetCounter(ctx context.Context, prefix string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM issue_counters WHERE prefix = ?`, prefix)
-	if err != nil {
-		return fmt.Errorf("failed to delete counter: %w", err)
-	}
+	// Hash-based IDs don't use counters, so nothing to reset
 	return nil
 }
 

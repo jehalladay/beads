@@ -207,35 +207,11 @@ func handleCollisions(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, is
 		result.CollisionIDs = append(result.CollisionIDs, collision.ID)
 	}
 
-	// Handle collisions
+	// Handle collisions - with hash IDs, collisions shouldn't happen
 	if len(collisionResult.Collisions) > 0 {
-		if opts.DryRun {
-			return issues, nil
-		}
-
-		if !opts.ResolveCollisions {
-			return nil, fmt.Errorf("collision detected for issues: %v (use --resolve-collisions to auto-resolve)", result.CollisionIDs)
-		}
-
-		// Resolve collisions by scoring and remapping
-		allExistingIssues, err := sqliteStore.SearchIssues(ctx, "", types.IssueFilter{})
-		if err != nil {
-			return nil, fmt.Errorf("failed to get existing issues for collision resolution: %w", err)
-		}
-
-		// Phase 2: Score collisions
-		if err := sqlite.ScoreCollisions(ctx, sqliteStore, collisionResult.Collisions, allExistingIssues); err != nil {
-			return nil, fmt.Errorf("failed to score collisions: %w", err)
-		}
-
-		// Phase 3: Remap collisions
-		idMapping, err := sqlite.RemapCollisions(ctx, sqliteStore, collisionResult.Collisions, allExistingIssues)
-		if err != nil {
-			return nil, fmt.Errorf("failed to remap collisions: %w", err)
-		}
-
-		result.IDMapping = idMapping
-		result.Created = len(collisionResult.Collisions)
+		// Hash-based IDs make collisions extremely unlikely (same ID = same content)
+		// If we get here, it's likely a bug or manual ID manipulation
+		return nil, fmt.Errorf("collision detected for issues: %v (this should not happen with hash-based IDs)", result.CollisionIDs)
 
 		// Remove colliding issues from the list (they're already processed)
 		filteredIssues := make([]*types.Issue, 0)
@@ -251,17 +227,8 @@ func handleCollisions(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, is
 		return filteredIssues, nil
 	}
 
-	// Phase 4: Apply renames (deletions of old IDs) if any were detected
-	if len(collisionResult.Renames) > 0 && !opts.DryRun {
-		// Build mapping for renames: oldID -> newID
-		renameMapping := make(map[string]string)
-		for _, rename := range collisionResult.Renames {
-			renameMapping[rename.OldID] = rename.NewID
-		}
-		if err := sqlite.ApplyCollisionResolution(ctx, sqliteStore, collisionResult, renameMapping); err != nil {
-			return nil, fmt.Errorf("failed to apply rename resolutions: %w", err)
-		}
-	}
+	// Phase 4: Renames removed - obsolete with hash IDs (bd-8e05)
+	// Hash-based IDs are content-addressed, so renames don't occur
 
 	if opts.DryRun {
 		result.Created = len(collisionResult.NewIssues) + len(collisionResult.Renames)
@@ -405,49 +372,8 @@ func handleRename(ctx context.Context, s *sqlite.SQLiteStorage, existing *types.
 		return "", fmt.Errorf("failed to create renamed issue %s: %w", incoming.ID, err)
 	}
 
-	// Update references from old ID to new ID
-	idMapping := map[string]string{existing.ID: incoming.ID}
-	cache, err := sqlite.BuildReplacementCache(idMapping)
-	if err != nil {
-		return "", fmt.Errorf("failed to build replacement cache: %w", err)
-	}
-
-	// Get all issues to update references
-	dbIssues, err := s.SearchIssues(ctx, "", types.IssueFilter{})
-	if err != nil {
-		return "", fmt.Errorf("failed to get issues for reference update: %w", err)
-	}
-
-	// Update text field references in all issues
-	for _, issue := range dbIssues {
-		updates := make(map[string]interface{})
-
-		newDesc := sqlite.ReplaceIDReferencesWithCache(issue.Description, cache)
-		if newDesc != issue.Description {
-			updates["description"] = newDesc
-		}
-
-		newDesign := sqlite.ReplaceIDReferencesWithCache(issue.Design, cache)
-		if newDesign != issue.Design {
-			updates["design"] = newDesign
-		}
-
-		newNotes := sqlite.ReplaceIDReferencesWithCache(issue.Notes, cache)
-		if newNotes != issue.Notes {
-			updates["notes"] = newNotes
-		}
-
-		newAC := sqlite.ReplaceIDReferencesWithCache(issue.AcceptanceCriteria, cache)
-		if newAC != issue.AcceptanceCriteria {
-			updates["acceptance_criteria"] = newAC
-		}
-
-		if len(updates) > 0 {
-			if err := s.UpdateIssue(ctx, issue.ID, updates, "import-rename"); err != nil {
-				return "", fmt.Errorf("failed to update references in issue %s: %w", issue.ID, err)
-			}
-		}
-	}
+	// Reference updates removed - obsolete with hash IDs (bd-8e05)
+	// Hash-based IDs are deterministic, so no reference rewriting needed
 
 	return oldID, nil
 }
