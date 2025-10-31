@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// TestTwoCloneCollision demonstrates that beads does NOT work with the basic workflow
-// of two independent clones filing issues simultaneously.
+// TestTwoCloneCollision verifies that with hash-based IDs (bd-165),
+// two independent clones can file issues simultaneously without collision.
 func TestTwoCloneCollision(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -44,6 +44,8 @@ func TestTwoCloneCollision(t *testing.T) {
 	// Initialize beads in clone A
 	t.Log("Initializing beads in clone A")
 	runCmd(t, cloneA, "./bd", "init", "--quiet", "--prefix", "test")
+	// Enable hash ID mode for collision-free IDs
+	runCmdWithEnv(t, cloneA, map[string]string{"BEADS_NO_DAEMON": "1"}, "./bd", "config", "set", "id_mode", "hash")
 	
 	// Commit the initial .beads directory from clone A
 	runCmd(t, cloneA, "git", "add", ".beads")
@@ -57,6 +59,8 @@ func TestTwoCloneCollision(t *testing.T) {
 	// Initialize database in clone B from JSONL
 	t.Log("Initializing database in clone B")
 	runCmd(t, cloneB, "./bd", "init", "--quiet", "--prefix", "test")
+	// Enable hash ID mode (same as clone A)
+	runCmdWithEnv(t, cloneB, map[string]string{"BEADS_NO_DAEMON": "1"}, "./bd", "config", "set", "id_mode", "hash")
 
 	// Install git hooks in both clones
 	t.Log("Installing git hooks")
@@ -79,11 +83,11 @@ func TestTwoCloneCollision(t *testing.T) {
 	waitForDaemon(t, cloneA, 1*time.Second)
 	waitForDaemon(t, cloneB, 1*time.Second)
 
-	// Clone A creates an issue
+	// Clone A creates an issue (hash ID based on content)
 	t.Log("Clone A creating issue")
 	runCmd(t, cloneA, "./bd", "create", "Issue from clone A", "-t", "task", "-p", "1", "--json")
 	
-	// Clone B creates an issue (should get same ID since databases are independent)
+	// Clone B creates an issue with different content (will get different hash ID)
 	t.Log("Clone B creating issue")
 	runCmd(t, cloneB, "./bd", "create", "Issue from clone B", "-t", "task", "-p", "1", "--json")
 
@@ -94,101 +98,18 @@ func TestTwoCloneCollision(t *testing.T) {
 	// Wait for push to complete by polling git log
 	waitForPush(t, cloneA, 2*time.Second)
 
-	// Clone B will conflict when syncing
-	t.Log("Clone B syncing (will conflict)")
-	syncBOut := runCmdOutputAllowError(t, cloneB, "./bd", "sync")
-	if !strings.Contains(syncBOut, "CONFLICT") && !strings.Contains(syncBOut, "Error") {
-		t.Log("Expected conflict during clone B sync, but got success. Output:")
-		t.Log(syncBOut)
-	}
+	// Clone B syncs (should work cleanly now - different IDs, no collision)
+	t.Log("Clone B syncing (should be clean)")
+	runCmd(t, cloneB, "./bd", "sync")
 	
-	// Clone B needs to abort the rebase and resolve manually
-	t.Log("Clone B aborting rebase")
-	runCmdAllowError(t, cloneB, "git", "rebase", "--abort")
+	// Wait for sync to complete
+	waitForPush(t, cloneB, 2*time.Second)
 	
-	// Pull with merge instead
-	t.Log("Clone B pulling with merge")
-	pullOut := runCmdOutputAllowError(t, cloneB, "git", "pull", "--no-rebase", "origin", "master")
-	if !strings.Contains(pullOut, "CONFLICT") {
-		t.Logf("Pull output: %s", pullOut)
-	}
+	// Clone A syncs to get clone B's issue
+	t.Log("Clone A syncing")
+	runCmd(t, cloneA, "./bd", "sync")
 	
-	// Check if we have conflict markers in the JSONL
-	jsonlPath := filepath.Join(cloneB, ".beads", "issues.jsonl")
-	jsonlContent, _ := os.ReadFile(jsonlPath)
-	if strings.Contains(string(jsonlContent), "<<<<<<<") {
-		t.Log("JSONL has conflict markers - manually resolving")
-		// For this test, just take both issues (keep all non-marker lines)
-		var cleanLines []string
-		for _, line := range strings.Split(string(jsonlContent), "\n") {
-			if !strings.HasPrefix(line, "<<<<<<<") && 
-			   !strings.HasPrefix(line, "=======") && 
-			   !strings.HasPrefix(line, ">>>>>>>") {
-				if strings.TrimSpace(line) != "" {
-					cleanLines = append(cleanLines, line)
-				}
-			}
-		}
-		cleaned := strings.Join(cleanLines, "\n") + "\n"
-		if err := os.WriteFile(jsonlPath, []byte(cleaned), 0644); err != nil {
-			t.Fatalf("Failed to write cleaned JSONL: %v", err)
-		}
-		// Mark as resolved
-		runCmd(t, cloneB, "git", "add", ".beads/issues.jsonl")
-		runCmd(t, cloneB, "git", "commit", "-m", "Resolve merge conflict")
-	}
-
-	// Force import with collision resolution in both
-	t.Log("Resolving collisions via import")
-	runCmd(t, cloneB, "./bd", "import", "-i", ".beads/issues.jsonl", "--resolve-collisions")
-
-	// Push the resolved state from clone B
-	t.Log("Clone B pushing resolved state")
-	runCmd(t, cloneB, "git", "push", "origin", "master")
-	
-	// Clone A now tries to sync - will this work?
-	t.Log("Clone A syncing after clone B resolved collision")
-	syncAOut := runCmdOutputAllowError(t, cloneA, "./bd", "sync")
-	t.Logf("Clone A sync output:\n%s", syncAOut)
-	
-	// Check if clone A also hit a conflict
-	hasConflict := strings.Contains(syncAOut, "CONFLICT") || strings.Contains(syncAOut, "Error pulling")
-	
-	if hasConflict {
-		t.Log("✓ TEST PROVES THE PROBLEM: Clone A also hit a conflict when syncing!")
-		t.Log("This demonstrates that the basic two-clone workflow does NOT converge cleanly.")
-		t.Errorf("EXPECTED FAILURE: beads cannot handle two clones filing issues simultaneously")
-		return
-	}
-	
-	// Clone B needs to sync to pull Clone A's rename detection changes
-	t.Log("Clone B syncing to pull Clone A's rename changes")
-	syncBOut2 := runCmdOutputAllowError(t, cloneB, "./bd", "sync")
-	t.Logf("Clone B sync output:\n%s", syncBOut2)
-	
-	// Check if Clone B hit a conflict (expected if both clones applied rename)
-	if strings.Contains(syncBOut2, "CONFLICT") || strings.Contains(syncBOut2, "Error pulling") {
-		t.Log("Clone B hit merge conflict (expected - both clones applied rename)")
-		t.Log("Resolving via bd export - aborting rebase, taking our DB as truth")
-		runCmd(t, cloneB, "git", "rebase", "--abort")
-		
-		// Fetch remote changes without merging
-		runCmd(t, cloneB, "git", "fetch", "origin")
-		
-		// Use our JSONL (from our DB) by exporting and committing
-		runCmd(t, cloneB, "./bd", "export", "-o", ".beads/issues.jsonl")
-		runCmd(t, cloneB, "git", "add", ".beads/issues.jsonl")
-		runCmd(t, cloneB, "git", "commit", "-m", "Resolve conflict: use our DB state")
-		
-		// Force merge with ours strategy
-		runCmdOutputAllowError(t, cloneB, "git", "merge", "origin/master", "-X", "ours")
-		
-		// Push
-		runCmd(t, cloneB, "git", "push", "origin", "master")
-	}
-	
-	// If we somehow got here, check if things converged
-	// Check git status ignoring untracked files (the copied bd binary is expected)
+	// Check if things converged
 	t.Log("Checking if git status is clean")
 	statusA := runCmdOutputAllowError(t, cloneA, "git", "status", "--porcelain")
 	statusB := runCmdOutputAllowError(t, cloneB, "git", "status", "--porcelain")
@@ -208,20 +129,44 @@ func TestTwoCloneCollision(t *testing.T) {
 	t.Log("Clone A final sync")
 	runCmdOutputAllowError(t, cloneA, "./bd", "sync")
 	
-	// Check if bd ready matches (comparing content, not timestamps)
-	readyA := runCmdOutputAllowError(t, cloneA, "./bd", "ready", "--json")
-	readyB := runCmdOutputAllowError(t, cloneB, "./bd", "ready", "--json")
+	// Verify both clones have both issues
+	listA := runCmdOutput(t, cloneA, "./bd", "list", "--json")
+	listB := runCmdOutput(t, cloneB, "./bd", "list", "--json")
 	
-	// Compare semantic content, ignoring timestamp differences
-	// Timestamps are expected to differ since issues were created at different times
-	if !compareIssuesIgnoringTimestamps(t, readyA, readyB) {
-		t.Log("✓ TEST PROVES THE PROBLEM: Databases did not converge!")
-		t.Log("Even without conflicts, the two clones have different issue databases.")
-		t.Errorf("bd ready content differs:\nClone A:\n%s\n\nClone B:\n%s", readyA, readyB)
-	} else {
-		t.Log("✓ SUCCESS: Content converged! Both clones have identical semantic content.")
-		t.Log("(Timestamp differences are acceptable and expected)")
+	// Parse and check for both issue titles
+	var issuesA, issuesB []issueContent
+	if err := json.Unmarshal([]byte(listA[strings.Index(listA, "["):]), &issuesA); err != nil {
+		t.Fatalf("Failed to parse clone A issues: %v", err)
 	}
+	if err := json.Unmarshal([]byte(listB[strings.Index(listB, "["):]), &issuesB); err != nil {
+		t.Fatalf("Failed to parse clone B issues: %v", err)
+	}
+	
+	if len(issuesA) != 2 {
+		t.Errorf("Clone A should have 2 issues, got %d", len(issuesA))
+	}
+	if len(issuesB) != 2 {
+		t.Errorf("Clone B should have 2 issues, got %d", len(issuesB))
+	}
+	
+	// Check that both issues are present in both clones
+	titlesA := make(map[string]bool)
+	for _, issue := range issuesA {
+		titlesA[issue.Title] = true
+	}
+	titlesB := make(map[string]bool)
+	for _, issue := range issuesB {
+		titlesB[issue.Title] = true
+	}
+	
+	if !titlesA["Issue from clone A"] || !titlesA["Issue from clone B"] {
+		t.Errorf("Clone A missing expected issues. Got: %v", sortedKeys(titlesA))
+	}
+	if !titlesB["Issue from clone A"] || !titlesB["Issue from clone B"] {
+		t.Errorf("Clone B missing expected issues. Got: %v", sortedKeys(titlesB))
+	}
+	
+	t.Log("✓ SUCCESS: Both clones converged with both issues using hash-based IDs!")
 }
 
 func installGitHooks(t *testing.T, repoDir string) {

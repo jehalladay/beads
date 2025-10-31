@@ -43,9 +43,9 @@ func TestTenCloneCollision(t *testing.T) {
 	})
 }
 
-// testNCloneCollision is the generalized N-way collision test.
-// It creates N clones, each creating an issue with the same ID but different content,
-// then syncs them in the specified order and verifies convergence.
+// testNCloneCollision is the generalized N-way convergence test.
+// With hash-based IDs (bd-165), each clone creates an issue with a unique content-based ID.
+// No collisions occur, so syncing should work cleanly without conflict resolution.
 func testNCloneCollision(t *testing.T, numClones int, syncOrder []string) {
 	t.Helper()
 	
@@ -74,7 +74,7 @@ func testNCloneCollision(t *testing.T, numClones int, syncOrder []string) {
 		cloneDirs[name] = setupClone(t, tmpDir, remoteDir, name, bdPath)
 	}
 	
-	// Each clone creates issue with same ID but different content
+	// Each clone creates issue with different content (thus different hash-based ID)
 	t.Logf("Creating issues in %d clones", numClones)
 	for name, dir := range cloneDirs {
 		createIssueInClone(t, dir, fmt.Sprintf("Issue from clone %s", name))
@@ -106,23 +106,12 @@ func testNCloneCollision(t *testing.T, numClones int, syncOrder []string) {
 	}
 	
 	t.Logf("Verifying convergence: expecting %d issues", len(expectedTitles))
-	allConverged := true
 	for name, dir := range cloneDirs {
 		titles := getTitlesFromClone(t, dir)
 		if !compareTitleSets(titles, expectedTitles) {
 			t.Errorf("Clone %s missing issues:\n  Expected: %v\n  Got: %v", 
 				name, sortedKeys(expectedTitles), sortedKeys(titles))
-			allConverged = false
 		}
-	}
-	
-	if !allConverged {
-		// This documents a known limitation: N-way collision resolution
-		// may hit UNIQUE constraint failures when multiple clones try to remap
-		// to the same target ID during convergence rounds.
-		// Example error: "failed to handle rename test-2 -> test-4: UNIQUE constraint failed"
-		t.Skip("KNOWN LIMITATION: N-way collisions may require additional resolution logic to avoid ID conflicts during convergence")
-		return
 	}
 	
 	t.Logf("✓ All %d clones converged successfully", numClones)
@@ -158,6 +147,8 @@ func setupClone(t *testing.T, tmpDir, remoteDir, name, bdPath string) string {
 	if name == "A" {
 		t.Logf("Initializing beads in clone %s", name)
 		runCmd(t, cloneDir, "./bd", "init", "--quiet", "--prefix", "test")
+		// Enable hash ID mode for collision-free IDs
+		runCmdWithEnv(t, cloneDir, map[string]string{"BEADS_NO_DAEMON": "1"}, "./bd", "config", "set", "id_mode", "hash")
 		runCmd(t, cloneDir, "git", "add", ".beads")
 		runCmd(t, cloneDir, "git", "commit", "-m", "Initialize beads")
 		runCmd(t, cloneDir, "git", "push", "origin", "master")
@@ -165,6 +156,8 @@ func setupClone(t *testing.T, tmpDir, remoteDir, name, bdPath string) string {
 		// Other clones pull and initialize from JSONL
 		runCmd(t, cloneDir, "git", "pull", "origin", "master")
 		runCmd(t, cloneDir, "./bd", "init", "--quiet", "--prefix", "test")
+		// Enable hash ID mode (same as clone A)
+		runCmdWithEnv(t, cloneDir, map[string]string{"BEADS_NO_DAEMON": "1"}, "./bd", "config", "set", "id_mode", "hash")
 	}
 	
 	// Install git hooks
