@@ -279,6 +279,7 @@ This command:
 			}
 		}
 
+
 		// Migrate to hash IDs if requested
 		if toHashIDs {
 			if !jsonOutput {

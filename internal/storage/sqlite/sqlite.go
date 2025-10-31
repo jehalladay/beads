@@ -776,9 +776,10 @@ func nextSequentialID(ctx context.Context, conn *sql.Conn, prefix string) (int, 
 }
 
 // generateHashID creates a hash-based ID for a top-level issue.
-// For child issues, use the parent ID with a numeric suffix (e.g., "bd-a3f8e9a2.1").
-// Includes a nonce parameter to handle collisions.
-func generateHashID(prefix, title, description, creator string, timestamp time.Time, nonce int) string {
+// For child issues, use the parent ID with a numeric suffix (e.g., "bd-a3f8e9.1").
+// Starts with 6 chars, expands to 7/8 on collision (length parameter).
+// Includes a nonce parameter to handle same-length collisions.
+func generateHashID(prefix, title, description, creator string, timestamp time.Time, length, nonce int) string {
 	// Combine inputs into a stable content string
 	// Include nonce to handle hash collisions
 	content := fmt.Sprintf("%s|%s|%s|%d|%d", title, description, creator, timestamp.UnixNano(), nonce)
@@ -786,8 +787,20 @@ func generateHashID(prefix, title, description, creator string, timestamp time.T
 	// Hash the content
 	hash := sha256.Sum256([]byte(content))
 	
-	// Use first 4 bytes (8 hex chars) for short, readable IDs
-	shortHash := hex.EncodeToString(hash[:4])
+	// Use variable length (6, 7, or 8 hex chars)
+	// length determines how many bytes to use (3, 3.5, or 4)
+	var shortHash string
+	switch length {
+	case 6:
+		shortHash = hex.EncodeToString(hash[:3])
+	case 7:
+		// 3.5 bytes: use 4 bytes but take only first 7 chars
+		shortHash = hex.EncodeToString(hash[:4])[:7]
+	case 8:
+		shortHash = hex.EncodeToString(hash[:4])
+	default:
+		shortHash = hex.EncodeToString(hash[:3]) // default to 6
+	}
 	
 	return fmt.Sprintf("%s-%s", prefix, shortHash)
 }
@@ -855,27 +868,35 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		idMode := getIDMode(ctx, conn)
 		
 		if idMode == "hash" {
-			// Generate hash-based ID with collision detection (bd-168)
-			// Try up to 10 times with different nonces to avoid collisions
+			// Generate hash-based ID with progressive length fallback (bd-7c87cf24)
+			// Start with 6 chars, expand to 7/8 on collision
 			var err error
-			for nonce := 0; nonce < 10; nonce++ {
-				candidate := generateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, nonce)
-				
-				// Check if this ID already exists
-				var count int
-				err = conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
-				if err != nil {
-					return fmt.Errorf("failed to check for ID collision: %w", err)
+			for length := 6; length <= 8; length++ {
+				// Try up to 10 nonces at each length
+				for nonce := 0; nonce < 10; nonce++ {
+					candidate := generateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, length, nonce)
+					
+					// Check if this ID already exists
+					var count int
+					err = conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
+					if err != nil {
+						return fmt.Errorf("failed to check for ID collision: %w", err)
+					}
+					
+					if count == 0 {
+						issue.ID = candidate
+						break
+					}
 				}
 				
-				if count == 0 {
-					issue.ID = candidate
+				// If we found a unique ID, stop trying longer lengths
+				if issue.ID != "" {
 					break
 				}
 			}
 			
 			if issue.ID == "" {
-				return fmt.Errorf("failed to generate unique ID after 10 attempts")
+				return fmt.Errorf("failed to generate unique ID after trying lengths 6-8 with 10 nonces each")
 			}
 		} else {
 			// Default: generate sequential ID using counter
@@ -1017,34 +1038,37 @@ func generateBatchIDs(ctx context.Context, conn *sql.Conn, issues []*types.Issue
 	
 	// Second pass: generate IDs for issues that need them
 	if idMode == "hash" {
-		// Hash mode: generate with collision detection
+		// Hash mode: generate with progressive length fallback (bd-7c87cf24)
 		for i := range issues {
 			if issues[i].ID == "" {
 				var generated bool
-				for nonce := 0; nonce < 10; nonce++ {
-					candidate := generateHashID(prefix, issues[i].Title, issues[i].Description, actor, issues[i].CreatedAt, nonce)
-					
-					// Check if this ID is already used in this batch or in the database
-					if usedIDs[candidate] {
-						continue
-					}
-					
-					var count int
-					err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
-					if err != nil {
-						return fmt.Errorf("failed to check for ID collision: %w", err)
-					}
-					
-					if count == 0 {
-						issues[i].ID = candidate
-						usedIDs[candidate] = true
-						generated = true
-						break
+				// Try lengths 6, 7, 8 with progressive fallback
+				for length := 6; length <= 8 && !generated; length++ {
+					for nonce := 0; nonce < 10; nonce++ {
+						candidate := generateHashID(prefix, issues[i].Title, issues[i].Description, actor, issues[i].CreatedAt, length, nonce)
+						
+						// Check if this ID is already used in this batch or in the database
+						if usedIDs[candidate] {
+							continue
+						}
+						
+						var count int
+						err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
+						if err != nil {
+							return fmt.Errorf("failed to check for ID collision: %w", err)
+						}
+						
+						if count == 0 {
+							issues[i].ID = candidate
+							usedIDs[candidate] = true
+							generated = true
+							break
+						}
 					}
 				}
 				
 				if !generated {
-					return fmt.Errorf("failed to generate unique ID for issue %d after 10 attempts", i)
+					return fmt.Errorf("failed to generate unique ID for issue %d after trying lengths 6-8 with 10 nonces each", i)
 				}
 			}
 		}
