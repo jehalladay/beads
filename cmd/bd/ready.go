@@ -206,6 +206,8 @@ var statsCmd = &cobra.Command{
 	Use:   "stats",
 	Short: "Show statistics",
 	Run: func(cmd *cobra.Command, args []string) {
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			resp, err := daemonClient.Stats()
@@ -295,6 +297,8 @@ func init() {
 	readyCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
 	readyCmd.Flags().StringP("sort", "s", "hybrid", "Sort policy: hybrid (default), priority, oldest")
 	readyCmd.Flags().Bool("json", false, "Output JSON format")
+
+	statsCmd.Flags().Bool("json", false, "Output JSON format")
 
 	rootCmd.AddCommand(readyCmd)
 	rootCmd.AddCommand(blockedCmd)

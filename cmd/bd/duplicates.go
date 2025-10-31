@@ -38,6 +38,7 @@ Example:
 
 		autoMerge, _ := cmd.Flags().GetBool("auto-merge")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 
 		ctx := context.Background()
 
@@ -174,6 +175,7 @@ Example:
 func init() {
 	duplicatesCmd.Flags().Bool("auto-merge", false, "Automatically merge all duplicates")
 	duplicatesCmd.Flags().Bool("dry-run", false, "Show what would be merged without making changes")
+	duplicatesCmd.Flags().Bool("json", false, "Output JSON format")
 	rootCmd.AddCommand(duplicatesCmd)
 }
 

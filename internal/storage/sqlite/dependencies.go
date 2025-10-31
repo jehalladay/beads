@@ -431,7 +431,7 @@ func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, m
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan tree node: %w", err)
 		}
-		_ = parentID // Silence unused variable warning
+		node.ParentID = parentID
 
 		if closedAt.Valid {
 			node.ClosedAt = &closedAt.Time

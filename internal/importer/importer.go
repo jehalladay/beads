@@ -90,7 +90,7 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 	}
 
 	// Detect and resolve collisions
-	issues, err = handleCollisions(ctx, sqliteStore, issues, opts, result)
+	issues, err = detectUpdates(ctx, sqliteStore, issues, opts, result)
 	if err != nil {
 		return result, err
 	}
@@ -193,8 +193,8 @@ func handlePrefixMismatch(ctx context.Context, sqliteStore *sqlite.SQLiteStorage
 	return nil
 }
 
-// handleCollisions detects and resolves ID collisions
-func handleCollisions(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues []*types.Issue, opts Options, result *Result) ([]*types.Issue, error) {
+// detectUpdates detects same-ID scenarios (which are updates with hash IDs, not collisions)
+func detectUpdates(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues []*types.Issue, opts Options, result *Result) ([]*types.Issue, error) {
 	// Phase 1: Detect (read-only)
 	collisionResult, err := sqlite.DetectCollisions(ctx, sqliteStore, issues)
 	if err != nil {
@@ -206,24 +206,12 @@ func handleCollisions(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, is
 		result.CollisionIDs = append(result.CollisionIDs, collision.ID)
 	}
 
-	// Handle collisions - with hash IDs, collisions shouldn't happen
+	// With hash IDs, "collisions" (same ID, different content) are actually UPDATES
+	// Hash IDs are based on creation content and remain stable across updates
+	// So same ID + different fields = normal update operation, not a collision
+	// The collisionResult.Collisions list represents issues that will be updated
 	if len(collisionResult.Collisions) > 0 {
-		// Hash-based IDs make collisions extremely unlikely (same ID = same content)
-		// If we get here, it's likely a bug or manual ID manipulation
-		return nil, fmt.Errorf("collision detected for issues: %v (this should not happen with hash-based IDs)", result.CollisionIDs)
-
-		// Remove colliding issues from the list (they're already processed)
-		filteredIssues := make([]*types.Issue, 0)
-		collidingIDs := make(map[string]bool)
-		for _, collision := range collisionResult.Collisions {
-			collidingIDs[collision.ID] = true
-		}
-		for _, issue := range issues {
-			if !collidingIDs[issue.ID] {
-				filteredIssues = append(filteredIssues, issue)
-			}
-		}
-		return filteredIssues, nil
+		result.Updated = len(collisionResult.Collisions)
 	}
 
 	// Phase 4: Renames removed - obsolete with hash IDs (bd-8e05)
@@ -435,7 +423,7 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 		// Phase 2: New content - check for ID collision
 		if existingWithID, found := dbByID[incoming.ID]; found {
 			// ID exists but different content - this is a collision
-			// The collision should have been handled earlier by handleCollisions
+			// The update should have been detected earlier by detectUpdates
 			// If we reach here, it means collision wasn't resolved - treat as update
 			if !opts.SkipUpdate {
 				// Build updates map

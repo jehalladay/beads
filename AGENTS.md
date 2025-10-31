@@ -147,6 +147,12 @@ bd create "Issue title" -t bug -p 1 -l bug,critical --json
 # Create multiple issues from markdown file
 bd create -f feature-plan.md --json
 
+# Create epic with hierarchical child tasks
+bd create "Auth System" -t epic -p 1 --json         # Returns: bd-a3f8e9
+bd create "Login UI" -p 1 --json                     # Auto-assigned: bd-a3f8e9.1
+bd create "Backend validation" -p 1 --json           # Auto-assigned: bd-a3f8e9.2
+bd create "Tests" -p 1 --json                        # Auto-assigned: bd-a3f8e9.3
+
 # Update one or more issues
 bd update <id> [<id>...] --status in_progress --json
 bd update <id> [<id>...] --priority 1 --json
@@ -192,10 +198,10 @@ bd rename-prefix kw- --json     # Apply rename
 # Restore compacted issue from git history
 bd restore <id>  # View full history at time of compaction
 
-# Import with collision detection
-bd import -i .beads/issues.jsonl --dry-run             # Preview only
-bd import -i .beads/issues.jsonl --resolve-collisions  # Auto-resolve
-bd import -i .beads/issues.jsonl --resolve-collisions --dedupe-after  # Auto-resolve + detect duplicates
+# Import issues from JSONL
+bd import -i .beads/issues.jsonl --dry-run      # Preview changes
+bd import -i .beads/issues.jsonl                # Import and update issues
+bd import -i .beads/issues.jsonl --dedupe-after # Import + detect duplicates
 
 # Find and merge duplicate issues
 bd duplicates                                          # Show all duplicates
@@ -335,8 +341,10 @@ bd daemons killall  # Restart with default (poll) mode
 - `bug` - Something broken that needs fixing
 - `feature` - New functionality
 - `task` - Work item (tests, docs, refactoring)
-- `epic` - Large feature composed of multiple issues
+- `epic` - Large feature composed of multiple issues (supports hierarchical children)
 - `chore` - Maintenance work (dependencies, tooling)
+
+**Hierarchical children:** Epics can have child issues with dotted IDs (e.g., `bd-a3f8e9.1`, `bd-a3f8e9.2`). Children are auto-numbered sequentially. Up to 3 levels of nesting supported. The parent hash ensures unique namespace - no coordination needed between agents working on different epics.
 
 ### Priorities
 
@@ -371,8 +379,8 @@ bd duplicates --auto-merge
 # Preview what would be merged
 bd duplicates --dry-run
 
-# During import (after collision resolution)
-bd import -i issues.jsonl --resolve-collisions --dedupe-after
+# During import
+bd import -i issues.jsonl --dedupe-after
 ```
 
 **Detection strategies:**
@@ -557,42 +565,30 @@ bd automatically detects when you're in a worktree and shows a prominent warning
 **Why It Matters:**
 The daemon maintains its own view of the current working directory and git state. When multiple worktrees share the same `.beads` database, the daemon may commit changes intended for one branch to a different branch, leading to confusion and incorrect git history.
 
-### Handling Import Collisions
+### Handling Git Merge Conflicts
 
-When merging branches or pulling changes, you may encounter ID collisions (same ID, different content). bd detects and safely handles these:
+**With hash-based IDs (v0.20.1+), ID collisions are eliminated!** Different issues get different hash IDs, so most git merges succeed cleanly.
 
-**Check for collisions after merge:**
+**When git merge conflicts occur:**
+Git conflicts in `.beads/beads.jsonl` happen when the same issue is modified on both branches (different timestamps/fields). This is a **same-issue update conflict**, not an ID collision.
+
+**Resolution:**
 ```bash
-# After git merge or pull
-bd import -i .beads/issues.jsonl --dry-run
+# After git merge creates conflict
+git checkout --theirs .beads/beads.jsonl  # Accept remote version
+# OR
+git checkout --ours .beads/beads.jsonl    # Keep local version
+# OR manually resolve in editor
 
-# Output shows:
-# === Collision Detection Report ===
-# Exact matches (idempotent): 15
-# New issues: 5
-# COLLISIONS DETECTED: 3
-#
-# Colliding issues:
-#   bd-10: Fix authentication (conflicting fields: [title, priority])
-#   bd-12: Add feature (conflicting fields: [description, status])
+# Import the resolved JSONL
+bd import -i .beads/beads.jsonl
+
+# Commit the merge
+git add .beads/beads.jsonl
+git commit
 ```
 
-**Resolve collisions automatically:**
-```bash
-# Let bd resolve collisions by remapping incoming issues to new IDs
-bd import -i .beads/issues.jsonl --resolve-collisions
-
-# bd will:
-# - Keep existing issues unchanged
-# - Assign new IDs to colliding issues (bd-25, bd-26, etc.)
-# - Update ALL text references and dependencies automatically
-# - Report the remapping with reference counts
-```
-
-**Important**: The `--resolve-collisions` flag is safe and recommended for branch merges. It preserves the existing database and only renumbers the incoming colliding issues. All text mentions like "see bd-10" and dependency links are automatically updated to use the new IDs.
-
-**Manual resolution** (alternative):
-If you prefer manual control, resolve the Git conflict in `.beads/issues.jsonl` directly, then import normally without `--resolve-collisions`.
+**bd automatically handles updates** - same ID with different content is a normal update operation. No special flags needed.
 
 ### Advanced: Intelligent Merge Tools
 
@@ -604,9 +600,7 @@ For Git merge conflicts in `.beads/issues.jsonl`, consider using **[beads-merge]
 - Leaves remaining conflicts for manual resolution
 - Works as a Git/jujutsu merge driver
 
-**Two types of conflicts, two tools:**
-- **Git merge conflicts** (same issue modified in two branches) → Use beads-merge during git merge
-- **ID collisions** (different issues with same ID) → Use `bd import --resolve-collisions` after merge
+**Beads-merge** helps with intelligent field-level merging during git merge. After resolving, just `bd import` to update your database.
 
 ## Current Project Status
 
@@ -709,8 +703,8 @@ rm .beads/.exclusive-lock
 - Use `--no-auto-flush` or `--no-auto-import` to disable automatic sync if needed
 - Use `bd dep tree` to understand complex dependencies
 - Priority 0-1 issues are usually more important than 2-4
-- Use `--dry-run` to preview import collisions before resolving
-- Use `--resolve-collisions` for safe automatic branch merges
+- Use `--dry-run` to preview import changes before applying
+- Hash IDs eliminate collisions - same ID with different content is a normal update
 - Use `--id` flag with `bd create` to partition ID space for parallel workers (e.g., `worker1-100`, `worker2-500`)
 
 ## Building and Testing

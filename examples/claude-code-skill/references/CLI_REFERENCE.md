@@ -263,31 +263,24 @@ Import issues from JSONL format.
 
 ```bash
 bd import < issues.jsonl
-bd import --resolve-collisions < issues.jsonl
+bd import -i issues.jsonl --dry-run  # Preview changes
 ```
 
-**Flags:**
-- `--resolve-collisions` - Automatically remap conflicting issue IDs
+**Behavior with hash-based IDs (v0.20.1+):**
+- Same ID = update operation (hash IDs remain stable)
+- Different issues get different hash IDs (no collisions)
+- Import automatically applies updates to existing issues
 
-**Use cases for --resolve-collisions:**
-- **Reimporting** after manual JSONL edits - if you closed an issue in the JSONL that's still open in DB
-- **Merging databases** - importing issues from another database with overlapping IDs
-- **Restoring from backup** - when database state has diverged from JSONL
-
-**What --resolve-collisions does:**
-1. Detects ID conflicts (same ID, different status/content)
-2. Remaps conflicting imports to new IDs
-3. Updates all references and dependencies to use new IDs
-4. Reports remapping (e.g., "mit-1 → bd-4")
-
-**Without --resolve-collisions**: Import fails on first conflict.
-
-**Example scenario:**
+**Use `--dry-run` to preview:**
 ```bash
-# You have: mit-1 (open) in database
-# Importing: mit-1 (closed) from JSONL
-# Result: Import creates bd-4 with closed status, preserves existing mit-1
+bd import -i issues.jsonl --dry-run
+# Shows: new issues, updates, exact matches
 ```
+
+**Use cases:**
+- **Syncing after git pull** - daemon auto-imports, manual rarely needed
+- **Merging databases** - import issues from another database
+- **Restoring from backup** - reimport JSONL to restore state
 
 ---
 
