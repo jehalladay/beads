@@ -556,32 +556,8 @@ func migrateContentHashColumn(db *sql.DB) error {
 	return nil
 }
 
-// getNextIDForPrefix atomically generates the next ID for a given prefix
-// Uses the issue_counters table for atomic, cross-process ID generation
-func (s *SQLiteStorage) getNextIDForPrefix(ctx context.Context, prefix string) (int, error) {
-	var nextID int
-	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO issue_counters (prefix, last_id)
-		VALUES (?, 1)
-		ON CONFLICT(prefix) DO UPDATE SET
-			last_id = last_id + 1
-		RETURNING last_id
-	`, prefix).Scan(&nextID)
-	if err != nil {
-		return 0, fmt.Errorf("failed to generate next ID for prefix %s: %w", prefix, err)
-	}
-	return nextID, nil
-}
-
-// AllocateNextID generates the next issue ID for a given prefix.
-// This is a public wrapper around getNextIDForPrefix for use by other packages.
-func (s *SQLiteStorage) AllocateNextID(ctx context.Context, prefix string) (string, error) {
-	nextID, err := s.getNextIDForPrefix(ctx, prefix)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s-%d", prefix, nextID), nil
-}
+// REMOVED (bd-8e05): getNextIDForPrefix and AllocateNextID - sequential ID generation
+// no longer needed with hash-based IDs
 
 // getNextChildNumber atomically generates the next child number for a parent ID
 // Uses the child_counters table for atomic, cross-process child ID generation
@@ -631,12 +607,7 @@ func (s *SQLiteStorage) GetNextChildID(ctx context.Context, parentID string) (st
 	return childID, nil
 }
 
-// SyncAllCounters is a no-op now that sequential IDs are removed (bd-aa744b).
-// Kept for backward compatibility with existing code that calls it.
-func (s *SQLiteStorage) SyncAllCounters(ctx context.Context) error {
-	// No-op: hash IDs don't use counters
-	return nil
-}
+// REMOVED (bd-c7af): SyncAllCounters - no longer needed with hash IDs
 
 // REMOVED (bd-166): derivePrefixFromPath was causing duplicate issues with wrong prefix
 // The database should ALWAYS have issue_prefix config set explicitly (by 'bd init' or auto-import)
@@ -1081,9 +1052,7 @@ func bulkMarkDirty(ctx context.Context, conn *sql.Conn, issues []*types.Issue) e
 //   }
 //
 //   // After importing with explicit IDs, sync counters to prevent collisions
-//   if err := store.SyncAllCounters(ctx); err != nil {
-//       return err
-//   }
+// REMOVED (bd-c7af): SyncAllCounters example - no longer needed with hash IDs
 //
 // Performance:
 //   - 100 issues: ~30ms (vs ~900ms with CreateIssue loop)
@@ -1727,8 +1696,8 @@ func (s *SQLiteStorage) DeleteIssue(ctx context.Context, id string) error {
 		return err
 	}
 
-	// Sync counters after deletion to keep them accurate
-	return s.SyncAllCounters(ctx)
+	// REMOVED (bd-c7af): Counter sync after deletion - no longer needed with hash IDs
+	return nil
 }
 
 // DeleteIssuesResult contains statistics about a batch deletion operation
@@ -1781,9 +1750,7 @@ func (s *SQLiteStorage) DeleteIssues(ctx context.Context, ids []string, cascade 
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	if err := s.SyncAllCounters(ctx); err != nil {
-		return nil, fmt.Errorf("failed to sync counters after deletion: %w", err)
-	}
+	// REMOVED (bd-c7af): Counter sync after deletion - no longer needed with hash IDs
 
 	return result, nil
 }

@@ -312,6 +312,11 @@ func handleRename(ctx context.Context, s *sqlite.SQLiteStorage, existing *types.
 			// The rename is already complete in the database
 			return deletedID, nil
 		}
+		// REMOVED (bd-8e05): Sequential ID collision handling during rename
+		// With hash-based IDs, rename collisions should not occur
+		return "", fmt.Errorf("rename collision handling removed - should not occur with hash IDs")
+		
+		/* OLD CODE REMOVED (bd-8e05)
 		// Different content - this is a collision during rename
 		// Allocate a new ID for the incoming issue instead of using the desired ID
 		prefix, err := s.GetConfig(ctx, "issue_prefix")
@@ -324,13 +329,6 @@ func handleRename(ctx context.Context, s *sqlite.SQLiteStorage, existing *types.
 		// Retry up to 3 times to handle concurrent ID allocation
 		const maxRetries = 3
 		for attempt := 0; attempt < maxRetries; attempt++ {
-			// Sync counters before allocation to avoid collisions
-			if attempt > 0 {
-				if syncErr := s.SyncAllCounters(ctx); syncErr != nil {
-					return "", fmt.Errorf("failed to sync counters on retry %d: %w", attempt, syncErr)
-				}
-			}
-			
 			newID, err := s.AllocateNextID(ctx, prefix)
 			if err != nil {
 				return "", fmt.Errorf("failed to generate new ID for rename collision: %w", err)
@@ -372,6 +370,7 @@ func handleRename(ctx context.Context, s *sqlite.SQLiteStorage, existing *types.
 		// This is acceptable because the old ID no longer exists in the system.
 		
 		return oldID, nil
+		*/
 	}
 
 	// Check if old ID still exists (it might have been deleted by another clone)
@@ -563,10 +562,7 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 		result.Created += len(newIssues)
 	}
 
-	// Sync counters after batch import
-	if err := sqliteStore.SyncAllCounters(ctx); err != nil {
-		return fmt.Errorf("error syncing counters: %w", err)
-	}
+	// REMOVED (bd-c7af): Counter sync after import - no longer needed with hash IDs
 
 	return nil
 }

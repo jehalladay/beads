@@ -711,10 +711,7 @@ func TestImportCounterSyncAfterHighID(t *testing.T) {
 		t.Fatalf("Failed to import high ID issue: %v", err)
 	}
 
-	// Step 4: Sync counters after import (mimics import command behavior)
-	if err := testStore.SyncAllCounters(ctx); err != nil {
-		t.Fatalf("Failed to sync counters: %v", err)
-	}
+	// REMOVED (bd-c7af): Counter sync - no longer needed with hash IDs
 
 	// Step 5: Create another auto-generated issue
 	// This should get bd-101 (counter should have synced to 100), not bd-4

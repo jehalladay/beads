@@ -353,11 +353,7 @@ func RemapCollisions(ctx context.Context, s *SQLiteStorage, collisions []*Collis
 			return nil, err
 		}
 
-		if attempt < maxRetries-1 {
-			if syncErr := s.SyncAllCounters(ctx); syncErr != nil {
-				return nil, fmt.Errorf("retry %d: UNIQUE constraint error, counter sync failed: %w (original error: %v)", attempt+1, syncErr, err)
-			}
-		}
+		// REMOVED (bd-c7af): Counter sync on retry - no longer needed with hash IDs
 	}
 
 	return nil, fmt.Errorf("failed after %d retries due to UNIQUE constraint violations: %w", maxRetries, lastErr)
@@ -365,44 +361,27 @@ func RemapCollisions(ctx context.Context, s *SQLiteStorage, collisions []*Collis
 
 // remapCollisionsOnce performs a single attempt at collision resolution.
 // This is the actual implementation that RemapCollisions wraps with retry logic.
+// REMOVED (bd-8e05): With hash-based IDs, collision remapping is no longer needed.
 func remapCollisionsOnce(ctx context.Context, s *SQLiteStorage, collisions []*CollisionDetail, _ []*types.Issue) (map[string]string, error) {
-	idMapping := make(map[string]string)
-
-	// Sync counters before remapping to avoid ID collisions
-	if err := s.SyncAllCounters(ctx); err != nil {
-		return nil, fmt.Errorf("failed to sync ID counters: %w", err)
+	// With hash-based IDs, collisions should not occur. If they do, it's a bug.
+	if len(collisions) > 0 {
+		return nil, fmt.Errorf("collision remapping no longer supported with hash IDs - %d collisions detected", len(collisions))
 	}
+	return nil, nil
+}
 
-	// Step 1: Collect ALL dependencies before any modifications
-	// This prevents CASCADE DELETE from losing dependency information
-	allDepsBeforeRemap, err := s.GetAllDependencyRecords(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get all dependencies: %w", err)
-	}
+// OLD IMPLEMENTATION REMOVED (bd-8e05) - retained for reference during migration
+// The original 250+ line function implemented sequential ID-based collision remapping
+// which is obsolete with hash-based IDs
 
-	// Step 2: Process each collision based on which version should be remapped
-	for _, collision := range collisions {
-		// Skip collisions with nil issues (shouldn't happen but be defensive)
-		if collision.IncomingIssue == nil {
-			return nil, fmt.Errorf("collision %s has nil IncomingIssue", collision.ID)
-		}
-		if collision.ExistingIssue == nil {
-			return nil, fmt.Errorf("collision %s has nil ExistingIssue", collision.ID)
-		}
+// Stub out the old implementation to avoid compile errors
+// The actual 250+ line implementation has been removed (bd-8e05)
+func _OLD_remapCollisionsOnce_REMOVED(ctx context.Context, s *SQLiteStorage, collisions []*CollisionDetail, _ []*types.Issue) (map[string]string, error) {
+	// Original implementation removed - see git history before bd-8e05
+	return nil, nil
+}
 
-		oldID := collision.ID
-
-		// Allocate new ID using atomic counter
-		prefix, err := s.GetConfig(ctx, "issue_prefix")
-		if err != nil || prefix == "" {
-			prefix = "bd"
-		}
-		nextID, err := s.getNextIDForPrefix(ctx, prefix)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate new ID for collision %s: %w", oldID, err)
-		}
-		newID := fmt.Sprintf("%s-%d", prefix, nextID)
-
+/* OLD CODE REMOVED (bd-8e05) - kept for git history reference
 		if collision.RemapIncoming {
 			// Incoming has higher hash -> remap incoming, keep existing
 			// Record mapping
@@ -498,6 +477,7 @@ func remapCollisionsOnce(ctx context.Context, s *SQLiteStorage, collisions []*Co
 
 	return idMapping, nil
 }
+END OF REMOVED CODE */
 
 // updateReferences updates all text field references and dependency records
 // to point to new IDs based on the idMapping

@@ -942,12 +942,7 @@ func (m *MemoryStorage) UnderlyingConn(ctx context.Context) (*sql.Conn, error) {
 	return nil, fmt.Errorf("UnderlyingConn not available in memory storage")
 }
 
-// SyncAllCounters is a no-op now that sequential IDs are removed (bd-aa744b).
-// Kept for backward compatibility with existing code that calls it.
-func (m *MemoryStorage) SyncAllCounters(ctx context.Context) error {
-	// No-op: hash IDs don't use counters
-	return nil
-}
+// REMOVED (bd-c7af): SyncAllCounters - no longer needed with hash IDs
 
 // MarkIssueDirty marks an issue as dirty for export
 func (m *MemoryStorage) MarkIssueDirty(ctx context.Context, issueID string) error {
