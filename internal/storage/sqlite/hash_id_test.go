@@ -17,12 +17,9 @@ func TestHashIDGeneration(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Set up database with prefix and hash mode
+	// Set up database with prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
-	}
-	if err := store.SetConfig(ctx, "id_mode", "hash"); err != nil {
-		t.Fatalf("Failed to set id_mode: %v", err)
 	}
 
 	// Create an issue - should get a hash ID
@@ -143,12 +140,9 @@ func TestHashIDBatchCreation(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Set up database with prefix and hash mode
+	// Set up database with prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
-	}
-	if err := store.SetConfig(ctx, "id_mode", "hash"); err != nil {
-		t.Fatalf("Failed to set id_mode: %v", err)
 	}
 
 	// Create multiple issues with similar content

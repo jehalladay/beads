@@ -18,12 +18,9 @@ func TestAdaptiveIDLength_E2E(t *testing.T) {
 	
 	ctx := context.Background()
 	
-	// Initialize with prefix and hash mode
+	// Initialize with prefix
 	if err := db.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
-	}
-	if err := db.SetConfig(ctx, "id_mode", "hash"); err != nil {
-		t.Fatalf("Failed to set id_mode: %v", err)
 	}
 	
 	// Helper to create issue and verify ID length
@@ -123,9 +120,6 @@ func TestAdaptiveIDLength_CustomConfig(t *testing.T) {
 	// Initialize with custom config
 	if err := db.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
-	}
-	if err := db.SetConfig(ctx, "id_mode", "hash"); err != nil {
-		t.Fatalf("Failed to set id_mode: %v", err)
 	}
 	
 	// Set stricter collision threshold (1%) and min length of 5

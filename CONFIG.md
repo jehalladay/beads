@@ -166,7 +166,6 @@ Configuration keys use dot-notation namespaces to organize settings:
 
 - `compact_*` - Compaction settings (see EXTENDING.md)
 - `issue_prefix` - Issue ID prefix (managed by `bd init`)
-- `id_mode` - ID generation mode: `sequential` or `hash` (managed by `bd init`)
 - `max_collision_prob` - Maximum collision probability for adaptive hash IDs (default: 0.25)
 - `min_hash_length` - Minimum hash ID length (default: 4)
 - `max_hash_length` - Maximum hash ID length (default: 8)

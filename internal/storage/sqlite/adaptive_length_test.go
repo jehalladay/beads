@@ -152,11 +152,6 @@ func TestGetAdaptiveIDLength_Integration(t *testing.T) {
 		t.Fatalf("Failed to set prefix: %v", err)
 	}
 	
-	// Set id_mode to hash
-	if err := db.SetConfig(ctx, "id_mode", "hash"); err != nil {
-		t.Fatalf("Failed to set id_mode: %v", err)
-	}
-	
 	// Test default config (should use 4 chars for empty database)
 	conn, err := db.db.Conn(ctx)
 	if err != nil {

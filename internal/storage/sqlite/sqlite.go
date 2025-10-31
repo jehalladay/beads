@@ -78,11 +78,6 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to migrate dirty_issues table: %w", err)
 	}
 
-	// Migrate existing databases to add issue_counters table if missing
-	if err := migrateIssueCountersTable(db); err != nil {
-		return nil, fmt.Errorf("failed to migrate issue_counters table: %w", err)
-	}
-
 	// Migrate existing databases to add external_ref column if missing
 	if err := migrateExternalRefColumn(db); err != nil {
 		return nil, fmt.Errorf("failed to migrate external_ref column: %w", err)
@@ -190,66 +185,6 @@ func migrateDirtyIssuesTable(db *sql.DB) error {
 		}
 	}
 
-	return nil
-}
-
-// migrateIssueCountersTable checks if the issue_counters table needs initialization.
-// This ensures existing databases created before the atomic counter feature get migrated automatically.
-// The table may already exist (created by schema), but be empty - in that case we still need to sync.
-func migrateIssueCountersTable(db *sql.DB) error {
-	// Check if the table exists (it should, created by schema)
-	var tableName string
-	err := db.QueryRow(`
-		SELECT name FROM sqlite_master
-		WHERE type='table' AND name='issue_counters'
-	`).Scan(&tableName)
-
-	tableExists := err == nil
-
-	if !tableExists {
-		if err != sql.ErrNoRows {
-			return fmt.Errorf("failed to check for issue_counters table: %w", err)
-		}
-		// Table doesn't exist, create it (shouldn't happen with schema, but handle it)
-		_, err := db.Exec(`
-			CREATE TABLE issue_counters (
-				prefix TEXT PRIMARY KEY,
-				last_id INTEGER NOT NULL DEFAULT 0
-			)
-		`)
-		if err != nil {
-			return fmt.Errorf("failed to create issue_counters table: %w", err)
-		}
-	}
-
-	// Check if table is empty - if so, we need to sync from existing issues
-	var count int
-	err = db.QueryRow(`SELECT COUNT(*) FROM issue_counters`).Scan(&count)
-	if err != nil {
-		return fmt.Errorf("failed to count issue_counters: %w", err)
-	}
-
-	if count == 0 {
-		// Table is empty, sync counters from existing issues to prevent ID collisions
-		// This is safe to do during migration since it's a one-time operation
-		_, err = db.Exec(`
-			INSERT INTO issue_counters (prefix, last_id)
-			SELECT
-				substr(id, 1, instr(id, '-') - 1) as prefix,
-				MAX(CAST(substr(id, instr(id, '-') + 1) AS INTEGER)) as max_id
-			FROM issues
-			WHERE instr(id, '-') > 0
-			  AND substr(id, instr(id, '-') + 1) GLOB '[0-9]*'
-			GROUP BY prefix
-			ON CONFLICT(prefix) DO UPDATE SET
-				last_id = MAX(last_id, excluded.last_id)
-		`)
-		if err != nil {
-			return fmt.Errorf("failed to sync counters during migration: %w", err)
-		}
-	}
-
-	// Table exists and is initialized (either was already populated, or we just synced it)
 	return nil
 }
 
@@ -696,40 +631,10 @@ func (s *SQLiteStorage) GetNextChildID(ctx context.Context, parentID string) (st
 	return childID, nil
 }
 
-// SyncAllCounters synchronizes all ID counters based on existing issues in the database
-// This scans all issues and updates counters to prevent ID collisions with auto-generated IDs
-// Note: This unconditionally overwrites counter values, allowing them to decrease after deletions
+// SyncAllCounters is a no-op now that sequential IDs are removed (bd-aa744b).
+// Kept for backward compatibility with existing code that calls it.
 func (s *SQLiteStorage) SyncAllCounters(ctx context.Context) error {
-	// First, delete counters for prefixes that have no issues
-	_, err := s.db.ExecContext(ctx, `
-		DELETE FROM issue_counters
-		WHERE prefix NOT IN (
-			SELECT DISTINCT substr(id, 1, instr(id, '-') - 1)
-			FROM issues
-			WHERE instr(id, '-') > 0
-			  AND substr(id, instr(id, '-') + 1) GLOB '[0-9]*'
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to delete orphaned counters: %w", err)
-	}
-
-	// Then, upsert counters for prefixes that have issues
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO issue_counters (prefix, last_id)
-		SELECT
-			substr(id, 1, instr(id, '-') - 1) as prefix,
-			MAX(CAST(substr(id, instr(id, '-') + 1) AS INTEGER)) as max_id
-		FROM issues
-		WHERE instr(id, '-') > 0
-		  AND substr(id, instr(id, '-') + 1) GLOB '[0-9]*'
-		GROUP BY prefix
-		ON CONFLICT(prefix) DO UPDATE SET
-			last_id = excluded.last_id
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to sync counters: %w", err)
-	}
+	// No-op: hash IDs don't use counters
 	return nil
 }
 
@@ -737,43 +642,7 @@ func (s *SQLiteStorage) SyncAllCounters(ctx context.Context) error {
 // The database should ALWAYS have issue_prefix config set explicitly (by 'bd init' or auto-import)
 // Never derive prefix from filename - it leads to silent data corruption
 
-// getIDMode returns the ID generation mode from config (sequential or hash).
-// Defaults to "sequential" for backward compatibility if not set.
-func getIDMode(ctx context.Context, conn *sql.Conn) string {
-	var mode string
-	err := conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "id_mode").Scan(&mode)
-	if err != nil || mode == "" {
-		return "sequential" // Default to sequential for backward compatibility
-	}
-	return mode
-}
 
-// nextSequentialID atomically increments and returns the next sequential ID number.
-// Must be called inside an IMMEDIATE transaction on the same connection.
-// Implements lazy initialization: if counter doesn't exist, initializes from existing issues.
-func nextSequentialID(ctx context.Context, conn *sql.Conn, prefix string) (int, error) {
-	var nextID int
-	
-	// The query handles three cases atomically:
-	// 1. Counter doesn't exist: initialize from MAX(existing IDs) or 1, then return that + 1
-	// 2. Counter exists but lower than max ID: update to max and return max + 1
-	// 3. Counter exists and correct: just increment and return next ID
-	err := conn.QueryRowContext(ctx, `
-		INSERT INTO issue_counters (prefix, last_id)
-		SELECT ?, COALESCE(MAX(CAST(substr(id, LENGTH(?) + 2) AS INTEGER)), 0) + 1
-		FROM issues
-		WHERE id LIKE ? || '-%'
-		  AND substr(id, LENGTH(?) + 2) GLOB '[0-9]*'
-		  AND instr(substr(id, LENGTH(?) + 2), '.') = 0
-		ON CONFLICT(prefix) DO UPDATE SET
-			last_id = last_id + 1
-		RETURNING last_id
-	`, prefix, prefix, prefix, prefix, prefix).Scan(&nextID)
-	if err != nil {
-		return 0, fmt.Errorf("failed to generate next sequential ID for prefix %s: %w", prefix, err)
-	}
-	return nextID, nil
-}
 
 // generateHashID creates a hash-based ID for a top-level issue.
 // For child issues, use the parent ID with a numeric suffix (e.g., "bd-a3f8e9.1").
@@ -869,61 +738,49 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 
 	// Generate ID if not set (inside transaction to prevent race conditions)
 	if issue.ID == "" {
-		// Check id_mode config to determine ID generation strategy
-		idMode := getIDMode(ctx, conn)
+		// Generate hash-based ID with adaptive length based on database size (bd-ea2a13)
+		// Start with length determined by database size, expand on collision
+		var err error
 		
-		if idMode == "hash" {
-			// Generate hash-based ID with adaptive length based on database size (bd-ea2a13)
-			// Start with length determined by database size, expand on collision
-			var err error
-			
-			// Get adaptive base length based on current database size
-			baseLength, err := GetAdaptiveIDLength(ctx, conn, prefix)
-			if err != nil {
-				// Fallback to 6 on error
-				baseLength = 6
-			}
-			
-			// Try baseLength, baseLength+1, baseLength+2, up to max of 8
-			maxLength := 8
-			if baseLength > maxLength {
-				baseLength = maxLength
-			}
-			
-			for length := baseLength; length <= maxLength; length++ {
-				// Try up to 10 nonces at each length
-				for nonce := 0; nonce < 10; nonce++ {
-					candidate := generateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, length, nonce)
-					
-					// Check if this ID already exists
-					var count int
-					err = conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
-					if err != nil {
-						return fmt.Errorf("failed to check for ID collision: %w", err)
-					}
-					
-					if count == 0 {
-						issue.ID = candidate
-						break
-					}
+		// Get adaptive base length based on current database size
+		baseLength, err := GetAdaptiveIDLength(ctx, conn, prefix)
+		if err != nil {
+			// Fallback to 6 on error
+			baseLength = 6
+		}
+		
+		// Try baseLength, baseLength+1, baseLength+2, up to max of 8
+		maxLength := 8
+		if baseLength > maxLength {
+			baseLength = maxLength
+		}
+		
+		for length := baseLength; length <= maxLength; length++ {
+			// Try up to 10 nonces at each length
+			for nonce := 0; nonce < 10; nonce++ {
+				candidate := generateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, length, nonce)
+				
+				// Check if this ID already exists
+				var count int
+				err = conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
+				if err != nil {
+					return fmt.Errorf("failed to check for ID collision: %w", err)
 				}
 				
-				// If we found a unique ID, stop trying longer lengths
-				if issue.ID != "" {
+				if count == 0 {
+					issue.ID = candidate
 					break
 				}
 			}
 			
-			if issue.ID == "" {
-				return fmt.Errorf("failed to generate unique ID after trying lengths %d-%d with 10 nonces each", baseLength, maxLength)
+			// If we found a unique ID, stop trying longer lengths
+			if issue.ID != "" {
+				break
 			}
-		} else {
-			// Default: generate sequential ID using counter
-			nextID, err := nextSequentialID(ctx, conn, prefix)
-			if err != nil {
-				return err
-			}
-			issue.ID = fmt.Sprintf("%s-%d", prefix, nextID)
+		}
+		
+		if issue.ID == "" {
+			return fmt.Errorf("failed to generate unique ID after trying lengths %d-%d with 10 nonces each", baseLength, maxLength)
 		}
 	} else {
 		// Validate that explicitly provided ID matches the configured prefix (bd-177)
@@ -1037,9 +894,6 @@ func generateBatchIDs(ctx context.Context, conn *sql.Conn, issues []*types.Issue
 		return fmt.Errorf("failed to get config: %w", err)
 	}
 
-	// Check id_mode config to determine ID generation strategy
-	idMode := getIDMode(ctx, conn)
-
 	// Validate explicitly provided IDs and generate IDs for those that need them
 	expectedPrefix := prefix + "-"
 	usedIDs := make(map[string]bool)
@@ -1056,64 +910,50 @@ func generateBatchIDs(ctx context.Context, conn *sql.Conn, issues []*types.Issue
 	}
 	
 	// Second pass: generate IDs for issues that need them
-	if idMode == "hash" {
-		// Hash mode: generate with adaptive length based on database size (bd-ea2a13)
-		// Get adaptive base length based on current database size
-		baseLength, err := GetAdaptiveIDLength(ctx, conn, prefix)
-		if err != nil {
-			// Fallback to 6 on error
-			baseLength = 6
-		}
-		
-		// Try baseLength, baseLength+1, baseLength+2, up to max of 8
-		maxLength := 8
-		if baseLength > maxLength {
-			baseLength = maxLength
-		}
-		
-		for i := range issues {
-			if issues[i].ID == "" {
-				var generated bool
-				// Try lengths from baseLength to maxLength with progressive fallback
-				for length := baseLength; length <= maxLength && !generated; length++ {
-					for nonce := 0; nonce < 10; nonce++ {
-						candidate := generateHashID(prefix, issues[i].Title, issues[i].Description, actor, issues[i].CreatedAt, length, nonce)
-						
-						// Check if this ID is already used in this batch or in the database
-						if usedIDs[candidate] {
-							continue
-						}
-						
-						var count int
-						err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
-						if err != nil {
-							return fmt.Errorf("failed to check for ID collision: %w", err)
-						}
-						
-						if count == 0 {
-							issues[i].ID = candidate
-							usedIDs[candidate] = true
-							generated = true
-							break
-						}
+	// Hash mode: generate with adaptive length based on database size (bd-ea2a13)
+	// Get adaptive base length based on current database size
+	baseLength, err := GetAdaptiveIDLength(ctx, conn, prefix)
+	if err != nil {
+		// Fallback to 6 on error
+		baseLength = 6
+	}
+	
+	// Try baseLength, baseLength+1, baseLength+2, up to max of 8
+	maxLength := 8
+	if baseLength > maxLength {
+		baseLength = maxLength
+	}
+	
+	for i := range issues {
+		if issues[i].ID == "" {
+			var generated bool
+			// Try lengths from baseLength to maxLength with progressive fallback
+			for length := baseLength; length <= maxLength && !generated; length++ {
+				for nonce := 0; nonce < 10; nonce++ {
+					candidate := generateHashID(prefix, issues[i].Title, issues[i].Description, actor, issues[i].CreatedAt, length, nonce)
+					
+					// Check if this ID is already used in this batch or in the database
+					if usedIDs[candidate] {
+						continue
+					}
+					
+					var count int
+					err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
+					if err != nil {
+						return fmt.Errorf("failed to check for ID collision: %w", err)
+					}
+					
+					if count == 0 {
+						issues[i].ID = candidate
+						usedIDs[candidate] = true
+						generated = true
+						break
 					}
 				}
-				
-				if !generated {
-					return fmt.Errorf("failed to generate unique ID for issue %d after trying lengths 6-8 with 10 nonces each", i)
-				}
 			}
-		}
-	} else {
-		// Sequential mode: allocate sequential IDs for all issues that need them
-		for i := range issues {
-			if issues[i].ID == "" {
-				nextID, err := nextSequentialID(ctx, conn, prefix)
-				if err != nil {
-					return fmt.Errorf("failed to generate sequential ID for issue %d: %w", i, err)
-				}
-				issues[i].ID = fmt.Sprintf("%s-%d", prefix, nextID)
-				usedIDs[issues[i].ID] = true
+			
+			if !generated {
+				return fmt.Errorf("failed to generate unique ID for issue %d after trying lengths 6-8 with 10 nonces each", i)
 			}
 		}
 	}

@@ -48,7 +48,6 @@ func TestTwoCloneCollision(t *testing.T) {
 	t.Log("Initializing beads in clone A")
 	runCmd(t, cloneA, "./bd", "init", "--quiet", "--prefix", "test")
 	// Enable hash ID mode for collision-free IDs
-	runCmdWithEnv(t, cloneA, map[string]string{"BEADS_NO_DAEMON": "1"}, "./bd", "config", "set", "id_mode", "hash")
 	// Configure git to use merge instead of rebase (sorted JSONL merges cleanly)
 	runCmd(t, cloneA, "git", "config", "pull.rebase", "false")
 	
@@ -65,7 +64,6 @@ func TestTwoCloneCollision(t *testing.T) {
 	t.Log("Initializing database in clone B")
 	runCmd(t, cloneB, "./bd", "init", "--quiet", "--prefix", "test")
 	// Enable hash ID mode (same as clone A)
-	runCmdWithEnv(t, cloneB, map[string]string{"BEADS_NO_DAEMON": "1"}, "./bd", "config", "set", "id_mode", "hash")
 	// Configure git to use merge instead of rebase (sorted JSONL merges cleanly)
 	runCmd(t, cloneB, "git", "config", "pull.rebase", "false")
 

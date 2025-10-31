@@ -138,7 +138,6 @@ func setupClone(t *testing.T, tmpDir, remoteDir, name, bdPath string) string {
 		t.Logf("Initializing beads in clone %s", name)
 		runCmd(t, cloneDir, "./bd", "init", "--quiet", "--prefix", "test")
 		// Enable hash ID mode for collision-free IDs
-		runCmdWithEnv(t, cloneDir, map[string]string{"BEADS_NO_DAEMON": "1"}, "./bd", "config", "set", "id_mode", "hash")
 		runCmd(t, cloneDir, "git", "add", ".beads")
 		runCmd(t, cloneDir, "git", "commit", "-m", "Initialize beads")
 		runCmd(t, cloneDir, "git", "push", "origin", "master")
@@ -147,7 +146,6 @@ func setupClone(t *testing.T, tmpDir, remoteDir, name, bdPath string) string {
 		runCmd(t, cloneDir, "git", "pull", "origin", "master")
 		runCmd(t, cloneDir, "./bd", "init", "--quiet", "--prefix", "test")
 		// Enable hash ID mode (same as clone A)
-		runCmdWithEnv(t, cloneDir, map[string]string{"BEADS_NO_DAEMON": "1"}, "./bd", "config", "set", "id_mode", "hash")
 	}
 	
 	// Install git hooks

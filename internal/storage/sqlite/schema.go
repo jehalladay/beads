@@ -129,12 +129,6 @@ CREATE TABLE IF NOT EXISTS export_hashes (
     FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
 );
 
--- Issue counters table (for atomic ID generation)
-CREATE TABLE IF NOT EXISTS issue_counters (
-    prefix TEXT PRIMARY KEY,
-    last_id INTEGER NOT NULL DEFAULT 0
-);
-
 -- Child counters table (for hierarchical ID generation)
 -- Tracks sequential child numbers per parent issue
 CREATE TABLE IF NOT EXISTS child_counters (

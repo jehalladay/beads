@@ -942,24 +942,10 @@ func (m *MemoryStorage) UnderlyingConn(ctx context.Context) (*sql.Conn, error) {
 	return nil, fmt.Errorf("UnderlyingConn not available in memory storage")
 }
 
-// SyncAllCounters synchronizes ID counters based on existing issues
+// SyncAllCounters is a no-op now that sequential IDs are removed (bd-aa744b).
+// Kept for backward compatibility with existing code that calls it.
 func (m *MemoryStorage) SyncAllCounters(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Reset counters
-	m.counters = make(map[string]int)
-
-	// Recompute from issues
-	for _, issue := range m.issues {
-		prefix, num := extractPrefixAndNumber(issue.ID)
-		if prefix != "" && num > 0 {
-			if m.counters[prefix] < num {
-				m.counters[prefix] = num
-			}
-		}
-	}
-
+	// No-op: hash IDs don't use counters
 	return nil
 }
 
