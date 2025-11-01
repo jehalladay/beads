@@ -1112,14 +1112,36 @@ func createAutoImportFunc(ctx context.Context, store storage.Storage, log daemon
 			log.log("Removed stale lock (%s), proceeding", holder)
 		}
 
-		// Pull from git
-		if err := gitPull(importCtx); err != nil {
-			log.log("Pull failed: %v", err)
-			return
-		}
-		log.log("Pulled from remote")
+		// Check JSONL modification time to avoid redundant imports
+		// (e.g., from self-triggered file watcher events after our own export)
+		jsonlInfo, err := os.Stat(jsonlPath)
+		if err != nil {
+		 log.log("Failed to stat JSONL: %v", err)
+		 return
+	}
 
-		// Count issues before import
+	// Get database modification time
+	dbPath := filepath.Join(beadsDir, "beads.db")
+	dbInfo, err := os.Stat(dbPath)
+	if err != nil {
+		log.log("Failed to stat database: %v", err)
+		return
+	}
+
+	// Skip if JSONL is older than database (nothing new to import)
+	if !jsonlInfo.ModTime().After(dbInfo.ModTime()) {
+		log.log("Skipping import: JSONL not newer than database")
+		return
+	}
+
+	// Pull from git
+	if err := gitPull(importCtx); err != nil {
+		log.log("Pull failed: %v", err)
+		return
+	}
+	log.log("Pulled from remote")
+
+	// Count issues before import
 		beforeCount, err := countDBIssues(importCtx, store)
 		if err != nil {
 			log.log("Failed to count issues before import: %v", err)

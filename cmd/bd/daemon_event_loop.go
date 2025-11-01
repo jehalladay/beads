@@ -47,9 +47,13 @@ func runEventDrivenLoop(
 	watcher, err := NewFileWatcher(jsonlPath, func() {
 		importDebouncer.Trigger()
 	})
+	var fallbackTicker *time.Ticker
 	if err != nil {
-		log.log("WARNING: File watcher unavailable (%v), mutations will trigger export only", err)
+		log.log("WARNING: File watcher unavailable (%v), using 60s polling fallback", err)
 		watcher = nil
+		// Fallback ticker to check for remote changes when watcher unavailable
+		fallbackTicker = time.NewTicker(60 * time.Second)
+		defer fallbackTicker.Stop()
 	} else {
 		watcher.Start(ctx, log)
 		defer watcher.Close()
@@ -97,6 +101,16 @@ func runEventDrivenLoop(
 			// Periodic health validation (not sync)
 			checkDaemonHealth(ctx, store, log)
 
+		case <-func() <-chan time.Time {
+			if fallbackTicker != nil {
+				return fallbackTicker.C
+			}
+			// Never fire if watcher is available
+			return make(chan time.Time)
+		}():
+			log.log("Fallback ticker: checking for remote changes")
+			importDebouncer.Trigger()
+
 		case sig := <-sigChan:
 			if isReloadSignal(sig) {
 				log.log("Received reload signal, ignoring")
@@ -120,12 +134,15 @@ func runEventDrivenLoop(
 			return
 
 		case err := <-serverErrChan:
-			log.log("RPC server failed: %v", err)
-			cancel()
-			if watcher != nil {
-				watcher.Close()
-			}
-			return
+		log.log("RPC server failed: %v", err)
+		cancel()
+		if watcher != nil {
+		watcher.Close()
+		}
+		if stopErr := server.Stop(); stopErr != nil {
+			log.log("Error stopping server: %v", stopErr)
+		}
+		return
 		}
 	}
 }
