@@ -135,6 +135,11 @@ bd info --json
 # Find ready work (no blockers)
 bd ready --json
 
+# Find stale issues (not updated recently)
+bd stale --days 30 --json                    # Default: 30 days
+bd stale --days 90 --status in_progress --json  # Filter by status
+bd stale --limit 20 --json                   # Limit results
+
 # Create new issue
 bd create "Issue title" -t bug|feature|task -p 0-4 -d "Description" --json
 
@@ -327,7 +332,7 @@ bd daemons killall  # Restart with default (poll) mode
 
 ### Workflow
 
-1. **Check for ready work**: Run `bd ready` to see what's unblocked
+1. **Check for ready work**: Run `bd ready` to see what's unblocked (or `bd stale` to find forgotten issues)
 2. **Claim your task**: `bd update <id> --status in_progress`
 3. **Work on it**: Implement, test, document
 4. **Discover new work**: If you find bugs or TODOs, create issues:

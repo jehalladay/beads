@@ -429,6 +429,39 @@ func (s *Server) handleReady(req *Request) Response {
 	}
 }
 
+func (s *Server) handleStale(req *Request) Response {
+	var staleArgs StaleArgs
+	if err := json.Unmarshal(req.Args, &staleArgs); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid stale args: %v", err),
+		}
+	}
+
+	store := s.storage
+
+	filter := types.StaleFilter{
+		Days:   staleArgs.Days,
+		Status: staleArgs.Status,
+		Limit:  staleArgs.Limit,
+	}
+
+	ctx := s.reqCtx(req)
+	issues, err := store.GetStaleIssues(ctx, filter)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get stale issues: %v", err),
+		}
+	}
+
+	data, _ := json.Marshal(issues)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
 func (s *Server) handleStats(req *Request) Response {
 	store := s.storage
 

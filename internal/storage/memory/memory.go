@@ -731,6 +731,37 @@ func (m *MemoryStorage) GetEpicsEligibleForClosure(ctx context.Context) ([]*type
 	return nil, nil
 }
 
+func (m *MemoryStorage) GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cutoff := time.Now().AddDate(0, 0, -filter.Days)
+	var stale []*types.Issue
+
+	for _, issue := range m.issues {
+		if issue.Status == types.StatusClosed {
+			continue
+		}
+		if filter.Status != "" && string(issue.Status) != filter.Status {
+			continue
+		}
+		if issue.UpdatedAt.Before(cutoff) {
+			stale = append(stale, issue)
+		}
+	}
+
+	// Sort by updated_at ascending (oldest first)
+	sort.Slice(stale, func(i, j int) bool {
+		return stale[i].UpdatedAt.Before(stale[j].UpdatedAt)
+	})
+
+	if filter.Limit > 0 && len(stale) > filter.Limit {
+		stale = stale[:filter.Limit]
+	}
+
+	return stale, nil
+}
+
 func (m *MemoryStorage) AddComment(ctx context.Context, issueID, actor, comment string) error {
 	return nil
 }

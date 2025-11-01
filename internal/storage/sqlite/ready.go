@@ -106,6 +106,101 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 	return s.scanIssues(ctx, rows)
 }
 
+// GetStaleIssues returns issues that haven't been updated recently
+func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error) {
+	// Build query with optional status filter
+	query := `
+		SELECT
+			id, content_hash, title, description, design, acceptance_criteria, notes,
+			status, priority, issue_type, assignee, estimated_minutes,
+			created_at, updated_at, closed_at, external_ref,
+			compaction_level, compacted_at, compacted_at_commit, original_size
+		FROM issues
+		WHERE status != 'closed'
+		  AND datetime(updated_at) < datetime('now', '-' || ? || ' days')
+	`
+	
+	args := []interface{}{filter.Days}
+	
+	// Add optional status filter
+	if filter.Status != "" {
+		query += " AND status = ?"
+		args = append(args, filter.Status)
+	}
+	
+	query += " ORDER BY updated_at ASC"
+	
+	// Add limit
+	if filter.Limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, filter.Limit)
+	}
+	
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query stale issues: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	
+	var issues []*types.Issue
+	for rows.Next() {
+		var issue types.Issue
+		var closedAt sql.NullTime
+		var estimatedMinutes sql.NullInt64
+		var assignee sql.NullString
+		var externalRef sql.NullString
+		var contentHash sql.NullString
+		var compactionLevel sql.NullInt64
+		var compactedAt sql.NullTime
+		var compactedAtCommit sql.NullString
+		var originalSize sql.NullInt64
+		
+		err := rows.Scan(
+			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
+			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
+			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
+			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef,
+			&compactionLevel, &compactedAt, &compactedAtCommit, &originalSize,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan stale issue: %w", err)
+		}
+		
+		if contentHash.Valid {
+			issue.ContentHash = contentHash.String
+		}
+		if closedAt.Valid {
+			issue.ClosedAt = &closedAt.Time
+		}
+		if estimatedMinutes.Valid {
+			mins := int(estimatedMinutes.Int64)
+			issue.EstimatedMinutes = &mins
+		}
+		if assignee.Valid {
+			issue.Assignee = assignee.String
+		}
+		if externalRef.Valid {
+			issue.ExternalRef = &externalRef.String
+		}
+		if compactionLevel.Valid {
+			issue.CompactionLevel = int(compactionLevel.Int64)
+		}
+		if compactedAt.Valid {
+			issue.CompactedAt = &compactedAt.Time
+		}
+		if compactedAtCommit.Valid {
+			issue.CompactedAtCommit = &compactedAtCommit.String
+		}
+		if originalSize.Valid {
+			issue.OriginalSize = int(originalSize.Int64)
+		}
+		
+		issues = append(issues, &issue)
+	}
+	
+	return issues, rows.Err()
+}
+
 // GetBlockedIssues returns issues that are blocked by dependencies
 func (s *SQLiteStorage) GetBlockedIssues(ctx context.Context) ([]*types.BlockedIssue, error) {
 	// Use GROUP_CONCAT to get all blocker IDs in a single query (no N+1)

@@ -265,6 +265,11 @@ func (c *Client) Ready(args *ReadyArgs) (*Response, error) {
 	return c.Execute(OpReady, args)
 }
 
+// Stale gets stale issues via the daemon
+func (c *Client) Stale(args *StaleArgs) (*Response, error) {
+	return c.Execute(OpStale, args)
+}
+
 // Stats gets statistics via the daemon
 func (c *Client) Stats() (*Response, error) {
 	return c.Execute(OpStats, nil)

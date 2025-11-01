@@ -289,6 +289,13 @@ type WorkFilter struct {
 	SortPolicy SortPolicy
 }
 
+// StaleFilter is used to filter stale issue queries
+type StaleFilter struct {
+	Days   int    // Issues not updated in this many days
+	Status string // Filter by status (open|in_progress|blocked), empty = all non-closed
+	Limit  int    // Maximum issues to return
+}
+
 // EpicStatus represents an epic with its completion status
 type EpicStatus struct {
 	Epic            *Issue `json:"epic"`

@@ -16,6 +16,7 @@ const (
 	OpList            = "list"
 	OpShow            = "show"
 	OpReady           = "ready"
+	OpStale           = "stale"
 	OpStats           = "stats"
 	OpDepAdd          = "dep_add"
 	OpDepRemove       = "dep_remove"
@@ -116,6 +117,13 @@ type ReadyArgs struct {
 	Priority   *int   `json:"priority,omitempty"`
 	Limit      int    `json:"limit,omitempty"`
 	SortPolicy string `json:"sort_policy,omitempty"`
+}
+
+// StaleArgs represents arguments for the stale command
+type StaleArgs struct {
+	Days   int    `json:"days,omitempty"`
+	Status string `json:"status,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
 }
 
 // DepAddArgs represents arguments for adding a dependency
