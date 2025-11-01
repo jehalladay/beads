@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.2] - 2025-11-01
+
+### Changed
+- Homebrew formula now auto-published in main repo via GoReleaser
+- Deprecated separate homebrew-beads tap repository
+
 ## [0.21.1] - 2025-10-31
 
 ### Changed
