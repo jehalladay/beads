@@ -14,6 +14,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/daemon"
 	_ "modernc.org/sqlite"
 )
@@ -191,7 +192,15 @@ func checkInstallation(path string) doctorCheck {
 
 func checkDatabaseVersion(path string) doctorCheck {
 	beadsDir := filepath.Join(path, ".beads")
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	
+	// Check config.json first for custom database name
+	var dbPath string
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
+		dbPath = cfg.DatabasePath(beadsDir)
+	} else {
+		// Fall back to canonical database name
+		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	}
 
 	// Check if database file exists
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -257,7 +266,15 @@ func checkDatabaseVersion(path string) doctorCheck {
 
 func checkIDFormat(path string) doctorCheck {
 	beadsDir := filepath.Join(path, ".beads")
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	
+	// Check config.json first for custom database name
+	var dbPath string
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
+		dbPath = cfg.DatabasePath(beadsDir)
+	} else {
+		// Fall back to canonical database name
+		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	}
 
 	// Check if using JSONL-only mode
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
