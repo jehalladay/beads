@@ -171,3 +171,205 @@ func TestCompareVersions(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckMultipleDatabases(t *testing.T) {
+	tests := []struct {
+		name           string
+		dbFiles        []string
+		expectedStatus string
+		expectWarning  bool
+	}{
+		{
+			name:           "no databases",
+			dbFiles:        []string{},
+			expectedStatus: statusOK,
+			expectWarning:  false,
+		},
+		{
+			name:           "single database",
+			dbFiles:        []string{"beads.db"},
+			expectedStatus: statusOK,
+			expectWarning:  false,
+		},
+		{
+			name:           "multiple databases",
+			dbFiles:        []string{"beads.db", "old.db"},
+			expectedStatus: statusWarning,
+			expectWarning:  true,
+		},
+		{
+			name:           "backup files ignored",
+			dbFiles:        []string{"beads.db", "beads.backup.db"},
+			expectedStatus: statusOK,
+			expectWarning:  false,
+		},
+		{
+			name:           "vc.db ignored",
+			dbFiles:        []string{"beads.db", "vc.db"},
+			expectedStatus: statusOK,
+			expectWarning:  false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			beadsDir := filepath.Join(tmpDir, ".beads")
+			if err := os.Mkdir(beadsDir, 0750); err != nil {
+				t.Fatal(err)
+			}
+
+			// Create test database files
+			for _, dbFile := range tc.dbFiles {
+				path := filepath.Join(beadsDir, dbFile)
+				if err := os.WriteFile(path, []byte{}, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			check := checkMultipleDatabases(tmpDir)
+
+			if check.Status != tc.expectedStatus {
+				t.Errorf("Expected status %s, got %s", tc.expectedStatus, check.Status)
+			}
+
+			if tc.expectWarning && check.Fix == "" {
+				t.Error("Expected fix message for warning status")
+			}
+		})
+	}
+}
+
+func TestCheckMultipleJSONLFiles(t *testing.T) {
+	tests := []struct {
+		name           string
+		jsonlFiles     []string
+		expectedStatus string
+		expectWarning  bool
+	}{
+		{
+			name:           "no JSONL files",
+			jsonlFiles:     []string{},
+			expectedStatus: statusOK,
+			expectWarning:  false,
+		},
+		{
+			name:           "single issues.jsonl",
+			jsonlFiles:     []string{"issues.jsonl"},
+			expectedStatus: statusOK,
+			expectWarning:  false,
+		},
+		{
+			name:           "single beads.jsonl",
+			jsonlFiles:     []string{"beads.jsonl"},
+			expectedStatus: statusOK,
+			expectWarning:  false,
+		},
+		{
+			name:           "both JSONL files",
+			jsonlFiles:     []string{"issues.jsonl", "beads.jsonl"},
+			expectedStatus: statusWarning,
+			expectWarning:  true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			beadsDir := filepath.Join(tmpDir, ".beads")
+			if err := os.Mkdir(beadsDir, 0750); err != nil {
+				t.Fatal(err)
+			}
+
+			// Create test JSONL files
+			for _, jsonlFile := range tc.jsonlFiles {
+				path := filepath.Join(beadsDir, jsonlFile)
+				if err := os.WriteFile(path, []byte{}, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			check := checkMultipleJSONLFiles(tmpDir)
+
+			if check.Status != tc.expectedStatus {
+				t.Errorf("Expected status %s, got %s", tc.expectedStatus, check.Status)
+			}
+
+			if tc.expectWarning && check.Fix == "" {
+				t.Error("Expected fix message for warning status")
+			}
+		})
+	}
+}
+
+func TestCheckPermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	check := checkPermissions(tmpDir)
+
+	if check.Status != statusOK {
+		t.Errorf("Expected ok status for writable directory, got %s: %s", check.Status, check.Message)
+	}
+}
+
+func TestCheckDatabaseJSONLSync(t *testing.T) {
+	tests := []struct {
+		name           string
+		hasDB          bool
+		hasJSONL       bool
+		expectedStatus string
+	}{
+		{
+			name:           "no database",
+			hasDB:          false,
+			hasJSONL:       true,
+			expectedStatus: statusOK,
+		},
+		{
+			name:           "no JSONL",
+			hasDB:          true,
+			hasJSONL:       false,
+			expectedStatus: statusOK,
+		},
+		{
+			name:           "both present",
+			hasDB:          true,
+			hasJSONL:       true,
+			expectedStatus: statusOK,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			beadsDir := filepath.Join(tmpDir, ".beads")
+			if err := os.Mkdir(beadsDir, 0750); err != nil {
+				t.Fatal(err)
+			}
+
+			if tc.hasDB {
+				dbPath := filepath.Join(beadsDir, "beads.db")
+				if err := os.WriteFile(dbPath, []byte{}, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if tc.hasJSONL {
+				jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+				if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			check := checkDatabaseJSONLSync(tmpDir)
+
+			if check.Status != tc.expectedStatus {
+				t.Errorf("Expected status %s, got %s", tc.expectedStatus, check.Status)
+			}
+		})
+	}
+}

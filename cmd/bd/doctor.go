@@ -14,6 +14,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads"
+	"github.com/steveyegge/beads/internal/daemon"
 	_ "modernc.org/sqlite"
 )
 
@@ -49,6 +50,11 @@ This command checks:
   - Database version and schema compatibility
   - Whether using hash-based vs sequential IDs
   - If CLI version is current (checks GitHub releases)
+  - Multiple database files
+  - Multiple JSONL files
+  - Daemon health (version mismatches, stale processes)
+  - Database-JSONL sync status
+  - File permissions
 
 Examples:
   bd doctor              # Check current directory
@@ -122,6 +128,41 @@ func runDiagnostics(path string) doctorResult {
 	versionCheck := checkCLIVersion()
 	result.Checks = append(result.Checks, versionCheck)
 	// Don't fail overall check for outdated CLI, just warn
+
+	// Check 5: Multiple database files
+	multiDBCheck := checkMultipleDatabases(path)
+	result.Checks = append(result.Checks, multiDBCheck)
+	if multiDBCheck.Status == statusWarning || multiDBCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	// Check 6: Multiple JSONL files
+	multiJSONLCheck := checkMultipleJSONLFiles(path)
+	result.Checks = append(result.Checks, multiJSONLCheck)
+	if multiJSONLCheck.Status == statusWarning || multiJSONLCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	// Check 7: Daemon health
+	daemonCheck := checkDaemonStatus(path)
+	result.Checks = append(result.Checks, daemonCheck)
+	if daemonCheck.Status == statusWarning || daemonCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	// Check 8: Database-JSONL sync
+	syncCheck := checkDatabaseJSONLSync(path)
+	result.Checks = append(result.Checks, syncCheck)
+	if syncCheck.Status == statusWarning || syncCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	// Check 9: Permissions
+	permCheck := checkPermissions(path)
+	result.Checks = append(result.Checks, permCheck)
+	if permCheck.Status == statusError {
+		result.OverallOK = false
+	}
 
 	return result
 }
@@ -492,6 +533,269 @@ func printDiagnostics(result doctorResult) {
 
 	if !hasIssues {
 		color.Green("✓ All checks passed\n")
+	}
+}
+
+func checkMultipleDatabases(path string) doctorCheck {
+	beadsDir := filepath.Join(path, ".beads")
+	
+	// Find all .db files (excluding backups and vc.db)
+	files, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
+	if err != nil {
+		return doctorCheck{
+			Name:    "Database Files",
+			Status:  statusError,
+			Message: "Unable to check for multiple databases",
+		}
+	}
+
+	// Filter out backups and vc.db
+	var dbFiles []string
+	for _, f := range files {
+		base := filepath.Base(f)
+		if !strings.HasSuffix(base, ".backup.db") && base != "vc.db" {
+			dbFiles = append(dbFiles, base)
+		}
+	}
+
+	if len(dbFiles) == 0 {
+		return doctorCheck{
+			Name:    "Database Files",
+			Status:  statusOK,
+			Message: "No database files (JSONL-only mode)",
+		}
+	}
+
+	if len(dbFiles) == 1 {
+		return doctorCheck{
+			Name:    "Database Files",
+			Status:  statusOK,
+			Message: "Single database file",
+		}
+	}
+
+	// Multiple databases found
+	return doctorCheck{
+		Name:    "Database Files",
+		Status:  statusWarning,
+		Message: fmt.Sprintf("Multiple database files found: %s", strings.Join(dbFiles, ", ")),
+		Fix:     "Run 'bd migrate' to consolidate databases or manually remove old .db files",
+	}
+}
+
+func checkMultipleJSONLFiles(path string) doctorCheck {
+	beadsDir := filepath.Join(path, ".beads")
+	
+	var jsonlFiles []string
+	for _, name := range []string{"issues.jsonl", "beads.jsonl"} {
+		jsonlPath := filepath.Join(beadsDir, name)
+		if _, err := os.Stat(jsonlPath); err == nil {
+			jsonlFiles = append(jsonlFiles, name)
+		}
+	}
+
+	if len(jsonlFiles) == 0 {
+		return doctorCheck{
+			Name:    "JSONL Files",
+			Status:  statusOK,
+			Message: "No JSONL files found (database-only mode)",
+		}
+	}
+
+	if len(jsonlFiles) == 1 {
+		return doctorCheck{
+			Name:    "JSONL Files",
+			Status:  statusOK,
+			Message: fmt.Sprintf("Using %s", jsonlFiles[0]),
+		}
+	}
+
+	// Multiple JSONL files found
+	return doctorCheck{
+		Name:    "JSONL Files",
+		Status:  statusWarning,
+		Message: fmt.Sprintf("Multiple JSONL files found: %s", strings.Join(jsonlFiles, ", ")),
+		Fix:     "Standardize on one JSONL file (issues.jsonl recommended). Delete or rename the other.",
+	}
+}
+
+func checkDaemonStatus(path string) doctorCheck {
+	// Import daemon discovery from internal package
+	daemons, err := daemon.DiscoverDaemons([]string{path})
+	if err != nil {
+		return doctorCheck{
+			Name:    "Daemon Health",
+			Status:  statusWarning,
+			Message: "Unable to check daemon health",
+			Detail:  err.Error(),
+		}
+	}
+
+	// Filter to this workspace
+	var workspaceDaemons []daemon.DaemonInfo
+	for _, d := range daemons {
+		if d.WorkspacePath == path {
+			workspaceDaemons = append(workspaceDaemons, d)
+		}
+	}
+
+	if len(workspaceDaemons) == 0 {
+		return doctorCheck{
+			Name:    "Daemon Health",
+			Status:  statusOK,
+			Message: "No daemon running (will auto-start on next command)",
+		}
+	}
+
+	// Check for version mismatches
+	for _, d := range workspaceDaemons {
+		if !d.Alive {
+			return doctorCheck{
+				Name:    "Daemon Health",
+				Status:  statusWarning,
+				Message: "Stale daemon detected",
+				Fix:     "Run 'bd daemons killall' to clean up stale daemons",
+			}
+		}
+
+		if d.Version != Version {
+			return doctorCheck{
+				Name:    "Daemon Health",
+				Status:  statusWarning,
+				Message: fmt.Sprintf("Version mismatch (daemon: %s, CLI: %s)", d.Version, Version),
+				Fix:     "Run 'bd daemons killall' to restart daemons with current version",
+			}
+		}
+	}
+
+	return doctorCheck{
+		Name:    "Daemon Health",
+		Status:  statusOK,
+		Message: fmt.Sprintf("Daemon running (PID %d, version %s)", workspaceDaemons[0].PID, workspaceDaemons[0].Version),
+	}
+}
+
+func checkDatabaseJSONLSync(path string) doctorCheck {
+	beadsDir := filepath.Join(path, ".beads")
+	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	
+	// Find JSONL file
+	var jsonlPath string
+	for _, name := range []string{"issues.jsonl", "beads.jsonl"} {
+		path := filepath.Join(beadsDir, name)
+		if _, err := os.Stat(path); err == nil {
+			jsonlPath = path
+			break
+		}
+	}
+
+	// If no database, skip this check
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return doctorCheck{
+			Name:    "DB-JSONL Sync",
+			Status:  statusOK,
+			Message: "N/A (no database)",
+		}
+	}
+
+	// If no JSONL, skip this check
+	if jsonlPath == "" {
+		return doctorCheck{
+			Name:    "DB-JSONL Sync",
+			Status:  statusOK,
+			Message: "N/A (no JSONL file)",
+		}
+	}
+
+	// Compare modification times
+	dbInfo, err := os.Stat(dbPath)
+	if err != nil {
+		return doctorCheck{
+			Name:    "DB-JSONL Sync",
+			Status:  statusWarning,
+			Message: "Unable to check database file",
+		}
+	}
+
+	jsonlInfo, err := os.Stat(jsonlPath)
+	if err != nil {
+		return doctorCheck{
+			Name:    "DB-JSONL Sync",
+			Status:  statusWarning,
+			Message: "Unable to check JSONL file",
+		}
+	}
+
+	// If JSONL is newer, warn about potential sync issue
+	if jsonlInfo.ModTime().After(dbInfo.ModTime()) {
+		timeDiff := jsonlInfo.ModTime().Sub(dbInfo.ModTime())
+		if timeDiff > 30*time.Second {
+			return doctorCheck{
+				Name:    "DB-JSONL Sync",
+				Status:  statusWarning,
+				Message: "JSONL is newer than database",
+				Fix:     "Run 'bd sync --import-only' to import JSONL updates",
+			}
+		}
+	}
+
+	return doctorCheck{
+		Name:    "DB-JSONL Sync",
+		Status:  statusOK,
+		Message: "Database and JSONL are in sync",
+	}
+}
+
+func checkPermissions(path string) doctorCheck {
+	beadsDir := filepath.Join(path, ".beads")
+	
+	// Check if .beads/ is writable
+	testFile := filepath.Join(beadsDir, ".doctor-test-write")
+	if err := os.WriteFile(testFile, []byte("test"), 0600); err != nil {
+		return doctorCheck{
+			Name:    "Permissions",
+			Status:  statusError,
+			Message: ".beads/ directory is not writable",
+			Fix:     fmt.Sprintf("Fix permissions: chmod u+w %s", beadsDir),
+		}
+	}
+	_ = os.Remove(testFile) // Clean up test file (intentionally ignore error)
+
+	// Check database permissions
+	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	if _, err := os.Stat(dbPath); err == nil {
+		// Try to open database
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			return doctorCheck{
+				Name:    "Permissions",
+				Status:  statusError,
+				Message: "Database file exists but cannot be opened",
+				Fix:     fmt.Sprintf("Check database permissions: %s", dbPath),
+			}
+		}
+		_ = db.Close() // Intentionally ignore close error
+
+		// Try a write test
+		db, err = sql.Open("sqlite", dbPath)
+		if err == nil {
+			_, err = db.Exec("SELECT 1")
+			_ = db.Close() // Intentionally ignore close error
+			if err != nil {
+				return doctorCheck{
+					Name:    "Permissions",
+					Status:  statusError,
+					Message: "Database file is not readable",
+					Fix:     fmt.Sprintf("Fix permissions: chmod u+rw %s", dbPath),
+				}
+			}
+		}
+	}
+
+	return doctorCheck{
+		Name:    "Permissions",
+		Status:  statusOK,
+		Message: "All permissions OK",
 	}
 }
 
