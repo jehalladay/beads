@@ -620,7 +620,7 @@ func TestImportIssues_Update(t *testing.T) {
 		t.Fatalf("Failed to create initial issue: %v", err)
 	}
 	
-	// Import updated version
+	// Import updated version with newer timestamp
 	issue2 := &types.Issue{
 		ID:          "test-abc123",
 		Title:       "Updated Title",
@@ -628,7 +628,10 @@ func TestImportIssues_Update(t *testing.T) {
 		Status:      types.StatusInProgress,
 		Priority:    2,
 		IssueType:   types.TypeTask,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now().Add(time.Hour), // Newer than issue1
 	}
+	issue2.ContentHash = issue2.ComputeContentHash()
 	
 	result, err := ImportIssues(ctx, tmpDB, store, []*types.Issue{issue2}, Options{})
 	if err != nil {
