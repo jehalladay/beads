@@ -141,6 +141,7 @@ bd stale --days 90 --status in_progress --json  # Filter by status
 bd stale --limit 20 --json                   # Limit results
 
 # Create new issue
+# IMPORTANT: Always quote titles and descriptions with double quotes
 bd create "Issue title" -t bug|feature|task -p 0-4 -d "Description" --json
 
 # Create with explicit ID (for parallel workers)
@@ -148,6 +149,10 @@ bd create "Issue title" --id worker1-100 -p 1 --json
 
 # Create with labels
 bd create "Issue title" -t bug -p 1 -l bug,critical --json
+
+# Examples with special characters (all require quoting):
+bd create "Fix: auth doesn't validate tokens" -t bug -p 1 --json
+bd create "Add support for OAuth 2.0" -d "Implement RFC 6749 (OAuth 2.0 spec)" --json
 
 # Create multiple issues from markdown file
 bd create -f feature-plan.md --json
