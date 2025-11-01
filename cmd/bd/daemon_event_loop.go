@@ -60,7 +60,12 @@ func runEventDrivenLoop(
 	go func() {
 		for {
 			select {
-			case event := <-mutationChan:
+			case event, ok := <-mutationChan:
+				if !ok {
+					// Channel closed (should never happen, but handle defensively)
+					log.log("Mutation channel closed; exiting listener")
+					return
+				}
 				log.log("Mutation detected: %s %s", event.Type, event.IssueID)
 				exportDebouncer.Trigger()
 
@@ -70,22 +75,27 @@ func runEventDrivenLoop(
 		}
 	}()
 
-	// Optional: Periodic health check and dropped events safety net
+	// Periodic health check
 	healthTicker := time.NewTicker(60 * time.Second)
 	defer healthTicker.Stop()
 
+	// Dropped events safety net (faster recovery than health check)
+	droppedEventsTicker := time.NewTicker(1 * time.Second)
+	defer droppedEventsTicker.Stop()
+
 	for {
 		select {
-		case <-healthTicker.C:
-			// Periodic health validation (not sync)
-			checkDaemonHealth(ctx, store, log)
-			
-			// Safety net: check for dropped mutation events
+		case <-droppedEventsTicker.C:
+			// Check for dropped mutation events every second
 			dropped := server.ResetDroppedEventsCount()
 			if dropped > 0 {
 				log.log("WARNING: %d mutation events were dropped, triggering export", dropped)
 				exportDebouncer.Trigger()
 			}
+
+		case <-healthTicker.C:
+			// Periodic health validation (not sync)
+			checkDaemonHealth(ctx, store, log)
 
 		case sig := <-sigChan:
 			if isReloadSignal(sig) {
