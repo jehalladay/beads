@@ -200,16 +200,7 @@ func TestListCommand(t *testing.T) {
 	})
 
 	t.Run("output formatted list digraph preset", func(t *testing.T) {
-		// Add a dependency first
-		dep := &types.Dependency{
-			IssueID:     h.issues[0].ID,
-			DependsOnID: h.issues[1].ID,
-			Type:        types.DepBlocks,
-		}
-		if err := h.store.AddDependency(h.ctx, dep, "test-user"); err != nil {
-			t.Fatalf("Failed to add dependency: %v", err)
-		}
-
+		// Dependency already added in previous test, just use it
 		err := outputFormattedList(h.ctx, h.store, h.issues, "digraph")
 		if err != nil {
 			t.Errorf("outputFormattedList with digraph format failed: %v", err)

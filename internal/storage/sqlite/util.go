@@ -8,7 +8,6 @@ import (
 )
 
 // QueryContext exposes the underlying database QueryContext method for advanced queries
-// This is used by commands that need direct SQL access (e.g., bd stale)
 func (s *SQLiteStorage) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	return s.db.QueryContext(ctx, query, args...)
 }

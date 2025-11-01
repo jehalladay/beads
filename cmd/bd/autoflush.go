@@ -528,12 +528,12 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error)
 // flushToJSONL exports dirty issues to JSONL using incremental updates
 // flushToJSONL exports dirty database changes to the JSONL file. Uses incremental
 // export by default (only exports modified issues), or full export for ID-changing
-// operations (renumber, resolve-collisions). Invoked by the debounce timer or
+// operations (e.g., rename-prefix). Invoked by the debounce timer or
 // immediately on command exit.
 //
 // Export modes:
 //   - Incremental (default): Exports only GetDirtyIssues(), merges with existing JSONL
-//   - Full (after renumber): Exports all issues, rebuilds JSONL from scratch
+//   - Full (after rename-prefix): Exports all issues, rebuilds JSONL from scratch
 //
 // Error handling: Tracks consecutive failures. After 3+ failures, displays prominent
 // warning suggesting manual "bd export" to recover. Failure counter resets on success.

@@ -60,7 +60,7 @@ var (
 	// Auto-flush state
 	autoFlushEnabled  = true  // Can be disabled with --no-auto-flush
 	isDirty           = false // Tracks if DB has changes needing export
-	needsFullExport   = false // Set to true when IDs change (renumber, rename-prefix)
+	needsFullExport   = false // Set to true when IDs change (e.g., rename-prefix)
 	flushMutex        sync.Mutex
 	flushTimer        *time.Timer
 	storeMutex        sync.Mutex // Protects store access from background goroutine
