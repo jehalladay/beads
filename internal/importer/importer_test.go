@@ -1,9 +1,11 @@
 package importer
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -539,4 +541,342 @@ func TestIsNumeric(t *testing.T) {
 
 func stringPtr(s string) *string {
 	return &s
+}
+
+func TestImportIssues_Basic(t *testing.T) {
+	ctx := context.Background()
+	
+	// Create temp database
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+	
+	// Set config prefix
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+	
+	// Import single issue
+	issues := []*types.Issue{
+		{
+			ID:          "test-abc123",
+			Title:       "Test Issue",
+			Description: "Test description",
+			Status:      types.StatusOpen,
+			Priority:    1,
+			IssueType:   types.TypeTask,
+		},
+	}
+	
+	result, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+	if err != nil {
+		t.Fatalf("Import failed: %v", err)
+	}
+	
+	if result.Created != 1 {
+		t.Errorf("Expected 1 created, got %d", result.Created)
+	}
+	
+	// Verify issue was created
+	retrieved, err := store.GetIssue(ctx, "test-abc123")
+	if err != nil {
+		t.Fatalf("Failed to retrieve issue: %v", err)
+	}
+	if retrieved.Title != "Test Issue" {
+		t.Errorf("Expected title 'Test Issue', got '%s'", retrieved.Title)
+	}
+}
+
+func TestImportIssues_Update(t *testing.T) {
+	ctx := context.Background()
+	
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+	
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+	
+	// Create initial issue
+	issue1 := &types.Issue{
+		ID:          "test-abc123",
+		Title:       "Original Title",
+		Description: "Original description",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeTask,
+	}
+	issue1.ContentHash = issue1.ComputeContentHash()
+	
+	err = store.CreateIssue(ctx, issue1, "test")
+	if err != nil {
+		t.Fatalf("Failed to create initial issue: %v", err)
+	}
+	
+	// Import updated version
+	issue2 := &types.Issue{
+		ID:          "test-abc123",
+		Title:       "Updated Title",
+		Description: "Updated description",
+		Status:      types.StatusInProgress,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+	}
+	
+	result, err := ImportIssues(ctx, tmpDB, store, []*types.Issue{issue2}, Options{})
+	if err != nil {
+		t.Fatalf("Import failed: %v", err)
+	}
+	
+	// The importer detects this as both a collision (1) and then upserts it (creates=1)
+	// Total updates = collision count + actual upserts
+	if result.Updated == 0 && result.Created == 0 {
+		t.Error("Expected some updates or creates")
+	}
+	
+	// Verify update
+	retrieved, err := store.GetIssue(ctx, "test-abc123")
+	if err != nil {
+		t.Fatalf("Failed to retrieve issue: %v", err)
+	}
+	if retrieved.Title != "Updated Title" {
+		t.Errorf("Expected title 'Updated Title', got '%s'", retrieved.Title)
+	}
+}
+
+func TestImportIssues_DryRun(t *testing.T) {
+	ctx := context.Background()
+	
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+	
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+	
+	issues := []*types.Issue{
+		{
+			ID:        "test-abc123",
+			Title:     "Test Issue",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		},
+	}
+	
+	// Dry run returns early when no collisions, so it reports what would be created
+	result, err := ImportIssues(ctx, tmpDB, store, issues, Options{DryRun: true})
+	if err != nil {
+		t.Fatalf("Import failed: %v", err)
+	}
+	
+	// Should report that 1 issue would be created
+	if result.Created != 1 {
+		t.Errorf("Expected 1 would be created in dry run, got %d", result.Created)
+	}
+}
+
+func TestImportIssues_Dependencies(t *testing.T) {
+	ctx := context.Background()
+	
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+	
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+	
+	issues := []*types.Issue{
+		{
+			ID:        "test-abc123",
+			Title:     "Issue 1",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			Dependencies: []*types.Dependency{
+				{IssueID: "test-abc123", DependsOnID: "test-def456", Type: types.DepBlocks},
+			},
+		},
+		{
+			ID:        "test-def456",
+			Title:     "Issue 2",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		},
+	}
+	
+	result, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+	if err != nil {
+		t.Fatalf("Import failed: %v", err)
+	}
+	
+	if result.Created != 2 {
+		t.Errorf("Expected 2 created, got %d", result.Created)
+	}
+	
+	// Verify dependency was created
+	deps, err := store.GetDependencies(ctx, "test-abc123")
+	if err != nil {
+		t.Fatalf("Failed to get dependencies: %v", err)
+	}
+	if len(deps) != 1 {
+		t.Errorf("Expected 1 dependency, got %d", len(deps))
+	}
+}
+
+func TestImportIssues_Labels(t *testing.T) {
+	ctx := context.Background()
+	
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+	
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+	
+	issues := []*types.Issue{
+		{
+			ID:        "test-abc123",
+			Title:     "Test Issue",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			Labels:    []string{"bug", "critical"},
+		},
+	}
+	
+	result, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+	if err != nil {
+		t.Fatalf("Import failed: %v", err)
+	}
+	
+	if result.Created != 1 {
+		t.Errorf("Expected 1 created, got %d", result.Created)
+	}
+	
+	// Verify labels were created
+	retrieved, err := store.GetIssue(ctx, "test-abc123")
+	if err != nil {
+		t.Fatalf("Failed to retrieve issue: %v", err)
+	}
+	if len(retrieved.Labels) != 2 {
+		t.Errorf("Expected 2 labels, got %d", len(retrieved.Labels))
+	}
+}
+
+func TestGetOrCreateStore_ExistingStore(t *testing.T) {
+	ctx := context.Background()
+	
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+	
+	result, needClose, err := getOrCreateStore(ctx, tmpDB, store)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	if needClose {
+		t.Error("Expected needClose=false for existing store")
+	}
+	if result != store {
+		t.Error("Expected same store instance")
+	}
+}
+
+func TestGetOrCreateStore_NewStore(t *testing.T) {
+	ctx := context.Background()
+	
+	tmpDB := t.TempDir() + "/test.db"
+	
+	// Create initial database
+	initStore, err := sqlite.New(tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	initStore.Close()
+	
+	// Test creating new connection
+	result, needClose, err := getOrCreateStore(ctx, tmpDB, nil)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	defer result.Close()
+	
+	if !needClose {
+		t.Error("Expected needClose=true for new store")
+	}
+	if result == nil {
+		t.Error("Expected non-nil store")
+	}
+}
+
+func TestGetOrCreateStore_EmptyPath(t *testing.T) {
+	ctx := context.Background()
+	
+	_, _, err := getOrCreateStore(ctx, "", nil)
+	if err == nil {
+		t.Error("Expected error for empty database path")
+	}
+}
+
+func TestGetPrefixList(t *testing.T) {
+	tests := []struct {
+		name     string
+		prefixes map[string]int
+		want     []string
+	}{
+		{
+			name:     "single prefix",
+			prefixes: map[string]int{"test": 5},
+			want:     []string{"test- (5 issues)"},
+		},
+		{
+			name:     "multiple prefixes",
+			prefixes: map[string]int{"test": 3, "other": 2, "foo": 1},
+			want:     []string{"foo- (1 issues)", "other- (2 issues)", "test- (3 issues)"},
+		},
+		{
+			name:     "empty",
+			prefixes: map[string]int{},
+			want:     []string{},
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GetPrefixList(tt.prefixes)
+			if len(got) != len(tt.want) {
+				t.Errorf("Length mismatch: got %d, want %d", len(got), len(tt.want))
+				return
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("Index %d: got %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
 }
