@@ -45,12 +45,20 @@ Example:
 		// Get all issues
 		allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error fetching issues: %v\n", err)
-			os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Error fetching issues: %v\n", err)
+		os.Exit(1)
 		}
 
-		// Find duplicates
-		duplicateGroups := findDuplicateGroups(allIssues)
+		// Filter out closed issues - they're done, no point detecting duplicates
+		openIssues := make([]*types.Issue, 0, len(allIssues))
+	for _, issue := range allIssues {
+		if issue.Status != types.StatusClosed {
+			openIssues = append(openIssues, issue)
+		}
+	}
+
+	// Find duplicates (only among open issues)
+	duplicateGroups := findDuplicateGroups(openIssues)
 
 		if len(duplicateGroups) == 0 {
 			if !jsonOutput {
