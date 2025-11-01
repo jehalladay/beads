@@ -161,7 +161,7 @@ func (s *Server) handleCreate(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	s.emitMutation("create", issue.ID)
+	s.emitMutation(MutationCreate, issue.ID)
 
 	data, _ := json.Marshal(issue)
 	return Response{
@@ -195,7 +195,7 @@ func (s *Server) handleUpdate(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	s.emitMutation("update", updateArgs.ID)
+	s.emitMutation(MutationUpdate, updateArgs.ID)
 
 	issue, err := store.GetIssue(ctx, updateArgs.ID)
 	if err != nil {
@@ -232,7 +232,7 @@ func (s *Server) handleClose(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	s.emitMutation("update", closeArgs.ID)
+	s.emitMutation(MutationUpdate, closeArgs.ID)
 
 	issue, _ := store.GetIssue(ctx, closeArgs.ID)
 	data, _ := json.Marshal(issue)
