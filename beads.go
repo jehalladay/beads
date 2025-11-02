@@ -125,11 +125,25 @@ func NewSQLiteStorage(dbPath string) (Storage, error) {
 func FindDatabasePath() string {
 	// 1. Check environment variable
 	if envDB := os.Getenv("BEADS_DB"); envDB != "" {
-		return envDB
+		// Canonicalize the path to prevent nested .beads directories
+		if absDB, err := filepath.Abs(envDB); err == nil {
+			if canonical, err := filepath.EvalSymlinks(absDB); err == nil {
+				return canonical
+			}
+			return absDB // Return absolute path even if symlink resolution fails
+		}
+		return envDB // Fallback to original if Abs fails
 	}
 
 	// 2. Search for .beads/*.db in current directory and ancestors
 	if foundDB := findDatabaseInTree(); foundDB != "" {
+		// Canonicalize found path
+		if absDB, err := filepath.Abs(foundDB); err == nil {
+			if canonical, err := filepath.EvalSymlinks(absDB); err == nil {
+				return canonical
+			}
+			return absDB
+		}
 		return foundDB
 	}
 

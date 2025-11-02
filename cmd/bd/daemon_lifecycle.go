@@ -423,6 +423,16 @@ func startDaemon(interval time.Duration, autoCommit, autoPush bool, logFile, pid
 // setupDaemonLock acquires the daemon lock and writes PID file
 func setupDaemonLock(pidFile string, dbPath string, log daemonLogger) (*DaemonLock, error) {
 	beadsDir := filepath.Dir(pidFile)
+	
+	// Detect nested .beads directories (e.g., .beads/.beads/.beads/)
+	cleanPath := filepath.Clean(beadsDir)
+	if strings.Contains(cleanPath, string(filepath.Separator)+".beads"+string(filepath.Separator)+".beads") {
+		log.log("Error: Nested .beads directory detected: %s", cleanPath)
+		log.log("Hint: Do not run 'bd daemon' from inside .beads/ directory")
+		log.log("Hint: Use absolute paths for BEADS_DB or run from workspace root")
+		return nil, fmt.Errorf("nested .beads directory detected")
+	}
+	
 	lock, err := acquireDaemonLock(beadsDir, dbPath)
 	if err != nil {
 		if err == ErrDaemonLocked {
