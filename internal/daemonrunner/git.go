@@ -8,6 +8,48 @@ import (
 	"time"
 )
 
+// GitClient provides an interface for git operations to enable testing
+type GitClient interface {
+	HasUpstream() bool
+	HasChanges(ctx context.Context, filePath string) (bool, error)
+	Commit(ctx context.Context, filePath string, message string) error
+	Push(ctx context.Context) error
+	Pull(ctx context.Context) error
+}
+
+// DefaultGitClient implements GitClient using os/exec
+type DefaultGitClient struct{}
+
+// NewGitClient creates a new default git client
+func NewGitClient() GitClient {
+	return &DefaultGitClient{}
+}
+
+// HasUpstream checks if the current branch has an upstream configured
+func (g *DefaultGitClient) HasUpstream() bool {
+	return gitHasUpstream()
+}
+
+// HasChanges checks if the specified file has uncommitted changes
+func (g *DefaultGitClient) HasChanges(ctx context.Context, filePath string) (bool, error) {
+	return gitHasChanges(ctx, filePath)
+}
+
+// Commit commits the specified file
+func (g *DefaultGitClient) Commit(ctx context.Context, filePath string, message string) error {
+	return gitCommit(ctx, filePath, message)
+}
+
+// Push pushes to the current branch's upstream
+func (g *DefaultGitClient) Push(ctx context.Context) error {
+	return gitPush(ctx)
+}
+
+// Pull pulls from the current branch's upstream
+func (g *DefaultGitClient) Pull(ctx context.Context) error {
+	return gitPull(ctx)
+}
+
 // isGitRepo checks if we're in a git repository
 func isGitRepo() bool {
 	cmd := exec.Command("git", "rev-parse", "--git-dir")
@@ -47,6 +89,10 @@ func gitCommit(ctx context.Context, filePath string, message string) error {
 	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", message)
 	output, err := commitCmd.CombinedOutput()
 	if err != nil {
+		// Treat "nothing to commit" as success (idempotent)
+		if strings.Contains(strings.ToLower(string(output)), "nothing to commit") {
+			return nil
+		}
 		return fmt.Errorf("git commit failed: %w\n%s", err, output)
 	}
 
@@ -55,25 +101,7 @@ func gitCommit(ctx context.Context, filePath string, message string) error {
 
 // gitPull pulls from the current branch's upstream
 func gitPull(ctx context.Context) error {
-	// Get current branch name
-	branchCmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
-	branchOutput, err := branchCmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to get current branch: %w", err)
-	}
-	branch := strings.TrimSpace(string(branchOutput))
-
-	// Get remote name for current branch (usually "origin")
-	remoteCmd := exec.CommandContext(ctx, "git", "config", "--get", fmt.Sprintf("branch.%s.remote", branch))
-	remoteOutput, err := remoteCmd.Output()
-	if err != nil {
-		// If no remote configured, default to "origin"
-		remoteOutput = []byte("origin\n")
-	}
-	remote := strings.TrimSpace(string(remoteOutput))
-
-	// Pull with explicit remote and branch
-	cmd := exec.CommandContext(ctx, "git", "pull", remote, branch)
+	cmd := exec.CommandContext(ctx, "git", "pull", "--ff-only")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git pull failed: %w\n%s", err, output)
