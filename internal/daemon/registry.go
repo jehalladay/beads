@@ -78,6 +78,7 @@ func (r *Registry) writeEntries(entries []RegistryEntry) error {
 		return fmt.Errorf("failed to marshal registry: %w", err)
 	}
 
+	// nolint:gosec // G306: Registry file needs to be readable for daemon discovery
 	if err := os.WriteFile(r.path, data, 0644); err != nil {
 		return fmt.Errorf("failed to write registry: %w", err)
 	}

@@ -84,33 +84,33 @@ Use --health to check daemon health and metrics.`,
 		if os.Getenv("BD_DAEMON_FOREGROUND") != "1" {
 			// Check if daemon is already running
 			if isRunning, pid := isDaemonRunning(pidFile); isRunning {
-			// Check if running daemon has compatible version
-			socketPath := getSocketPathForPID(pidFile, global)
-			if client, err := rpc.TryConnectWithTimeout(socketPath, 1*time.Second); err == nil && client != nil {
-				health, healthErr := client.Health()
-				_ = client.Close()
-				
-				// If we can check version and it's compatible, exit
-				if healthErr == nil && health.Compatible {
-					fmt.Fprintf(os.Stderr, "Error: daemon already running (PID %d, version %s)\n", pid, health.Version)
+				// Check if running daemon has compatible version
+				socketPath := getSocketPathForPID(pidFile, global)
+				if client, err := rpc.TryConnectWithTimeout(socketPath, 1*time.Second); err == nil && client != nil {
+					health, healthErr := client.Health()
+					_ = client.Close()
+
+					// If we can check version and it's compatible, exit
+					if healthErr == nil && health.Compatible {
+						fmt.Fprintf(os.Stderr, "Error: daemon already running (PID %d, version %s)\n", pid, health.Version)
+						fmt.Fprintf(os.Stderr, "Use 'bd daemon --stop%s' to stop it first\n", boolToFlag(global, " --global"))
+						os.Exit(1)
+					}
+
+					// Version mismatch - auto-stop old daemon
+					if healthErr == nil && !health.Compatible {
+						fmt.Fprintf(os.Stderr, "Warning: daemon version mismatch (daemon: %s, client: %s)\n", health.Version, Version)
+						fmt.Fprintf(os.Stderr, "Stopping old daemon and starting new one...\n")
+						stopDaemon(pidFile)
+						// Continue with daemon startup
+					}
+				} else {
+					// Can't check version - assume incompatible
+					fmt.Fprintf(os.Stderr, "Error: daemon already running (PID %d)\n", pid)
 					fmt.Fprintf(os.Stderr, "Use 'bd daemon --stop%s' to stop it first\n", boolToFlag(global, " --global"))
 					os.Exit(1)
 				}
-				
-				// Version mismatch - auto-stop old daemon
-				if healthErr == nil && !health.Compatible {
-					fmt.Fprintf(os.Stderr, "Warning: daemon version mismatch (daemon: %s, client: %s)\n", health.Version, Version)
-					fmt.Fprintf(os.Stderr, "Stopping old daemon and starting new one...\n")
-					stopDaemon(pidFile)
-					// Continue with daemon startup
-				}
-			} else {
-				// Can't check version - assume incompatible
-				fmt.Fprintf(os.Stderr, "Error: daemon already running (PID %d)\n", pid)
-				fmt.Fprintf(os.Stderr, "Use 'bd daemon --stop%s' to stop it first\n", boolToFlag(global, " --global"))
-				os.Exit(1)
 			}
-		}
 		}
 
 		// Global daemon doesn't support auto-commit/auto-push (no sync loop)
@@ -231,15 +231,16 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 			errMsg += fmt.Sprintf("\nBeads requires a single canonical database: %s\n", beads.CanonicalDatabaseName)
 			errMsg += "Run 'bd init' to migrate legacy databases or manually remove old databases\n"
 			errMsg += "Or run 'bd doctor' for more diagnostics"
-			
+
 			log.log(errMsg)
-			
+
 			// Write error to file so user can see it without checking logs
 			errFile := filepath.Join(beadsDir, "daemon-error")
+			// nolint:gosec // G306: Error file needs to be readable for debugging
 			if err := os.WriteFile(errFile, []byte(errMsg), 0644); err != nil {
 				log.log("Warning: could not write daemon-error file: %v", err)
 			}
-			
+
 			os.Exit(1)
 		}
 	}
@@ -286,18 +287,18 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 		log.log("Error: failed to read database version: %v", err)
 		os.Exit(1)
 	}
-	
+
 	if dbVersion != "" && dbVersion != Version {
 		log.log("Warning: Database schema version mismatch")
 		log.log("  Database version: %s", dbVersion)
 		log.log("  Daemon version: %s", Version)
 		log.log("  Auto-upgrading database to daemon version...")
-		
+
 		// Auto-upgrade database to daemon version
 		// The daemon operates on its own database, so it should always use its own version
 		if err := store.SetMetadata(versionCtx, "bd_version", Version); err != nil {
 			log.log("Error: failed to update database version: %v", err)
-			
+
 			// Allow override via environment variable for emergencies
 			if os.Getenv("BEADS_IGNORE_VERSION_MISMATCH") != "1" {
 				os.Exit(1)

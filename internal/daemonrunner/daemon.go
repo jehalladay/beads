@@ -27,7 +27,7 @@ type Daemon struct {
 	server *rpc.Server
 	lock   io.Closer
 	cancel context.CancelFunc
-	
+
 	// Version is the daemon's build version
 	Version string
 }
@@ -62,7 +62,7 @@ func (d *Daemon) Start() error {
 	defer func() { _ = d.lock.Close() }()
 	defer func() { _ = os.Remove(d.cfg.PIDFile) }()
 
-	d.log.log("Daemon started (interval: %v, auto-commit: %v, auto-push: %v)", 
+	d.log.log("Daemon started (interval: %v, auto-commit: %v, auto-push: %v)",
 		d.cfg.Interval, d.cfg.AutoCommit, d.cfg.AutoPush)
 
 	// Handle global daemon differently
@@ -178,8 +178,6 @@ func getGlobalBeadsDir() (string, error) {
 	return beadsDir, nil
 }
 
-
-
 func (d *Daemon) setupLock() (io.Closer, error) {
 	beadsDir := filepath.Dir(d.cfg.PIDFile)
 	lock, err := acquireDaemonLock(beadsDir, d.cfg.DBPath, d.Version)
@@ -255,6 +253,7 @@ func (d *Daemon) validateSingleDatabase() error {
 
 			// Write error to file so user can see it without checking logs
 			errFile := filepath.Join(d.cfg.BeadsDir, "daemon-error")
+			// nolint:gosec // G306: Error file needs to be readable for debugging
 			_ = os.WriteFile(errFile, []byte(errMsg), 0644)
 
 			return fmt.Errorf("multiple database files found")
@@ -283,7 +282,7 @@ func (d *Daemon) validateSchemaVersion() error {
 	}
 
 	mismatch, missing := checkVersionMismatch(dbVersion, d.Version)
-	
+
 	if mismatch {
 		d.log.log("Error: Database schema version mismatch")
 		d.log.log("  Database version: %s", dbVersion)

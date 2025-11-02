@@ -373,15 +373,18 @@ func saveMappingFile(path string, mapping map[string]string) error {
 		return err
 	}
 	
+	// nolint:gosec // G306: JSONL file needs to be readable by other tools
 	return os.WriteFile(path, data, 0644)
 }
 
 // copyFile copies a file from src to dst
 func copyFile(src, dst string) error {
+	// nolint:gosec // G304: src is validated migration backup path
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
+	// nolint:gosec // G306: JSONL file needs to be readable by other tools
 	return os.WriteFile(dst, data, 0644)
 }
 

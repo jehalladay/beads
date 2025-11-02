@@ -517,6 +517,7 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error)
 	}
 
 	// Set appropriate file permissions (0644: rw-r--r--)
+	// nolint:gosec // G302: JSONL needs to be readable by other tools
 	if err := os.Chmod(jsonlPath, 0644); err != nil {
 		// Non-fatal - file is already written
 		if os.Getenv("BD_DEBUG") != "" {

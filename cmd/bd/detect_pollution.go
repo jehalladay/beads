@@ -242,6 +242,7 @@ func detectTestPollution(issues []*types.Issue) []pollutionResult {
 
 func backupPollutedIssues(polluted []pollutionResult, path string) error {
 	// Create backup file
+	// nolint:gosec // G304: path is provided by user as explicit backup location
 	file, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("failed to create backup file: %w", err)

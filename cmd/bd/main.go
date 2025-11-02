@@ -153,16 +153,16 @@ var rootCmd = &cobra.Command{
 
 		// Initialize database path
 		if dbPath == "" {
-		// Use public API to find database (same logic as extensions)
-		if foundDB := beads.FindDatabasePath(); foundDB != "" {
-		 dbPath = foundDB
-		} else {
-		 // No database found - error out instead of falling back to ~/.beads
-			fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
-		 fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
-		 fmt.Fprintf(os.Stderr, "      or set BEADS_DB environment variable to specify a database\n")
-		os.Exit(1)
-		}
+			// Use public API to find database (same logic as extensions)
+			if foundDB := beads.FindDatabasePath(); foundDB != "" {
+				dbPath = foundDB
+			} else {
+				// No database found - error out instead of falling back to ~/.beads
+				fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
+				fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
+				fmt.Fprintf(os.Stderr, "      or set BEADS_DB environment variable to specify a database\n")
+				os.Exit(1)
+			}
 		}
 
 		// Set actor from flag, viper (env), or default
@@ -343,6 +343,7 @@ var rootCmd = &cobra.Command{
 						// Check for daemon-error file to provide better error message
 						if beadsDir := filepath.Dir(socketPath); beadsDir != "" {
 							errFile := filepath.Join(beadsDir, "daemon-error")
+							// nolint:gosec // G304: errFile is derived from secure beads directory
 							if errMsg, readErr := os.ReadFile(errFile); readErr == nil && len(errMsg) > 0 {
 								fmt.Fprintf(os.Stderr, "\n%s\n", string(errMsg))
 								daemonStatus.Detail = string(errMsg)

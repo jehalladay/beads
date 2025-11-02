@@ -75,6 +75,7 @@ func initializeNoDbMode() error {
 
 // loadIssuesFromJSONL reads all issues from a JSONL file
 func loadIssuesFromJSONL(path string) ([]*types.Issue, error) {
+	// nolint:gosec // G304: path is validated JSONL file from findJSONLPath
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err

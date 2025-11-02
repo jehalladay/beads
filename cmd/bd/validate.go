@@ -374,6 +374,7 @@ func validateGitConflicts(ctx context.Context, fix bool) checkResult {
 
 	// Check JSONL file for conflict markers
 	jsonlPath := findJSONLPath()
+	// nolint:gosec // G304: jsonlPath is validated JSONL file from findJSONLPath
 	data, err := os.ReadFile(jsonlPath)
 	if err != nil {
 		if os.IsNotExist(err) {
