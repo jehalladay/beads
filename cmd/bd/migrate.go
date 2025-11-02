@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 	_ "modernc.org/sqlite"
 )
 
@@ -262,6 +263,34 @@ This command:
 			}
 
 			ctx := context.Background()
+			
+			// Detect and set issue_prefix if missing (fixes GH #201)
+			prefix, err := store.GetConfig(ctx, "issue_prefix")
+			if err != nil || prefix == "" {
+				// Get first issue to detect prefix
+				issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+				if err == nil && len(issues) > 0 {
+					detectedPrefix := utils.ExtractIssuePrefix(issues[0].ID)
+					if detectedPrefix != "" {
+						if err := store.SetConfig(ctx, "issue_prefix", detectedPrefix); err != nil {
+							_ = store.Close()
+							if jsonOutput {
+								outputJSON(map[string]interface{}{
+									"error":   "prefix_detection_failed",
+									"message": err.Error(),
+								})
+							} else {
+								fmt.Fprintf(os.Stderr, "Error: failed to set issue prefix: %v\n", err)
+							}
+							os.Exit(1)
+						}
+						if !jsonOutput {
+							color.Green("✓ Detected and set issue prefix: %s\n", detectedPrefix)
+						}
+					}
+				}
+			}
+			
 			if err := store.SetMetadata(ctx, "bd_version", Version); err != nil {
 				_ = store.Close()
 				if jsonOutput {
