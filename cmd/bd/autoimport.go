@@ -133,7 +133,16 @@ func findGitRoot() string {
 	if err != nil {
 		return ""
 	}
-	return string(bytes.TrimSpace(output))
+	root := string(bytes.TrimSpace(output))
+	// On Windows, git returns Unix-style paths (/c/Users/...) but we need
+	// Windows-style paths (C:\Users\...) for filepath.Rel to work correctly
+	if runtime.GOOS == "windows" && len(root) > 0 && root[0] == '/' {
+		// Convert /c/Users/... to C:\Users\...
+		if len(root) >= 3 && root[2] == '/' {
+			root = string(root[1]) + ":" + filepath.FromSlash(root[2:])
+		}
+	}
+	return root
 }
 
 // importFromGit imports issues from git HEAD
