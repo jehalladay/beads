@@ -390,13 +390,9 @@ var rootCmd = &cobra.Command{
 					}
 				}
 			} else {
-				// Auto-start disabled - only override if we don't already have a health failure
-				if daemonStatus.FallbackReason != FallbackHealthFailed {
-					// For connect failures, mention that auto-start was disabled
-					if daemonStatus.FallbackReason == FallbackConnectFailed {
-						daemonStatus.FallbackReason = FallbackAutoStartDisabled
-					}
-				}
+				// Auto-start disabled - preserve the actual failure reason
+				// Don't override connect_failed or health_failed with auto_start_disabled
+				// This preserves important diagnostic info (daemon crashed vs not running)
 				if os.Getenv("BD_DEBUG") != "" {
 					fmt.Fprintf(os.Stderr, "Debug: auto-start disabled by BEADS_AUTO_START_DAEMON\n")
 				}
