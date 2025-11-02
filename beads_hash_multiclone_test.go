@@ -5,9 +5,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// getBDPath returns the correct path to the bd binary for the current OS
+func getBDPath() string {
+	if runtime.GOOS == "windows" {
+		return "./bd.exe"
+	}
+	return "./bd"
+}
 
 // TestHashIDs_MultiCloneConverge verifies that hash-based IDs work correctly
 // across multiple clones creating different issues. With hash IDs, each unique
@@ -15,12 +24,12 @@ import (
 func TestHashIDs_MultiCloneConverge(t *testing.T) {
 	tmpDir := t.TempDir()
 	
-	bdPath, err := filepath.Abs("./bd")
+	bdPath, err := filepath.Abs(getBDPath())
 	if err != nil {
 		t.Fatalf("Failed to get bd path: %v", err)
 	}
 	if _, err := os.Stat(bdPath); err != nil {
-		t.Fatalf("bd binary not found at %s - run 'go build -o bd ./cmd/bd' first", bdPath)
+		t.Fatalf("bd binary not found at %s - run 'go build -v ./cmd/bd' first", bdPath)
 	}
 	
 	// Setup remote and 3 clones
@@ -79,12 +88,12 @@ func TestHashIDs_MultiCloneConverge(t *testing.T) {
 func TestHashIDs_IdenticalContentDedup(t *testing.T) {
 	tmpDir := t.TempDir()
 	
-	bdPath, err := filepath.Abs("./bd")
+	bdPath, err := filepath.Abs(getBDPath())
 	if err != nil {
 		t.Fatalf("Failed to get bd path: %v", err)
 	}
 	if _, err := os.Stat(bdPath); err != nil {
-		t.Fatalf("bd binary not found at %s - run 'go build -o bd ./cmd/bd' first", bdPath)
+		t.Fatalf("bd binary not found at %s - run 'go build -v ./cmd/bd' first", bdPath)
 	}
 	
 	// Setup remote and 2 clones
