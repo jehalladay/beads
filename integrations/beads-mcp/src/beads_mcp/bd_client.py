@@ -129,6 +129,16 @@ class BdClientBase(ABC):
         """Initialize a new beads database."""
         pass
 
+    @abstractmethod
+    async def inspect_migration(self) -> dict:
+        """Get migration plan and database state for agent analysis."""
+        pass
+
+    @abstractmethod
+    async def get_schema_info(self) -> dict:
+        """Get current database schema for inspection."""
+        pass
+
 
 class BdCliClient(BdClientBase):
     """Client for calling bd CLI commands and parsing JSON output."""
@@ -574,6 +584,28 @@ class BdCliClient(BdClientBase):
             return []
 
         return [BlockedIssue.model_validate(issue) for issue in data]
+
+    async def inspect_migration(self) -> dict:
+        """Get migration plan and database state for agent analysis.
+
+        Returns:
+            Migration plan dict with registered_migrations, warnings, etc.
+        """
+        data = await self._run_command("migrate", "--inspect")
+        if not isinstance(data, dict):
+            raise BdCommandError("Invalid response for inspect_migration")
+        return data
+
+    async def get_schema_info(self) -> dict:
+        """Get current database schema for inspection.
+
+        Returns:
+            Schema info dict with tables, version, config, sample IDs, etc.
+        """
+        data = await self._run_command("info", "--schema")
+        if not isinstance(data, dict):
+            raise BdCommandError("Invalid response for get_schema_info")
+        return data
 
     async def init(self, params: InitParams | None = None) -> str:
         """Initialize bd in current directory.

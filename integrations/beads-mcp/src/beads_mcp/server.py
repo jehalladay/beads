@@ -18,7 +18,9 @@ from beads_mcp.tools import (
     beads_blocked,
     beads_close_issue,
     beads_create_issue,
+    beads_get_schema_info,
     beads_init,
+    beads_inspect_migration,
     beads_list_issues,
     beads_quickstart,
     beads_ready_work,
@@ -510,6 +512,39 @@ async def debug_env(workspace_root: str | None = None) -> str:
         if not key.startswith("_"):  # Skip internal vars
             info.append(f"{key}={value}\n")
     return "".join(info)
+
+
+@mcp.tool(
+    name="inspect_migration",
+    description="Get migration plan and database state for agent analysis.",
+)
+@with_workspace
+async def inspect_migration(workspace_root: str | None = None) -> dict:
+    """Get migration plan and database state for agent analysis.
+    
+    AI agents should:
+    1. Review registered_migrations to understand what will run
+    2. Check warnings array for issues (missing config, version mismatch)
+    3. Verify missing_config is empty before migrating
+    4. Check invariants_to_check to understand safety guarantees
+    
+    Returns migration plan, current db state, warnings, and invariants.
+    """
+    return await beads_inspect_migration()
+
+
+@mcp.tool(
+    name="get_schema_info",
+    description="Get current database schema for inspection.",
+)
+@with_workspace
+async def get_schema_info(workspace_root: str | None = None) -> dict:
+    """Get current database schema for inspection.
+    
+    Returns tables, schema version, config, sample issue IDs, and detected prefix.
+    Useful for verifying database state before migrations.
+    """
+    return await beads_get_schema_info()
 
 
 async def async_main() -> None:
