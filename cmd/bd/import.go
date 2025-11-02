@@ -176,8 +176,9 @@ Behavior:
 			fmt.Fprintf(os.Stderr, "\nAll text and dependency references have been updated.\n")
 		}
 
-		// Schedule auto-flush after import completes
-		markDirtyAndScheduleFlush()
+		// Flush immediately after import (no debounce) to ensure daemon sees changes
+		// Without this, daemon FileWatcher won't detect the import for up to 30s
+		flushToJSONL()
 
 		// Print summary
 		fmt.Fprintf(os.Stderr, "Import complete: %d created, %d updated", result.Created, result.Updated)
