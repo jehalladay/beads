@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stderr,  # Ensure logs don't pollute stdio protocol
 )
 
 T = TypeVar("T")
@@ -228,8 +229,15 @@ async def set_context(workspace_root: str) -> str:
     Returns:
         Confirmation message with resolved paths
     """
-    # Resolve to git repo root if possible
-    resolved_root = _resolve_workspace_root(workspace_root)
+    # Resolve to git repo root if possible (run in thread to avoid blocking event loop)
+    try:
+        resolved_root = await asyncio.wait_for(
+            asyncio.to_thread(_resolve_workspace_root, workspace_root),
+            timeout=2.0,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"Git detection timed out, using provided path: {workspace_root}")
+        resolved_root = os.path.abspath(workspace_root)
     
     # Always set working directory and context flag
     os.environ["BEADS_WORKING_DIR"] = resolved_root
