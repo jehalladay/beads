@@ -257,20 +257,14 @@ func TestBranchExists(t *testing.T) {
 		}
 		currentBranch := strings.TrimSpace(string(output))
 
-		exists, err := wm.branchExists(currentBranch)
-		if err != nil {
-			t.Fatalf("branchExists failed: %v", err)
-		}
+		exists := wm.branchExists(currentBranch)
 		if !exists {
 			t.Errorf("Current branch %s should exist", currentBranch)
 		}
 	})
 
 	t.Run("non-existent branch returns false", func(t *testing.T) {
-		exists, err := wm.branchExists("does-not-exist-branch")
-		if err != nil {
-			t.Fatalf("branchExists failed: %v", err)
-		}
+		exists := wm.branchExists("does-not-exist-branch")
 		if exists {
 			t.Error("Non-existent branch should return false")
 		}
