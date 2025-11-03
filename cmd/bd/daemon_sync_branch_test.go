@@ -737,6 +737,479 @@ func newTestSyncBranchLogger() (daemonLogger, *string) {
 	return logger, &messages
 }
 
+// TestSyncBranchConfigChange tests changing sync.branch after worktree exists
+func TestSyncBranchConfigChange(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	initTestGitRepo(t, tmpDir)
+	initMainBranch(t, tmpDir)
+
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create .beads dir: %v", err)
+	}
+
+	dbPath := filepath.Join(beadsDir, "test.db")
+	store, err := sqlite.New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Set initial sync.branch
+	syncBranch1 := "beads-sync-v1"
+	if err := store.SetConfig(ctx, "sync.branch", syncBranch1); err != nil {
+		t.Fatalf("Failed to set sync.branch: %v", err)
+	}
+
+	issue := &types.Issue{
+		Title:     "Test config change",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+		t.Fatalf("Failed to create issue: %v", err)
+	}
+
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	if err := exportToJSONLWithStore(ctx, store, jsonlPath); err != nil {
+		t.Fatalf("Failed to export: %v", err)
+	}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
+
+	log, _ := newTestSyncBranchLogger()
+
+	// First commit to v1 branch
+	committed, err := syncBranchCommitAndPush(ctx, store, jsonlPath, false, log)
+	if err != nil {
+		t.Fatalf("First commit failed: %v", err)
+	}
+	if !committed {
+		t.Error("Expected first commit to succeed")
+	}
+
+	// Verify v1 worktree exists
+	worktree1Path := filepath.Join(tmpDir, ".git", "beads-worktrees", syncBranch1)
+	if _, err := os.Stat(worktree1Path); os.IsNotExist(err) {
+		t.Errorf("Worktree v1 not created at %s", worktree1Path)
+	}
+
+	// Change sync.branch to v2
+	syncBranch2 := "beads-sync-v2"
+	if err := store.SetConfig(ctx, "sync.branch", syncBranch2); err != nil {
+		t.Fatalf("Failed to change sync.branch: %v", err)
+	}
+
+	// Update issue to create new changes
+	if err := store.UpdateIssue(ctx, issue.ID, map[string]interface{}{
+		"priority": 2,
+	}, "test"); err != nil {
+		t.Fatalf("Failed to update issue: %v", err)
+	}
+
+	if err := exportToJSONLWithStore(ctx, store, jsonlPath); err != nil {
+		t.Fatalf("Failed to export: %v", err)
+	}
+
+	// Commit to v2 branch (should create new worktree)
+	committed, err = syncBranchCommitAndPush(ctx, store, jsonlPath, false, log)
+	if err != nil {
+		t.Fatalf("Second commit failed: %v", err)
+	}
+	if !committed {
+		t.Error("Expected second commit to succeed")
+	}
+
+	// Verify v2 worktree exists
+	worktree2Path := filepath.Join(tmpDir, ".git", "beads-worktrees", syncBranch2)
+	if _, err := os.Stat(worktree2Path); os.IsNotExist(err) {
+		t.Errorf("Worktree v2 not created at %s", worktree2Path)
+	}
+
+	// Verify both branches exist
+	cmd := exec.Command("git", "branch", "--list")
+	cmd.Dir = tmpDir
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("Failed to list branches: %v", err)
+	}
+	branches := string(output)
+	if !strings.Contains(branches, syncBranch1) {
+		t.Errorf("Branch %s not found", syncBranch1)
+	}
+	if !strings.Contains(branches, syncBranch2) {
+		t.Errorf("Branch %s not found", syncBranch2)
+	}
+
+	// Verify both worktrees exist and are valid
+	if _, err := os.Stat(worktree1Path); err != nil {
+		t.Error("Old worktree v1 should still exist")
+	}
+	if _, err := os.Stat(worktree2Path); err != nil {
+		t.Error("New worktree v2 should exist")
+	}
+}
+
+// TestSyncBranchMultipleConcurrentClones tests three clones working simultaneously
+func TestSyncBranchMultipleConcurrentClones(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Setup remote and three clones
+	tmpDir := t.TempDir()
+	remoteDir := filepath.Join(tmpDir, "remote")
+	os.MkdirAll(remoteDir, 0755)
+	runGitCmd(t, remoteDir, "init", "--bare")
+
+	syncBranch := "beads-sync"
+
+	// Helper to setup a clone
+	setupClone := func(name string) (string, *sqlite.SQLiteStorage) {
+		cloneDir := filepath.Join(tmpDir, name)
+		runGitCmd(t, tmpDir, "clone", remoteDir, cloneDir)
+		configureGit(t, cloneDir)
+
+		beadsDir := filepath.Join(cloneDir, ".beads")
+		os.MkdirAll(beadsDir, 0755)
+		dbPath := filepath.Join(beadsDir, "test.db")
+		store, _ := sqlite.New(dbPath)
+
+		ctx := context.Background()
+		store.SetConfig(ctx, "issue_prefix", "test")
+		store.SetConfig(ctx, "sync.branch", syncBranch)
+
+		return cloneDir, store
+	}
+
+	// Setup three clones
+	clone1Dir, store1 := setupClone("clone1")
+	defer store1.Close()
+	clone2Dir, store2 := setupClone("clone2")
+	defer store2.Close()
+	clone3Dir, store3 := setupClone("clone3")
+	defer store3.Close()
+
+	ctx := context.Background()
+
+	// Initial commit on main
+	initMainBranch(t, clone1Dir)
+	runGitCmd(t, clone1Dir, "push", "origin", "master")
+
+	oldWd, _ := os.Getwd()
+	defer os.Chdir(oldWd)
+
+	// Clone1: Create and push issue A
+	os.Chdir(clone1Dir)
+	issueA := &types.Issue{
+		Title:     "Issue A from clone1",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	store1.CreateIssue(ctx, issueA, "agent1")
+	jsonlPath1 := filepath.Join(clone1Dir, ".beads", "issues.jsonl")
+	exportToJSONLWithStore(ctx, store1, jsonlPath1)
+
+	log1, _ := newTestSyncBranchLogger()
+	committed, err := syncBranchCommitAndPush(ctx, store1, jsonlPath1, true, log1)
+	if err != nil || !committed {
+		t.Fatalf("Clone1 commit failed: err=%v, committed=%v", err, committed)
+	}
+
+	// Clone2: Fetch, pull, create issue B, push
+	os.Chdir(clone2Dir)
+	runGitCmd(t, clone2Dir, "fetch", "origin")
+	log2, _ := newTestSyncBranchLogger()
+	syncBranchPull(ctx, store2, log2)
+	jsonlPath2 := filepath.Join(clone2Dir, ".beads", "issues.jsonl")
+	importToJSONLWithStore(ctx, store2, jsonlPath2)
+
+	issueB := &types.Issue{
+		Title:     "Issue B from clone2",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	store2.CreateIssue(ctx, issueB, "agent2")
+	exportToJSONLWithStore(ctx, store2, jsonlPath2)
+	committed, err = syncBranchCommitAndPush(ctx, store2, jsonlPath2, true, log2)
+	if err != nil || !committed {
+		t.Fatalf("Clone2 commit failed: err=%v, committed=%v", err, committed)
+	}
+
+	// Clone3: Fetch, pull, create issue C, push
+	os.Chdir(clone3Dir)
+	runGitCmd(t, clone3Dir, "fetch", "origin")
+	log3, _ := newTestSyncBranchLogger()
+	syncBranchPull(ctx, store3, log3)
+	jsonlPath3 := filepath.Join(clone3Dir, ".beads", "issues.jsonl")
+	importToJSONLWithStore(ctx, store3, jsonlPath3)
+
+	issueC := &types.Issue{
+		Title:     "Issue C from clone3",
+		Status:    types.StatusOpen,
+		Priority:  3,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	store3.CreateIssue(ctx, issueC, "agent3")
+	exportToJSONLWithStore(ctx, store3, jsonlPath3)
+	committed, err = syncBranchCommitAndPush(ctx, store3, jsonlPath3, true, log3)
+	if err != nil || !committed {
+		t.Fatalf("Clone3 commit failed: err=%v, committed=%v", err, committed)
+	}
+
+	// All clones pull final state
+	os.Chdir(clone1Dir)
+	syncBranchPull(ctx, store1, log1)
+	importToJSONLWithStore(ctx, store1, jsonlPath1)
+
+	os.Chdir(clone2Dir)
+	syncBranchPull(ctx, store2, log2)
+	importToJSONLWithStore(ctx, store2, jsonlPath2)
+
+	// Verify all three issues exist in all clones
+	verifyIssueCount := func(store *sqlite.SQLiteStorage, expected int, cloneName string) {
+		issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+		if err != nil {
+			t.Errorf("%s: Failed to search issues: %v", cloneName, err)
+		}
+		if len(issues) != expected {
+			t.Errorf("%s: Expected %d issues, got %d", cloneName, expected, len(issues))
+		}
+	}
+
+	verifyIssueCount(store1, 3, "clone1")
+	verifyIssueCount(store2, 3, "clone2")
+	verifyIssueCount(store3, 3, "clone3")
+
+	// Verify specific issues exist
+	verifyIssueExists := func(store *sqlite.SQLiteStorage, id, cloneName string) {
+		_, err := store.GetIssue(ctx, id)
+		if err != nil {
+			t.Errorf("%s: Issue %s not found: %v", cloneName, id, err)
+		}
+	}
+
+	verifyIssueExists(store1, issueA.ID, "clone1")
+	verifyIssueExists(store1, issueB.ID, "clone1")
+	verifyIssueExists(store1, issueC.ID, "clone1")
+}
+
+// TestSyncBranchPerformance tests that sync branch operations have acceptable overhead
+func TestSyncBranchPerformance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping performance test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	initTestGitRepo(t, tmpDir)
+	initMainBranch(t, tmpDir)
+
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	os.MkdirAll(beadsDir, 0755)
+
+	dbPath := filepath.Join(beadsDir, "test.db")
+	store, err := sqlite.New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	store.SetConfig(ctx, "issue_prefix", "test")
+	store.SetConfig(ctx, "sync.branch", "beads-sync")
+
+	// Create initial issue
+	issue := &types.Issue{
+		Title:     "Performance test issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	store.CreateIssue(ctx, issue, "test")
+
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	exportToJSONLWithStore(ctx, store, jsonlPath)
+
+	oldWd, _ := os.Getwd()
+	defer os.Chdir(oldWd)
+	os.Chdir(tmpDir)
+
+	log, _ := newTestSyncBranchLogger()
+
+	// First commit (creates worktree - expected to be slower)
+	start := time.Now()
+	committed, err := syncBranchCommitAndPush(ctx, store, jsonlPath, false, log)
+	firstDuration := time.Since(start)
+	if err != nil || !committed {
+		t.Fatalf("First commit failed: err=%v, committed=%v", err, committed)
+	}
+
+	t.Logf("First commit (with worktree creation): %v", firstDuration)
+
+	// Subsequent commits (should be fast)
+	const iterations = 5
+	var totalDuration time.Duration
+
+	for i := 0; i < iterations; i++ {
+		// Make a small change
+		store.UpdateIssue(ctx, issue.ID, map[string]interface{}{
+			"priority": (i % 4) + 1,
+		}, "test")
+		exportToJSONLWithStore(ctx, store, jsonlPath)
+
+		start = time.Now()
+		committed, err = syncBranchCommitAndPush(ctx, store, jsonlPath, false, log)
+		duration := time.Since(start)
+		totalDuration += duration
+
+		if err != nil || !committed {
+			t.Fatalf("Commit %d failed: err=%v, committed=%v", i+1, err, committed)
+		}
+
+		t.Logf("Commit %d: %v", i+1, duration)
+	}
+
+	avgDuration := totalDuration / iterations
+	maxAllowed := 150 * time.Millisecond
+
+	t.Logf("Average commit time: %v (max allowed: %v)", avgDuration, maxAllowed)
+
+	if avgDuration > maxAllowed {
+		t.Errorf("Average commit overhead %v exceeds maximum allowed %v", avgDuration, maxAllowed)
+	}
+}
+
+// TestSyncBranchNetworkFailure tests graceful handling of network errors
+func TestSyncBranchNetworkFailure(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	initTestGitRepo(t, tmpDir)
+	initMainBranch(t, tmpDir)
+
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	os.MkdirAll(beadsDir, 0755)
+
+	dbPath := filepath.Join(beadsDir, "test.db")
+	store, err := sqlite.New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	store.SetConfig(ctx, "issue_prefix", "test")
+	store.SetConfig(ctx, "sync.branch", "beads-sync")
+
+	// Create issue
+	issue := &types.Issue{
+		Title:     "Test network failure",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	store.CreateIssue(ctx, issue, "test")
+
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	exportToJSONLWithStore(ctx, store, jsonlPath)
+
+	oldWd, _ := os.Getwd()
+	defer os.Chdir(oldWd)
+	os.Chdir(tmpDir)
+
+	log, logMsgs := newTestSyncBranchLogger()
+
+	// Commit locally (without push to simulate offline mode)
+	committed, err := syncBranchCommitAndPush(ctx, store, jsonlPath, false, log)
+	if err != nil {
+		t.Fatalf("Local commit failed: %v", err)
+	}
+	if !committed {
+		t.Error("Expected commit to succeed locally")
+	}
+
+	// Now try to push to non-existent remote (simulates network failure)
+	// Set up a bogus remote
+	runGitCmd(t, tmpDir, "remote", "add", "origin", "https://invalid-remote.example.com/repo.git")
+
+	// Update issue
+	store.UpdateIssue(ctx, issue.ID, map[string]interface{}{
+		"priority": 2,
+	}, "test")
+	exportToJSONLWithStore(ctx, store, jsonlPath)
+
+	// Try commit with push - should handle network error gracefully
+	committed, err = syncBranchCommitAndPush(ctx, store, jsonlPath, true, log)
+
+	// The commit should succeed locally even if push fails
+	// (Current implementation may vary - this documents expected behavior)
+	pushFailed := false
+	if err != nil {
+		// Network error is acceptable - verify it's a git/network error
+		if !strings.Contains(err.Error(), "git") && !strings.Contains(err.Error(), "push") {
+			t.Errorf("Expected git/push error, got: %v", err)
+		}
+		t.Logf("Network error (expected): %v", err)
+		pushFailed = true
+	}
+
+	// Verify local commit still succeeded
+	worktreePath := filepath.Join(tmpDir, ".git", "beads-worktrees", "beads-sync")
+	cmd := exec.Command("git", "-C", worktreePath, "log", "--oneline")
+	output, cmdErr := cmd.Output()
+	if cmdErr != nil {
+		t.Fatalf("Failed to get log: %v", cmdErr)
+	}
+
+	// Should have at least 2 commits (initial + update)
+	commits := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(commits) < 2 {
+		t.Errorf("Expected at least 2 commits, got %d", len(commits))
+	}
+
+	// Verify log contains appropriate messages
+	// If push failed, we might not have the success message
+	if !pushFailed {
+		if !strings.Contains(*logMsgs, "Committed") || !strings.Contains(*logMsgs, "beads-sync") {
+			t.Error("Expected commit success message in log")
+		}
+	}
+}
+
 // initMainBranch creates an initial commit on main branch
 // The JSONL file should not exist yet when this is called
 func initMainBranch(t *testing.T, dir string) {
