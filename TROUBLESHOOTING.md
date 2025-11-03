@@ -29,6 +29,37 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
+### Wrong version of bd running / Multiple bd binaries in PATH
+
+If `bd version` shows an unexpected version (e.g., older than what you just installed), you likely have multiple `bd` binaries in your PATH.
+
+**Diagnosis:**
+```bash
+# Check all bd binaries in PATH
+which -a bd
+
+# Example output showing conflict:
+# /Users/you/go/bin/bd        <- From go install (older)
+# /opt/homebrew/bin/bd        <- From Homebrew (newer)
+```
+
+**Solution:**
+```bash
+# Remove old go install version
+rm ~/go/bin/bd
+
+# Or remove mise-managed Go installs
+rm ~/.local/share/mise/installs/go/*/bin/bd
+
+# Verify you're using the correct version
+which bd        # Should show /opt/homebrew/bin/bd or your package manager path
+bd version      # Should show the expected version
+```
+
+**Why this happens:** If you previously installed bd via `go install`, the binary was placed in `~/go/bin/`. When you later install via Homebrew or another package manager, the old `~/go/bin/bd` may appear earlier in your PATH, causing the wrong version to run.
+
+**Recommendation:** Choose one installation method (Homebrew recommended) and stick with it. Avoid mixing `go install` with package managers.
+
 ### `zsh: killed bd` or crashes on macOS
 
 Some users report crashes when running `bd init` or other commands on macOS. This is typically caused by CGO/SQLite compatibility issues.
