@@ -4,7 +4,7 @@ bd init --prefix test
 # Create issue and capture its hash ID
 bd create 'Issue to close'
 cp stdout issue.txt
-exec sh -c 'grep -oE "test-[a-f0-9]+" issue.txt > issue_id.txt'
+exec sh -c 'grep -oE "test-[a-z0-9]+" issue.txt > issue_id.txt'
 
 # Close the issue
 exec sh -c 'bd close $(cat issue_id.txt) --reason Fixed'

@@ -4,7 +4,7 @@ bd init --prefix test
 # Create issues
 bd create 'First issue'
 cp stdout first.txt
-exec sh -c 'grep -oE "test-[a-f0-9]+" first.txt > first_id.txt'
+exec sh -c 'grep -oE "test-[a-z0-9]+" first.txt > first_id.txt'
 
 bd create 'Second issue'
 

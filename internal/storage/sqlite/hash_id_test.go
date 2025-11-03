@@ -35,10 +35,10 @@ func TestHashIDGeneration(t *testing.T) {
 		t.Fatalf("Failed to create issue: %v", err)
 	}
 
-	// Verify hash ID format: bd-<4-8 hex chars> with adaptive length (bd-ea2a13)
-	// For empty/small database, should use 4 chars
-	if len(issue.ID) < 7 || len(issue.ID) > 11 { // "bd-" (3) + 4-8 hex chars = 7-11
-		t.Errorf("Expected ID length 7-11, got %d: %s", len(issue.ID), issue.ID)
+	// Verify hash ID format: bd-<3-8 base36 chars> with adaptive length
+	// For empty/small database, should use 3 chars
+	if len(issue.ID) < 6 || len(issue.ID) > 11 { // "bd-" (3) + 3-8 base36 chars = 6-11
+		t.Errorf("Expected ID length 6-11, got %d: %s", len(issue.ID), issue.ID)
 	}
 
 	if issue.ID[:3] != "bd-" {
@@ -182,9 +182,9 @@ func TestHashIDBatchCreation(t *testing.T) {
 		}
 		ids[issue.ID] = true
 
-		// Verify hash ID format (4-8 chars with adaptive length)
-		if len(issue.ID) < 7 || len(issue.ID) > 11 {
-			t.Errorf("Expected ID length 7-11, got %d: %s", len(issue.ID), issue.ID)
+		// Verify hash ID format (3-8 chars with adaptive length)
+		if len(issue.ID) < 6 || len(issue.ID) > 11 {
+			t.Errorf("Expected ID length 6-11, got %d: %s", len(issue.ID), issue.ID)
 		}
 		if issue.ID[:3] != "bd-" {
 			t.Errorf("Expected ID to start with 'bd-', got: %s", issue.ID)

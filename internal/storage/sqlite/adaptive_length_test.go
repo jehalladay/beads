@@ -45,35 +45,41 @@ func TestComputeAdaptiveLength(t *testing.T) {
 		want      int
 	}{
 		{
-			name:      "small database uses 4 chars",
+			name:      "tiny database uses 3 chars",
 			numIssues: 50,
 			config:    DefaultAdaptiveConfig(),
-			want:      4,
+			want:      3,
 		},
 		{
-			name:      "medium database uses 4 chars",
+			name:      "small database uses 4 chars",
 			numIssues: 500,
 			config:    DefaultAdaptiveConfig(),
 			want:      4,
 		},
 		{
-			name:      "large database uses 5 chars",
-			numIssues: 1000,
+			name:      "medium database uses 5 chars",
+			numIssues: 3000,
 			config:    DefaultAdaptiveConfig(),
 			want:      5,
 		},
 		{
-			name:      "very large database uses 6 chars",
-			numIssues: 10000,
+			name:      "large database uses 6 chars",
+			numIssues: 20000,
 			config:    DefaultAdaptiveConfig(),
 			want:      6,
+		},
+		{
+			name:      "very large database uses 7 chars",
+			numIssues: 100000,
+			config:    DefaultAdaptiveConfig(),
+			want:      7,
 		},
 		{
 			name:      "custom threshold - stricter",
 			numIssues: 200,
 			config: AdaptiveIDConfig{
 				MaxCollisionProbability: 0.01, // 1% threshold
-				MinLength:               4,
+				MinLength:               3,
 				MaxLength:               8,
 			},
 			want: 5,
@@ -83,7 +89,7 @@ func TestComputeAdaptiveLength(t *testing.T) {
 			numIssues: 1000,
 			config: AdaptiveIDConfig{
 				MaxCollisionProbability: 0.50, // 50% threshold
-				MinLength:               4,
+				MinLength:               3,
 				MaxLength:               8,
 			},
 			want: 4,
@@ -112,6 +118,7 @@ func TestGenerateHashID_VariableLengths(t *testing.T) {
 		length       int
 		expectedLen  int // length of hash portion (without prefix)
 	}{
+		{3, 3},
 		{4, 4},
 		{5, 5},
 		{6, 6},
@@ -152,20 +159,20 @@ func TestGetAdaptiveIDLength_Integration(t *testing.T) {
 		t.Fatalf("Failed to set prefix: %v", err)
 	}
 	
-	// Test default config (should use 4 chars for empty database)
+	// Test default config (should use 3 chars for empty database)
 	conn, err := db.db.Conn(ctx)
 	if err != nil {
 		t.Fatalf("Failed to get connection: %v", err)
 	}
 	defer conn.Close()
-	
+
 	length, err := GetAdaptiveIDLength(ctx, conn, "test")
 	if err != nil {
 		t.Fatalf("GetAdaptiveIDLength failed: %v", err)
 	}
-	
-	if length != 4 {
-		t.Errorf("Empty database should use 4 chars, got %d", length)
+
+	if length != 3 {
+		t.Errorf("Empty database should use 3 chars, got %d", length)
 	}
 	
 	// Test custom config

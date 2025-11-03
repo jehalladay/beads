@@ -4,13 +4,74 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// base36Alphabet is the character set for base36 encoding (0-9, a-z)
+const base36Alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+// encodeBase36 converts a byte slice to a base36 string of specified length
+// Takes the first N bytes and converts them to base36 representation
+func encodeBase36(data []byte, length int) string {
+	// Convert bytes to big integer
+	num := new(big.Int).SetBytes(data)
+
+	// Convert to base36
+	var result strings.Builder
+	base := big.NewInt(36)
+	zero := big.NewInt(0)
+	mod := new(big.Int)
+
+	// Build the string in reverse
+	chars := make([]byte, 0, length)
+	for num.Cmp(zero) > 0 {
+		num.DivMod(num, base, mod)
+		chars = append(chars, base36Alphabet[mod.Int64()])
+	}
+
+	// Reverse the string
+	for i := len(chars) - 1; i >= 0; i-- {
+		result.WriteByte(chars[i])
+	}
+
+	// Pad with zeros if needed
+	str := result.String()
+	if len(str) < length {
+		str = strings.Repeat("0", length-len(str)) + str
+	}
+
+	// Truncate to exact length if needed (keep least significant digits)
+	if len(str) > length {
+		str = str[len(str)-length:]
+	}
+
+	return str
+}
+
+// isValidBase36 checks if a string contains only base36 characters
+func isValidBase36(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidHex checks if a string contains only hex characters
+func isValidHex(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
 
 // ValidateIssueIDPrefix validates that an issue ID matches the configured prefix
 // Supports both top-level (bd-a3f8e9) and hierarchical (bd-a3f8e9.1) IDs
@@ -150,36 +211,39 @@ func EnsureIDs(ctx context.Context, conn *sql.Conn, prefix string, issues []*typ
 }
 
 // generateHashID creates a hash-based ID for a top-level issue.
-// For child issues, use the parent ID with a numeric suffix (e.g., "bd-a3f8e9.1").
-// Supports adaptive length from 4-8 chars based on database size (bd-ea2a13).
+// For child issues, use the parent ID with a numeric suffix (e.g., "bd-x7k9p.1").
+// Supports adaptive length from 3-8 chars based on database size.
 // Includes a nonce parameter to handle same-length collisions.
+// Uses base36 encoding (0-9, a-z) for better information density than hex.
 func generateHashID(prefix, title, description, creator string, timestamp time.Time, length, nonce int) string {
 	// Combine inputs into a stable content string
 	// Include nonce to handle hash collisions
 	content := fmt.Sprintf("%s|%s|%s|%d|%d", title, description, creator, timestamp.UnixNano(), nonce)
-	
+
 	// Hash the content
 	hash := sha256.Sum256([]byte(content))
-	
-	// Use variable length (4-8 hex chars)
-	// length determines how many bytes to use (2, 2.5, 3, 3.5, or 4)
-	var shortHash string
+
+	// Use base36 encoding with variable length (3-8 chars)
+	// Determine how many bytes to use based on desired output length
+	var numBytes int
 	switch length {
+	case 3:
+		numBytes = 2 // 2 bytes = 16 bits ≈ 3.09 base36 chars
 	case 4:
-		shortHash = hex.EncodeToString(hash[:2])
+		numBytes = 3 // 3 bytes = 24 bits ≈ 4.63 base36 chars
 	case 5:
-		// 2.5 bytes: use 3 bytes but take only first 5 chars
-		shortHash = hex.EncodeToString(hash[:3])[:5]
+		numBytes = 4 // 4 bytes = 32 bits ≈ 6.18 base36 chars
 	case 6:
-		shortHash = hex.EncodeToString(hash[:3])
+		numBytes = 4 // 4 bytes = 32 bits ≈ 6.18 base36 chars
 	case 7:
-		// 3.5 bytes: use 4 bytes but take only first 7 chars
-		shortHash = hex.EncodeToString(hash[:4])[:7]
+		numBytes = 5 // 5 bytes = 40 bits ≈ 7.73 base36 chars
 	case 8:
-		shortHash = hex.EncodeToString(hash[:4])
+		numBytes = 5 // 5 bytes = 40 bits ≈ 7.73 base36 chars
 	default:
-		shortHash = hex.EncodeToString(hash[:3]) // default to 6
+		numBytes = 3 // default to 3 chars
 	}
-	
+
+	shortHash := encodeBase36(hash[:numBytes], length)
+
 	return fmt.Sprintf("%s-%s", prefix, shortHash)
 }

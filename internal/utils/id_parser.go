@@ -78,11 +78,11 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 	}
 	
 	// Extract the hash part for substring matching
-	hashPart := strings.TrimPrefix(normalizedID, prefix)
-	
+	hashPart := strings.TrimPrefix(normalizedID, prefixWithHyphen)
+
 	var matches []string
 	for _, issue := range issues {
-		issueHash := strings.TrimPrefix(issue.ID, prefix)
+		issueHash := strings.TrimPrefix(issue.ID, prefixWithHyphen)
 		// Check if the issue hash contains the input hash as substring
 		if strings.Contains(issueHash, hashPart) {
 			matches = append(matches, issue.ID)

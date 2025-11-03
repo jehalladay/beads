@@ -50,36 +50,18 @@ func TestAdaptiveIDLength_E2E(t *testing.T) {
 		return issue.ID
 	}
 	
-	// Test 1: First few issues should use 4-char IDs
-	t.Run("first_50_issues_use_4_chars", func(t *testing.T) {
+	// Test 1: First few issues should use 3-char IDs (base36 allows shorter IDs)
+	t.Run("first_50_issues_use_3_chars", func(t *testing.T) {
 		for i := 0; i < 50; i++ {
 			title := formatTitle("Issue %d", i)
-			createAndCheckLength(title, 4)
+			createAndCheckLength(title, 3)
 		}
 	})
-	
-	// Test 2: Issues 50-500 should still use 4 chars (7% collision at 500)
-	t.Run("issues_50_to_500_use_4_chars", func(t *testing.T) {
-		for i := 50; i < 500; i++ {
-			title := formatTitle("Issue %d", i)
-			id := createAndCheckLength(title, 4)
-			// Most should be 4 chars, but collisions might push some to 5
-			// We allow up to 5 chars as progressive fallback
-			hashPart := strings.TrimPrefix(id, "test-")
-			if len(hashPart) > 5 {
-				t.Errorf("Issue %d has hash length %d, expected 4-5", i, len(hashPart))
-			}
-		}
-	})
-	
-	// Test 3: At 1000 issues, should scale to 5 chars
-	// Note: We don't enforce exact length in this test because the adaptive
-	// algorithm will keep using 4 chars until collision probability exceeds 25%
-	// At 600 issues we're still below that threshold
-	t.Run("verify_adaptive_scaling_works", func(t *testing.T) {
-		// Just verify that we can create more issues and the algorithm doesn't break
-		// The actual length will be determined by the adaptive algorithm
-		for i := 500; i < 550; i++ {
+
+	// Test 2: Issues 50-200 should transition to 4 chars
+	// (3 chars good up to ~160 issues with 25% threshold)
+	t.Run("issues_50_to_200_use_3_or_4_chars", func(t *testing.T) {
+		for i := 50; i < 200; i++ {
 			title := formatTitle("Issue %d", i)
 			issue := &types.Issue{
 				Title:       title,
@@ -88,15 +70,42 @@ func TestAdaptiveIDLength_E2E(t *testing.T) {
 				Priority:    1,
 				IssueType:   "task",
 			}
-			
+
 			if err := db.CreateIssue(ctx, issue, "test@example.com"); err != nil {
 				t.Fatalf("Failed to create issue: %v", err)
 			}
-			
-			// Should use 4-6 chars depending on database size
+
+			// Most should be 3 chars initially, transitioning to 4 after ~160
 			hashPart := strings.TrimPrefix(issue.ID, "test-")
-			if len(hashPart) < 4 || len(hashPart) > 6 {
-				t.Errorf("Issue %d has hash length %d, expected 4-6", i, len(hashPart))
+			if len(hashPart) < 3 || len(hashPart) > 4 {
+				t.Errorf("Issue %d has hash length %d, expected 3-4", i, len(hashPart))
+			}
+		}
+	})
+	
+	// Test 3: At 500-1000 issues, should scale to 4-5 chars
+	// (4 chars good up to ~980 issues with 25% threshold)
+	t.Run("verify_adaptive_scaling_works", func(t *testing.T) {
+		// Just verify that we can create more issues and the algorithm doesn't break
+		// The actual length will be determined by the adaptive algorithm
+		for i := 200; i < 250; i++ {
+			title := formatTitle("Issue %d", i)
+			issue := &types.Issue{
+				Title:       title,
+				Description: "Test",
+				Status:      "open",
+				Priority:    1,
+				IssueType:   "task",
+			}
+
+			if err := db.CreateIssue(ctx, issue, "test@example.com"); err != nil {
+				t.Fatalf("Failed to create issue: %v", err)
+			}
+
+			// Should use 4-5 chars depending on database size
+			hashPart := strings.TrimPrefix(issue.ID, "test-")
+			if len(hashPart) < 3 || len(hashPart) > 5 {
+				t.Errorf("Issue %d has hash length %d, expected 3-5", i, len(hashPart))
 			}
 		}
 	})

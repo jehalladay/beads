@@ -11,19 +11,26 @@ import (
 type AdaptiveIDConfig struct {
 	// MaxCollisionProbability is the threshold at which we scale up ID length (e.g., 0.25 = 25%)
 	MaxCollisionProbability float64
-	
-	// MinLength is the minimum hash length to use (default 4)
+
+	// MinLength is the minimum hash length to use (default 3)
 	MinLength int
-	
+
 	// MaxLength is the maximum hash length to use (default 8)
 	MaxLength int
 }
 
-// DefaultAdaptiveConfig returns sensible defaults
+// DefaultAdaptiveConfig returns sensible defaults for base36 encoding
+// With base36 (0-9, a-z), we can use shorter IDs than hex:
+//   3 chars: ~46K namespace, good for up to ~160 issues (25% collision prob)
+//   4 chars: ~1.7M namespace, good for up to ~980 issues
+//   5 chars: ~60M namespace, good for up to ~5.9K issues
+//   6 chars: ~2.2B namespace, good for up to ~35K issues
+//   7 chars: ~78B namespace, good for up to ~212K issues
+//   8 chars: ~2.8T namespace, good for up to ~1M+ issues
 func DefaultAdaptiveConfig() AdaptiveIDConfig {
 	return AdaptiveIDConfig{
 		MaxCollisionProbability: 0.25, // 25% threshold
-		MinLength:               4,
+		MinLength:               3,
 		MaxLength:               8,
 	}
 }
@@ -32,7 +39,7 @@ func DefaultAdaptiveConfig() AdaptiveIDConfig {
 // P(collision) ≈ 1 - e^(-n²/2N)
 // where n = number of items, N = total possible values
 func collisionProbability(numIssues int, idLength int) float64 {
-	const base = 36.0 // lowercase alphanumeric (0-9, a-z)
+	const base = 36.0 // base36 encoding (0-9, a-z)
 	totalPossibilities := math.Pow(base, float64(idLength))
 	exponent := -float64(numIssues*numIssues) / (2.0 * totalPossibilities)
 	return 1.0 - math.Exp(exponent)
