@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -195,9 +196,107 @@ var daemonsRestartCmd = &cobra.Command{
 Stops the daemon gracefully, then starts a new one.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Fprintf(os.Stderr, "Error: restart not yet implemented\n")
-		fmt.Fprintf(os.Stderr, "Use 'bd daemons stop <target>' then 'bd daemon' to restart manually\n")
-		os.Exit(1)
+		target := args[0]
+		searchRoots, _ := cmd.Flags().GetStringSlice("search")
+		// Use global jsonOutput set by PersistentPreRun
+
+		// Discover daemons
+		daemons, err := daemon.DiscoverDaemons(searchRoots)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error discovering daemons: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Find the target daemon
+		var targetDaemon *daemon.DaemonInfo
+		for _, d := range daemons {
+			if d.WorkspacePath == target || fmt.Sprintf("%d", d.PID) == target {
+				targetDaemon = &d
+				break
+			}
+		}
+
+		if targetDaemon == nil {
+			if jsonOutput {
+				outputJSON(map[string]string{"error": "daemon not found"})
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: daemon not found for %s\n", target)
+			}
+			os.Exit(1)
+		}
+
+		workspace := targetDaemon.WorkspacePath
+
+		// Stop the daemon
+		if !jsonOutput {
+			fmt.Printf("Stopping daemon for workspace: %s (PID %d)\n", workspace, targetDaemon.PID)
+		}
+		if err := daemon.StopDaemon(*targetDaemon); err != nil {
+			if jsonOutput {
+				outputJSON(map[string]string{"error": err.Error()})
+			} else {
+				fmt.Fprintf(os.Stderr, "Error stopping daemon: %v\n", err)
+			}
+			os.Exit(1)
+		}
+
+		// Wait a moment for cleanup
+		time.Sleep(500 * time.Millisecond)
+
+		// Start a new daemon by executing 'bd daemon' in the workspace directory
+		if !jsonOutput {
+			fmt.Printf("Starting new daemon for workspace: %s\n", workspace)
+		}
+
+		exe, err := os.Executable()
+		if err != nil {
+			if jsonOutput {
+				outputJSON(map[string]string{"error": fmt.Sprintf("cannot resolve executable: %v", err)})
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: cannot resolve executable: %v\n", err)
+			}
+			os.Exit(1)
+		}
+
+		// Check if workspace-local bd binary exists (preferred)
+		localBd := filepath.Join(workspace, "bd")
+		_, localErr := os.Stat(localBd)
+
+		bdPath := exe
+		if localErr == nil {
+			// Use local bd binary if it exists
+			bdPath = localBd
+		}
+
+		// Use bd daemon command with proper working directory
+		// The daemon will fork itself into the background
+		daemonCmd := &exec.Cmd{
+			Path: bdPath,
+			Args: []string{bdPath, "daemon"},
+			Dir:  workspace,
+			Env:  os.Environ(),
+		}
+
+		if err := daemonCmd.Start(); err != nil {
+			if jsonOutput {
+				outputJSON(map[string]string{"error": fmt.Sprintf("failed to start daemon: %v", err)})
+			} else {
+				fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
+			}
+			os.Exit(1)
+		}
+
+		// Don't wait for daemon to exit (it will fork and continue in background)
+		go func() { _ = daemonCmd.Wait() }()
+
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"workspace": workspace,
+				"action":    "restarted",
+			})
+		} else {
+			fmt.Printf("Successfully restarted daemon for workspace: %s\n", workspace)
+		}
 	},
 }
 
@@ -562,5 +661,6 @@ func init() {
 	daemonsKillallCmd.Flags().Bool("force", false, "Use SIGKILL immediately if graceful shutdown fails")
 
 	// Flags for restart command
+	daemonsRestartCmd.Flags().StringSlice("search", nil, "Directories to search for daemons (default: home, /tmp, cwd)")
 	daemonsRestartCmd.Flags().Bool("json", false, "Output in JSON format")
 }
