@@ -177,7 +177,8 @@ var rootCmd = &cobra.Command{
 				// No database found - error out instead of falling back to ~/.beads
 				fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
 				fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
-				fmt.Fprintf(os.Stderr, "      or set BEADS_DB environment variable to specify a database\n")
+				fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
+				fmt.Fprintf(os.Stderr, "      or set BEADS_DB to point to your database file (deprecated)\n")
 				os.Exit(1)
 			}
 		}
@@ -438,13 +439,29 @@ var rootCmd = &cobra.Command{
 		// Handle --no-db mode: write memory storage back to JSONL
 		if noDb {
 			if store != nil {
-				cwd, err := os.Getwd()
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
-					os.Exit(1)
+				// Determine beads directory (respect BEADS_DIR)
+				var beadsDir string
+				if envDir := os.Getenv("BEADS_DIR"); envDir != "" {
+					// Canonicalize the path
+					if absDir, err := filepath.Abs(envDir); err == nil {
+						if canonical, err := filepath.EvalSymlinks(absDir); err == nil {
+							beadsDir = canonical
+						} else {
+							beadsDir = absDir
+						}
+					} else {
+						beadsDir = envDir
+					}
+				} else {
+					// Fall back to current directory
+					cwd, err := os.Getwd()
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
+						os.Exit(1)
+					}
+					beadsDir = filepath.Join(cwd, ".beads")
 				}
 
-				beadsDir := filepath.Join(cwd, ".beads")
 				if memStore, ok := store.(*memory.MemoryStorage); ok {
 					if err := writeIssuesToJSONL(memStore, beadsDir); err != nil {
 						fmt.Fprintf(os.Stderr, "Error: failed to write JSONL: %v\n", err)

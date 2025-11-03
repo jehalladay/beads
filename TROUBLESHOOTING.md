@@ -146,7 +146,8 @@ This means bd found multiple `.beads` directories in your directory hierarchy. T
 1. **If you have nested projects** (intentional):
    - This is fine! bd is designed to support this
    - Just be aware which database you're using
-   - Set `BEADS_DB` environment variable if you want to override the default selection
+   - Set `BEADS_DIR` environment variable to point to your `.beads` directory if you want to override the default selection
+   - Or use `BEADS_DB` (deprecated) to point directly to the database file
 
 2. **If you have accidental duplicates** (unintentional):
    - Decide which database to keep
@@ -156,10 +157,14 @@ This means bd found multiple `.beads` directories in your directory hierarchy. T
 
 3. **Override database selection**:
    ```bash
-   # Temporarily use specific database
-   BEADS_DB=/path/to/.beads/issues.db bd list
+   # Temporarily use specific .beads directory (recommended)
+   BEADS_DIR=/path/to/.beads bd list
 
    # Or add to shell config for permanent override
+   export BEADS_DIR=/path/to/.beads
+
+   # Legacy method (deprecated, points to database file directly)
+   BEADS_DB=/path/to/.beads/issues.db bd list
    export BEADS_DB=/path/to/.beads/issues.db
    ```
 

@@ -371,13 +371,13 @@ Use when parsing programmatically or extracting specific fields.
 bd finds database in this order:
 
 1. `--db` flag: `bd ready --db /path/to/db.db`
-2. `$BEADS_DB` environment variable
-3. `.beads/*.db` in current directory or ancestors
-4. `~/.beads/default.db` as fallback
+2. `$BEADS_DIR` environment variable (points to .beads directory)
+3. `$BEADS_DB` environment variable (deprecated, points to database file)
+4. `.beads/*.db` in current directory or ancestors
 
 **Project-local** (`.beads/`): Project-specific work, git-tracked
 
-**Global fallback** (`~/.beads/`): Cross-project tracking, personal tasks
+**Recommended**: Use `BEADS_DIR` to point to your `.beads` directory, especially when using `--no-db` mode
 
 ---
 

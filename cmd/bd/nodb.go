@@ -18,14 +18,31 @@ import (
 // This is called when --no-db flag is set
 func initializeNoDbMode() error {
 	// Find .beads directory
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get current directory: %w", err)
+	var beadsDir string
+
+	// Check BEADS_DIR environment variable first
+	if envDir := os.Getenv("BEADS_DIR"); envDir != "" {
+		// Canonicalize the path
+		if absDir, err := filepath.Abs(envDir); err == nil {
+			if canonical, err := filepath.EvalSymlinks(absDir); err == nil {
+				beadsDir = canonical
+			} else {
+				beadsDir = absDir
+			}
+		} else {
+			beadsDir = envDir
+		}
+	} else {
+		// Fall back to current directory
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+		beadsDir = filepath.Join(cwd, ".beads")
 	}
 
-	beadsDir := filepath.Join(cwd, ".beads")
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
-		return fmt.Errorf("no .beads directory found (hint: run 'bd init' first)")
+		return fmt.Errorf("no .beads directory found (hint: run 'bd init' first or set BEADS_DIR)")
 	}
 
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
