@@ -59,23 +59,33 @@ Behavior:
 		lineNum := 0
 
 		for scanner.Scan() {
-			lineNum++
-			line := scanner.Text()
+		lineNum++
+		line := scanner.Text()
 
-			// Skip empty lines
-			if line == "" {
-				continue
-			}
-
-			// Parse JSON
-			var issue types.Issue
-			if err := json.Unmarshal([]byte(line), &issue); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing line %d: %v\n", lineNum, err)
-				os.Exit(1)
-			}
-
-			allIssues = append(allIssues, &issue)
+		// Skip empty lines
+		if line == "" {
+		continue
 		}
+
+		// Detect git conflict markers
+		if strings.Contains(line, "<<<<<<<") || strings.Contains(line, "=======") || strings.Contains(line, ">>>>>>>") {
+		 fmt.Fprintf(os.Stderr, "Error: Git conflict markers detected in JSONL file (line %d)\n\n", lineNum)
+		fmt.Fprintf(os.Stderr, "To resolve:\n")
+		fmt.Fprintf(os.Stderr, "  git checkout --ours .beads/issues.jsonl && bd import -i .beads/issues.jsonl\n")
+		 fmt.Fprintf(os.Stderr, "  git checkout --theirs .beads/issues.jsonl && bd import -i .beads/issues.jsonl\n\n")
+			fmt.Fprintf(os.Stderr, "For advanced field-level merging, see: https://github.com/neongreen/mono/tree/main/beads-merge\n")
+		 os.Exit(1)
+		 }
+
+		// Parse JSON
+		var issue types.Issue
+		if err := json.Unmarshal([]byte(line), &issue); err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing line %d: %v\n", lineNum, err)
+			os.Exit(1)
+		}
+
+		allIssues = append(allIssues, &issue)
+	}
 
 		if err := scanner.Err(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)

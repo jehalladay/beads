@@ -400,17 +400,21 @@ func validateGitConflicts(_ context.Context, fix bool) checkResult {
 	if len(conflictLines) > 0 {
 		result.issueCount = 1 // One conflict situation
 		result.suggestions = append(result.suggestions,
-			fmt.Sprintf("Resolve git conflict in %s (markers at lines: %v)", jsonlPath, conflictLines))
-		if !fix {
-			result.suggestions = append(result.suggestions,
-				fmt.Sprintf("Then run 'bd import -i %s' to reload issues", jsonlPath))
-		}
+			fmt.Sprintf("Git conflict markers found in %s at lines: %v", jsonlPath, conflictLines))
+		result.suggestions = append(result.suggestions,
+			"To resolve, choose one version:")
+		result.suggestions = append(result.suggestions,
+			"  git checkout --ours .beads/issues.jsonl && bd import -i .beads/issues.jsonl")
+		result.suggestions = append(result.suggestions,
+			"  git checkout --theirs .beads/issues.jsonl && bd import -i .beads/issues.jsonl")
+		result.suggestions = append(result.suggestions,
+			"For advanced field-level merging: https://github.com/neongreen/mono/tree/main/beads-merge")
 	}
 
 	// Can't auto-fix git conflicts
 	if fix && result.issueCount > 0 {
 		result.suggestions = append(result.suggestions,
-			"Git conflicts cannot be auto-fixed. Resolve manually in your editor or run 'bd export' to regenerate JSONL")
+			"Note: Git conflicts cannot be auto-fixed with --fix-all")
 	}
 
 	return result

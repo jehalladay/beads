@@ -602,17 +602,27 @@ The daemon maintains its own view of the current working directory and git state
 **With hash-based IDs (v0.20.1+), ID collisions are eliminated!** Different issues get different hash IDs, so most git merges succeed cleanly.
 
 **When git merge conflicts occur:**
-Git conflicts in `.beads/beads.jsonl` happen when the same issue is modified on both branches (different timestamps/fields). This is a **same-issue update conflict**, not an ID collision.
+Git conflicts in `.beads/beads.jsonl` happen when the same issue is modified on both branches (different timestamps/fields). This is a **same-issue update conflict**, not an ID collision. Conflicts are rare in practice since hash IDs prevent structural collisions.
 
-**Resolution:**
+**Automatic detection:**
+bd automatically detects conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) and shows clear resolution steps:
+- `bd import` rejects files with conflict markers and shows resolution commands
+- `bd validate --checks=conflicts` scans for conflicts in JSONL
+
+**Resolution workflow:**
 ```bash
-# After git merge creates conflict
-git checkout --theirs .beads/beads.jsonl  # Accept remote version
-# OR
-git checkout --ours .beads/beads.jsonl    # Keep local version
-# OR manually resolve in editor
+# After git merge creates conflict in .beads/beads.jsonl
 
-# Import the resolved JSONL
+# Option 1: Accept their version (remote)
+git checkout --theirs .beads/beads.jsonl
+bd import -i .beads/beads.jsonl
+
+# Option 2: Keep our version (local)
+git checkout --ours .beads/beads.jsonl  
+bd import -i .beads/beads.jsonl
+
+# Option 3: Manual resolution in editor
+# Edit .beads/beads.jsonl to remove conflict markers
 bd import -i .beads/beads.jsonl
 
 # Commit the merge
@@ -620,7 +630,7 @@ git add .beads/beads.jsonl
 git commit
 ```
 
-**bd automatically handles updates** - same ID with different content is a normal update operation. No special flags needed.
+**Note:** `bd import` automatically handles updates - same ID with different content is a normal update operation. No special flags needed. If you accidentally modified the same issue in both branches, just pick whichever version is more complete.
 
 ### Advanced: Intelligent Merge Tools
 
