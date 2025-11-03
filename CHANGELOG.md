@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.4] - 2025-11-02
+
+### Added
+
+- **New Commands**:
+  - `bd status` - Database overview command showing issue counts and stats (bd-28db)
+  - `bd comment` - Convenient alias for `bd comments add` (bd-d3f0)
+  - `bd daemons restart` - Restart specific daemon without manual kill/start
+  - `--json` flag for `bd stale` command
+
+- **Protected Branch Workflow**:
+  - `BEADS_DIR` environment variable for custom database location (bd-e16b)
+  - `sync.branch` configuration for protected branch workflows (bd-b7d2)
+  - Git worktree management with sparse checkout for sync branches (bd-a4b5)
+    - Only checks out `.beads/` in worktrees, minimal disk usage
+    - Only used when `sync.branch` is configured, not for default users
+  - Comprehensive protected branch documentation
+
+- **Migration & Validation**:
+  - Migration inspection tools for AI agents (bd-627d)
+  - Conflict marker detection in `bd import` and `bd validate`
+  - Git hooks health check in `bd doctor`
+  - External reference (`external_ref`) UNIQUE constraint and validation
+  - `external_ref` now primary matching key for import updates (bd-1022)
+
+### Fixed
+
+- **Critical Fixes**:
+  - Daemon corruption from git conflicts (bd-8931)
+  - MCP `set_context` hangs with stdio transport (GH #153)
+  - Double-release race condition in `importInProgress` flag
+  - Critical daemon race condition causing stale exports
+
+- **Configuration & Migration**:
+  - `bd migrate` now detects and sets missing `issue_prefix` config
+  - Config system refactored (renamed `config.json` → `metadata.json`)
+  - Config version update in migrate command
+
+- **Daemon & RPC**:
+  - `bd doctor --json` flag not working (bd-6049)
+  - `bd import` now flushes JSONL immediately for daemon visibility (bd-47f1)
+  - Panic recovery in RPC `handleConnection` (bd-1048)
+  - Daemon auto-upgrades database version instead of exiting
+
+- **Windows Compatibility**:
+  - Windows test failures (path handling, bd binary references)
+  - Windows CI: forward slashes in git hook shell scripts
+  - TestMetricsSnapshot/uptime flakiness on Windows
+
+- **Code Quality**:
+  - All golangci-lint errors fixed - linter now passes cleanly
+  - All gosec, misspell, and unparam linter warnings resolved
+  - Tightened file permissions and added security exclusions
+
+### Changed
+
+- Daemon automatically upgrades database schema version instead of exiting
+- Git worktree management for sync branches uses sparse checkout (`.beads/` only)
+- Improved test isolation and performance optimization
+
 ## [0.21.2] - 2025-11-01
 
 ### Changed
