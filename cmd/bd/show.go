@@ -13,6 +13,22 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
+// formatDependencyType converts a dependency type to a human-readable label
+func formatDependencyType(depType types.DependencyType) string {
+	switch depType {
+	case types.DepBlocks:
+		return "blocks"
+	case types.DepRelated:
+		return "related"
+	case types.DepParentChild:
+		return "parent-child"
+	case types.DepDiscoveredFrom:
+		return "discovered-from"
+	default:
+		return string(depType)
+	}
+}
+
 var showCmd = &cobra.Command{
 	Use:   "show [id...]",
 	Short: "Show issue details",
@@ -60,9 +76,9 @@ var showCmd = &cobra.Command{
 				if jsonOutput {
 					type IssueDetails struct {
 						types.Issue
-						Labels       []string       `json:"labels,omitempty"`
-						Dependencies []*types.Issue `json:"dependencies,omitempty"`
-						Dependents   []*types.Issue `json:"dependents,omitempty"`
+						Labels       []string                              `json:"labels,omitempty"`
+						Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
+						Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
 					}
 					var details IssueDetails
 					if err := json.Unmarshal(resp.Data, &details); err == nil {
@@ -80,9 +96,9 @@ var showCmd = &cobra.Command{
 					// Parse response and use existing formatting code
 					type IssueDetails struct {
 						types.Issue
-						Labels       []string       `json:"labels,omitempty"`
-						Dependencies []*types.Issue `json:"dependencies,omitempty"`
-						Dependents   []*types.Issue `json:"dependents,omitempty"`
+						Labels       []string                              `json:"labels,omitempty"`
+						Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
+						Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
 					}
 					var details IssueDetails
 					if err := json.Unmarshal(resp.Data, &details); err != nil {
@@ -152,15 +168,19 @@ var showCmd = &cobra.Command{
 						fmt.Printf("\nLabels: %v\n", details.Labels)
 					}
 					if len(details.Dependencies) > 0 {
-						fmt.Printf("\nDepends on (%d):\n", len(details.Dependencies))
+						fmt.Printf("\nDependencies (%d):\n", len(details.Dependencies))
 						for _, dep := range details.Dependencies {
-							fmt.Printf("  → %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+							fmt.Printf("  [%s] %s: %s [P%d]\n", 
+								formatDependencyType(dep.DependencyType), 
+								dep.ID, dep.Title, dep.Priority)
 						}
 					}
 					if len(details.Dependents) > 0 {
-						fmt.Printf("\nBlocks (%d):\n", len(details.Dependents))
+						fmt.Printf("\nDependents (%d):\n", len(details.Dependents))
 						for _, dep := range details.Dependents {
-							fmt.Printf("  ← %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+							fmt.Printf("  [%s] %s: %s [P%d]\n", 
+								formatDependencyType(dep.DependencyType), 
+								dep.ID, dep.Title, dep.Priority)
 						}
 					}
 					fmt.Println()
@@ -280,20 +300,49 @@ var showCmd = &cobra.Command{
 			if len(labels) > 0 {
 				fmt.Printf("\nLabels: %v\n", labels)
 			}
-			// Show dependencies
-			deps, _ := store.GetDependencies(ctx, issue.ID)
-			if len(deps) > 0 {
-				fmt.Printf("\nDepends on (%d):\n", len(deps))
+			// Show dependencies with metadata (including type)
+			var depsWithMeta []*types.IssueWithDependencyMetadata
+			if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+				depsWithMeta, _ = sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
+			} else {
+				// Fallback for non-SQLite storage
+				deps, _ := store.GetDependencies(ctx, issue.ID)
 				for _, dep := range deps {
-					fmt.Printf("  → %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+					depsWithMeta = append(depsWithMeta, &types.IssueWithDependencyMetadata{
+						Issue:          *dep,
+						DependencyType: types.DepBlocks, // default
+					})
 				}
 			}
-			// Show dependents
-			dependents, _ := store.GetDependents(ctx, issue.ID)
-			if len(dependents) > 0 {
-				fmt.Printf("\nBlocks (%d):\n", len(dependents))
-				for _, dep := range dependents {
-					fmt.Printf("  ← %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+			if len(depsWithMeta) > 0 {
+				fmt.Printf("\nDependencies (%d):\n", len(depsWithMeta))
+				for _, dep := range depsWithMeta {
+					fmt.Printf("  [%s] %s: %s [P%d]\n", 
+						formatDependencyType(dep.DependencyType), 
+						dep.ID, dep.Title, dep.Priority)
+				}
+			}
+			
+			// Show dependents with metadata (including type)
+			var dependentsWithMeta []*types.IssueWithDependencyMetadata
+			if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+				dependentsWithMeta, _ = sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
+			} else {
+				// Fallback for non-SQLite storage
+				dependents, _ := store.GetDependents(ctx, issue.ID)
+				for _, dependent := range dependents {
+					dependentsWithMeta = append(dependentsWithMeta, &types.IssueWithDependencyMetadata{
+						Issue:          *dependent,
+						DependencyType: types.DepBlocks, // default
+					})
+				}
+			}
+			if len(dependentsWithMeta) > 0 {
+				fmt.Printf("\nDependents (%d):\n", len(dependentsWithMeta))
+				for _, dep := range dependentsWithMeta {
+					fmt.Printf("  [%s] %s: %s [P%d]\n", 
+						formatDependencyType(dep.DependencyType), 
+						dep.ID, dep.Title, dep.Priority)
 				}
 			}
 			// Show comments
