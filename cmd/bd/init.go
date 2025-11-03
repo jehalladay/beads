@@ -124,8 +124,8 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 				// Non-fatal - continue anyway
 			}
 
-			// Create config.yaml template
-			if err := createConfigYaml(localBeadsDir, quiet); err != nil {
+			// Create config.yaml with no-db: true
+			if err := createConfigYaml(localBeadsDir, quiet, true); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", err)
 				// Non-fatal - continue anyway
 			}
@@ -248,7 +248,7 @@ bd.db
 		}
 		
 		// Create config.yaml template
-		if err := createConfigYaml(localBeadsDir, quiet); err != nil {
+		if err := createConfigYaml(localBeadsDir, quiet, false); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", err)
 			// Non-fatal - continue anyway
 		}
@@ -544,7 +544,7 @@ func migrateOldDatabases(targetPath string, quiet bool) error {
 }
 
 // createConfigYaml creates the config.yaml template in the specified directory
-func createConfigYaml(beadsDir string, quiet bool) error {
+func createConfigYaml(beadsDir string, quiet bool, noDbMode bool) error {
 	configYamlPath := filepath.Join(beadsDir, "config.yaml")
 	
 	// Skip if already exists
@@ -552,7 +552,12 @@ func createConfigYaml(beadsDir string, quiet bool) error {
 		return nil
 	}
 	
-	configYamlTemplate := `# Beads Configuration File
+	noDbLine := "# no-db: false"
+	if noDbMode {
+		noDbLine = "no-db: true  # JSONL-only mode, no SQLite database"
+	}
+	
+	configYamlTemplate := fmt.Sprintf(`# Beads Configuration File
 # This file configures default behavior for all bd commands in this repository
 # All settings can also be set via environment variables (BD_* prefix)
 # or overridden with command-line flags
@@ -565,7 +570,7 @@ func createConfigYaml(beadsDir string, quiet bool) error {
 # Use no-db mode: load from JSONL, no SQLite, write back after each command
 # When true, bd will use .beads/issues.jsonl as the source of truth
 # instead of SQLite database
-# no-db: false
+%s
 
 # Disable daemon for RPC communication (forces direct database access)
 # no-daemon: false
@@ -600,7 +605,7 @@ func createConfigYaml(beadsDir string, quiet bool) error {
 # - github.org
 # - github.repo
 # - sync.branch - Git branch for beads commits (use BEADS_SYNC_BRANCH env var or bd config set)
-`
+`, noDbLine)
 	
 	if err := os.WriteFile(configYamlPath, []byte(configYamlTemplate), 0600); err != nil {
 		return fmt.Errorf("failed to write config.yaml: %w", err)
