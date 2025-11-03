@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -287,6 +288,66 @@ func TestMigrateExportHashesTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export_hashes table not found: %v", err)
 	}
+}
+
+func TestMigrateExternalRefUnique(t *testing.T) {
+	t.Run("creates unique index on external_ref", func(t *testing.T) {
+		store, cleanup := setupTestDB(t)
+		defer cleanup()
+		db := store.db
+
+		externalRef1 := "JIRA-1"
+		externalRef2 := "JIRA-2"
+		issue1 := types.Issue{ID: "bd-1", Title: "Issue 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask, ExternalRef: &externalRef1}
+		if err := store.CreateIssue(context.Background(), &issue1, "test"); err != nil {
+			t.Fatalf("failed to create issue1: %v", err)
+		}
+
+		issue2 := types.Issue{ID: "bd-2", Title: "Issue 2", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask, ExternalRef: &externalRef2}
+		if err := store.CreateIssue(context.Background(), &issue2, "test"); err != nil {
+			t.Fatalf("failed to create issue2: %v", err)
+		}
+
+		if err := migrateExternalRefUnique(db); err != nil {
+			t.Fatalf("failed to migrate external_ref unique constraint: %v", err)
+		}
+
+		issue3 := types.Issue{ID: "bd-3", Title: "Issue 3", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask, ExternalRef: &externalRef1}
+		err := store.CreateIssue(context.Background(), &issue3, "test")
+		if err == nil {
+			t.Error("Expected error when creating issue with duplicate external_ref, got nil")
+		}
+	})
+
+	t.Run("fails if duplicates exist", func(t *testing.T) {
+		store, cleanup := setupTestDB(t)
+		defer cleanup()
+		db := store.db
+
+		_, err := db.Exec(`DROP INDEX IF EXISTS idx_issues_external_ref_unique`)
+		if err != nil {
+			t.Fatalf("failed to drop index: %v", err)
+		}
+
+		externalRef := "JIRA-1"
+		issue1 := types.Issue{ID: "bd-100", Title: "Issue 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask, ExternalRef: &externalRef}
+		if err := store.CreateIssue(context.Background(), &issue1, "test"); err != nil {
+			t.Fatalf("failed to create issue1: %v", err)
+		}
+
+		_, err = db.Exec(`INSERT INTO issues (id, title, status, priority, issue_type, external_ref, created_at, updated_at) VALUES (?, ?, 'open', 1, 'task', ?, datetime('now'), datetime('now'))`, "bd-101", "Issue 2", externalRef)
+		if err != nil {
+			t.Fatalf("failed to create duplicate: %v", err)
+		}
+
+		err = migrateExternalRefUnique(db)
+		if err == nil {
+			t.Error("Expected migration to fail with duplicates present")
+		}
+		if !strings.Contains(err.Error(), "duplicate external_ref values") {
+			t.Errorf("Expected error about duplicates, got: %v", err)
+		}
+	})
 }
 
 func TestMigrateContentHashColumn(t *testing.T) {

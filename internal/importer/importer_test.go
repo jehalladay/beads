@@ -2,6 +2,8 @@ package importer
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -882,4 +884,210 @@ func TestGetPrefixList(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateNoDuplicateExternalRefs(t *testing.T) {
+	t.Run("no external_ref values", func(t *testing.T) {
+		issues := []*types.Issue{
+			{ID: "bd-1", Title: "Issue 1"},
+			{ID: "bd-2", Title: "Issue 2"},
+		}
+		err := validateNoDuplicateExternalRefs(issues)
+		if err != nil {
+			t.Errorf("Expected no error, got: %v", err)
+		}
+	})
+
+	t.Run("unique external_ref values", func(t *testing.T) {
+		ref1 := "JIRA-1"
+		ref2 := "JIRA-2"
+		issues := []*types.Issue{
+			{ID: "bd-1", Title: "Issue 1", ExternalRef: &ref1},
+			{ID: "bd-2", Title: "Issue 2", ExternalRef: &ref2},
+		}
+		err := validateNoDuplicateExternalRefs(issues)
+		if err != nil {
+			t.Errorf("Expected no error, got: %v", err)
+		}
+	})
+
+	t.Run("duplicate external_ref values", func(t *testing.T) {
+		ref1 := "JIRA-1"
+		ref2 := "JIRA-1"
+		issues := []*types.Issue{
+			{ID: "bd-1", Title: "Issue 1", ExternalRef: &ref1},
+			{ID: "bd-2", Title: "Issue 2", ExternalRef: &ref2},
+		}
+		err := validateNoDuplicateExternalRefs(issues)
+		if err == nil {
+			t.Error("Expected error for duplicate external_ref, got nil")
+		}
+		if err != nil && !strings.Contains(err.Error(), "duplicate external_ref values") {
+			t.Errorf("Expected error about duplicates, got: %v", err)
+		}
+	})
+
+	t.Run("multiple duplicates", func(t *testing.T) {
+		jira1 := "JIRA-1"
+		jira2 := "JIRA-2"
+		issues := []*types.Issue{
+			{ID: "bd-1", Title: "Issue 1", ExternalRef: &jira1},
+			{ID: "bd-2", Title: "Issue 2", ExternalRef: &jira1},
+			{ID: "bd-3", Title: "Issue 3", ExternalRef: &jira2},
+			{ID: "bd-4", Title: "Issue 4", ExternalRef: &jira2},
+		}
+		err := validateNoDuplicateExternalRefs(issues)
+		if err == nil {
+			t.Error("Expected error for duplicate external_ref, got nil")
+		}
+		if err != nil {
+			if !strings.Contains(err.Error(), "JIRA-1") || !strings.Contains(err.Error(), "JIRA-2") {
+				t.Errorf("Expected error to mention both JIRA-1 and JIRA-2, got: %v", err)
+			}
+		}
+	})
+
+	t.Run("ignores empty external_ref", func(t *testing.T) {
+		empty := ""
+		ref1 := "JIRA-1"
+		issues := []*types.Issue{
+			{ID: "bd-1", Title: "Issue 1", ExternalRef: &empty},
+			{ID: "bd-2", Title: "Issue 2", ExternalRef: &empty},
+			{ID: "bd-3", Title: "Issue 3", ExternalRef: &ref1},
+		}
+		err := validateNoDuplicateExternalRefs(issues)
+		if err != nil {
+			t.Errorf("Expected no error for empty refs, got: %v", err)
+		}
+	})
+}
+
+func TestConcurrentExternalRefImports(t *testing.T) {
+	t.Run("sequential imports with same external_ref are detected as updates", func(t *testing.T) {
+		store, err := sqlite.New(":memory:")
+		if err != nil {
+			t.Fatalf("Failed to create store: %v", err)
+		}
+		defer store.Close()
+
+		ctx := context.Background()
+		if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+			t.Fatalf("Failed to set prefix: %v", err)
+		}
+
+		externalRef := "JIRA-100"
+		
+		issue1 := &types.Issue{
+			ID:          "bd-1",
+			Title:       "First import",
+			Status:      types.StatusOpen,
+			Priority:    1,
+			IssueType:   types.TypeTask,
+			ExternalRef: &externalRef,
+		}
+
+		result1, err := ImportIssues(ctx, "", store, []*types.Issue{issue1}, Options{})
+		if err != nil {
+			t.Fatalf("First import failed: %v", err)
+		}
+
+		if result1.Created != 1 {
+			t.Errorf("Expected 1 created, got %d", result1.Created)
+		}
+
+		issue2 := &types.Issue{
+			ID:          "bd-2",
+			Title:       "Second import (different ID, same external_ref)",
+			Status:      types.StatusInProgress,
+			Priority:    2,
+			IssueType:   types.TypeTask,
+			ExternalRef: &externalRef,
+			UpdatedAt:   time.Now().Add(1 * time.Hour),
+		}
+
+		result2, err := ImportIssues(ctx, "", store, []*types.Issue{issue2}, Options{})
+		if err != nil {
+			t.Fatalf("Second import failed: %v", err)
+		}
+
+		if result2.Updated != 1 {
+			t.Errorf("Expected 1 updated, got %d (created: %d)", result2.Updated, result2.Created)
+		}
+
+		finalIssue, err := store.GetIssueByExternalRef(ctx, externalRef)
+		if err != nil {
+			t.Fatalf("Failed to get final issue: %v", err)
+		}
+
+		if finalIssue.ID != "bd-1" {
+			t.Errorf("Expected final issue ID to be bd-1, got %s", finalIssue.ID)
+		}
+
+		if finalIssue.Title != "Second import (different ID, same external_ref)" {
+			t.Errorf("Expected title to be updated, got %s", finalIssue.Title)
+		}
+	})
+
+	t.Run("concurrent updates to same external_ref with different timestamps", func(t *testing.T) {
+		store, err := sqlite.New(":memory:")
+		if err != nil {
+			t.Fatalf("Failed to create store: %v", err)
+		}
+		defer store.Close()
+
+		ctx := context.Background()
+		if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+			t.Fatalf("Failed to set prefix: %v", err)
+		}
+
+		externalRef := "JIRA-200"
+		existing := &types.Issue{
+			ID:          "bd-1",
+			Title:       "Existing issue",
+			Status:      types.StatusOpen,
+			Priority:    1,
+			IssueType:   types.TypeTask,
+			ExternalRef: &externalRef,
+		}
+
+		if err := store.CreateIssue(ctx, existing, "test"); err != nil {
+			t.Fatalf("Failed to create existing issue: %v", err)
+		}
+
+		var wg sync.WaitGroup
+		results := make([]*Result, 3)
+
+		for i := 0; i < 3; i++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				
+				updated := &types.Issue{
+					ID:          "bd-import-" + string(rune('1'+idx)),
+					Title:       "Updated from worker " + string(rune('A'+idx)),
+					Status:      types.StatusInProgress,
+					Priority:    2,
+					IssueType:   types.TypeTask,
+					ExternalRef: &externalRef,
+					UpdatedAt:   time.Now().Add(time.Duration(idx) * time.Second),
+				}
+
+				result, _ := ImportIssues(ctx, "", store, []*types.Issue{updated}, Options{})
+				results[idx] = result
+			}(i)
+		}
+
+		wg.Wait()
+
+		finalIssue, err := store.GetIssueByExternalRef(ctx, externalRef)
+		if err != nil {
+			t.Fatalf("Failed to get final issue: %v", err)
+		}
+
+		if finalIssue == nil {
+			t.Error("Expected final issue to exist")
+		}
+
+		t.Logf("Final issue title: %s, status: %s", finalIssue.Title, finalIssue.Status)
+	})
 }

@@ -88,6 +88,11 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 		return result, err
 	}
 
+	// Validate no duplicate external_ref values in batch
+	if err := validateNoDuplicateExternalRefs(issues); err != nil {
+		return result, err
+	}
+
 	// Detect and resolve collisions
 	issues, err = detectUpdates(ctx, sqliteStore, issues, opts, result)
 	if err != nil {
@@ -671,4 +676,29 @@ func GetPrefixList(prefixes map[string]int) []string {
 		result = append(result, fmt.Sprintf("%s- (%d issues)", prefix, count))
 	}
 	return result
+}
+
+func validateNoDuplicateExternalRefs(issues []*types.Issue) error {
+	seen := make(map[string][]string)
+	
+	for _, issue := range issues {
+		if issue.ExternalRef != nil && *issue.ExternalRef != "" {
+			ref := *issue.ExternalRef
+			seen[ref] = append(seen[ref], issue.ID)
+		}
+	}
+
+	var duplicates []string
+	for ref, issueIDs := range seen {
+		if len(issueIDs) > 1 {
+			duplicates = append(duplicates, fmt.Sprintf("external_ref '%s' appears in issues: %v", ref, issueIDs))
+		}
+	}
+
+	if len(duplicates) > 0 {
+		sort.Strings(duplicates)
+		return fmt.Errorf("batch import contains duplicate external_ref values:\n%s", strings.Join(duplicates, "\n"))
+	}
+
+	return nil
 }

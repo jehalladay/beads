@@ -4,6 +4,7 @@ package sqlite
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -27,6 +28,7 @@ var migrations = []Migration{
 	{"compacted_at_commit_column", migrateCompactedAtCommitColumn},
 	{"export_hashes_table", migrateExportHashesTable},
 	{"content_hash_column", migrateContentHashColumn},
+	{"external_ref_unique", migrateExternalRefUnique},
 }
 
 // MigrationInfo contains metadata about a migration for inspection
@@ -61,6 +63,7 @@ func getMigrationDescription(name string) string {
 		"compacted_at_commit_column":   "Adds compacted_at_commit to snapshots table",
 		"export_hashes_table":          "Adds export_hashes table for idempotent exports",
 		"content_hash_column":          "Adds content_hash column for collision resolution",
+		"external_ref_unique":          "Adds UNIQUE constraint on external_ref column",
 	}
 	
 	if desc, ok := descriptions[name]; ok {
@@ -509,4 +512,63 @@ func migrateContentHashColumn(db *sql.DB) error {
 
 	// Column already exists
 	return nil
+}
+
+func migrateExternalRefUnique(db *sql.DB) error {
+	var hasConstraint bool
+	err := db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM sqlite_master
+		WHERE type = 'index'
+		  AND name = 'idx_issues_external_ref_unique'
+	`).Scan(&hasConstraint)
+	if err != nil {
+		return fmt.Errorf("failed to check for UNIQUE constraint: %w", err)
+	}
+
+	if hasConstraint {
+		return nil
+	}
+
+	existingDuplicates, err := findExternalRefDuplicates(db)
+	if err != nil {
+		return fmt.Errorf("failed to check for duplicate external_ref values: %w", err)
+	}
+
+	if len(existingDuplicates) > 0 {
+		return fmt.Errorf("cannot add UNIQUE constraint: found %d duplicate external_ref values (resolve with 'bd duplicates' or manually)", len(existingDuplicates))
+	}
+
+	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_issues_external_ref_unique ON issues(external_ref) WHERE external_ref IS NOT NULL`)
+	if err != nil {
+		return fmt.Errorf("failed to create UNIQUE index on external_ref: %w", err)
+	}
+
+	return nil
+}
+
+func findExternalRefDuplicates(db *sql.DB) (map[string][]string, error) {
+	rows, err := db.Query(`
+		SELECT external_ref, GROUP_CONCAT(id, ',') as ids
+		FROM issues
+		WHERE external_ref IS NOT NULL
+		GROUP BY external_ref
+		HAVING COUNT(*) > 1
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	duplicates := make(map[string][]string)
+	for rows.Next() {
+		var externalRef, idsCSV string
+		if err := rows.Scan(&externalRef, &idsCSV); err != nil {
+			return nil, err
+		}
+		ids := strings.Split(idsCSV, ",")
+		duplicates[externalRef] = ids
+	}
+
+	return duplicates, rows.Err()
 }

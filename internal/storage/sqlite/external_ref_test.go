@@ -279,3 +279,68 @@ func TestExternalRefIndex(t *testing.T) {
 		t.Error("Expected idx_issues_external_ref index to exist")
 	}
 }
+
+func TestExternalRefIndexUsage(t *testing.T) {
+	ctx := context.Background()
+	s, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	externalRef := "JIRA-123"
+	issue := &types.Issue{
+		ID:          "bd-test-1",
+		Title:       "Test issue",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeTask,
+		ExternalRef: &externalRef,
+	}
+
+	err := s.CreateIssue(ctx, issue, "test")
+	if err != nil {
+		t.Fatalf("Failed to create issue: %v", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		EXPLAIN QUERY PLAN
+		SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee,
+			created_at, updated_at, closed_at, external_ref,
+			compaction_level, compacted_at, compacted_at_commit, original_size
+		FROM issues
+		WHERE external_ref = ?
+	`, externalRef)
+	if err != nil {
+		t.Fatalf("Failed to get query plan: %v", err)
+	}
+	defer rows.Close()
+
+	var planFound bool
+	var indexUsed bool
+
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatalf("Failed to scan query plan row: %v", err)
+		}
+		planFound = true
+		
+		if detail == "SEARCH TABLE issues USING INDEX idx_issues_external_ref (external_ref=?)" ||
+		   detail == "SEARCH issues USING INDEX idx_issues_external_ref (external_ref=?)" ||
+		   detail == "SEARCH TABLE issues USING INDEX idx_issues_external_ref_unique (external_ref=?)" ||
+		   detail == "SEARCH issues USING INDEX idx_issues_external_ref_unique (external_ref=?)" {
+			indexUsed = true
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Error reading query plan: %v", err)
+	}
+
+	if !planFound {
+		t.Error("Expected query plan output, got none")
+	}
+
+	if !indexUsed {
+		t.Error("Expected query planner to use idx_issues_external_ref index, but it didn't")
+	}
+}
