@@ -57,6 +57,7 @@ Agents report that they enjoy working with Beads, and they will use it spontaneo
 - 🤖 **Agent-friendly** - `--json` flags for programmatic integration
 - 📦 **Git-versioned** - JSONL records stored in git, synced across machines
 - 🌍 **Distributed by design** - Agents on multiple machines share one logical database via git
+- 🔐 **Protected branch support** - Works with GitHub/GitLab protected branches via separate sync branch
 - 🏗️ **Extensible** - Add your own tables to the SQLite database
 - 🔍 **Multi-project isolation** - Each project gets its own database, auto-discovered by directory
 - 🌲 **Dependency trees** - Visualize full dependency graphs
@@ -93,6 +94,9 @@ Beads is designed for **AI coding agents** to use on your behalf. Setup takes 30
 # In your project root:
 bd init
 
+# For protected branches (GitHub/GitLab):
+bd init --branch beads-metadata
+
 # bd will:
 # - Create .beads/ directory with database
 # - Import existing issues from git (if any)
@@ -102,6 +106,8 @@ bd init
 # Then tell your agent about bd:
 echo "BEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions" >> AGENTS.md
 ```
+
+**Protected branches?** If your `main` branch is protected, use `bd init --branch beads-metadata` to commit issue updates to a separate branch. See [docs/PROTECTED_BRANCHES.md](docs/PROTECTED_BRANCHES.md) for details.
 
 **Your agent does the rest:** Next time your agent starts, it will:
 1. Run `bd onboard` and receive integration instructions

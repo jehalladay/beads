@@ -508,6 +508,57 @@ beads/
 
 The 30-second debounce provides a **transaction window** for batch operations - multiple issue changes within 30 seconds get flushed together, avoiding commit spam.
 
+### Protected Branch Workflow
+
+**If your repository uses protected branches (GitHub, GitLab, etc.)**, beads can commit to a separate branch instead of `main`:
+
+```bash
+# Initialize with separate sync branch
+bd init --branch beads-metadata
+
+# Or configure existing setup
+bd config set sync.branch beads-metadata
+```
+
+**How it works:**
+- Beads commits issue updates to `beads-metadata` instead of `main`
+- Uses git worktrees (lightweight checkouts) in `.git/beads-worktrees/`
+- Your main working directory is never affected
+- Periodically merge `beads-metadata` back to `main` via pull request
+
+**Daily workflow (unchanged for agents):**
+
+```bash
+# Agents work normally - no changes needed!
+bd create "Fix authentication" -t bug -p 1
+bd update bd-a1b2 --status in_progress
+bd close bd-a1b2 "Fixed"
+```
+
+All changes automatically commit to `beads-metadata` branch (if daemon is running with `--auto-commit`).
+
+**Merging to main (humans):**
+
+```bash
+# Check what's changed
+bd sync --status
+
+# Option 1: Create pull request
+git push origin beads-metadata
+# Then create PR on GitHub/GitLab
+
+# Option 2: Direct merge (if allowed)
+bd sync --merge
+```
+
+**Benefits:**
+- ✅ Works with protected `main` branches
+- ✅ No disruption to agent workflows
+- ✅ Platform-agnostic (works on any git platform)
+- ✅ Backward compatible (opt-in via config)
+
+**See [docs/PROTECTED_BRANCHES.md](docs/PROTECTED_BRANCHES.md) for complete setup guide, troubleshooting, and examples.**
+
 ### Agent Session Workflow
 
 **IMPORTANT for AI agents:** When you finish making issue changes, always run:
