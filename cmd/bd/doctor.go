@@ -1025,6 +1025,5 @@ func checkGitHooks(path string) doctorCheck {
 }
 
 func init() {
-	doctorCmd.Flags().Bool("json", false, "Output JSON format")
 	rootCmd.AddCommand(doctorCmd)
 }
