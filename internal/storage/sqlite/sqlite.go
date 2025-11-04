@@ -27,30 +27,21 @@ type SQLiteStorage struct {
 
 // New creates a new SQLite storage backend
 func New(path string) (*SQLiteStorage, error) {
-	// Convert :memory: to shared memory URL for consistent behavior across connections
-	// SQLite creates separate in-memory databases for each connection to ":memory:",
-	// but "file::memory:?cache=shared" creates a shared in-memory database.
-	dbPath := path
+	// Build connection string with proper URI syntax
+	// For :memory: databases, use shared cache so multiple connections see the same data
+	var connStr string
 	if path == ":memory:" {
-		dbPath = "file::memory:?cache=shared"
-	}
-
-	// Ensure directory exists (skip for memory databases)
-	if !strings.Contains(dbPath, ":memory:") {
-		dir := filepath.Dir(dbPath)
+		// Use shared in-memory database with pragmas
+		connStr = "file::memory:?cache=shared&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
+	} else {
+		// Ensure directory exists for file-based databases
+		dir := filepath.Dir(path)
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, fmt.Errorf("failed to create directory: %w", err)
 		}
+		// Use file URI with pragmas
+		connStr = "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
 	}
-
-	// Open database with WAL mode for better concurrency and busy timeout for parallel writes
-	// Use modernc.org/sqlite's _pragma syntax for all options to ensure consistent behavior
-	// _pragma=journal_mode(WAL) enables Write-Ahead Logging for better concurrency
-	// _pragma=foreign_keys(ON) enforces foreign key constraints
-	// _pragma=busy_timeout(30000) means wait up to 30 seconds for locks instead of failing immediately
-	// _time_format=sqlite enables automatic parsing of DATETIME columns to time.Time
-	// Use file: URI scheme to properly separate file path from query parameters
-	connStr := "file:" + dbPath + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
 
 	db, err := sql.Open("sqlite3", connStr)
 	if err != nil {
@@ -72,10 +63,14 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, err
 	}
 
-	// Convert to absolute path for consistency
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute path: %w", err)
+	// Convert to absolute path for consistency (but keep :memory: as-is)
+	absPath := path
+	if path != ":memory:" {
+		var err error
+		absPath, err = filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get absolute path: %w", err)
+		}
 	}
 
 	return &SQLiteStorage{
