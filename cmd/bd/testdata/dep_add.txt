@@ -20,5 +20,5 @@ stdout 'Added dependency'
 
 # Verify the dependency was added
 exec sh -c 'bd show $(cat second_id.txt)'
-stdout 'Depends on'
+stdout 'Dependencies \(1\)'
 stdout 'test-'
