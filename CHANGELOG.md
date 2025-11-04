@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.6] - 2025-11-04
+
+### Added
+
+- **npm Package** (bd-febc): Created `@beads/bd` npm package for Node.js/Claude Code for Web integration
+  - Native binary downloads from GitHub releases
+  - Integration tests and release documentation
+  - Postinstall script for platform-specific binary installation
+
+- **Template Support** (bd-164b): Issue creation from markdown templates
+  - Create multiple issues from a single file
+  - Structured format for bulk issue creation
+
+- **`bd comment` Alias** (bd-d3f0): Convenient shorthand for `bd comments add`
+
+### Changed
+
+- **Base36 Issue IDs** (GH #213): Switched from hex to Base36 encoding for shorter, more readable IDs
+  - Reduces ID length while maintaining uniqueness
+  - More human-friendly format
+
+### Fixed
+
+- **SQLite URI Handling** (bd-c54b): Fixed `file://` URI scheme to prevent query params in filename
+  - Prevents database corruption from malformed URIs
+  - Fixed `:memory:` database connection strings
+
+- **`bd init --no-db` Behavior** (GH #210): Now correctly creates `metadata.json` and `config.yaml`
+  - Previously failed to set `no-db: true` flag
+  - Improved metadata-only initialization workflow
+
+- **Symlink Path Resolution**: Fixed `findDatabaseInTree` to properly resolve symlinks
+- **Epic Hierarchy Display**: Fixed `bd show` command to correctly display epic child relationships
+- **CI Stability**: Fixed performance thresholds, test eligibility, and lint errors
+
+### Dependencies
+
+- Bumped `github.com/anthropics/anthropic-sdk-go` from 1.14.0 to 1.16.0
+- Bumped `fastmcp` from 2.13.0.1 to 2.13.0.2
+
 ## [0.21.5] - 2025-11-02
 
 ### Fixed
