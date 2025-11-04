@@ -125,7 +125,7 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 			}
 
 			// Create config.yaml with no-db: true
-			if err := createConfigYaml(localBeadsDir, quiet, true); err != nil {
+			if err := createConfigYaml(localBeadsDir, true); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", err)
 				// Non-fatal - continue anyway
 			}
@@ -248,7 +248,7 @@ bd.db
 		}
 		
 		// Create config.yaml template
-		if err := createConfigYaml(localBeadsDir, quiet, false); err != nil {
+		if err := createConfigYaml(localBeadsDir, false); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", err)
 			// Non-fatal - continue anyway
 		}
@@ -544,7 +544,7 @@ func migrateOldDatabases(targetPath string, quiet bool) error {
 }
 
 // createConfigYaml creates the config.yaml template in the specified directory
-func createConfigYaml(beadsDir string, quiet bool, noDbMode bool) error {
+func createConfigYaml(beadsDir string, noDbMode bool) error {
 	configYamlPath := filepath.Join(beadsDir, "config.yaml")
 	
 	// Skip if already exists

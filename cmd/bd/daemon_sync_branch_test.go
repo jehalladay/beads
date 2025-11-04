@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1100,7 +1101,11 @@ func TestSyncBranchPerformance(t *testing.T) {
 	}
 
 	avgDuration := totalDuration / iterations
+	// Windows git operations are significantly slower - use platform-specific thresholds
 	maxAllowed := 150 * time.Millisecond
+	if runtime.GOOS == "windows" {
+		maxAllowed = 500 * time.Millisecond
+	}
 
 	t.Logf("Average commit time: %v (max allowed: %v)", avgDuration, maxAllowed)
 

@@ -181,7 +181,7 @@ the default values for your common issue types.`,
 		}
 
 		// Write template file
-		if err := os.WriteFile(templatePath, data, 0644); err != nil {
+		if err := os.WriteFile(templatePath, data, 0600); err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing template: %v\n", err)
 			os.Exit(1)
 		}
@@ -286,6 +286,7 @@ func loadBuiltinTemplate(name string) (*Template, error) {
 // loadCustomTemplate loads a custom template from .beads/templates/
 func loadCustomTemplate(name string) (*Template, error) {
 	path := filepath.Join(".beads", "templates", name+".yaml")
+	// #nosec G304 - path is sanitized via sanitizeTemplateName before calling this function
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("template '%s' not found", name)
