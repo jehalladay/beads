@@ -67,3 +67,5 @@ npm-package/bin/LICENSE
 npm-package/bin/README.md
 npm-package/node_modules/
 npm-package/package-lock.json
+.beads/beads.db?*
+bd-original
