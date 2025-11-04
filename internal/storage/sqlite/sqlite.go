@@ -49,13 +49,8 @@ func New(path string) (*SQLiteStorage, error) {
 	// _pragma=foreign_keys(ON) enforces foreign key constraints
 	// _pragma=busy_timeout(30000) means wait up to 30 seconds for locks instead of failing immediately
 	// _time_format=sqlite enables automatic parsing of DATETIME columns to time.Time
-	// Note: For shared memory URLs, additional params need to be added with & not ?
-	connStr := dbPath
-	if strings.Contains(dbPath, "?") {
-		connStr += "&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
-	} else {
-		connStr += "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
-	}
+	// Use file: URI scheme to properly separate file path from query parameters
+	connStr := "file:" + dbPath + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
 
 	db, err := sql.Open("sqlite3", connStr)
 	if err != nil {
