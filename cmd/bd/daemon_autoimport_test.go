@@ -134,11 +134,11 @@ func TestDaemonAutoImportAfterGitPull(t *testing.T) {
 		
 		// Wait for filesystem to settle after git operations
 		// Windows has lower filesystem timestamp precision (typically 100ms)
-		// so we need a longer delay to ensure mtime comparison works
+		// and file I/O may be slower, so we need a longer delay
 		if runtime.GOOS == "windows" {
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(500 * time.Millisecond)
 		} else {
-			time.Sleep(50 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 		}
 		
 		// Start daemon server in clone2
