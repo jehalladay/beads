@@ -213,11 +213,33 @@ Examples:
 	},
 }
 
+// commentCmd is a top-level alias for commentsAddCmd
+var commentCmd = &cobra.Command{
+	Use:   "comment [issue-id] [text]",
+	Short: "Add a comment to an issue (alias for 'comments add')",
+	Long: `Add a comment to an issue. This is a convenient alias for 'bd comments add'.
+
+Examples:
+  # Add a comment
+  bd comment bd-123 "Working on this now"
+
+  # Add a comment from a file
+  bd comment bd-123 -f notes.txt`,
+	Args: cobra.MinimumNArgs(1),
+	Run: commentsAddCmd.Run,
+}
+
 func init() {
 	commentsCmd.AddCommand(commentsAddCmd)
 	commentsAddCmd.Flags().StringP("file", "f", "", "Read comment text from file")
 	commentsAddCmd.Flags().StringP("author", "a", "", "Add author to comment")
+	
+	// Add the same flags to the alias
+	commentCmd.Flags().StringP("file", "f", "", "Read comment text from file")
+	commentCmd.Flags().StringP("author", "a", "", "Add author to comment")
+	
 	rootCmd.AddCommand(commentsCmd)
+	rootCmd.AddCommand(commentCmd)
 }
 
 func isUnknownOperationError(err error) bool {
