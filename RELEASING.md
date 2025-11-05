@@ -75,31 +75,48 @@ Before starting a release:
 
 ## 1. Prepare Release
 
-### Update Version
+### Update Version and Create Release Tag
 
-Use the version bump script to update all version references:
+Use the version bump script to update all version references and create the release tag:
 
 ```bash
 # Dry run - shows what will change
 ./scripts/bump-version.sh 0.22.0
 
-# Review the diff
-git diff
-
-# Commit if it looks good
-./scripts/bump-version.sh 0.22.0 --commit
+# Review the diff, then commit, tag, and push in one command
+./scripts/bump-version.sh 0.22.0 --commit --tag --push
 ```
 
 This updates:
-- `cmd/bd/main.go` - CLI version constant
-- `integrations/mcp/server/pyproject.toml` - MCP server version
-- `npm-package/package.json` - npm package version
-- `Formula/bd.rb` - Homebrew formula version
-- `.goreleaser.yml` - Release configuration
+- `cmd/bd/version.go` - CLI version constant
+- `integrations/beads-mcp/pyproject.toml` - MCP server version
+- `.claude-plugin/plugin.json` - Plugin version
+- `.claude-plugin/marketplace.json` - Marketplace version
+- `README.md` - Documentation version
+- `PLUGIN.md` - Version requirements
 
-### Update CHANGELOG.md
+The `--commit --tag --push` flags will:
+1. Create a git commit with all version changes
+2. Create an annotated tag `v0.22.0`
+3. Push both commit and tag to origin
 
-Add release notes:
+This triggers GitHub Actions to build release artifacts automatically.
+
+**Alternative (step-by-step):**
+
+```bash
+# Just commit
+./scripts/bump-version.sh 0.22.0 --commit
+
+# Then manually tag and push
+git tag -a v0.22.0 -m "Release v0.22.0"
+git push origin main
+git push origin v0.22.0
+```
+
+### Update CHANGELOG.md (Optional but Recommended)
+
+Add release notes before or after running the version bump:
 
 ```markdown
 ## [0.22.0] - 2025-11-04
@@ -116,21 +133,6 @@ Add release notes:
 
 ### Breaking Changes
 - Changed behavior of B (migration guide)
-```
-
-### Commit and Tag
-
-```bash
-# Commit version bump and changelog
-git add -A
-git commit -m "chore: Bump version to 0.22.0"
-
-# Create annotated tag
-git tag -a v0.22.0 -m "Release v0.22.0"
-
-# Push to GitHub
-git push origin main
-git push origin v0.22.0
 ```
 
 ## 2. GitHub Release
