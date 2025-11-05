@@ -373,3 +373,139 @@ func TestImportJSONLFile(t *testing.T) {
 		}
 	})
 }
+
+func TestExportToMultiRepo(t *testing.T) {
+	t.Run("returns nil in single-repo mode", func(t *testing.T) {
+		store, cleanup := setupTestDB(t)
+		defer cleanup()
+
+		// Initialize config fresh
+		if err := config.Initialize(); err != nil {
+			t.Fatalf("failed to initialize config: %v", err)
+		}
+
+		// Clear any multi-repo config from previous tests
+		config.Set("repos.primary", "")
+		config.Set("repos.additional", nil)
+
+		ctx := context.Background()
+		results, err := store.ExportToMultiRepo(ctx)
+		if err != nil {
+			t.Errorf("unexpected error in single-repo mode: %v", err)
+		}
+		if results != nil {
+			t.Errorf("expected nil results in single-repo mode, got %v", results)
+		}
+	})
+
+	t.Run("exports issues to correct repos", func(t *testing.T) {
+		store, cleanup := setupTestDB(t)
+		defer cleanup()
+
+		// Initialize config
+		if err := config.Initialize(); err != nil {
+			t.Fatalf("failed to initialize config: %v", err)
+		}
+
+		// Create temporary repos
+		primaryDir := t.TempDir()
+		additionalDir := t.TempDir()
+
+		// Create .beads directories
+		primaryBeadsDir := filepath.Join(primaryDir, ".beads")
+		additionalBeadsDir := filepath.Join(additionalDir, ".beads")
+		if err := os.MkdirAll(primaryBeadsDir, 0755); err != nil {
+			t.Fatalf("failed to create primary .beads dir: %v", err)
+		}
+		if err := os.MkdirAll(additionalBeadsDir, 0755); err != nil {
+			t.Fatalf("failed to create additional .beads dir: %v", err)
+		}
+
+		// Set multi-repo config
+		config.Set("repos.primary", primaryDir)
+		config.Set("repos.additional", []string{additionalDir})
+
+		ctx := context.Background()
+
+		// Create issues with different source_repos
+		issue1 := &types.Issue{
+			ID:         "bd-primary-1",
+			Title:      "Primary Issue",
+			Status:     types.StatusOpen,
+			Priority:   1,
+			IssueType:  types.TypeTask,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			SourceRepo: ".",
+		}
+		issue1.ContentHash = issue1.ComputeContentHash()
+
+		issue2 := &types.Issue{
+			ID:         "bd-additional-1",
+			Title:      "Additional Issue",
+			Status:     types.StatusOpen,
+			Priority:   1,
+			IssueType:  types.TypeTask,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			SourceRepo: additionalDir,
+		}
+		issue2.ContentHash = issue2.ComputeContentHash()
+
+		// Insert issues
+		if err := store.CreateIssue(ctx, issue1, "test"); err != nil {
+			t.Fatalf("failed to create primary issue: %v", err)
+		}
+		if err := store.CreateIssue(ctx, issue2, "test"); err != nil {
+			t.Fatalf("failed to create additional issue: %v", err)
+		}
+
+		// Export to multi-repo
+		results, err := store.ExportToMultiRepo(ctx)
+		if err != nil {
+			t.Fatalf("ExportToMultiRepo() error = %v", err)
+		}
+
+		// Verify export counts
+		if results["."] != 1 {
+			t.Errorf("expected 1 issue exported to primary, got %d", results["."])
+		}
+		if results[additionalDir] != 1 {
+			t.Errorf("expected 1 issue exported to additional, got %d", results[additionalDir])
+		}
+
+		// Verify JSONL files exist and contain correct issues
+		primaryJSONL := filepath.Join(primaryBeadsDir, "issues.jsonl")
+		additionalJSONL := filepath.Join(additionalBeadsDir, "issues.jsonl")
+
+		// Check primary JSONL
+		f1, err := os.Open(primaryJSONL)
+		if err != nil {
+			t.Fatalf("failed to open primary JSONL: %v", err)
+		}
+		defer f1.Close()
+
+		var primaryIssue types.Issue
+		if err := json.NewDecoder(f1).Decode(&primaryIssue); err != nil {
+			t.Fatalf("failed to decode primary issue: %v", err)
+		}
+		if primaryIssue.ID != "bd-primary-1" {
+			t.Errorf("expected bd-primary-1 in primary JSONL, got %s", primaryIssue.ID)
+		}
+
+		// Check additional JSONL
+		f2, err := os.Open(additionalJSONL)
+		if err != nil {
+			t.Fatalf("failed to open additional JSONL: %v", err)
+		}
+		defer f2.Close()
+
+		var additionalIssue types.Issue
+		if err := json.NewDecoder(f2).Decode(&additionalIssue); err != nil {
+			t.Fatalf("failed to decode additional issue: %v", err)
+		}
+		if additionalIssue.ID != "bd-additional-1" {
+			t.Errorf("expected bd-additional-1 in additional JSONL, got %s", additionalIssue.ID)
+		}
+	})
+}
