@@ -91,6 +91,12 @@ func Initialize() error {
 	// Set defaults for additional settings
 	v.SetDefault("flush-debounce", "30s")
 	v.SetDefault("auto-start-daemon", true)
+	
+	// Routing configuration defaults
+	v.SetDefault("routing.mode", "auto")
+	v.SetDefault("routing.default", ".")
+	v.SetDefault("routing.maintainer", ".")
+	v.SetDefault("routing.contributor", "~/.beads-planning")
 
 	// Read config file if it was found
 	if configFileSet {
