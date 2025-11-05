@@ -138,7 +138,7 @@ func TestDaemonAutoImportAfterGitPull(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			time.Sleep(500 * time.Millisecond)
 		} else {
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 		}
 		
 		// Start daemon server in clone2
@@ -232,10 +232,8 @@ func TestDaemonAutoImportAfterGitPull(t *testing.T) {
 		// Agent B pulls
 		runGitCmd(t, clone2Dir, "pull")
 		
-		// Wait a bit for auto-import to process
-		time.Sleep(200 * time.Millisecond)
-		
 		// Query via daemon - should see priority 0
+		// (Execute forces auto-import synchronously)
 		socketPath := filepath.Join(clone2BeadsDir, "bd.sock")
 		client, err := rpc.TryConnect(socketPath)
 		if err != nil {

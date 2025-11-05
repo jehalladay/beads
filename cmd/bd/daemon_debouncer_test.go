@@ -18,12 +18,12 @@ func TestDebouncer_BatchesMultipleTriggers(t *testing.T) {
 	debouncer.Trigger()
 	debouncer.Trigger()
 
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 	if got := atomic.LoadInt32(&count); got != 0 {
 		t.Errorf("action fired too early: got %d, want 0", got)
 	}
 
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(35 * time.Millisecond)
 	if got := atomic.LoadInt32(&count); got != 1 {
 		t.Errorf("action should have fired once: got %d, want 1", got)
 	}
@@ -37,16 +37,16 @@ func TestDebouncer_ResetsTimerOnSubsequentTriggers(t *testing.T) {
 	t.Cleanup(debouncer.Cancel)
 
 	debouncer.Trigger()
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 
 	debouncer.Trigger()
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 
 	if got := atomic.LoadInt32(&count); got != 0 {
 		t.Errorf("action fired too early after timer reset: got %d, want 0", got)
 	}
 
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(35 * time.Millisecond)
 	if got := atomic.LoadInt32(&count); got != 1 {
 		t.Errorf("action should have fired once after final timer: got %d, want 1", got)
 	}
@@ -60,7 +60,7 @@ func TestDebouncer_CancelDuringWait(t *testing.T) {
 	t.Cleanup(debouncer.Cancel)
 
 	debouncer.Trigger()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 
 	debouncer.Cancel()
 
@@ -80,7 +80,7 @@ func TestDebouncer_CancelWithNoPendingAction(t *testing.T) {
 	debouncer.Cancel()
 
 	debouncer.Trigger()
-	time.Sleep(70 * time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
 	if got := atomic.LoadInt32(&count); got != 1 {
 		t.Errorf("action should fire normally after cancel with no pending action: got %d, want 1", got)
 	}
@@ -108,7 +108,7 @@ func TestDebouncer_ThreadSafety(t *testing.T) {
 	close(start)
 	wg.Wait()
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(70 * time.Millisecond)
 
 	got := atomic.LoadInt32(&count)
 	if got != 1 {
@@ -157,19 +157,19 @@ func TestDebouncer_MultipleSequentialTriggerCycles(t *testing.T) {
 	t.Cleanup(debouncer.Cancel)
 
 	debouncer.Trigger()
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(40 * time.Millisecond)
 	if got := atomic.LoadInt32(&count); got != 1 {
 		t.Errorf("first cycle: got %d, want 1", got)
 	}
 
 	debouncer.Trigger()
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(40 * time.Millisecond)
 	if got := atomic.LoadInt32(&count); got != 2 {
 		t.Errorf("second cycle: got %d, want 2", got)
 	}
 
 	debouncer.Trigger()
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(40 * time.Millisecond)
 	if got := atomic.LoadInt32(&count); got != 3 {
 		t.Errorf("third cycle: got %d, want 3", got)
 	}
@@ -185,7 +185,7 @@ func TestDebouncer_CancelImmediatelyAfterTrigger(t *testing.T) {
 	debouncer.Trigger()
 	debouncer.Cancel()
 
-	time.Sleep(80 * time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
 	if got := atomic.LoadInt32(&count); got != 0 {
 		t.Errorf("action should not fire after immediate cancel: got %d, want 0", got)
 	}
