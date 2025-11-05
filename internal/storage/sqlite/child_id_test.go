@@ -197,7 +197,9 @@ func TestCreateIssue_HierarchicalID_ParentNotExists(t *testing.T) {
 	if err == nil {
 		t.Errorf("expected error for child without parent, got nil")
 	}
-	if err != nil && err.Error() != "parent issue bd-nonexistent does not exist" {
-		t.Errorf("unexpected error message: %v", err)
+	// With resurrection feature, error message includes JSONL history check
+	expectedErr := "parent issue bd-nonexistent does not exist and could not be resurrected from JSONL history"
+	if err != nil && err.Error() != expectedErr {
+		t.Errorf("unexpected error message: got %q, want %q", err.Error(), expectedErr)
 	}
 }
