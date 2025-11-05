@@ -183,11 +183,21 @@ func tryResurrectParent(parentID string, issues []*types.Issue) bool {
 	return false // Parent not in this batch
 }
 
+// OrphanHandling defines how to handle missing parent issues during import
+type OrphanHandling string
+
+const (
+	OrphanStrict     OrphanHandling = "strict"     // Fail import on missing parent
+	OrphanResurrect  OrphanHandling = "resurrect"  // Auto-resurrect from batch
+	OrphanSkip       OrphanHandling = "skip"       // Skip orphaned issues
+	OrphanAllow      OrphanHandling = "allow"      // Allow orphans (default)
+)
+
 // EnsureIDs generates or validates IDs for issues
 // For issues with empty IDs, generates unique hash-based IDs
 // For issues with existing IDs, validates they match the prefix and parent exists (if hierarchical)
-// For hierarchical IDs with missing parents, attempts resurrection from the import batch
-func EnsureIDs(ctx context.Context, conn *sql.Conn, prefix string, issues []*types.Issue, actor string) error {
+// For hierarchical IDs with missing parents, behavior depends on orphanHandling mode
+func EnsureIDs(ctx context.Context, conn *sql.Conn, prefix string, issues []*types.Issue, actor string, orphanHandling OrphanHandling) error {
 	usedIDs := make(map[string]bool)
 	
 	// First pass: record explicitly provided IDs
@@ -210,11 +220,24 @@ func EnsureIDs(ctx context.Context, conn *sql.Conn, prefix string, issues []*typ
 					return fmt.Errorf("failed to check parent existence: %w", err)
 				}
 				if parentCount == 0 {
-					// Try to resurrect parent from import batch
-					if !tryResurrectParent(parentID, issues) {
-						return fmt.Errorf("parent issue %s does not exist and cannot be resurrected from import batch", parentID)
+					// Handle missing parent based on mode
+					switch orphanHandling {
+					case OrphanStrict:
+						return fmt.Errorf("parent issue %s does not exist (strict mode)", parentID)
+					case OrphanResurrect:
+						if !tryResurrectParent(parentID, issues) {
+							return fmt.Errorf("parent issue %s does not exist and cannot be resurrected from import batch", parentID)
+						}
+						// Parent will be created in this batch (due to depth-sorting), so allow this child
+					case OrphanSkip:
+						// Mark issue for skipping by clearing its ID (will be filtered out later)
+						issues[i].ID = ""
+						continue
+					case OrphanAllow:
+						// Allow orphan - no validation
+					default:
+						// Default to allow for backward compatibility
 					}
-					// Parent will be created in this batch (due to depth-sorting), so allow this child
 				}
 			}
 			

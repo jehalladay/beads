@@ -33,7 +33,7 @@ func validateBatchIssues(issues []*types.Issue) error {
 }
 
 // generateBatchIDs generates IDs for all issues that need them atomically
-func (s *SQLiteStorage) generateBatchIDs(ctx context.Context, conn *sql.Conn, issues []*types.Issue, actor string) error {
+func (s *SQLiteStorage) generateBatchIDs(ctx context.Context, conn *sql.Conn, issues []*types.Issue, actor string, orphanHandling OrphanHandling) error {
 	// Get prefix from config (needed for both generation and validation)
 	var prefix string
 	err := conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&prefix)
@@ -45,7 +45,7 @@ func (s *SQLiteStorage) generateBatchIDs(ctx context.Context, conn *sql.Conn, is
 	}
 
 	// Generate or validate IDs for all issues
-	if err := EnsureIDs(ctx, conn, prefix, issues, actor); err != nil {
+	if err := EnsureIDs(ctx, conn, prefix, issues, actor, orphanHandling); err != nil {
 		return err
 	}
 	
@@ -122,6 +122,12 @@ func bulkMarkDirty(ctx context.Context, conn *sql.Conn, issues []*types.Issue) e
 //   - Single issue creation (use CreateIssue for simplicity)
 //   - Interactive user operations (use CreateIssue)
 func (s *SQLiteStorage) CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error {
+	// Default to OrphanResurrect for backward compatibility
+	return s.CreateIssuesWithOptions(ctx, issues, actor, OrphanResurrect)
+}
+
+// CreateIssuesWithOptions creates multiple issues with configurable orphan handling
+func (s *SQLiteStorage) CreateIssuesWithOptions(ctx context.Context, issues []*types.Issue, actor string, orphanHandling OrphanHandling) error {
 	if len(issues) == 0 {
 		return nil
 	}
@@ -150,7 +156,7 @@ func (s *SQLiteStorage) CreateIssues(ctx context.Context, issues []*types.Issue,
 	}()
 
 	// Phase 3: Generate IDs for issues that need them
-	if err := s.generateBatchIDs(ctx, conn, issues, actor); err != nil {
+	if err := s.generateBatchIDs(ctx, conn, issues, actor, orphanHandling); err != nil {
 		return err
 	}
 

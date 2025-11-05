@@ -13,18 +13,18 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
-// OrphanHandling defines how to handle missing parent issues during import
-type OrphanHandling string
+// OrphanHandling is an alias to sqlite.OrphanHandling for convenience
+type OrphanHandling = sqlite.OrphanHandling
 
 const (
 	// OrphanStrict fails import on missing parent (safest)
-	OrphanStrict OrphanHandling = "strict"
+	OrphanStrict = sqlite.OrphanStrict
 	// OrphanResurrect auto-resurrects missing parents from JSONL history
-	OrphanResurrect OrphanHandling = "resurrect"
+	OrphanResurrect = sqlite.OrphanResurrect
 	// OrphanSkip skips orphaned issues with warning
-	OrphanSkip OrphanHandling = "skip"
+	OrphanSkip = sqlite.OrphanSkip
 	// OrphanAllow imports orphans without validation (default, works around bugs)
-	OrphanAllow OrphanHandling = "allow"
+	OrphanAllow = sqlite.OrphanAllow
 )
 
 // Options contains import configuration
@@ -566,14 +566,14 @@ if len(newIssues) > 0 {
 
 // Create in batches by depth level (max depth 3)
 		for depth := 0; depth <= 3; depth++ {
-  var batchForDepth []*types.Issue
-  for _, issue := range newIssues {
-   if strings.Count(issue.ID, ".") == depth {
-   batchForDepth = append(batchForDepth, issue)
+   var batchForDepth []*types.Issue
+   for _, issue := range newIssues {
+    if strings.Count(issue.ID, ".") == depth {
+    batchForDepth = append(batchForDepth, issue)
 				}
 			}
 			if len(batchForDepth) > 0 {
-				if err := sqliteStore.CreateIssues(ctx, batchForDepth, "import"); err != nil {
+				if err := sqliteStore.CreateIssuesWithOptions(ctx, batchForDepth, "import", opts.OrphanHandling); err != nil {
 					return fmt.Errorf("error creating depth-%d issues: %w", depth, err)
 				}
 				result.Created += len(batchForDepth)
