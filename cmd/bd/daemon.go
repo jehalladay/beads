@@ -271,6 +271,18 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 	defer func() { _ = store.Close() }()
 	log.log("Database opened: %s", daemonDBPath)
 
+	// Hydrate from multi-repo if configured
+	hydrateCtx := context.Background()
+	if results, err := store.HydrateFromMultiRepo(hydrateCtx); err != nil {
+		log.log("Error: multi-repo hydration failed: %v", err)
+		os.Exit(1)
+	} else if results != nil {
+		log.log("Multi-repo hydration complete:")
+		for repo, count := range results {
+			log.log("  %s: %d issues", repo, count)
+		}
+	}
+
 	// Validate database fingerprint
 	if err := validateDatabaseFingerprint(store, &log); err != nil {
 		if os.Getenv("BEADS_IGNORE_REPO_MISMATCH") != "1" {

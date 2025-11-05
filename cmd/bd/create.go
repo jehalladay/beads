@@ -9,6 +9,8 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -103,7 +105,37 @@ var createCmd = &cobra.Command{
 		externalRef, _ := cmd.Flags().GetString("external-ref")
 		deps, _ := cmd.Flags().GetStringSlice("deps")
 		forceCreate, _ := cmd.Flags().GetBool("force")
+		repoOverride, _ := cmd.Flags().GetString("repo")
 		// Use global jsonOutput set by PersistentPreRun
+
+		// Determine target repository using routing logic
+		repoPath := "." // default to current directory
+		if cmd.Flags().Changed("repo") {
+			// Explicit --repo flag overrides auto-routing
+			repoPath = repoOverride
+		} else {
+			// Auto-routing based on user role
+			userRole, err := routing.DetectUserRole(".")
+			if err != nil && os.Getenv("BD_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "Warning: failed to detect user role: %v\n", err)
+			}
+			
+			routingConfig := &routing.RoutingConfig{
+				Mode:             config.GetString("routing.mode"),
+				DefaultRepo:      config.GetString("routing.default"),
+				MaintainerRepo:   config.GetString("routing.maintainer"),
+				ContributorRepo:  config.GetString("routing.contributor"),
+				ExplicitOverride: repoOverride,
+			}
+			
+			repoPath = routing.DetermineTargetRepo(routingConfig, userRole, ".")
+		}
+		
+		// TODO: Switch to target repo for multi-repo support (bd-4ms)
+		// For now, we just log the target repo in debug mode
+		if os.Getenv("BD_DEBUG") != "" && repoPath != "." {
+			fmt.Fprintf(os.Stderr, "DEBUG: Target repo: %s\n", repoPath)
+		}
 
 		// Check for conflicting flags
 		if explicitID != "" && parentID != "" {
@@ -226,6 +258,42 @@ var createCmd = &cobra.Command{
 		}
 
 		ctx := context.Background()
+		
+		// Check if any dependencies are discovered-from type
+		// If so, inherit source_repo from the parent issue
+		var discoveredFromParentID string
+		for _, depSpec := range deps {
+			depSpec = strings.TrimSpace(depSpec)
+			if depSpec == "" {
+				continue
+			}
+			
+			var depType types.DependencyType
+			var dependsOnID string
+			
+			if strings.Contains(depSpec, ":") {
+				parts := strings.SplitN(depSpec, ":", 2)
+				if len(parts) == 2 {
+					depType = types.DependencyType(strings.TrimSpace(parts[0]))
+					dependsOnID = strings.TrimSpace(parts[1])
+					
+					if depType == types.DepDiscoveredFrom {
+						discoveredFromParentID = dependsOnID
+						break
+					}
+				}
+			}
+		}
+		
+		// If we found a discovered-from dependency, inherit source_repo from parent
+		if discoveredFromParentID != "" {
+			parentIssue, err := store.GetIssue(ctx, discoveredFromParentID)
+			if err == nil && parentIssue.SourceRepo != "" {
+				issue.SourceRepo = parentIssue.SourceRepo
+			}
+			// If error getting parent or parent has no source_repo, continue with default
+		}
+		
 		if err := store.CreateIssue(ctx, issue, actor); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -312,6 +380,7 @@ func init() {
 	createCmd.Flags().String("external-ref", "", "External reference (e.g., 'gh-9', 'jira-ABC')")
 	createCmd.Flags().StringSlice("deps", []string{}, "Dependencies in format 'type:id' or 'id' (e.g., 'discovered-from:bd-20,blocks:bd-15' or 'bd-20')")
 	createCmd.Flags().Bool("force", false, "Force creation even if prefix doesn't match database prefix")
+	createCmd.Flags().String("repo", "", "Target repository for issue (overrides auto-routing)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
 }

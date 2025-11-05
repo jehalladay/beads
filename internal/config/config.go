@@ -91,6 +91,12 @@ func Initialize() error {
 	// Set defaults for additional settings
 	v.SetDefault("flush-debounce", "30s")
 	v.SetDefault("auto-start-daemon", true)
+	
+	// Routing configuration defaults
+	v.SetDefault("routing.mode", "auto")
+	v.SetDefault("routing.default", ".")
+	v.SetDefault("routing.maintainer", ".")
+	v.SetDefault("routing.contributor", "~/.beads-planning")
 
 	// Read config file if it was found
 	if configFileSet {
@@ -166,4 +172,37 @@ func AllSettings() map[string]interface{} {
 		return map[string]interface{}{}
 	}
 	return v.AllSettings()
+}
+
+// GetStringSlice retrieves a string slice configuration value
+func GetStringSlice(key string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v.GetStringSlice(key)
+}
+
+// MultiRepoConfig contains configuration for multi-repo support
+type MultiRepoConfig struct {
+	Primary    string   // Primary repo path (where canonical issues live)
+	Additional []string // Additional repos to hydrate from
+}
+
+// GetMultiRepoConfig retrieves multi-repo configuration
+// Returns nil if multi-repo is not configured (single-repo mode)
+func GetMultiRepoConfig() *MultiRepoConfig {
+	if v == nil {
+		return nil
+	}
+	
+	// Check if repos.primary is set (indicates multi-repo mode)
+	primary := v.GetString("repos.primary")
+	if primary == "" {
+		return nil // Single-repo mode
+	}
+	
+	return &MultiRepoConfig{
+		Primary:    primary,
+		Additional: v.GetStringSlice("repos.additional"),
+	}
 }
