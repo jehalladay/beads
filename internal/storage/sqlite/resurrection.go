@@ -120,7 +120,7 @@ func (s *SQLiteStorage) findIssueInJSONL(issueID string) (*types.Issue, error) {
 	}
 	
 	// Open and scan JSONL file
-	file, err := os.Open(jsonlPath)
+	file, err := os.Open(jsonlPath) // #nosec G304 -- jsonlPath is from trusted beads directory
 	if err != nil {
 		return nil, fmt.Errorf("failed to open JSONL file: %w", err)
 	}

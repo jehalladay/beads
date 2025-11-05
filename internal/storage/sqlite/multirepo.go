@@ -118,7 +118,7 @@ func (s *SQLiteStorage) hydrateFromRepo(ctx context.Context, repoPath, sourceRep
 
 // importJSONLFile imports issues from a JSONL file, setting the source_repo field.
 func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRepo string) (int, error) {
-	file, err := os.Open(jsonlPath)
+	file, err := os.Open(jsonlPath) // #nosec G304 -- jsonlPath is from trusted source
 	if err != nil {
 		return 0, fmt.Errorf("failed to open JSONL file: %w", err)
 	}

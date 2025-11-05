@@ -127,7 +127,7 @@ func (s *SQLiteStorage) exportToRepo(ctx context.Context, repoPath string, issue
 
 	// Write atomically using temp file + rename
 	tempPath := fmt.Sprintf("%s.tmp.%d", jsonlPath, os.Getpid())
-	f, err := os.Create(tempPath)
+	f, err := os.Create(tempPath) // #nosec G304 -- tempPath derived from trusted jsonlPath
 	if err != nil {
 		return 0, fmt.Errorf("failed to create temp file: %w", err)
 	}
@@ -161,7 +161,7 @@ func (s *SQLiteStorage) exportToRepo(ctx context.Context, repoPath string, issue
 	}
 
 	// Set file permissions
-	if err := os.Chmod(jsonlPath, 0644); err != nil {
+	if err := os.Chmod(jsonlPath, 0644); err != nil { // nolint:gosec // G302: 0644 intentional for git-tracked files
 		// Non-fatal
 		if os.Getenv("BD_DEBUG") != "" {
 			fmt.Fprintf(os.Stderr, "Debug: failed to set permissions on %s: %v\n", jsonlPath, err)
