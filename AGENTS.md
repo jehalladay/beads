@@ -147,8 +147,9 @@ bd create "Issue title" -t bug|feature|task -p 0-4 -d "Description" --json
 # Create with explicit ID (for parallel workers)
 bd create "Issue title" --id worker1-100 -p 1 --json
 
-# Create with labels
+# Create with labels (--labels or --label work)
 bd create "Issue title" -t bug -p 1 -l bug,critical --json
+bd create "Issue title" -t bug -p 1 --label bug,critical --json
 
 # Examples with special characters (all require quoting):
 bd create "Fix: auth doesn't validate tokens" -t bug -p 1 --json

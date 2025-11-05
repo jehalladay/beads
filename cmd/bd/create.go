@@ -96,6 +96,10 @@ var createCmd = &cobra.Command{
 		assignee, _ := cmd.Flags().GetString("assignee")
 
 		labels, _ := cmd.Flags().GetStringSlice("labels")
+		labelAlias, _ := cmd.Flags().GetStringSlice("label")
+		if len(labelAlias) > 0 {
+			labels = append(labels, labelAlias...)
+		}
 		if len(labels) == 0 && tmpl != nil && len(tmpl.Labels) > 0 {
 			labels = tmpl.Labels
 		}
@@ -375,6 +379,8 @@ func init() {
 	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore)")
 	createCmd.Flags().StringP("assignee", "a", "", "Assignee")
 	createCmd.Flags().StringSliceP("labels", "l", []string{}, "Labels (comma-separated)")
+	createCmd.Flags().StringSlice("label", []string{}, "Alias for --labels")
+	_ = createCmd.Flags().MarkHidden("label")
 	createCmd.Flags().String("id", "", "Explicit issue ID (e.g., 'bd-42' for partitioning)")
 	createCmd.Flags().String("parent", "", "Parent issue ID for hierarchical child (e.g., 'bd-a3f8e9')")
 	createCmd.Flags().String("external-ref", "", "External reference (e.g., 'gh-9', 'jira-ABC')")
