@@ -179,6 +179,7 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 		var estimatedMinutes sql.NullInt64
 		var assignee sql.NullString
 		var externalRef sql.NullString
+		var sourceRepo sql.NullString
 		var contentHash sql.NullString
 		var compactionLevel sql.NullInt64
 		var compactedAt sql.NullTime
@@ -189,7 +190,7 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef,
+			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
 			&compactionLevel, &compactedAt, &compactedAtCommit, &originalSize,
 		)
 		if err != nil {
@@ -211,6 +212,9 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 		}
 		if externalRef.Valid {
 			issue.ExternalRef = &externalRef.String
+		}
+		if sourceRepo.Valid {
+			issue.SourceRepo = sourceRepo.String
 		}
 		if compactionLevel.Valid {
 			issue.CompactionLevel = int(compactionLevel.Int64)

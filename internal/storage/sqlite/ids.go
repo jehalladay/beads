@@ -217,7 +217,6 @@ func EnsureIDs(ctx context.Context, conn *sql.Conn, prefix string, issues []*typ
 					// Parent will be created in this batch (due to depth-sorting), so allow this child
 				}
 			}
-		}
 			
 			usedIDs[issues[i].ID] = true
 		}
