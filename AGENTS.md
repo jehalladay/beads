@@ -726,15 +726,44 @@ git commit
 
 ### Advanced: Intelligent Merge Tools
 
-For Git merge conflicts in `.beads/issues.jsonl`, consider using **[beads-merge](https://github.com/neongreen/mono/tree/main/beads-merge)** - a specialized merge tool by @neongreen that:
+For Git merge conflicts in `.beads/issues.jsonl`, use **[beads-merge](https://github.com/neongreen/mono/tree/main/beads-merge)** - a production-ready 3-way merge tool by @neongreen that:
 
-- Matches issues across conflicted JSONL files
-- Merges fields intelligently (e.g., combines labels, picks newer timestamps)
-- Resolves conflicts automatically where possible
-- Leaves remaining conflicts for manual resolution
-- Works as a Git/jujutsu merge driver
+- **Prevents conflicts proactively** with field-level merging
+- Matches issues by identity (id + created_at + created_by)
+- Smart field merging: timestamps→max, dependencies→union, status/priority→3-way
+- Outputs conflict markers only for unresolvable conflicts
+- Works as Git/jujutsu merge driver (opt-in)
 
-**Beads-merge** helps with intelligent field-level merging during git merge. After resolving, just `bd import` to update your database.
+**Setup (one-time)**:
+
+```bash
+# Install (requires Go 1.21+)
+git clone https://github.com/neongreen/mono.git
+cd mono/beads-merge
+go install
+
+# Configure Git merge driver
+git config merge.beads.name "JSONL merge driver for beads"
+git config merge.beads.driver "beads-merge %A %O %A %B"
+
+# Enable for beads JSONL files (in your repo)
+echo ".beads/beads.jsonl merge=beads" >> .gitattributes
+git add .gitattributes
+git commit -m "Enable beads-merge for JSONL files"
+```
+
+**For Jujutsu users**, add to `~/.jjconfig.toml`:
+
+```toml
+[merge-tools.beads-merge]
+program = "beads-merge"
+merge-args = ["$output", "$base", "$left", "$right"]
+merge-conflict-exit-codes = [1]
+```
+
+Then resolve with: `jj resolve --tool=beads-merge`
+
+**How it works**: During `git merge`, beads-merge merges JSONL files issue-by-issue instead of line-by-line. This prevents spurious conflicts from line renumbering or timestamp updates. If conflicts remain, they're marked in standard format for manual resolution.
 
 ## Current Project Status
 
