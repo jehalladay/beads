@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.8] - 2025-11-05
+
 ### Added
 
 - **Parent Resurrection** (bd-58c0): Automatic resurrection of deleted parent issues from JSONL history
@@ -24,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **JSONL Resurrection Logic**: Fixed to use LAST occurrence instead of FIRST (append-only semantics)
+- **Version Bump Script**: Added `--tag` and `--push` flags to automate release tagging
+  - Addresses confusion where version bump doesn't trigger GitHub release
+  - New usage: `./scripts/bump-version.sh X.Y.Z --commit --tag --push`
 
 ## [0.21.7] - 2025-11-04
 
