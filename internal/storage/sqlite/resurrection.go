@@ -3,6 +3,7 @@ package sqlite
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -24,9 +25,22 @@ import (
 //   - false if parent was not found in JSONL history
 //   - error if resurrection failed for any other reason
 func (s *SQLiteStorage) TryResurrectParent(ctx context.Context, parentID string) (bool, error) {
+	// Get a connection for the entire resurrection operation
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to get database connection: %w", err)
+	}
+	defer conn.Close()
+	
+	return s.tryResurrectParentWithConn(ctx, conn, parentID)
+}
+
+// tryResurrectParentWithConn is the internal version that accepts an existing connection.
+// This allows resurrection to participate in an existing transaction.
+func (s *SQLiteStorage) tryResurrectParentWithConn(ctx context.Context, conn *sql.Conn, parentID string) (bool, error) {
 	// First check if parent already exists in database
 	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, parentID).Scan(&count)
+	err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, parentID).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check parent existence: %w", err)
 	}
@@ -63,14 +77,7 @@ func (s *SQLiteStorage) TryResurrectParent(ctx context.Context, parentID string)
 		tombstone.Description = fmt.Sprintf("%s\n\nOriginal description:\n%s", tombstone.Description, parentIssue.Description)
 	}
 	
-	// Get a connection for the transaction
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return false, fmt.Errorf("failed to get database connection: %w", err)
-	}
-	defer conn.Close()
-	
-	// Insert tombstone into database
+	// Insert tombstone into database using the provided connection
 	if err := insertIssue(ctx, conn, tombstone); err != nil {
 		return false, fmt.Errorf("failed to create tombstone for parent %s: %w", parentID, err)
 	}
@@ -80,9 +87,9 @@ func (s *SQLiteStorage) TryResurrectParent(ctx context.Context, parentID string)
 		for _, dep := range parentIssue.Dependencies {
 			// Only resurrect dependencies if both source and target exist
 			var targetCount int
-			err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, dep.DependsOnID).Scan(&targetCount)
+			err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, dep.DependsOnID).Scan(&targetCount)
 			if err == nil && targetCount > 0 {
-				_, err := s.db.ExecContext(ctx, `
+				_, err := conn.ExecContext(ctx, `
 					INSERT OR IGNORE INTO dependencies (issue_id, depends_on_id, type, created_by)
 					VALUES (?, ?, ?, ?)
 				`, parentID, dep.DependsOnID, dep.Type, "resurrection")
@@ -170,12 +177,24 @@ func (s *SQLiteStorage) findIssueInJSONL(issueID string) (*types.Issue, error) {
 //   - false if any parent in the chain was not found in JSONL history
 //   - error if resurrection failed for any other reason
 func (s *SQLiteStorage) TryResurrectParentChain(ctx context.Context, childID string) (bool, error) {
+	// Get a connection for the entire chain resurrection
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to get database connection: %w", err)
+	}
+	defer conn.Close()
+	
+	return s.tryResurrectParentChainWithConn(ctx, conn, childID)
+}
+
+// tryResurrectParentChainWithConn is the internal version that accepts an existing connection.
+func (s *SQLiteStorage) tryResurrectParentChainWithConn(ctx context.Context, conn *sql.Conn, childID string) (bool, error) {
 	// Extract all parent IDs from the hierarchical chain
 	parents := extractParentChain(childID)
 	
 	// Resurrect from root to leaf (shallower to deeper)
 	for _, parentID := range parents {
-		resurrected, err := s.TryResurrectParent(ctx, parentID)
+		resurrected, err := s.tryResurrectParentWithConn(ctx, conn, parentID)
 		if err != nil {
 			return false, fmt.Errorf("failed to resurrect parent %s: %w", parentID, err)
 		}

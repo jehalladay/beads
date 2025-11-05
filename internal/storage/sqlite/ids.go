@@ -189,17 +189,18 @@ func (s *SQLiteStorage) EnsureIDs(ctx context.Context, conn *sql.Conn, prefix st
 			// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
 			if strings.Contains(issues[i].ID, ".") {
 			// Try to resurrect entire parent chain if any parents are missing
-			resurrected, err := s.TryResurrectParentChain(ctx, issues[i].ID)
+			// Use the conn-based version to participate in the same transaction
+			resurrected, err := s.tryResurrectParentChainWithConn(ctx, conn, issues[i].ID)
 			if err != nil {
 			 return fmt.Errorf("failed to resurrect parent chain for %s: %w", issues[i].ID, err)
 			}
 			if !resurrected {
-			 // Parent(s) not found in JSONL history - cannot proceed
+			// Parent(s) not found in JSONL history - cannot proceed
 			lastDot := strings.LastIndex(issues[i].ID, ".")
-			 parentID := issues[i].ID[:lastDot]
+			parentID := issues[i].ID[:lastDot]
 			 return fmt.Errorf("parent issue %s does not exist and could not be resurrected from JSONL history", parentID)
-			}
-			}
+			 }
+		}
 			
 			usedIDs[issues[i].ID] = true
 		}

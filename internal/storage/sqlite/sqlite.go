@@ -182,17 +182,18 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
 		if strings.Contains(issue.ID, ".") {
 		// Try to resurrect entire parent chain if any parents are missing
-		resurrected, err := s.TryResurrectParentChain(ctx, issue.ID)
+		// Use the conn-based version to participate in the same transaction
+		resurrected, err := s.tryResurrectParentChainWithConn(ctx, conn, issue.ID)
 		if err != nil {
 		 return fmt.Errorf("failed to resurrect parent chain for %s: %w", issue.ID, err)
 		}
 		if !resurrected {
-		 // Parent(s) not found in JSONL history - cannot proceed
+		// Parent(s) not found in JSONL history - cannot proceed
 		lastDot := strings.LastIndex(issue.ID, ".")
-		 parentID := issue.ID[:lastDot]
+		parentID := issue.ID[:lastDot]
 		 return fmt.Errorf("parent issue %s does not exist and could not be resurrected from JSONL history", parentID)
-		}
-		}
+		 }
+	}
 	}
 
 	// Insert issue
