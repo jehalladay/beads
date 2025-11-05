@@ -223,9 +223,119 @@ From the conversation, these are non-negotiable:
 - **Git as ledger**: Everything must be git-tracked for forensics and AI repair
 - **Moving frontier**: Focus on active work, aggressively prune completed work
 - **Multi-clone sync**: Workers across clones must coordinate via git
-- **Small databases**: Keep beads.jsonl small enough for agents to read (<25k)
+- **Small databases**: Keep beads.jsonl small enough for agents to read (<25k per repo, see below)
 - **Simple defaults**: Don't break single-user workflows
 - **Explicit over implicit**: Clear boundaries between personal and canonical
+
+### JSONL Size Bounds with Multi-Repo
+
+**Critical clarification**: The <25k limit applies **per-repo**, not to total hydrated size.
+
+#### The Rule
+
+**Per-repo limit**: Each individual JSONL file should stay <25k (roughly 100-200 issues depending on metadata).
+
+**Why per-repo, not total**:
+1. **Git operations**: Each repo is independently versioned. Git performance depends on per-file size, not aggregate.
+2. **AI readability**: Agents read JSONLs for forensics/repair. Reading one 20k file is easy; reading the union of 10 files is still manageable.
+3. **Bounded growth**: Total size naturally bounded by number of repos (typically N=1-3, rarely >10).
+4. **Pruning granularity**: Completed work is pruned per-repo, keeping each repo's frontier small.
+
+#### Example Scenarios
+
+| Primary | Planning | Team Shared | Total Hydrated | Valid? |
+|---------|----------|-------------|----------------|--------|
+| 20k | - | - | 20k | ✅ Single-repo, well under limit |
+| 20k | 15k | - | 35k | ✅ Each repo <25k (per-repo rule) |
+| 20k | 15k | 18k | 53k | ✅ Each repo <25k (per-repo rule) |
+| 30k | 15k | - | 45k | ❌ Primary exceeds 25k |
+| 20k | 28k | - | 48k | ❌ Planning exceeds 25k |
+
+#### Rationale: Why 25k?
+
+**Agent context limits**: AI agents have finite context windows. A 25k JSONL file is:
+- ~100-200 issues with metadata
+- ~500-1000 lines of JSON
+- Comfortably fits in GPT-4 context (128k tokens)
+- Small enough to read/parse in <500ms
+
+**Moving frontier principle**: Beads tracks **active work**, not historical archive. With aggressive pruning:
+- Completed issues get compacted/archived
+- Blocked work stays dormant
+- Only ready + in-progress issues are "hot"
+- Typical frontier: 50-100 issues per repo
+
+#### Monitoring Size with Multi-Repo
+
+**Per-repo monitoring**:
+```bash
+# Check each repo's JSONL size
+$ wc -c .beads/beads.jsonl
+20480 .beads/beads.jsonl
+
+$ wc -c ~/.beads-planning/beads.jsonl
+15360 ~/.beads-planning/beads.jsonl
+
+# Total hydrated size (informational, not a hard limit)
+$ expr 20480 + 15360
+35840
+```
+
+**Automated check**:
+```go
+// Check all configured repos
+for _, repo := range cfg.Repos.All() {
+    jsonlPath := filepath.Join(repo, "beads.jsonl")
+    size, _ := getFileSize(jsonlPath)
+    if size > 25*1024 {  // 25k
+        log.Warnf("Repo %s exceeds 25k limit: %d bytes", repo, size)
+    }
+}
+```
+
+#### Pruning Strategy with Multi-Repo
+
+Each repo should be pruned independently:
+
+```bash
+# Prune completed work from primary repo
+$ bd compact --repo . --older-than 30d
+
+# Prune experimental planning repo
+$ bd compact --repo ~/.beads-planning --older-than 7d
+
+# Shared team planning (longer retention)
+$ bd compact --repo ~/team-shared/.beads --older-than 90d
+```
+
+Different repos can have different retention policies based on their role.
+
+#### Total Size Soft Limit (Guideline Only)
+
+While per-repo limit is the hard rule, consider total hydrated size for performance:
+
+**Guideline**: Keep total hydrated size <100k for optimal performance.
+
+**Why 100k total**:
+- SQLite hydration: Parsing 100k JSON still fast (<1s)
+- Agent queries: Dependency graphs with 300-500 total issues remain tractable
+- Memory footprint: In-memory SQLite comfortably handles 500 issues
+
+**If total exceeds 100k**:
+- Not a hard error, but performance may degrade
+- Consider pruning completed work more aggressively
+- Evaluate if all repos are still needed
+- Check if any repos should be archived/removed
+
+#### Summary
+
+| Limit Type | Value | Enforcement |
+|------------|-------|-------------|
+| **Per-repo (hard limit)** | <25k | ⚠️ Warn if exceeded, agents may struggle |
+| **Total hydrated (guideline)** | <100k | ℹ️ Informational, affects performance |
+| **Typical usage** | 20k-50k total | ✅ Expected range for active development |
+
+**Bottom line**: Monitor per-repo size (<25k each). Total size naturally bounded by N repos × 25k.
 
 ---
 
@@ -515,7 +625,107 @@ $ bd add "Task"
 # → .beads/beads.jsonl (as before)
 ```
 
-### Opting Into Multi-Repo
+### Library Consumers (Go/TypeScript)
+
+**Critical for projects like VC that use beads as a library.**
+
+#### Backward Compatibility (No Changes Required)
+
+Your existing code continues to work unchanged. The storage layer automatically reads `.beads/config.toml` if present:
+
+```go
+// Before multi-repo (v0.17.3)
+store, err := beadsLib.NewSQLiteStorage(".beads/vc.db")
+
+// After multi-repo (v0.18.0+) - EXACT SAME CODE
+store, err := beadsLib.NewSQLiteStorage(".beads/vc.db")
+// If .beads/config.toml exists, additional repos are auto-hydrated
+// If .beads/config.toml doesn't exist, single-repo mode (backward compatible)
+```
+
+**What happens automatically**:
+1. Storage layer checks for `.beads/config.toml`
+2. If found: Reads `repos.additional`, hydrates from all configured repos
+3. If not found: Single-repo mode (current behavior)
+4. Your code doesn't need to know which mode is active
+
+#### Explicit Multi-Repo Configuration (Optional)
+
+If you need to override config.toml or configure repos programmatically:
+
+```go
+// Explicit multi-repo configuration
+cfg := beadsLib.Config{
+    Primary:    ".beads/vc.db",
+    Additional: []string{
+        filepath.ExpandUser("~/.beads-planning"),
+        filepath.ExpandUser("~/team-shared/.beads"),
+    },
+}
+store, err := beadsLib.NewStorageWithConfig(cfg)
+```
+
+**When to use explicit configuration**:
+- Testing: Override config for test isolation
+- Dynamic repos: Add repos based on runtime conditions
+- No config file: Programmatic setup without `.beads/config.toml`
+
+#### When to Use Multi-Repo vs Single-Repo
+
+**Single-repo (default, recommended for most library consumers)**:
+```go
+// VC executor managing its own database
+store, err := beadsLib.NewSQLiteStorage(".beads/vc.db")
+// Stays single-repo by default, no config.toml needed
+```
+
+**Multi-repo (opt-in for specific use cases)**:
+- **Team planning**: VC executor needs to see team-wide issues from shared repo
+- **Multi-phase dev**: Different repos for architecture, implementation, testing phases
+- **Personal planning**: User wants to track personal experiments separate from VC's canonical DB
+
+**Example: VC with team planning**:
+```toml
+# .beads/config.toml
+[repos]
+primary = "."
+additional = ["~/team-shared/.beads"]
+
+[routing]
+default = "."  # VC-generated issues go to primary
+```
+
+```go
+// VC executor code (unchanged)
+store, err := beadsLib.NewSQLiteStorage(".beads/vc.db")
+
+// GetReadyWork() now returns issues from:
+// - .beads/vc.db (VC-generated issues)
+// - ~/team-shared/.beads (team planning)
+ready, err := store.GetReadyWork(ctx)
+```
+
+#### Migration Checklist for Library Consumers
+
+1. **Test with config.toml**: Create `.beads/config.toml`, verify auto-hydration works
+2. **Verify performance**: Ensure multi-repo hydration meets your latency requirements (see Performance section)
+3. **Update exclusive locks**: If using locks, decide if you need per-repo or all-repo locking (see Exclusive Lock Protocol section)
+4. **Review routing**: Ensure auto-generated issues (e.g., VC's `discovered:blocker`) go to correct repo
+5. **Test backward compat**: Verify code works with and without config.toml
+
+#### API Compatibility Matrix
+
+| API Call | v0.17.3 (single-repo) | v0.18.0+ (multi-repo) | Breaking? |
+|----------|----------------------|----------------------|-----------|
+| `NewSQLiteStorage(path)` | ✅ Single repo | ✅ Auto-detects config | ❌ No |
+| `GetReadyWork()` | ✅ Returns from single DB | ✅ Returns from all repos | ❌ No |
+| `CreateIssue()` | ✅ Writes to single DB | ✅ Writes to primary (or routing config) | ❌ No |
+| `UpdateIssue()` | ✅ Updates in single DB | ✅ Updates in source repo | ❌ No |
+| Exclusive locks | ✅ Locks single DB | ✅ Locks per-repo | ❌ No |
+
+**Summary**: Zero breaking changes. Multi-repo is transparent to library consumers.
+
+### Opting Into Multi-Repo (CLI Users)
 
 ```bash
 # Create planning repo
@@ -547,6 +757,190 @@ $ git init && bd init
 $ cd ~/team-project
 $ bd config --add-repo ~/.beads-planning --routing contributor
 ```
+
+### Self-Hosting Projects (VC, Internal Tools, Pet Projects)
+
+**Important**: The multi-repo design is primarily for **OSS contributors** making PRs to upstream projects. Self-hosting projects have different needs.
+
+#### What is Self-Hosting?
+
+Projects that use beads to build themselves:
+- **VC (VibeCoder)**: Uses beads to track development of VC itself
+- **Internal tools**: Company tools that track their own roadmap
+- **Pet projects**: Personal projects with beads-based planning
+
+**Key difference from OSS contribution**:
+- No upstream/downstream distinction (you ARE the project)
+- Direct commit access (no PR workflow)
+- Often have automated executors/agents
+- Bootstrap/early phase stability matters
+
+#### Default Recommendation: Stay Single-Repo
+
+**For most self-hosting projects, single-repo is the right choice:**
+
+```bash
+# Simple, stable, proven
+$ cd ~/my-project
+$ bd init
+$ bd create "Task" -p 1
+# → .beads/beads.jsonl (committed to project repo)
+```
+
+**Why single-repo for self-hosting**:
+- ✅ **Simpler**: No config, no routing decisions, no multi-repo complexity
+- ✅ **Proven**: Current architecture, battle-tested
+- ✅ **Sufficient**: All issues live with the project they describe
+- ✅ **Stable**: No hydration overhead, no cross-repo coordination
+
+#### When to Adopt Multi-Repo
+
+Multi-repo makes sense for self-hosting projects only in specific scenarios:
+
+**Scenario 1: Team Planning Separation**
+
+Your project has multiple developers with different permission levels:
+
+```toml
+# .beads/config.toml
+[repos]
+primary = "."  # Canonical project issues (maintainers only)
+additional = ["~/team-shared/.beads"]  # Team planning (all contributors)
+```
+
+**Scenario 2: Multi-Phase Development**
+
+Your project uses distinct phases (architecture → implementation → testing):
+
+```toml
+# .beads/config.toml
+[repos]
+primary = "."  # Current active work
+additional = [
+  "~/.beads-work/architecture",  # Design decisions
+  "~/.beads-work/implementation", # Implementation backlog
+]
+```
+
+**Scenario 3: Experimental Work Isolation**
+
+You want to keep experimental ideas separate from canonical roadmap:
+
+```toml
+# .beads/config.toml
+[repos]
+primary = "."  # Committed roadmap
+additional = ["~/.beads-experiments"]  # Experimental ideas
+```
+
+#### Automated Executors with Multi-Repo
+
+**Critical for projects like VC with automated agents.**
+
+**Default behavior (recommended)**:
+```go
+// Executor sees ONLY primary repo (canonical work)
+store, err := beadsLib.NewSQLiteStorage(".beads/vc.db")
+// No config.toml = single-repo mode
+ready, err := store.GetReadyWork(ctx)  // Only canonical issues
+```
+
+**With multi-repo (opt-in)**:
+```toml
+# .beads/config.toml
+[repos]
+primary = "."
+additional = ["~/team-shared/.beads"]
+
+[routing]
+default = "."  # Executor-created issues stay in primary
+```
+
+```go
+// Executor code (unchanged)
+store, err := beadsLib.NewSQLiteStorage(".beads/vc.db")
+// Auto-reads config.toml, hydrates from both repos
+ready, err := store.GetReadyWork(ctx)
+// Returns issues from primary + team-shared
+
+// When executor creates discovered issues:
+discovered := &Issue{Title: "Found blocker", ...}
+store.CreateIssue(discovered)
+// → Goes to primary repo (routing.default = ".")
+```
+
+**Recommendation for executors**: Stay single-repo unless you have a clear team coordination need.
+
+#### Bootstrap Phase Considerations
+
+**If your project is in early/bootstrap phase (like VC), extra caution:**
+
+1. **Prioritize stability**: Multi-repo adds complexity. Delay until proven need.
+2. **Test thoroughly**: If adopting multi-repo, test with small repos first.
+3. **Monitor performance**: Ensure executor polling loops stay sub-second (see Performance section).
+4. **Plan rollback**: Keep single-repo workflow working so you can revert if needed.
+
+**Bootstrap-phase checklist**:
+- [ ] Do you have multiple developers with different permissions? → Maybe multi-repo
+- [ ] Do you have team planning separate from executor roadmap? → Maybe multi-repo
+- [ ] Are you solo or small team with unified planning? → Stay single-repo
+- [ ] Is executor stability critical right now? → Stay single-repo
+- [ ] Can you afford multi-repo testing/debugging time? → If no, stay single-repo
+
+#### Migration Path for Self-Hosting Projects
+
+**From single-repo to multi-repo (when ready)**:
+
+```bash
+# Step 1: Create planning repo
+$ mkdir ~/.beads-planning && cd ~/.beads-planning
+$ git init && bd init
+
+# Step 2: Configure multi-repo (test mode)
+$ cd ~/my-project
+$ bd config --add-repo ~/.beads-planning --routing auto
+
+# Step 3: Test with small workload
+$ bd create "Test issue" --repo ~/.beads-planning
+$ bd show  # Verify hydration works
+$ bd ready  # Verify queries work
+
+# Step 4: Verify executor compatibility
+# - Run executor with multi-repo config
+# - Check GetReadyWork() latency (<100ms)
+# - Verify discovered issues route correctly
+
+# Step 5: Migrate planning issues (optional)
+$ bd migrate --move-to ~/.beads-planning --filter "label=experimental"
+```
+
+**Rollback (if needed)**:
+```bash
+# Remove config.toml to revert to single-repo
+$ rm .beads/config.toml
+$ bd show  # Back to single-repo mode
+```
+
+#### Summary: Self-Hosting Decision Tree
+
+```
+Is your project self-hosting? (building itself with beads)
+├─ YES
+│  ├─ Solo developer or unified team?
+│  │  └─ Stay single-repo (simple, stable)
+│  ├─ Multiple developers, different permissions?
+│  │  └─ Consider multi-repo (team planning separation)
+│  ├─ Multi-phase development (arch → impl → test)?
+│  │  └─ Consider multi-repo (phase isolation)
+│  ├─ Bootstrap/early phase?
+│  │  └─ Stay single-repo (stability > flexibility)
+│  └─ Automated executor?
+│     └─ Stay single-repo unless team coordination needed
+└─ NO (OSS contributor)
+   └─ Use multi-repo (planning repo separate from upstream)
+```
+
+**Bottom line for self-hosting**: Default to single-repo. Only adopt multi-repo when you have a proven, specific need.
 
 ## Design Decisions (Resolved)
 
@@ -616,6 +1010,94 @@ func (s *MultiRepoStorage) GetReadyWork(ctx) ([]Issue, error) {
 
 **Rationale**: VC's polling loop (every 5-10 seconds) requires sub-second queries. File stat is microseconds, re-parsing only when needed.
 
+#### Performance Benchmarks and Targets
+
+**Critical for library consumers (VC) with automated polling.**
+
+##### Performance Targets
+
+Based on VC's polling loop requirements (every 5-10 seconds):
+
+| Operation | Target | Rationale |
+|-----------|--------|-----------|
+| **File stat** (per repo) | <1ms | Checking mtime of N JSONLs must be negligible |
+| **Hydration** (full re-parse) | <500ms | Only happens when JSONL changes, rare in polling loop |
+| **Query** (from cached DB) | <10ms | Common case: no JSONL changes, pure SQLite query |
+| **Total GetReadyWork()** | <100ms | VC's hard requirement for responsive executor |
+
+##### Scale Testing Targets
+
+Test at multiple repo counts to ensure scaling:
+
+| Repo Count | File Stat Total | Hydration (worst case) | Query (cached) | Total (cached) |
+|------------|-----------------|------------------------|----------------|----------------|
+| **N=1** (baseline) | <1ms | <200ms | <5ms | <10ms |
+| **N=3** (typical) | <3ms | <500ms | <10ms | <20ms |
+| **N=10** (edge case) | <10ms | <2s | <50ms | <100ms |
+
+**Assumptions**:
+- JSONL size: <25k per repo (see Design Principles)
+- SQLite: In-memory mode (`:memory:` or `file::memory:?cache=shared`)
+- Cached case: No JSONL changes since last hydration (99% of polling loops)
+
+##### Benchmark Suite (To Be Implemented)
+
+```go
+// benchmark/multi_repo_test.go
+
+func BenchmarkFileStatOverhead(b *testing.B) {
+    // Test: Stat N JSONL files
+    // Target: <1ms per repo
+}
+
+func BenchmarkHydrationN1(b *testing.B) {
+    // Test: Full hydration from 1 JSONL (20k file)
+    // Target: <200ms
+}
+
+func BenchmarkHydrationN3(b *testing.B) {
+    // Test: Full hydration from 3 JSONLs (20k each)
+    // Target: <500ms
+}
+
+func BenchmarkHydrationN10(b *testing.B) {
+    // Test: Full hydration from 10 JSONLs (20k each)
+    // Target: <2s
+}
+
+func BenchmarkQueryCached(b *testing.B) {
+    // Test: GetReadyWork() with no JSONL changes
+    // Target: <10ms
+}
+
+func BenchmarkGetReadyWorkN3(b *testing.B) {
+    // Test: Realistic polling loop (3 repos, cached)
+    // Target: <20ms total
+}
+```
+
+##### Performance Optimization Notes
+
+If benchmarks fail to meet targets, optimization strategies:
+
+1. **Parallel file stats**: Use goroutines to stat N JSONLs concurrently
+2. **Incremental hydration**: Only re-parse changed repos, merge into DB
+3. **Smarter caching**: Hash-based cache invalidation (mtime + file size)
+4. **SQLite tuning**: `PRAGMA synchronous = OFF`, `PRAGMA journal_mode = MEMORY`
+5. **Lazy hydration**: Defer hydration until first query after mtime change
+
+##### Status
+
+**Benchmarks**: ⏳ Not implemented yet (tracked in bd-wta)
+**Targets**: ✅ Documented above
+**Validation**: ⏳ Pending implementation
+
+**Next steps**:
+1. Implement benchmark suite in `benchmark/multi_repo_test.go`
+2. Run benchmarks on realistic workloads (VC-sized DBs)
+3. Document results in this section
+4. File optimization issues if targets not met
+
 ### 5. Visibility Field: **Optional, Backward Compatible**
 
 **Decision**: Add `visibility` as optional field, defaults to "canonical" if missing.
@@ -681,6 +1163,71 @@ func (s *Storage) UpdateIssue(issue Issue) error {
 ```
 
 **Limitation**: Cross-repo transactions are NOT atomic (acceptable, rare use case).
+
+#### Compatibility with Exclusive Lock Protocol
+
+The per-repo file locking (Decision #7) is **fully compatible** with the existing exclusive lock protocol (see [EXCLUSIVE_LOCK.md](../EXCLUSIVE_LOCK.md)).
+
+**How they work together**:
+
+1. **Exclusive locks are daemon-level**: The `.beads/.exclusive-lock` prevents the bd daemon from operating on a specific database
+2. **File locks are operation-level**: Per-JSONL file locks (`flock`) ensure atomic read-modify-write for individual operations
+3. **Different scopes, complementary purposes**:
+   - Exclusive lock: "This entire database is off-limits to the daemon"
+   - File lock: "This specific JSONL is being modified right now"
+
+**Multi-repo behavior**:
+
+With multi-repo configuration, each repo can have its own exclusive lock:
+
+```bash
+# VC executor locks its primary database
+.beads/.exclusive-lock           # Locks primary repo operations
+
+# Planning repo can be locked independently
+~/.beads-planning/.exclusive-lock  # Locks planning repo operations
+```
+
+**When both are active**:
+- If primary repo is locked: Daemon skips all operations on primary, but can still sync planning repo
+- If planning repo is locked: Daemon skips planning repo, but can still sync primary
+- If both locked: Daemon skips entire multi-repo workspace
+
+**No migration needed for library consumers**:
+
+Existing VC code (v0.17.3+) using exclusive locks will continue to work:
+```go
+// VC's existing lock acquisition
+lock, err := types.NewExclusiveLock("vc-executor", "1.0.0")
+lockPath := filepath.Join(".beads", ".exclusive-lock")
+os.WriteFile(lockPath, data, 0644)
+
+// Works the same with multi-repo:
+// - Locks .beads/ (primary repo)
+// - Daemon skips primary, can still sync ~/.beads-planning if configured
+```
+
+**Atomic multi-repo locking**:
+
+If a library consumer needs to lock **all** repos atomically:
+
+```go
+// Lock all configured repos
+repos := []string{".beads", filepath.ExpandUser("~/.beads-planning")}
+for _, repo := range repos {
+    lockPath := filepath.Join(repo, ".exclusive-lock")
+    os.WriteFile(lockPath, lockData, 0644)
+}
+defer func() {
+    for _, repo := range repos {
+        os.Remove(filepath.Join(repo, ".exclusive-lock"))
+    }
+}()
+
+// Now daemon skips all repos until locks released
+```
+
+**Summary**: No breaking changes. Exclusive locks work per-repo in multi-repo configs, preventing daemon interference at repo granularity.
 
 ## Key Learnings from VC Feedback
 
