@@ -95,7 +95,29 @@ func (s *Server) handleCreate(req *Request) Response {
 		}
 	}
 
+	// Check for conflicting flags
+	if createArgs.ID != "" && createArgs.Parent != "" {
+		return Response{
+			Success: false,
+			Error:   "cannot specify both ID and Parent",
+		}
+	}
+
 	store := s.storage
+	ctx := s.reqCtx(req)
+
+	// If parent is specified, generate child ID
+	issueID := createArgs.ID
+	if createArgs.Parent != "" {
+		childID, err := store.GetNextChildID(ctx, createArgs.Parent)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to generate child ID: %v", err),
+			}
+		}
+		issueID = childID
+	}
 
 	var design, acceptance, assignee *string
 	if createArgs.Design != "" {
@@ -109,7 +131,7 @@ func (s *Server) handleCreate(req *Request) Response {
 	}
 
 	issue := &types.Issue{
-		ID:                 createArgs.ID,
+		ID:                 issueID,
 		Title:              createArgs.Title,
 		Description:        createArgs.Description,
 		IssueType:          types.IssueType(createArgs.IssueType),
@@ -119,8 +141,6 @@ func (s *Server) handleCreate(req *Request) Response {
 		Assignee:           strValue(assignee),
 		Status:             types.StatusOpen,
 	}
-
-	ctx := s.reqCtx(req)
 	
 	// Check if any dependencies are discovered-from type
 	// If so, inherit source_repo from the parent issue

@@ -148,22 +148,14 @@ var createCmd = &cobra.Command{
 		}
 
 		// If parent is specified, generate child ID
-		if parentID != "" {
+		// In daemon mode, the parent will be sent to the RPC handler
+		// In direct mode, we generate the child ID here
+		if parentID != "" && daemonClient == nil {
 			ctx := context.Background()
-			var childID string
-			var err error
-
-			if daemonClient != nil {
-				// TODO: Add RPC support for GetNextChildID (bd-171)
-				fmt.Fprintf(os.Stderr, "Error: --parent flag not yet supported in daemon mode\n")
+			childID, err := store.GetNextChildID(ctx, parentID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
-			} else {
-				// Direct mode - use storage
-				childID, err = store.GetNextChildID(ctx, parentID)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
 			}
 			explicitID = childID // Set as explicit ID for the rest of the flow
 		}
@@ -213,6 +205,7 @@ var createCmd = &cobra.Command{
 		if daemonClient != nil {
 			createArgs := &rpc.CreateArgs{
 				ID:                 explicitID,
+				Parent:             parentID,
 				Title:              title,
 				Description:        description,
 				IssueType:          issueType,
