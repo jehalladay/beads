@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -751,13 +752,13 @@ func checkDaemonStatus(path string) doctorCheck {
 func checkDatabaseJSONLSync(path string) doctorCheck {
 	beadsDir := filepath.Join(path, ".beads")
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	
+
 	// Find JSONL file
 	var jsonlPath string
 	for _, name := range []string{"issues.jsonl", "beads.jsonl"} {
-		path := filepath.Join(beadsDir, name)
-		if _, err := os.Stat(path); err == nil {
-			jsonlPath = path
+		testPath := filepath.Join(beadsDir, name)
+		if _, err := os.Stat(testPath); err == nil {
+			jsonlPath = testPath
 			break
 		}
 	}
@@ -780,7 +781,111 @@ func checkDatabaseJSONLSync(path string) doctorCheck {
 		}
 	}
 
-	// Compare modification times
+	// Try to read JSONL first (doesn't depend on database)
+	jsonlCount, jsonlPrefixes, jsonlErr := countJSONLIssues(jsonlPath)
+
+	// Single database open for all queries (instead of 3 separate opens)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		// Database can't be opened. If JSONL has issues, suggest recovery.
+		if jsonlErr == nil && jsonlCount > 0 {
+			return doctorCheck{
+				Name:    "DB-JSONL Sync",
+				Status:  statusWarning,
+				Message: fmt.Sprintf("Database cannot be opened but JSONL contains %d issues", jsonlCount),
+				Detail:  err.Error(),
+				Fix:     fmt.Sprintf("Run 'bd import -i %s --rename-on-import' to recover issues from JSONL", filepath.Base(jsonlPath)),
+			}
+		}
+		return doctorCheck{
+			Name:    "DB-JSONL Sync",
+			Status:  statusWarning,
+			Message: "Unable to open database",
+			Detail:  err.Error(),
+		}
+	}
+	defer db.Close()
+
+	// Get database count
+	var dbCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM issues").Scan(&dbCount)
+	if err != nil {
+		// Database opened but can't query. If JSONL has issues, suggest recovery.
+		if jsonlErr == nil && jsonlCount > 0 {
+			return doctorCheck{
+				Name:    "DB-JSONL Sync",
+				Status:  statusWarning,
+				Message: fmt.Sprintf("Database cannot be queried but JSONL contains %d issues", jsonlCount),
+				Detail:  err.Error(),
+				Fix:     fmt.Sprintf("Run 'bd import -i %s --rename-on-import' to recover issues from JSONL", filepath.Base(jsonlPath)),
+			}
+		}
+		return doctorCheck{
+			Name:    "DB-JSONL Sync",
+			Status:  statusWarning,
+			Message: "Unable to query database",
+			Detail:  err.Error(),
+		}
+	}
+
+	// Get database prefix
+	var dbPrefix string
+	err = db.QueryRow("SELECT value FROM config WHERE key = ?", "issue_prefix").Scan(&dbPrefix)
+	if err != nil && err != sql.ErrNoRows {
+		return doctorCheck{
+			Name:    "DB-JSONL Sync",
+			Status:  statusWarning,
+			Message: "Unable to read database prefix",
+			Detail:  err.Error(),
+		}
+	}
+
+	// Use JSONL error if we got it earlier
+	if jsonlErr != nil {
+		return doctorCheck{
+			Name:    "DB-JSONL Sync",
+			Status:  statusWarning,
+			Message: "Unable to read JSONL file",
+			Detail:  jsonlErr.Error(),
+		}
+	}
+
+	// Check for issues
+	var issues []string
+
+	// Count mismatch
+	if dbCount != jsonlCount {
+		issues = append(issues, fmt.Sprintf("Count mismatch: database has %d issues, JSONL has %d", dbCount, jsonlCount))
+	}
+
+	// Prefix mismatch (only check most common prefix in JSONL)
+	if dbPrefix != "" && len(jsonlPrefixes) > 0 {
+		var mostCommonPrefix string
+		maxCount := 0
+		for prefix, count := range jsonlPrefixes {
+			if count > maxCount {
+				maxCount = count
+				mostCommonPrefix = prefix
+			}
+		}
+
+		// Only warn if majority of issues have wrong prefix
+		if mostCommonPrefix != dbPrefix && maxCount > jsonlCount/2 {
+			issues = append(issues, fmt.Sprintf("Prefix mismatch: database uses %q but most JSONL issues use %q", dbPrefix, mostCommonPrefix))
+		}
+	}
+
+	// If we found issues, report them
+	if len(issues) > 0 {
+		return doctorCheck{
+			Name:    "DB-JSONL Sync",
+			Status:  statusWarning,
+			Message: strings.Join(issues, "; "),
+			Fix:     "Run 'bd sync --import-only' to import JSONL updates or 'bd import -i issues.jsonl --rename-on-import' to fix prefixes",
+		}
+	}
+
+	// Check modification times (only if counts match)
 	dbInfo, err := os.Stat(dbPath)
 	if err != nil {
 		return doctorCheck{
@@ -799,7 +904,6 @@ func checkDatabaseJSONLSync(path string) doctorCheck {
 		}
 	}
 
-	// If JSONL is newer, warn about potential sync issue
 	if jsonlInfo.ModTime().After(dbInfo.ModTime()) {
 		timeDiff := jsonlInfo.ModTime().Sub(dbInfo.ModTime())
 		if timeDiff > 30*time.Second {
@@ -817,6 +921,54 @@ func checkDatabaseJSONLSync(path string) doctorCheck {
 		Status:  statusOK,
 		Message: "Database and JSONL are in sync",
 	}
+}
+
+// countJSONLIssues counts issues in the JSONL file and returns the count, prefixes, and any error.
+func countJSONLIssues(jsonlPath string) (int, map[string]int, error) {
+	// jsonlPath is safe: constructed from filepath.Join(beadsDir, hardcoded name)
+	file, err := os.Open(jsonlPath) //nolint:gosec
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to open JSONL file: %w", err)
+	}
+	defer file.Close()
+
+	count := 0
+	prefixes := make(map[string]int)
+	errorCount := 0
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		// Parse JSON to get the ID
+		var issue map[string]interface{}
+		if err := json.Unmarshal(line, &issue); err != nil {
+			errorCount++
+			continue
+		}
+
+		if id, ok := issue["id"].(string); ok {
+			count++
+			// Extract prefix (everything before the first dash)
+			parts := strings.SplitN(id, "-", 2)
+			if len(parts) > 0 {
+				prefixes[parts[0]]++
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return count, prefixes, fmt.Errorf("failed to read JSONL file: %w", err)
+	}
+
+	if errorCount > 0 {
+		return count, prefixes, fmt.Errorf("skipped %d malformed lines in JSONL", errorCount)
+	}
+
+	return count, prefixes, nil
 }
 
 func checkPermissions(path string) doctorCheck {
@@ -1006,13 +1158,15 @@ func checkGitHooks(path string) doctorCheck {
 		}
 	}
 
+	hookInstallMsg := "See https://github.com/steveyegge/beads/tree/main/examples/git-hooks for installation instructions"
+
 	if len(installedHooks) > 0 {
 		return doctorCheck{
 			Name:    "Git Hooks",
 			Status:  statusWarning,
 			Message: fmt.Sprintf("Missing %d recommended hook(s)", len(missingHooks)),
 			Detail:  fmt.Sprintf("Missing: %s", strings.Join(missingHooks, ", ")),
-			Fix:     "Run './examples/git-hooks/install.sh' to install recommended git hooks",
+			Fix:     hookInstallMsg,
 		}
 	}
 
@@ -1021,7 +1175,7 @@ func checkGitHooks(path string) doctorCheck {
 		Status:  statusWarning,
 		Message: "No recommended git hooks installed",
 		Detail:  fmt.Sprintf("Recommended: %s", strings.Join([]string{"pre-commit", "post-merge", "pre-push"}, ", ")),
-		Fix:     "Run './examples/git-hooks/install.sh' to install recommended git hooks",
+		Fix:     hookInstallMsg,
 	}
 }
 
