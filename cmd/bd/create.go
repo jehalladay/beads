@@ -82,7 +82,14 @@ var createCmd = &cobra.Command{
 		if acceptance == "" && tmpl != nil {
 			acceptance = tmpl.AcceptanceCriteria
 		}
-		priority, _ := cmd.Flags().GetInt("priority")
+		
+		// Parse priority (supports both "1" and "P1" formats)
+		priorityStr, _ := cmd.Flags().GetString("priority")
+		priority := parsePriority(priorityStr)
+		if priority == -1 {
+			fmt.Fprintf(os.Stderr, "Error: invalid priority %q (expected 0-4 or P0-P4)\n", priorityStr)
+			os.Exit(1)
+		}
 		if cmd.Flags().Changed("priority") == false && tmpl != nil {
 			priority = tmpl.Priority
 		}
@@ -375,7 +382,7 @@ func init() {
 	createCmd.Flags().StringP("description", "d", "", "Issue description")
 	createCmd.Flags().String("design", "", "Design notes")
 	createCmd.Flags().String("acceptance", "", "Acceptance criteria")
-	createCmd.Flags().IntP("priority", "p", 2, "Priority (0-4, 0=highest)")
+	createCmd.Flags().StringP("priority", "p", "2", "Priority (0-4 or P0-P4, 0=highest)")
 	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore)")
 	createCmd.Flags().StringP("assignee", "a", "", "Assignee")
 	createCmd.Flags().StringSliceP("labels", "l", []string{}, "Labels (comma-separated)")

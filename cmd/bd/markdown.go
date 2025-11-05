@@ -40,8 +40,16 @@ type IssueTemplate struct {
 }
 
 // parsePriority extracts and validates a priority value from content.
+// Supports both numeric (0-4) and P-prefix format (P0-P4).
 // Returns the parsed priority (0-4) or -1 if invalid.
 func parsePriority(content string) int {
+	content = strings.TrimSpace(content)
+	
+	// Handle "P1", "P0", etc. format
+	if strings.HasPrefix(strings.ToUpper(content), "P") {
+		content = content[1:] // Strip the "P" prefix
+	}
+	
 	var p int
 	if _, err := fmt.Sscanf(content, "%d", &p); err == nil && p >= 0 && p <= 4 {
 		return p

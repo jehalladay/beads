@@ -372,7 +372,12 @@ var updateCmd = &cobra.Command{
 			updates["status"] = status
 		}
 		if cmd.Flags().Changed("priority") {
-			priority, _ := cmd.Flags().GetInt("priority")
+			priorityStr, _ := cmd.Flags().GetString("priority")
+			priority := parsePriority(priorityStr)
+			if priority == -1 {
+				fmt.Fprintf(os.Stderr, "Error: invalid priority %q (expected 0-4 or P0-P4)\n", priorityStr)
+				os.Exit(1)
+			}
 			updates["priority"] = priority
 		}
 		if cmd.Flags().Changed("title") {
@@ -781,7 +786,7 @@ var closeCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(showCmd)
 	updateCmd.Flags().StringP("status", "s", "", "New status")
-	updateCmd.Flags().IntP("priority", "p", 0, "New priority")
+	updateCmd.Flags().StringP("priority", "p", "", "New priority (0-4 or P0-P4)")
 	updateCmd.Flags().String("title", "", "New title")
 	updateCmd.Flags().StringP("assignee", "a", "", "New assignee")
 	updateCmd.Flags().StringP("description", "d", "", "Issue description")
