@@ -57,6 +57,7 @@ type Response struct {
 // CreateArgs represents arguments for the create operation
 type CreateArgs struct {
 	ID                 string   `json:"id,omitempty"`
+	Parent             string   `json:"parent,omitempty"` // Parent ID for hierarchical issues
 	Title              string   `json:"title"`
 	Description        string   `json:"description,omitempty"`
 	IssueType          string   `json:"issue_type"`
