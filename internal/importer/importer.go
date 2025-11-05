@@ -13,13 +13,28 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
+// OrphanHandling defines how to handle missing parent issues during import
+type OrphanHandling string
+
+const (
+	// OrphanStrict fails import on missing parent (safest)
+	OrphanStrict OrphanHandling = "strict"
+	// OrphanResurrect auto-resurrects missing parents from JSONL history
+	OrphanResurrect OrphanHandling = "resurrect"
+	// OrphanSkip skips orphaned issues with warning
+	OrphanSkip OrphanHandling = "skip"
+	// OrphanAllow imports orphans without validation (default, works around bugs)
+	OrphanAllow OrphanHandling = "allow"
+)
+
 // Options contains import configuration
 type Options struct {
-	DryRun               bool // Preview changes without applying them
-	SkipUpdate           bool // Skip updating existing issues (create-only mode)
-	Strict               bool // Fail on any error (dependencies, labels, etc.)
-	RenameOnImport       bool // Rename imported issues to match database prefix
-	SkipPrefixValidation bool // Skip prefix validation (for auto-import)
+	DryRun               bool           // Preview changes without applying them
+	SkipUpdate           bool           // Skip updating existing issues (create-only mode)
+	Strict               bool           // Fail on any error (dependencies, labels, etc.)
+	RenameOnImport       bool           // Rename imported issues to match database prefix
+	SkipPrefixValidation bool           // Skip prefix validation (for auto-import)
+	OrphanHandling       OrphanHandling // How to handle missing parent issues (default: allow)
 }
 
 // Result contains statistics about the import operation
