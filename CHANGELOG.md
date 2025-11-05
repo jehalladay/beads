@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.9] - 2025-11-05
+
+### Added
+
+- **Epic/Child Filtering** (bd-zkl, fbe790a): New `bd list` filters for hierarchical issue queries
+  - `--ancestor <id>`: Filter by ancestor issue (shows all descendants)
+  - `--parent <id>`: Filter by direct parent issue
+  - `--epic <id>`: Alias for `--ancestor` (more intuitive for epic-based workflows)
+  - `ancestor_id` field added to issue type for efficient epic hierarchy queries
+
+- **Advanced List Filters**: Pattern matching, date ranges, and empty checks
+  - **Pattern matching**: `--title-contains`, `--desc-contains`, `--notes-contains` (case-insensitive substring)
+  - **Date ranges**: `--created-after/before`, `--updated-after/before`, `--closed-after/before`
+  - **Empty checks**: `--empty-description`, `--no-assignee`, `--no-labels`
+  - **Priority ranges**: `--priority-min`, `--priority-max`
+
+- **Database Migration** (bd-bb08, 3bde4b0): Added `ON DELETE CASCADE` to `child_counters` table
+  - Prevents orphaned child counter records when issues are deleted
+  - Comprehensive migration tests ensure data integrity
+
+### Fixed
+
+- **Import Timestamp Preservation** (8b9a486): Fixed critical bug where `closed_at` timestamps were lost during sync
+  - Ensures closed issues retain their original completion timestamps
+  - Prevents issue resurrection timestamps from overwriting real closure times
+
+- **Import Config Respect** (7292c85): Import now respects `import.missing_parents` config setting
+  - Previously ignored config for parent resurrection behavior
+  - Now correctly honors user's preference for handling missing parents
+
+- **GoReleaser Homebrew Tap** (37ed10c): Fixed homebrew tap to point to `steveyegge/homebrew-beads`
+  - Automated homebrew formula updates now work correctly
+  - Resolves brew installation issues
+
+- **npm Package Versioning** (626d51d): Added npm-package to version bump script
+  - Ensures `@beads/bd` npm package stays in sync with CLI releases
+  - Prevents version mismatches across distribution channels
+
+- **Linting** (52cf2af): Fixed golangci-lint errors
+  - Added proper error handling
+  - Added gosec suppressions for known-safe operations
+
+### Changed
+
+- **RPC Filter Parity** (510ca17): Comprehensive test coverage for CLI vs RPC filter behavior
+  - Ensures MCP server and CLI have identical filtering semantics
+  - Validates all new filters work correctly in both modes
+
 ## [0.21.8] - 2025-11-05
 
 ### Added
