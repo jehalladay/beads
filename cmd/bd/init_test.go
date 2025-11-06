@@ -599,4 +599,192 @@ func TestInitMergeDriverAutoConfiguration(t *testing.T) {
 			t.Error(".beads directory should be created even without git")
 		}
 	})
+
+	t.Run("detect already-installed merge driver", func(t *testing.T) {
+		// Reset global state
+		origDBPath := dbPath
+		defer func() { dbPath = origDBPath }()
+		dbPath = ""
+
+		tmpDir := t.TempDir()
+		originalWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get working directory: %v", err)
+		}
+		defer os.Chdir(originalWd)
+
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("Failed to change to temp directory: %v", err)
+		}
+
+		// Initialize git repo
+		if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
+			t.Fatalf("Failed to init git: %v", err)
+		}
+
+		// Pre-configure merge driver manually
+		if err := runCommandInDir(tmpDir, "git", "config", "merge.beads.driver", "bd merge %A %O %L %R"); err != nil {
+			t.Fatalf("Failed to set git config: %v", err)
+		}
+
+		// Create .gitattributes with merge driver
+		gitattrsPath := filepath.Join(tmpDir, ".gitattributes")
+		initialContent := "# Existing config\n.beads/beads.jsonl merge=beads\n"
+		if err := os.WriteFile(gitattrsPath, []byte(initialContent), 0644); err != nil {
+			t.Fatalf("Failed to create .gitattributes: %v", err)
+		}
+
+		// Run bd init - should detect existing config
+		rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("Init failed: %v", err)
+		}
+
+		// Verify git config still exists (not duplicated)
+		output, err := runCommandInDirWithOutput(tmpDir, "git", "config", "merge.beads.driver")
+		if err != nil {
+			t.Fatalf("Git config should still be set: %v", err)
+		}
+		if !strings.Contains(output, "bd merge") {
+			t.Errorf("Expected merge driver to contain 'bd merge', got: %s", output)
+		}
+
+		// Verify .gitattributes wasn't duplicated
+		content, err := os.ReadFile(gitattrsPath)
+		if err != nil {
+			t.Fatalf("Failed to read .gitattributes: %v", err)
+		}
+
+		contentStr := string(content)
+		// Count occurrences - should only appear once
+		count := strings.Count(contentStr, ".beads/beads.jsonl merge=beads")
+		if count != 1 {
+			t.Errorf("Expected .gitattributes to contain merge config exactly once, found %d times", count)
+		}
+
+		// Should still have the comment
+		if !strings.Contains(contentStr, "# Existing config") {
+			t.Error(".gitattributes should preserve existing content")
+		}
+	})
+
+	t.Run("append to existing .gitattributes", func(t *testing.T) {
+		// Reset global state
+		origDBPath := dbPath
+		defer func() { dbPath = origDBPath }()
+		dbPath = ""
+
+		// Reset Cobra flags
+		initCmd.Flags().Set("skip-merge-driver", "false")
+
+		tmpDir := t.TempDir()
+		originalWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get working directory: %v", err)
+		}
+		defer os.Chdir(originalWd)
+
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("Failed to change to temp directory: %v", err)
+		}
+
+		// Initialize git repo
+		if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
+			t.Fatalf("Failed to init git: %v", err)
+		}
+
+		// Create .gitattributes with existing content (no newline at end)
+		gitattrsPath := filepath.Join(tmpDir, ".gitattributes")
+		existingContent := "*.txt text\n*.jpg binary"
+		if err := os.WriteFile(gitattrsPath, []byte(existingContent), 0644); err != nil {
+			t.Fatalf("Failed to create .gitattributes: %v", err)
+		}
+
+		// Run bd init
+		rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("Init failed: %v", err)
+		}
+
+		// Verify .gitattributes was appended to, not overwritten
+		content, err := os.ReadFile(gitattrsPath)
+		if err != nil {
+			t.Fatalf("Failed to read .gitattributes: %v", err)
+		}
+
+		contentStr := string(content)
+
+		// Should contain original content
+		if !strings.Contains(contentStr, "*.txt text") {
+			t.Error(".gitattributes should preserve original content")
+		}
+		if !strings.Contains(contentStr, "*.jpg binary") {
+			t.Error(".gitattributes should preserve original content")
+		}
+
+		// Should contain beads config
+		if !strings.Contains(contentStr, ".beads/beads.jsonl merge=beads") {
+			t.Error(".gitattributes should contain beads merge config")
+		}
+
+		// Beads config should come after existing content
+		txtIdx := strings.Index(contentStr, "*.txt")
+		beadsIdx := strings.Index(contentStr, ".beads/beads.jsonl")
+		if txtIdx >= beadsIdx {
+			t.Error("Beads config should be appended after existing content")
+		}
+	})
+
+	t.Run("verify git config has correct settings", func(t *testing.T) {
+		// Reset global state
+		origDBPath := dbPath
+		defer func() { dbPath = origDBPath }()
+		dbPath = ""
+
+		// Reset Cobra flags
+		initCmd.Flags().Set("skip-merge-driver", "false")
+
+		tmpDir := t.TempDir()
+		originalWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get working directory: %v", err)
+		}
+		defer os.Chdir(originalWd)
+
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("Failed to change to temp directory: %v", err)
+		}
+
+		// Initialize git repo
+		if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
+			t.Fatalf("Failed to init git: %v", err)
+		}
+
+		// Run bd init
+		rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("Init failed: %v", err)
+		}
+
+		// Verify merge.beads.driver is set correctly
+		driver, err := runCommandInDirWithOutput(tmpDir, "git", "config", "merge.beads.driver")
+		if err != nil {
+			t.Fatalf("Failed to get merge.beads.driver: %v", err)
+		}
+		driver = strings.TrimSpace(driver)
+		expected := "bd merge %A %O %L %R"
+		if driver != expected {
+			t.Errorf("Expected merge.beads.driver to be %q, got %q", expected, driver)
+		}
+
+		// Verify merge.beads.name is set
+		name, err := runCommandInDirWithOutput(tmpDir, "git", "config", "merge.beads.name")
+		if err != nil {
+			t.Fatalf("Failed to get merge.beads.name: %v", err)
+		}
+		name = strings.TrimSpace(name)
+		if !strings.Contains(name, "bd") {
+			t.Errorf("Expected merge.beads.name to contain 'bd', got %q", name)
+		}
+	})
 }
