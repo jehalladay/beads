@@ -94,12 +94,24 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noAutoImport, "no-auto-import", false, "Disable automatic JSONL import when newer than DB")
 	rootCmd.PersistentFlags().BoolVar(&sandboxMode, "sandbox", false, "Sandbox mode: disables daemon and auto-sync")
 	rootCmd.PersistentFlags().BoolVar(&noDb, "no-db", false, "Use no-db mode: load from JSONL, no SQLite")
+
+	// Add --version flag to root command (same behavior as version subcommand)
+	rootCmd.Flags().BoolP("version", "v", false, "Print version information")
 }
 
 var rootCmd = &cobra.Command{
 	Use:   "bd",
 	Short: "bd - Dependency-aware issue tracker",
 	Long:  `Issues chained together like beads. A lightweight issue tracker with first-class dependency support.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		// Handle --version flag on root command
+		if v, _ := cmd.Flags().GetBool("version"); v {
+			fmt.Printf("bd version %s (%s)\n", Version, Build)
+			return
+		}
+		// No subcommand - show help
+		_ = cmd.Help()
+	},
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Apply viper configuration if flags weren't explicitly set
 		// Priority: flags > viper (config file + env vars) > defaults
