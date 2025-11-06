@@ -32,6 +32,7 @@ The wizard will:
 - Create `.beads/` directory and database
 - Import existing issues from git (if any)
 - Prompt to install git hooks (recommended)
+- Prompt to configure git merge driver (recommended)
 - Auto-start daemon for sync
 
 ## Your First Issues

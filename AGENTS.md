@@ -12,8 +12,9 @@ This is **beads** (command: `bd`), an issue tracker designed for AI-supervised c
 bd init --quiet  # Non-interactive, auto-installs git hooks, no prompts
 ```
 
-**Why `--quiet`?** Regular `bd init` has interactive prompts (git hooks) that confuse agents. The `--quiet` flag makes it fully non-interactive:
+**Why `--quiet`?** Regular `bd init` has interactive prompts (git hooks, merge driver) that confuse agents. The `--quiet` flag makes it fully non-interactive:
 - Automatically installs git hooks
+- Automatically configures git merge driver for intelligent JSONL merging
 - No prompts for user input
 - Safe for agent-driven repo setup
 
@@ -775,17 +776,35 @@ git commit
 
 **Note:** `bd import` automatically handles updates - same ID with different content is a normal update operation. No special flags needed. If you accidentally modified the same issue in both branches, just pick whichever version is more complete.
 
-### Advanced: Intelligent Merge Tools
+### Intelligent Merge Driver (Auto-Configured)
 
-For Git merge conflicts in `.beads/issues.jsonl`, use **[beads-merge](https://github.com/neongreen/mono/tree/main/beads-merge)** - a production-ready 3-way merge tool by @neongreen that:
+**As of v0.21+, bd automatically configures its own merge driver during `bd init`.** This provides intelligent JSONL merging to prevent conflicts when multiple branches modify issues.
 
-- **Prevents conflicts proactively** with field-level merging
+**What it does:**
+- Performs field-level 3-way merging (not line-by-line)
 - Matches issues by identity (id + created_at + created_by)
 - Smart field merging: timestamps→max, dependencies→union, status/priority→3-way
 - Outputs conflict markers only for unresolvable conflicts
-- Works as Git/jujutsu merge driver (opt-in)
+- Automatically configured during `bd init` (both interactive and `--quiet` modes)
 
-**Setup (one-time)**:
+**Auto-configuration (happens automatically):**
+```bash
+# During bd init, these are configured:
+git config merge.beads.driver "bd merge %A %O %L %R"
+git config merge.beads.name "bd JSONL merge driver"
+# .gitattributes entry: .beads/beads.jsonl merge=beads
+```
+
+**Manual setup (if skipped with `--skip-merge-driver`):**
+```bash
+git config merge.beads.driver "bd merge %A %O %L %R"
+git config merge.beads.name "bd JSONL merge driver"
+echo ".beads/beads.jsonl merge=beads" >> .gitattributes
+```
+
+**Alternative: External beads-merge tool**
+
+For advanced users, **[beads-merge](https://github.com/neongreen/mono/tree/main/beads-merge)** by @neongreen is a standalone 3-way merge tool that can be used instead of `bd merge`:
 
 ```bash
 # Install (requires Go 1.21+)
@@ -793,14 +812,9 @@ git clone https://github.com/neongreen/mono.git
 cd mono/beads-merge
 go install
 
-# Configure Git merge driver
+# Configure Git merge driver (replaces bd merge)
 git config merge.beads.name "JSONL merge driver for beads"
 git config merge.beads.driver "beads-merge %A %O %A %B"
-
-# Enable for beads JSONL files (in your repo)
-echo ".beads/beads.jsonl merge=beads" >> .gitattributes
-git add .gitattributes
-git commit -m "Enable beads-merge for JSONL files"
 ```
 
 **For Jujutsu users**, add to `~/.jjconfig.toml`:
