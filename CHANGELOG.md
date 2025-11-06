@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Git Hook Version Detection** (bd-iou5, 991c624): `bd info` now detects outdated git hooks
+  - Adds version markers to all git hook templates (pre-commit, post-merge, pre-push)
+  - Warns when installed hooks are outdated or missing
+  - Suggests running `examples/git-hooks/install.sh` to update
+  - Prevents issues like the `--resolve-collisions` flag error after updates
+
 ## [0.22.0] - 2025-11-05
 
 ### Added
