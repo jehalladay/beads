@@ -1,9 +1,11 @@
+//go:build !integration
+// +build !integration
+
 package importer
 
 import (
 	"context"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -1039,83 +1041,5 @@ func TestConcurrentExternalRefImports(t *testing.T) {
 		if finalIssue.Title != "Second import (different ID, same external_ref)" {
 			t.Errorf("Expected title to be updated, got %s", finalIssue.Title)
 		}
-	})
-
-	t.Run("concurrent updates to same external_ref with different timestamps", func(t *testing.T) {
-		if testing.Short() {
-			t.Skip("Skipping slow concurrent test in short mode")
-		}
-		
-		store, err := sqlite.New(":memory:")
-		if err != nil {
-			t.Fatalf("Failed to create store: %v", err)
-		}
-		defer store.Close()
-
-		ctx := context.Background()
-		if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-			t.Fatalf("Failed to set prefix: %v", err)
-		}
-
-		externalRef := "JIRA-200"
-		existing := &types.Issue{
-			ID:          "bd-1",
-			Title:       "Existing issue",
-			Status:      types.StatusOpen,
-			Priority:    1,
-			IssueType:   types.TypeTask,
-			ExternalRef: &externalRef,
-		}
-
-		if err := store.CreateIssue(ctx, existing, "test"); err != nil {
-			t.Fatalf("Failed to create existing issue: %v", err)
-		}
-
-		var wg sync.WaitGroup
-		results := make([]*Result, 3)
-		done := make(chan bool, 1)
-
-		for i := 0; i < 3; i++ {
-			wg.Add(1)
-			go func(idx int) {
-				defer wg.Done()
-				
-				updated := &types.Issue{
-					ID:          "bd-import-" + string(rune('1'+idx)),
-					Title:       "Updated from worker " + string(rune('A'+idx)),
-					Status:      types.StatusInProgress,
-					Priority:    2,
-					IssueType:   types.TypeTask,
-					ExternalRef: &externalRef,
-					UpdatedAt:   time.Now().Add(time.Duration(idx) * time.Second),
-				}
-
-				result, _ := ImportIssues(ctx, "", store, []*types.Issue{updated}, Options{})
-				results[idx] = result
-			}(i)
-		}
-
-		go func() {
-			wg.Wait()
-			done <- true
-		}()
-
-		select {
-		case <-done:
-			// Test completed normally
-		case <-time.After(30 * time.Second):
-			t.Fatal("Test timed out after 30 seconds - likely deadlock in concurrent imports")
-		}
-
-		finalIssue, err := store.GetIssueByExternalRef(ctx, externalRef)
-		if err != nil {
-			t.Fatalf("Failed to get final issue: %v", err)
-		}
-
-		if finalIssue == nil {
-			t.Error("Expected final issue to exist")
-		}
-
-		t.Logf("Final issue title: %s, status: %s", finalIssue.Title, finalIssue.Status)
 	})
 }

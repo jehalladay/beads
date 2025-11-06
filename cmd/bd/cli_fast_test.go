@@ -246,14 +246,25 @@ func TestCLI_Import(t *testing.T) {
 var testBD string
 
 func init() {
-	// Build bd binary once
-	tmpDir, err := os.MkdirTemp("", "bd-cli-test-*")
-	if err != nil {
-		panic(err)
-	}
+	// Use existing bd binary from repo root if available, otherwise build once
 	bdBinary := "bd"
 	if runtime.GOOS == "windows" {
 		bdBinary = "bd.exe"
+	}
+	
+	// Check if bd binary exists in repo root (../../bd from cmd/bd/)
+	repoRoot := filepath.Join("..", "..")
+	existingBD := filepath.Join(repoRoot, bdBinary)
+	if _, err := os.Stat(existingBD); err == nil {
+		// Use existing binary
+		testBD, _ = filepath.Abs(existingBD)
+		return
+	}
+	
+	// Fall back to building once (for CI or fresh checkouts)
+	tmpDir, err := os.MkdirTemp("", "bd-cli-test-*")
+	if err != nil {
+		panic(err)
 	}
 	testBD = filepath.Join(tmpDir, bdBinary)
 	cmd := exec.Command("go", "build", "-o", testBD, ".")
