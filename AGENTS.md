@@ -611,8 +611,13 @@ bd sync --merge
 2. **Ensure all quality gates pass** (only if code changes were made) - run tests, linters, builds (file P0 issues if broken)
 3. **Update beads issues** - close finished work, update status
 4. **Sync the issue tracker carefully** - Work methodically to ensure both local and remote issues merge safely. This may require pulling, handling conflicts (sometimes accepting remote changes and re-importing), syncing the database, and verifying consistency. Be creative and patient - the goal is clean reconciliation where no issues are lost.
-5. **Verify clean state** - Ensure all changes are committed and pushed, no untracked files remain
-6. **Choose a follow-up issue for next session**
+5. **Clean up git state** - Clear old stashes and prune dead remote branches:
+   ```bash
+   git stash clear                    # Remove old stashes
+   git remote prune origin            # Clean up deleted remote branches
+   ```
+6. **Verify clean state** - Ensure all changes are committed and pushed, no untracked files remain
+7. **Choose a follow-up issue for next session**
    - Provide a prompt for the user to give to you in the next session
    - Format: "Continue work on bd-X: [issue title]. [Brief context about what's been done and what's next]"
 
