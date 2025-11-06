@@ -130,12 +130,16 @@ func Merge3Way(outputPath, basePath, leftPath, rightPath string, debug bool) err
 		if err != nil {
 			return fmt.Errorf("error marshaling issue %s: %w", issue.ID, err)
 		}
-		fmt.Fprintln(outFile, string(line))
+		if _, err := fmt.Fprintln(outFile, string(line)); err != nil {
+			return fmt.Errorf("error writing merged issue: %w", err)
+		}
 	}
 
 	// Write conflicts to output file
 	for _, conflict := range conflicts {
-		fmt.Fprintln(outFile, conflict)
+		if _, err := fmt.Fprintln(outFile, conflict); err != nil {
+			return fmt.Errorf("error writing conflict: %w", err)
+		}
 	}
 
 	if debug {
@@ -143,7 +147,9 @@ func Merge3Way(outputPath, basePath, leftPath, rightPath string, debug bool) err
 		fmt.Fprintf(os.Stderr, "\n")
 
 		// Show first few lines of output for debugging
-		outFile.Sync()
+		if err := outFile.Sync(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to sync output file: %v\n", err)
+		}
 		if content, err := os.ReadFile(outputPath); err == nil {
 			lines := 0
 			fmt.Fprintf(os.Stderr, "Output file preview (first 10 lines):\n")
@@ -362,7 +368,7 @@ func mergeIssue(base, left, right Issue) (Issue, string) {
 	result.Dependencies = mergeDependencies(left.Dependencies, right.Dependencies)
 
 	// Check if we have a real conflict
-	if hasConflict(base, left, right, result) {
+	if hasConflict(base, left, right) {
 		return result, makeConflictWithBase(base.RawLine, left.RawLine, right.RawLine)
 	}
 
@@ -444,7 +450,7 @@ func mergeDependencies(left, right []Dependency) []Dependency {
 	return result
 }
 
-func hasConflict(base, left, right, merged Issue) bool {
+func hasConflict(base, left, right Issue) bool {
 	// Check if any field has conflicting changes
 	if base.Title != left.Title && base.Title != right.Title && left.Title != right.Title {
 		return true
