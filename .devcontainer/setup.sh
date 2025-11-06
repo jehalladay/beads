@@ -12,7 +12,7 @@ echo "✅ Verifying bd installation..."
 bd version
 
 echo "🎯 Initializing bd (non-interactive)..."
-if [ ! -d .beads ]; then
+if [ ! -f .beads/beads.db ]; then
   bd init --quiet
 else
   echo "bd already initialized"
