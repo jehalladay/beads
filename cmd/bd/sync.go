@@ -214,27 +214,40 @@ Use --merge to merge the sync branch back to main branch.`,
 					}
 				}
 				
-				// Step 4.5: Export back to JSONL if import made changes (e.g., rename detection)
-				// This ensures JSONL stays in sync with DB after rename detection
-				fmt.Println("→ Re-exporting after import to sync rename changes...")
-				if err := exportToJSONL(ctx, jsonlPath); err != nil {
-					fmt.Fprintf(os.Stderr, "Error re-exporting after import: %v\n", err)
-					os.Exit(1)
-				}
-				
-				// Step 4.6: Commit the re-export if it created changes
-				hasPostImportChanges, err := gitHasChanges(ctx, jsonlPath)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error checking git status after re-export: %v\n", err)
-					os.Exit(1)
-				}
-				if hasPostImportChanges {
-					fmt.Println("→ Committing rename detection changes...")
-					if err := gitCommit(ctx, jsonlPath, "bd sync: apply rename detection from import"); err != nil {
-						fmt.Fprintf(os.Stderr, "Error committing post-import changes: %v\n", err)
-						os.Exit(1)
+				// Step 4.5: Check if DB needs re-export (only if DB differs from JSONL)
+				// This prevents the infinite loop: import → export → commit → dirty again
+				if err := ensureStoreActive(); err == nil && store != nil {
+					needsExport, err := dbNeedsExport(ctx, store, jsonlPath)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to check if export needed: %v\n", err)
+						// Conservative: assume export needed
+						needsExport = true
 					}
-					hasChanges = true // Mark that we have changes to push
+
+					if needsExport {
+						fmt.Println("→ Re-exporting after import to sync DB changes...")
+						if err := exportToJSONL(ctx, jsonlPath); err != nil {
+							fmt.Fprintf(os.Stderr, "Error re-exporting after import: %v\n", err)
+							os.Exit(1)
+						}
+
+						// Step 4.6: Commit the re-export if it created changes
+						hasPostImportChanges, err := gitHasChanges(ctx, jsonlPath)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "Error checking git status after re-export: %v\n", err)
+							os.Exit(1)
+						}
+						if hasPostImportChanges {
+							fmt.Println("→ Committing DB changes from import...")
+							if err := gitCommit(ctx, jsonlPath, "bd sync: apply DB changes after import"); err != nil {
+								fmt.Fprintf(os.Stderr, "Error committing post-import changes: %v\n", err)
+								os.Exit(1)
+							}
+							hasChanges = true // Mark that we have changes to push
+						}
+					} else {
+						fmt.Println("→ DB and JSONL in sync, skipping re-export")
+					}
 				}
 			}
 		}

@@ -223,3 +223,49 @@ func countDBIssuesFast(ctx context.Context, store storage.Storage) (int, error) 
 	}
 	return len(issues), nil
 }
+
+// dbNeedsExport checks if the database has changes that differ from JSONL.
+// Returns true if export is needed, false if DB and JSONL are already in sync.
+func dbNeedsExport(ctx context.Context, store storage.Storage, jsonlPath string) (bool, error) {
+	// Check if JSONL exists
+	jsonlInfo, err := os.Stat(jsonlPath)
+	if os.IsNotExist(err) {
+		// JSONL doesn't exist - always need to export
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to stat JSONL: %w", err)
+	}
+
+	// Check database modification time
+	beadsDir := filepath.Dir(jsonlPath)
+	dbPath := filepath.Join(beadsDir, "beads.db")
+	dbInfo, err := os.Stat(dbPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to stat database: %w", err)
+	}
+
+	// If database is newer than JSONL, we need to export
+	if dbInfo.ModTime().After(jsonlInfo.ModTime()) {
+		return true, nil
+	}
+
+	// If modification times suggest they're in sync, verify counts match
+	dbCount, err := countDBIssuesFast(ctx, store)
+	if err != nil {
+		return false, fmt.Errorf("failed to count database issues: %w", err)
+	}
+
+	jsonlCount, err := countIssuesInJSONL(jsonlPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to count JSONL issues: %w", err)
+	}
+
+	// If counts don't match, we need to export
+	if dbCount != jsonlCount {
+		return true, nil
+	}
+
+	// DB and JSONL appear to be in sync
+	return false, nil
+}
