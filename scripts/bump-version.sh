@@ -228,8 +228,12 @@ main() {
                 integrations/beads-mcp/pyproject.toml \
                 integrations/beads-mcp/src/beads_mcp/__init__.py \
                 npm-package/package.json \
-                README.md \
-                PLUGIN.md
+                README.md
+        
+        # Add PLUGIN.md if it exists
+        if [ -f "PLUGIN.md" ]; then
+            git add PLUGIN.md
+        fi
 
         git commit -m "chore: Bump version to $NEW_VERSION
 
