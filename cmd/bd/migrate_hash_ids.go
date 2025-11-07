@@ -326,21 +326,27 @@ func replaceIDReferences(text string, mapping map[string]string) string {
 
 // isHashID checks if an ID is hash-based (not sequential)
 func isHashID(id string) bool {
-	// Hash IDs contain hex characters after the prefix
-	// Sequential IDs are only digits
+	// Hash IDs are Base36-encoded (0-9, a-z) with adaptive length (3-8 chars)
+	// Sequential IDs are numeric and typically short (1-4 digits)
 	parts := strings.SplitN(id, "-", 2)
 	if len(parts) != 2 {
 		return false
 	}
 	
-	// Check if the suffix starts with a hex digit (a-f)
 	suffix := parts[1]
 	if len(suffix) == 0 {
 		return false
 	}
 	
-	// If it contains any letter a-f, it's a hash ID
-	return regexp.MustCompile(`[a-f]`).MatchString(suffix)
+	// If it's 5+ characters long, it's almost certainly a hash ID
+	// (sequential IDs rarely exceed 9999 = 4 digits)
+	if len(suffix) >= 5 {
+		return true
+	}
+	
+	// For shorter IDs, check if it contains any letter (a-z)
+	// Sequential IDs are purely numeric
+	return regexp.MustCompile(`[a-z]`).MatchString(suffix)
 }
 
 // saveMappingFile saves the ID mapping to a JSON file
