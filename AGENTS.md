@@ -172,6 +172,8 @@ bd update <id> [<id>...] --status in_progress --json
 bd update <id> [<id>...] --priority 1 --json
 
 # Edit issue fields in $EDITOR (HUMANS ONLY - not for agents)
+# NOTE: This command is intentionally NOT exposed via the MCP server
+# Agents should use 'bd update' with field-specific parameters instead
 bd edit <id>                    # Edit description
 bd edit <id> --title            # Edit title
 bd edit <id> --design           # Edit design notes
