@@ -499,6 +499,11 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 		}
 		log.log("Exported to JSONL")
 
+		// Capture left snapshot (pre-pull state) for 3-way merge
+		if err := captureLeftSnapshot(jsonlPath); err != nil {
+			log.log("Warning: failed to capture snapshot for deletion tracking: %v", err)
+		}
+
 		if autoCommit {
 			// Try sync branch commit first
 			committed, err := syncBranchCommitAndPush(syncCtx, store, autoPush, log)
@@ -549,6 +554,12 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 			return
 		}
 
+		// Perform 3-way merge and prune deletions
+		if err := applyDeletionsFromMerge(syncCtx, store, jsonlPath); err != nil {
+			log.log("Error during 3-way merge: %v", err)
+			return
+		}
+
 		if err := importToJSONLWithStore(syncCtx, store, jsonlPath); err != nil {
 			log.log("Import failed: %v", err)
 			return
@@ -565,6 +576,11 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 		if err := validatePostImport(beforeCount, afterCount); err != nil {
 			log.log("Post-import validation failed: %v", err)
 			return
+		}
+
+		// Update base snapshot after successful import
+		if err := updateBaseSnapshot(jsonlPath); err != nil {
+			log.log("Warning: failed to update base snapshot: %v", err)
 		}
 
 		if autoPush && autoCommit {
