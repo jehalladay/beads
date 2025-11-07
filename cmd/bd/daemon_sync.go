@@ -501,9 +501,23 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 
 		// Capture left snapshot (pre-pull state) for 3-way merge
 		// This is mandatory for deletion tracking integrity
-		if err := captureLeftSnapshot(jsonlPath); err != nil {
-			log.log("Error: failed to capture snapshot (required for deletion tracking): %v", err)
-			return
+		// In multi-repo mode, capture snapshots for all JSONL files
+		multiRepoPaths := getMultiRepoJSONLPaths()
+		if multiRepoPaths != nil {
+			// Multi-repo mode: snapshot each JSONL file
+			for _, path := range multiRepoPaths {
+				if err := captureLeftSnapshot(path); err != nil {
+					log.log("Error: failed to capture snapshot for %s: %v", path, err)
+					return
+				}
+			}
+			log.log("Captured %d snapshots (multi-repo mode)", len(multiRepoPaths))
+		} else {
+			// Single-repo mode: snapshot the main JSONL
+			if err := captureLeftSnapshot(jsonlPath); err != nil {
+				log.log("Error: failed to capture snapshot (required for deletion tracking): %v", err)
+				return
+			}
 		}
 
 		if autoCommit {
@@ -557,9 +571,23 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 		}
 
 		// Perform 3-way merge and prune deletions
-		if err := applyDeletionsFromMerge(syncCtx, store, jsonlPath); err != nil {
-			log.log("Error during 3-way merge: %v", err)
-			return
+		// In multi-repo mode, apply deletions for each JSONL file
+		multiRepoPathsForMerge := getMultiRepoJSONLPaths()
+		if multiRepoPathsForMerge != nil {
+			// Multi-repo mode: merge/prune for each JSONL
+			for _, path := range multiRepoPathsForMerge {
+				if err := applyDeletionsFromMerge(syncCtx, store, path); err != nil {
+					log.log("Error during 3-way merge for %s: %v", path, err)
+					return
+				}
+			}
+			log.log("Applied deletions from %d repos", len(multiRepoPathsForMerge))
+		} else {
+			// Single-repo mode
+			if err := applyDeletionsFromMerge(syncCtx, store, jsonlPath); err != nil {
+				log.log("Error during 3-way merge: %v", err)
+				return
+			}
 		}
 
 		if err := importToJSONLWithStore(syncCtx, store, jsonlPath); err != nil {
@@ -581,8 +609,18 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 		}
 
 		// Update base snapshot after successful import
-		if err := updateBaseSnapshot(jsonlPath); err != nil {
-			log.log("Warning: failed to update base snapshot: %v", err)
+		// In multi-repo mode, update snapshots for all JSONL files
+		multiRepoPathsForSnapshot := getMultiRepoJSONLPaths()
+		if multiRepoPathsForSnapshot != nil {
+			for _, path := range multiRepoPathsForSnapshot {
+				if err := updateBaseSnapshot(path); err != nil {
+					log.log("Warning: failed to update base snapshot for %s: %v", path, err)
+				}
+			}
+		} else {
+			if err := updateBaseSnapshot(jsonlPath); err != nil {
+				log.log("Warning: failed to update base snapshot: %v", err)
+			}
 		}
 
 		if autoPush && autoCommit {

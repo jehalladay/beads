@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -383,5 +385,287 @@ func TestSnapshotManagement(t *testing.T) {
 	}
 	if baseCount != 1 || leftCount != 1 {
 		t.Errorf("Expected 1 issue in each snapshot, got base=%d left=%d", baseCount, leftCount)
+	}
+}
+
+// TestMultiRepoDeletionTracking tests deletion tracking with multi-repo mode
+// This is the test for bd-4oob: snapshot files need to be created per-JSONL file
+func TestMultiRepoDeletionTracking(t *testing.T) {
+	// Setup workspace directories
+	primaryDir := t.TempDir()
+	additionalDir := t.TempDir()
+
+	// Setup .beads directories
+	primaryBeadsDir := filepath.Join(primaryDir, ".beads")
+	additionalBeadsDir := filepath.Join(additionalDir, ".beads")
+	if err := os.MkdirAll(primaryBeadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create primary .beads dir: %v", err)
+	}
+	if err := os.MkdirAll(additionalBeadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create additional .beads dir: %v", err)
+	}
+
+	// Create database in primary dir
+	dbPath := filepath.Join(primaryBeadsDir, "beads.db")
+	ctx := context.Background()
+
+	store, err := sqlite.New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("Failed to set issue_prefix: %v", err)
+	}
+
+	// Setup multi-repo config
+	config.Set("repos.primary", primaryDir)
+	config.Set("repos.additional", []string{additionalDir})
+	defer func() {
+		config.Set("repos.primary", "")
+		config.Set("repos.additional", nil)
+	}()
+
+	// Create issues in different repos
+	primaryIssue := &types.Issue{
+		ID:          "bd-primary",
+		Title:       "Primary repo issue",
+		Description: "This belongs to primary",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   "task",
+		SourceRepo:  ".", // Primary repo
+	}
+
+	additionalIssue := &types.Issue{
+		ID:          "bd-additional",
+		Title:       "Additional repo issue",
+		Description: "This belongs to additional",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   "task",
+		SourceRepo:  additionalDir,
+	}
+
+	if err := store.CreateIssue(ctx, primaryIssue, "test"); err != nil {
+		t.Fatalf("Failed to create primary issue: %v", err)
+	}
+	if err := store.CreateIssue(ctx, additionalIssue, "test"); err != nil {
+		t.Fatalf("Failed to create additional issue: %v", err)
+	}
+
+	// Export to multi-repo (this creates multiple JSONL files)
+	results, err := store.ExportToMultiRepo(ctx)
+	if err != nil {
+		t.Fatalf("ExportToMultiRepo failed: %v", err)
+	}
+	if results == nil {
+		t.Fatal("Expected multi-repo results, got nil")
+	}
+	if results["."] != 1 {
+		t.Errorf("Expected 1 issue in primary repo, got %d", results["."])
+	}
+	if results[additionalDir] != 1 {
+		t.Errorf("Expected 1 issue in additional repo, got %d", results[additionalDir])
+	}
+
+	// Verify JSONL files exist
+	primaryJSONL := filepath.Join(primaryBeadsDir, "issues.jsonl")
+	additionalJSONL := filepath.Join(additionalBeadsDir, "issues.jsonl")
+
+	if !fileExists(primaryJSONL) {
+		t.Fatalf("Primary JSONL not created: %s", primaryJSONL)
+	}
+	if !fileExists(additionalJSONL) {
+		t.Fatalf("Additional JSONL not created: %s", additionalJSONL)
+	}
+
+	// THIS IS THE BUG: Initialize snapshots - currently only works for single JSONL
+	// Should create snapshots for BOTH JSONL files
+	if err := initializeSnapshotsIfNeeded(primaryJSONL); err != nil {
+		t.Fatalf("Failed to initialize primary snapshots: %v", err)
+	}
+	if err := initializeSnapshotsIfNeeded(additionalJSONL); err != nil {
+		t.Fatalf("Failed to initialize additional snapshots: %v", err)
+	}
+
+	// Verify snapshot files exist for both repos
+	primaryBasePath, primaryLeftPath := getSnapshotPaths(primaryJSONL)
+	additionalBasePath, additionalLeftPath := getSnapshotPaths(additionalJSONL)
+
+	if !fileExists(primaryBasePath) {
+		t.Errorf("Primary base snapshot not created: %s", primaryBasePath)
+	}
+	if !fileExists(additionalBasePath) {
+		t.Errorf("Additional base snapshot not created: %s", additionalBasePath)
+	}
+
+	// Capture left snapshot BEFORE simulating git pull
+	// This represents our local state before the pull
+	if err := captureLeftSnapshot(primaryJSONL); err != nil {
+		t.Fatalf("Failed to capture primary left snapshot: %v", err)
+	}
+	if err := captureLeftSnapshot(additionalJSONL); err != nil {
+		t.Fatalf("Failed to capture additional left snapshot: %v", err)
+	}
+
+	// Simulate remote deletion: replace additional repo JSONL with empty file
+	// This simulates what happens after a git pull where remote deleted the issue
+	emptyFile, err := os.Create(additionalJSONL)
+	if err != nil {
+		t.Fatalf("Failed to create empty JSONL: %v", err)
+	}
+	emptyFile.Close()
+
+	// Verify left snapshots exist
+	if !fileExists(primaryLeftPath) {
+		t.Errorf("Primary left snapshot not created: %s", primaryLeftPath)
+	}
+	if !fileExists(additionalLeftPath) {
+		t.Errorf("Additional left snapshot not created: %s", additionalLeftPath)
+	}
+
+	// Now apply deletion tracking for additional repo
+	// This should detect that bd-additional was deleted remotely and remove it from DB
+	merged, err := merge3WayAndPruneDeletions(ctx, store, additionalJSONL)
+	if err != nil {
+		t.Fatalf("merge3WayAndPruneDeletions failed for additional repo: %v", err)
+	}
+	if !merged {
+		t.Error("Expected merge to be performed (base snapshot exists)")
+	}
+
+	// Verify the issue was deleted from the database
+	issue, err := store.GetIssue(ctx, "bd-additional")
+	if err != nil {
+		t.Errorf("Unexpected error getting issue: %v", err)
+	}
+	if issue != nil {
+		t.Errorf("Expected bd-additional to be deleted from database, but it still exists: %+v", issue)
+	}
+
+	// Verify primary issue still exists
+	primaryResult, err := store.GetIssue(ctx, "bd-primary")
+	if err != nil {
+		t.Errorf("Primary issue should still exist: %v", err)
+	}
+	if primaryResult == nil {
+		t.Error("Primary issue should not be nil")
+	}
+}
+
+// TestMultiRepoSnapshotIsolation verifies that snapshot operations on one repo
+// don't interfere with another repo's snapshots
+func TestMultiRepoSnapshotIsolation(t *testing.T) {
+	// Setup two repo directories
+	repo1Dir := t.TempDir()
+	repo2Dir := t.TempDir()
+
+	// Create .beads/issues.jsonl in each
+	repo1JSONL := filepath.Join(repo1Dir, ".beads", "issues.jsonl")
+	repo2JSONL := filepath.Join(repo2Dir, ".beads", "issues.jsonl")
+
+	if err := os.MkdirAll(filepath.Dir(repo1JSONL), 0755); err != nil {
+		t.Fatalf("Failed to create repo1 .beads: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(repo2JSONL), 0755); err != nil {
+		t.Fatalf("Failed to create repo2 .beads: %v", err)
+	}
+
+	// Write test issues
+	issue1 := map[string]interface{}{
+		"id":    "bd-repo1-issue",
+		"title": "Repo 1 Issue",
+	}
+	issue2 := map[string]interface{}{
+		"id":    "bd-repo2-issue",
+		"title": "Repo 2 Issue",
+	}
+
+	// Write to repo1
+	f1, err := os.Create(repo1JSONL)
+	if err != nil {
+		t.Fatalf("Failed to create repo1 JSONL: %v", err)
+	}
+	json.NewEncoder(f1).Encode(issue1)
+	f1.Close()
+
+	// Write to repo2
+	f2, err := os.Create(repo2JSONL)
+	if err != nil {
+		t.Fatalf("Failed to create repo2 JSONL: %v", err)
+	}
+	json.NewEncoder(f2).Encode(issue2)
+	f2.Close()
+
+	// Initialize snapshots for both
+	if err := initializeSnapshotsIfNeeded(repo1JSONL); err != nil {
+		t.Fatalf("Failed to init repo1 snapshots: %v", err)
+	}
+	if err := initializeSnapshotsIfNeeded(repo2JSONL); err != nil {
+		t.Fatalf("Failed to init repo2 snapshots: %v", err)
+	}
+
+	// Get snapshot paths for both
+	repo1Base, repo1Left := getSnapshotPaths(repo1JSONL)
+	repo2Base, repo2Left := getSnapshotPaths(repo2JSONL)
+
+	// Verify isolation: snapshots should be in different directories
+	if filepath.Dir(repo1Base) == filepath.Dir(repo2Base) {
+		t.Error("Snapshot directories should be different for different repos")
+	}
+
+	// Verify each snapshot contains only its own issue
+	repo1IDs, err := buildIDSet(repo1Base)
+	if err != nil {
+		t.Fatalf("Failed to read repo1 base snapshot: %v", err)
+	}
+	repo2IDs, err := buildIDSet(repo2Base)
+	if err != nil {
+		t.Fatalf("Failed to read repo2 base snapshot: %v", err)
+	}
+
+	if !repo1IDs["bd-repo1-issue"] {
+		t.Error("Repo1 snapshot should contain bd-repo1-issue")
+	}
+	if repo1IDs["bd-repo2-issue"] {
+		t.Error("Repo1 snapshot should NOT contain bd-repo2-issue")
+	}
+
+	if !repo2IDs["bd-repo2-issue"] {
+		t.Error("Repo2 snapshot should contain bd-repo2-issue")
+	}
+	if repo2IDs["bd-repo1-issue"] {
+		t.Error("Repo2 snapshot should NOT contain bd-repo1-issue")
+	}
+
+	// Capture left snapshots for both
+	if err := captureLeftSnapshot(repo1JSONL); err != nil {
+		t.Fatalf("Failed to capture repo1 left: %v", err)
+	}
+	if err := captureLeftSnapshot(repo2JSONL); err != nil {
+		t.Fatalf("Failed to capture repo2 left: %v", err)
+	}
+
+	// Verify left snapshots are isolated
+	if !fileExists(repo1Left) || !fileExists(repo2Left) {
+		t.Error("Both left snapshots should exist")
+	}
+
+	repo1LeftIDs, err := buildIDSet(repo1Left)
+	if err != nil {
+		t.Fatalf("Failed to read repo1 left snapshot: %v", err)
+	}
+	repo2LeftIDs, err := buildIDSet(repo2Left)
+	if err != nil {
+		t.Fatalf("Failed to read repo2 left snapshot: %v", err)
+	}
+
+	if !repo1LeftIDs["bd-repo1-issue"] || repo1LeftIDs["bd-repo2-issue"] {
+		t.Error("Repo1 left snapshot has wrong issues")
+	}
+	if !repo2LeftIDs["bd-repo2-issue"] || repo2LeftIDs["bd-repo1-issue"] {
+		t.Error("Repo2 left snapshot has wrong issues")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/merge"
 	"github.com/steveyegge/beads/internal/storage"
 )
@@ -99,20 +100,10 @@ func merge3WayAndPruneDeletions(ctx context.Context, store storage.Storage, json
 	}
 
 	// Prune accepted deletions from the database
-	// Use type assertion to access DeleteIssue method (available in concrete SQLiteStorage)
-	type deleter interface {
-		DeleteIssue(context.Context, string) error
-	}
-
-	d, ok := store.(deleter)
-	if !ok {
-		return false, fmt.Errorf("storage backend does not support DeleteIssue")
-	}
-
 	// Collect all deletion errors - fail the operation if any delete fails
 	var deletionErrors []error
 	for _, id := range acceptedDeletions {
-		if err := d.DeleteIssue(ctx, id); err != nil {
+		if err := store.DeleteIssue(ctx, id); err != nil {
 			deletionErrors = append(deletionErrors, fmt.Errorf("issue %s: %w", id, err))
 		}
 	}
@@ -337,6 +328,33 @@ func initializeSnapshotsIfNeeded(jsonlPath string) error {
 	}
 
 	return nil
+}
+
+// getMultiRepoJSONLPaths returns all JSONL file paths for multi-repo mode
+// Returns nil if not in multi-repo mode
+func getMultiRepoJSONLPaths() []string {
+	multiRepo := config.GetMultiRepoConfig()
+	if multiRepo == nil {
+		return nil
+	}
+
+	var paths []string
+
+	// Primary repo JSONL
+	primaryPath := multiRepo.Primary
+	if primaryPath == "" {
+		primaryPath = "."
+	}
+	primaryJSONL := filepath.Join(primaryPath, ".beads", "issues.jsonl")
+	paths = append(paths, primaryJSONL)
+
+	// Additional repos' JSONLs
+	for _, repoPath := range multiRepo.Additional {
+		jsonlPath := filepath.Join(repoPath, ".beads", "issues.jsonl")
+		paths = append(paths, jsonlPath)
+	}
+
+	return paths
 }
 
 // applyDeletionsFromMerge applies deletions discovered during 3-way merge
