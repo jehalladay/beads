@@ -67,6 +67,22 @@ Agents report that they enjoy working with Beads, and they will use it spontaneo
 - ⚡ **High performance** - Batch operations for bulk imports (1000 issues in ~950ms)
 - 🗜️ **Memory decay** - Semantic compaction gracefully reduces old closed issues
 
+## Requirements
+
+**Linux users:** Beads requires **glibc 2.32+** (Ubuntu 22.04+, Debian 11+, RHEL 9+, or equivalent).
+
+- ✅ **Supported:** Ubuntu 22.04+ (Jammy), Debian 11+ (Bullseye), Fedora 34+, RHEL 9+
+- ❌ **Not supported:** Ubuntu 20.04 (glibc 2.31), Debian 10 (glibc 2.28), CentOS 7, RHEL 8
+
+**Ubuntu 20.04 users:** Standard support ended April 2025. Please upgrade to Ubuntu 22.04+ or build from source:
+```bash
+git clone https://github.com/steveyegge/beads.git
+cd beads
+go build -o bd ./cmd/bd
+```
+
+**macOS/Windows:** No special requirements.
+
 ## Installation
 
 **npm (Node.js environments, Claude Code for Web):**
