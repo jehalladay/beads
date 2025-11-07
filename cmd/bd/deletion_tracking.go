@@ -7,12 +7,27 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"time"
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/merge"
 	"github.com/steveyegge/beads/internal/storage"
+)
+
+// snapshotMetadata contains versioning info for snapshot files
+type snapshotMetadata struct {
+	Version   string    `json:"version"`   // bd version that created this snapshot
+	Timestamp time.Time `json:"timestamp"` // When snapshot was created
+	CommitSHA string    `json:"commit"`    // Git commit SHA at snapshot time
+}
+
+const (
+	// maxSnapshotAge is the maximum allowed age for a snapshot file (1 hour)
+	maxSnapshotAge = 1 * time.Hour
 )
 
 // jsonEquals compares two JSON strings semantically, handling field reordering
@@ -35,18 +50,135 @@ func getSnapshotPaths(jsonlPath string) (basePath, leftPath string) {
 	return
 }
 
+// getSnapshotMetadataPaths returns paths for metadata files
+func getSnapshotMetadataPaths(jsonlPath string) (baseMeta, leftMeta string) {
+	dir := filepath.Dir(jsonlPath)
+	baseMeta = filepath.Join(dir, "beads.base.meta.json")
+	leftMeta = filepath.Join(dir, "beads.left.meta.json")
+	return
+}
+
+// getCurrentCommitSHA returns the current git commit SHA, or empty string if not in a git repo
+func getCurrentCommitSHA() string {
+	cmd := exec.Command("git", "rev-parse", "--short", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// createSnapshotMetadata creates metadata for the current snapshot
+func createSnapshotMetadata() snapshotMetadata {
+	return snapshotMetadata{
+		Version:   getVersion(),
+		Timestamp: time.Now(),
+		CommitSHA: getCurrentCommitSHA(),
+	}
+}
+
+// getVersion returns the current bd version
+func getVersion() string {
+	return Version
+}
+
+// writeSnapshotMetadata writes metadata to a file
+func writeSnapshotMetadata(path string, meta snapshotMetadata) error {
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+	
+	// Use process-specific temp file for atomic write
+	tempPath := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
+	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write metadata temp file: %w", err)
+	}
+	
+	// Atomic rename
+	return os.Rename(tempPath, path)
+}
+
+// readSnapshotMetadata reads metadata from a file
+func readSnapshotMetadata(path string) (*snapshotMetadata, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // No metadata file exists (backward compatibility)
+		}
+		return nil, fmt.Errorf("failed to read metadata: %w", err)
+	}
+	
+	var meta snapshotMetadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil, fmt.Errorf("failed to parse metadata: %w", err)
+	}
+	
+	return &meta, nil
+}
+
+// validateSnapshotMetadata validates that snapshot metadata is recent and compatible
+func validateSnapshotMetadata(meta *snapshotMetadata, currentCommit string) error {
+	if meta == nil {
+		// No metadata file - likely old snapshot format, consider it stale
+		return fmt.Errorf("snapshot has no metadata (stale format)")
+	}
+	
+	// Check age
+	age := time.Since(meta.Timestamp)
+	if age > maxSnapshotAge {
+		return fmt.Errorf("snapshot is too old (age: %v, max: %v)", age.Round(time.Second), maxSnapshotAge)
+	}
+	
+	// Check version compatibility (major.minor must match)
+	currentVersion := getVersion()
+	if !isVersionCompatible(meta.Version, currentVersion) {
+		return fmt.Errorf("snapshot version %s incompatible with current version %s", meta.Version, currentVersion)
+	}
+	
+	// Check commit SHA if we're in a git repo
+	if currentCommit != "" && meta.CommitSHA != "" && meta.CommitSHA != currentCommit {
+		return fmt.Errorf("snapshot from different commit (snapshot: %s, current: %s)", meta.CommitSHA, currentCommit)
+	}
+	
+	return nil
+}
+
+// isVersionCompatible checks if two versions are compatible (major.minor must match)
+func isVersionCompatible(v1, v2 string) bool {
+	// Extract major.minor from both versions
+	parts1 := strings.Split(v1, ".")
+	parts2 := strings.Split(v2, ".")
+	
+	if len(parts1) < 2 || len(parts2) < 2 {
+		return false
+	}
+	
+	// Compare major.minor
+	return parts1[0] == parts2[0] && parts1[1] == parts2[1]
+}
+
 // captureLeftSnapshot copies the current JSONL to the left snapshot file
 // This should be called after export, before git pull
 // Uses atomic file operations to prevent race conditions
 func captureLeftSnapshot(jsonlPath string) error {
 	_, leftPath := getSnapshotPaths(jsonlPath)
+	_, leftMetaPath := getSnapshotMetadataPaths(jsonlPath)
+	
 	// Use process-specific temp file to prevent concurrent write conflicts
 	tempPath := fmt.Sprintf("%s.%d.tmp", leftPath, os.Getpid())
 	if err := copyFileSnapshot(jsonlPath, tempPath); err != nil {
 		return err
 	}
+	
 	// Atomic rename on POSIX systems
-	return os.Rename(tempPath, leftPath)
+	if err := os.Rename(tempPath, leftPath); err != nil {
+		return err
+	}
+	
+	// Write metadata
+	meta := createSnapshotMetadata()
+	return writeSnapshotMetadata(leftMetaPath, meta)
 }
 
 // updateBaseSnapshot copies the current JSONL to the base snapshot file
@@ -54,23 +186,63 @@ func captureLeftSnapshot(jsonlPath string) error {
 // Uses atomic file operations to prevent race conditions
 func updateBaseSnapshot(jsonlPath string) error {
 	basePath, _ := getSnapshotPaths(jsonlPath)
+	baseMetaPath, _ := getSnapshotMetadataPaths(jsonlPath)
+	
 	// Use process-specific temp file to prevent concurrent write conflicts
 	tempPath := fmt.Sprintf("%s.%d.tmp", basePath, os.Getpid())
 	if err := copyFileSnapshot(jsonlPath, tempPath); err != nil {
 		return err
 	}
+	
 	// Atomic rename on POSIX systems
-	return os.Rename(tempPath, basePath)
+	if err := os.Rename(tempPath, basePath); err != nil {
+		return err
+	}
+	
+	// Write metadata
+	meta := createSnapshotMetadata()
+	return writeSnapshotMetadata(baseMetaPath, meta)
 }
 
 // merge3WayAndPruneDeletions performs 3-way merge and prunes accepted deletions from DB
 // Returns true if merge was performed, false if skipped (no base file)
 func merge3WayAndPruneDeletions(ctx context.Context, store storage.Storage, jsonlPath string) (bool, error) {
 	basePath, leftPath := getSnapshotPaths(jsonlPath)
+	baseMetaPath, leftMetaPath := getSnapshotMetadataPaths(jsonlPath)
 
 	// If no base snapshot exists, skip deletion handling (first run or bootstrap)
 	if !fileExists(basePath) {
 		return false, nil
+	}
+	
+	// Validate snapshot metadata
+	currentCommit := getCurrentCommitSHA()
+	
+	baseMeta, err := readSnapshotMetadata(baseMetaPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to read base snapshot metadata: %w", err)
+	}
+	
+	if err := validateSnapshotMetadata(baseMeta, currentCommit); err != nil {
+		// Stale or invalid snapshot - clean up and skip merge
+		fmt.Fprintf(os.Stderr, "Warning: base snapshot invalid (%v), cleaning up\n", err)
+		_ = cleanupSnapshots(jsonlPath)
+		return false, nil
+	}
+	
+	// If left snapshot exists, validate it too
+	if fileExists(leftPath) {
+		leftMeta, err := readSnapshotMetadata(leftMetaPath)
+		if err != nil {
+			return false, fmt.Errorf("failed to read left snapshot metadata: %w", err)
+		}
+		
+		if err := validateSnapshotMetadata(leftMeta, currentCommit); err != nil {
+			// Stale or invalid snapshot - clean up and skip merge
+			fmt.Fprintf(os.Stderr, "Warning: left snapshot invalid (%v), cleaning up\n", err)
+			_ = cleanupSnapshots(jsonlPath)
+			return false, nil
+		}
 	}
 
 	// Run 3-way merge: base (last import) vs left (pre-pull export) vs right (pulled JSONL)
@@ -82,8 +254,7 @@ func merge3WayAndPruneDeletions(ctx context.Context, store storage.Storage, json
 		}
 	}()
 
-	err := merge.Merge3Way(tmpMerged, basePath, leftPath, jsonlPath, false)
-	if err != nil {
+	if err = merge.Merge3Way(tmpMerged, basePath, leftPath, jsonlPath, false); err != nil {
 		// Merge error (including conflicts) is returned as error
 		return false, fmt.Errorf("3-way merge failed: %w", err)
 	}
@@ -265,13 +436,16 @@ func copyFileSnapshot(src, dst string) error {
 	return destFile.Sync()
 }
 
-// cleanupSnapshots removes the snapshot files
+// cleanupSnapshots removes the snapshot files and their metadata
 // This is useful for cleanup after errors or manual operations
 func cleanupSnapshots(jsonlPath string) error {
 	basePath, leftPath := getSnapshotPaths(jsonlPath)
+	baseMetaPath, leftMetaPath := getSnapshotMetadataPaths(jsonlPath)
 	
 	_ = os.Remove(basePath)
 	_ = os.Remove(leftPath)
+	_ = os.Remove(baseMetaPath)
+	_ = os.Remove(leftMetaPath)
 	
 	return nil
 }
@@ -319,11 +493,18 @@ func getSnapshotStats(jsonlPath string) (baseCount, leftCount int, baseExists, l
 // This is called during init or first sync to bootstrap the deletion tracking
 func initializeSnapshotsIfNeeded(jsonlPath string) error {
 	basePath, _ := getSnapshotPaths(jsonlPath)
+	baseMetaPath, _ := getSnapshotMetadataPaths(jsonlPath)
 
 	// If JSONL exists but base snapshot doesn't, create initial base
 	if fileExists(jsonlPath) && !fileExists(basePath) {
 		if err := copyFileSnapshot(jsonlPath, basePath); err != nil {
 			return fmt.Errorf("failed to initialize base snapshot: %w", err)
+		}
+		
+		// Create metadata
+		meta := createSnapshotMetadata()
+		if err := writeSnapshotMetadata(baseMetaPath, meta); err != nil {
+			return fmt.Errorf("failed to initialize base snapshot metadata: %w", err)
 		}
 	}
 
