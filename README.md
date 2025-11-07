@@ -634,6 +634,10 @@ bd daemons health
 bd daemons stop /path/to/workspace
 bd daemons stop 12345  # By PID
 
+# Restart a specific daemon
+bd daemons restart /path/to/workspace
+bd daemons restart 12345  # By PID
+
 # View daemon logs
 bd daemons logs /path/to/workspace -n 100
 bd daemons logs 12345 -f  # Follow mode
@@ -649,6 +653,39 @@ bd daemons killall --force  # Force kill if graceful fails
 - **Cleanup**: `bd daemons list` auto-removes stale sockets
 
 See [commands/daemons.md](commands/daemons.md) for complete documentation.
+
+### Web Interface
+
+A standalone web interface for real-time issue monitoring is available as an example:
+
+```bash
+# Build the monitor-webui
+cd examples/monitor-webui
+go build
+
+# Start web UI on localhost:8080
+./monitor-webui
+
+# Custom port and host
+./monitor-webui -port 3000
+./monitor-webui -host 0.0.0.0 -port 8080  # Listen on all interfaces
+```
+
+The monitor provides:
+- **Real-time table view** of all issues with filtering by status and priority
+- **Click-through details** - Click any issue to view full details in a modal
+- **Live updates** - WebSocket connection for real-time changes via daemon RPC
+- **Responsive design** - Mobile-friendly card view on small screens
+- **Statistics dashboard** - Quick overview of issue counts and ready work
+- **Clean UI** - Simple, fast interface styled with milligram.css
+
+The monitor is particularly useful for:
+- **Team visibility** - Share a dashboard view of project status
+- **AI agent supervision** - Watch your coding agent create and update issues in real-time
+- **Quick browsing** - Faster than CLI for exploring issue details
+- **Mobile access** - Check project status from your phone
+
+See [examples/monitor-webui/](examples/monitor-webui/) for complete documentation.
 
 ## Examples
 

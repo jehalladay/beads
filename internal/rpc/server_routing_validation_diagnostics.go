@@ -201,6 +201,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleImport(req)
 	case OpEpicStatus:
 		resp = s.handleEpicStatus(req)
+	case OpGetMutations:
+		resp = s.handleGetMutations(req)
 	case OpShutdown:
 		resp = s.handleShutdown(req)
 	default:
