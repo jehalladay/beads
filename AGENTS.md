@@ -609,6 +609,34 @@ beads/
 └── *.md                 # Documentation
 ```
 
+### Testing Workflow
+
+**IMPORTANT:** Never pollute the production database with test issues!
+
+**For manual testing**, use the `BEADS_DB` environment variable to point to a temporary database:
+
+```bash
+# Create test issues in isolated database
+BEADS_DB=/tmp/test.db ./bd init --quiet --prefix test
+BEADS_DB=/tmp/test.db ./bd create "Test issue" -p 1
+
+# Or for quick testing
+BEADS_DB=/tmp/test.db ./bd create "Test feature" -p 1
+```
+
+**For automated tests**, use `t.TempDir()` in Go tests:
+
+```go
+func TestMyFeature(t *testing.T) {
+    tmpDir := t.TempDir()
+    testDB := filepath.Join(tmpDir, ".beads", "beads.db")
+    s := newTestStore(t, testDB)
+    // ... test code
+}
+```
+
+**Warning:** bd will warn you when creating issues with "Test" prefix in the production database. Always use `BEADS_DB` for manual testing.
+
 ### Before Committing
 
 1. **Run tests**: `go test -short ./...` (full tests run in CI)

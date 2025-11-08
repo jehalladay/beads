@@ -57,6 +57,13 @@ var createCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Warn if creating a test issue in production database
+		if strings.HasPrefix(strings.ToLower(title), "test") {
+			yellow := color.New(color.FgYellow).SprintFunc()
+			fmt.Fprintf(os.Stderr, "%s Creating issue with 'Test' prefix in production database.\n", yellow("⚠"))
+			fmt.Fprintf(os.Stderr, "  For testing, consider using: BEADS_DB=/tmp/test.db ./bd create \"Test issue\"\n")
+		}
+
 		// Load template if specified
 		var tmpl *Template
 		if fromTemplate != "" {
