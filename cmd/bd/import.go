@@ -102,15 +102,54 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 		continue
 		}
 
-		// Detect git conflict markers
+		// Detect git conflict markers and attempt automatic 3-way merge
 		if strings.Contains(line, "<<<<<<<") || strings.Contains(line, "=======") || strings.Contains(line, ">>>>>>>") {
-		 fmt.Fprintf(os.Stderr, "Error: Git conflict markers detected in JSONL file (line %d)\n\n", lineNum)
-		fmt.Fprintf(os.Stderr, "To resolve:\n")
-		fmt.Fprintf(os.Stderr, "  git checkout --ours .beads/issues.jsonl && bd import -i .beads/issues.jsonl\n")
-		 fmt.Fprintf(os.Stderr, "  git checkout --theirs .beads/issues.jsonl && bd import -i .beads/issues.jsonl\n\n")
-			fmt.Fprintf(os.Stderr, "For advanced field-level merging, see: https://github.com/neongreen/mono/tree/main/beads-merge\n")
-		 os.Exit(1)
-		 }
+			fmt.Fprintf(os.Stderr, "Git conflict markers detected in JSONL file (line %d)\n", lineNum)
+			fmt.Fprintf(os.Stderr, "→ Attempting automatic 3-way merge...\n\n")
+
+			// Attempt automatic merge using bd merge command
+			if err := attemptAutoMerge(input); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Automatic merge failed: %v\n\n", err)
+				fmt.Fprintf(os.Stderr, "To resolve manually:\n")
+				fmt.Fprintf(os.Stderr, "  git checkout --ours .beads/issues.jsonl && bd import -i .beads/issues.jsonl\n")
+				fmt.Fprintf(os.Stderr, "  git checkout --theirs .beads/issues.jsonl && bd import -i .beads/issues.jsonl\n\n")
+				fmt.Fprintf(os.Stderr, "For advanced field-level merging, see: https://github.com/neongreen/mono/tree/main/beads-merge\n")
+				os.Exit(1)
+			}
+
+			fmt.Fprintf(os.Stderr, "✓ Automatic merge successful\n")
+			fmt.Fprintf(os.Stderr, "→ Restarting import with merged JSONL...\n\n")
+
+			// Re-open the input file to read the merged content
+			if input != "" {
+				// Close current file handle
+				if in != os.Stdin {
+					_ = in.Close()
+				}
+
+				// Re-open the merged file
+				// #nosec G304 - user-provided file path is intentional
+				f, err := os.Open(input)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error reopening merged file: %v\n", err)
+					os.Exit(1)
+				}
+				defer func() {
+					if err := f.Close(); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to close input file: %v\n", err)
+					}
+				}()
+				in = f
+				scanner = bufio.NewScanner(in)
+				allIssues = nil // Reset issues list
+				lineNum = 0     // Reset line counter
+				continue        // Restart parsing from beginning
+			} else {
+				// Can't retry stdin - should not happen since git conflicts only in files
+				fmt.Fprintf(os.Stderr, "Error: Cannot retry merge from stdin\n")
+				os.Exit(1)
+			}
+		}
 
 		// Parse JSON
 		var issue types.Issue
@@ -425,6 +464,124 @@ func countLinesInGitHEAD(filePath string, workDir string) int {
 		return 0
 	}
 	return lines
+}
+
+// attemptAutoMerge attempts to resolve git conflicts using bd merge 3-way merge
+func attemptAutoMerge(conflictedPath string) error {
+	// Validate inputs
+	if conflictedPath == "" {
+		return fmt.Errorf("no file path provided for merge")
+	}
+
+	// Get git repository root
+	gitRootCmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	gitRootOutput, err := gitRootCmd.Output()
+	if err != nil {
+		return fmt.Errorf("not in a git repository: %w", err)
+	}
+	gitRoot := strings.TrimSpace(string(gitRootOutput))
+
+	// Convert conflicted path to absolute path relative to git root
+	absConflictedPath := conflictedPath
+	if !filepath.IsAbs(conflictedPath) {
+		absConflictedPath = filepath.Join(gitRoot, conflictedPath)
+	}
+
+	// Get base (merge-base), left (ours/HEAD), and right (theirs/MERGE_HEAD) versions
+	// These are the three inputs needed for 3-way merge
+
+	// Extract relative path from git root for git commands
+	relPath, err := filepath.Rel(gitRoot, absConflictedPath)
+	if err != nil {
+		relPath = conflictedPath
+	}
+
+	// Create temp directory for merge artifacts
+	tmpDir, err := os.MkdirTemp("", "bd-merge-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	basePath := filepath.Join(tmpDir, "base.jsonl")
+	leftPath := filepath.Join(tmpDir, "left.jsonl")
+	rightPath := filepath.Join(tmpDir, "right.jsonl")
+	outputPath := filepath.Join(tmpDir, "merged.jsonl")
+
+	// Extract base version (merge-base)
+	baseCmd := exec.Command("git", "show", fmt.Sprintf(":1:%s", relPath))
+	baseCmd.Dir = gitRoot
+	baseContent, err := baseCmd.Output()
+	if err != nil {
+		// Stage 1 might not exist if file was added in both branches
+		// Create empty base in this case
+		baseContent = []byte{}
+	}
+	if err := os.WriteFile(basePath, baseContent, 0600); err != nil {
+		return fmt.Errorf("failed to write base version: %w", err)
+	}
+
+	// Extract left version (ours/HEAD)
+	leftCmd := exec.Command("git", "show", fmt.Sprintf(":2:%s", relPath))
+	leftCmd.Dir = gitRoot
+	leftContent, err := leftCmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to extract 'ours' version: %w", err)
+	}
+	if err := os.WriteFile(leftPath, leftContent, 0600); err != nil {
+		return fmt.Errorf("failed to write left version: %w", err)
+	}
+
+	// Extract right version (theirs/MERGE_HEAD)
+	rightCmd := exec.Command("git", "show", fmt.Sprintf(":3:%s", relPath))
+	rightCmd.Dir = gitRoot
+	rightContent, err := rightCmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to extract 'theirs' version: %w", err)
+	}
+	if err := os.WriteFile(rightPath, rightContent, 0600); err != nil {
+		return fmt.Errorf("failed to write right version: %w", err)
+	}
+
+	// Get current executable to call bd merge
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("cannot resolve current executable: %w", err)
+	}
+
+	// Invoke bd merge command
+	mergeCmd := exec.Command(exe, "merge", outputPath, basePath, leftPath, rightPath)
+	mergeOutput, err := mergeCmd.CombinedOutput()
+	if err != nil {
+		// Check exit code - bd merge returns 1 if there are conflicts, 2 for errors
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if exitErr.ExitCode() == 1 {
+				// Conflicts exist - merge tool did its best but couldn't resolve everything
+				return fmt.Errorf("merge conflicts could not be automatically resolved:\n%s", mergeOutput)
+			}
+		}
+		return fmt.Errorf("merge command failed: %w\n%s", err, mergeOutput)
+	}
+
+	// Merge succeeded - copy merged result back to original file
+	mergedContent, err := os.ReadFile(outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to read merged output: %w", err)
+	}
+
+	if err := os.WriteFile(absConflictedPath, mergedContent, 0600); err != nil {
+		return fmt.Errorf("failed to write merged result: %w", err)
+	}
+
+	// Stage the resolved file
+	stageCmd := exec.Command("git", "add", relPath)
+	stageCmd.Dir = gitRoot
+	if err := stageCmd.Run(); err != nil {
+		// Non-fatal - user can stage manually
+		fmt.Fprintf(os.Stderr, "Warning: failed to auto-stage merged file: %v\n", err)
+	}
+
+	return nil
 }
 
 // detectPrefixFromIssues extracts the common prefix from issue IDs
