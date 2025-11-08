@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2025-11-08
+
+### Added
+
+- **Agent Mail Integration**: Complete Python adapter library with comprehensive documentation and multi-agent coordination tests
+  - Python adapter library in `integrations/agent-mail-python/`
+  - Agent Mail quickstart guide and comprehensive integration docs
+  - Multi-agent race condition tests and failure scenario tests
+  - Automated git traffic benchmark
+  - Bash-agent integration example
+
+- **bd info --whats-new** (bd-eiz9): Agent version awareness for quick upgrade summaries
+  - Shows last 3 versions with workflow-impacting changes
+  - Supports `--json` flag for machine-readable output
+  - Helps agents understand what changed without re-reading full docs
+
+- **bd hooks install** (bd-908z): Embedded git hooks command
+  - Replaces external install script with native command
+  - Git hooks now embedded in bd binary
+  - Works for all bd users, not just source repo users
+
+- **bd cleanup**: Bulk deletion command for closed issues (bd-buol)
+  - Agent-driven compaction for large databases
+  - Removes closed issues older than specified threshold
+
+### Fixed
+
+- **3-way JSONL Merge** (bd-jjua): Auto-invoked on conflicts
+  - Automatically triggers intelligent merge on JSONL conflicts
+  - No manual intervention required
+  - Warning message added to zombie issues.jsonl file
+
+- **Auto-import on Missing Database** (ab4ec90): `bd import` now auto-initializes database when missing
+- **Daemon Crash Recovery** (bd-vcg5): Panic handler with socket cleanup prevents orphaned processes
+- **Stale Database Exports** (bd-srwk): ID-based staleness detection prevents exporting stale data
+- **Windows MCP Subprocess Timeout** (bd-r79z): Fix for git detection on Windows
+- **Daemon Orphaning** (a6c9579): Track parent PID and exit when parent dies
+- **Test Pollution Prevention** (bd-z528, bd-2c5a): Safeguards to prevent test issues in production database
+- **Client Self-Heal** (a236558): Auto-recovery for stale daemon.pid files
+- **Post-Merge Hook Error Messages** (abb1d1c): Show actual error messages instead of silent failures
+- **Auto-import During Delete** (bd-8kde): Disable auto-import during delete operations to prevent conflicts
+- **MCP Workspace Context** (bd-8zf2): Auto-detect workspace from CWD
+- **Import Sync Warning** (bd-u4f5): Warn when import syncs with working tree but not git HEAD
+- **GH#254** (bd-tuqd): `bd init` now detects and chains with existing git hooks
+- **GH#249**: Add nil storage checks to prevent RPC daemon crashes
+- **GH#252**: Fix SQLite driver name mismatch causing "unknown driver" errors
+- **Nested .beads Directories** (bd-eqjc): Prevent creating nested .beads directories
+- **Windows SQLite Support**: Fix SQLite in releases for Windows
+
+### Changed
+
+- **Agent Affordances** (observations from agents using beads):
+  - **bd new**: Added as alias for `bd create` command (agents often tried this)
+  - **bd list**: Changed default to one-line-per-issue format to prevent agent miscounting; added `--long` flag for previous detailed format
+
+- **Developer Experience**:
+  - Extracted supplemental docs from AGENTS.md for better organization
+  - Added warning for working tree vs git HEAD sync mismatches
+  - Completion commands now work without database
+  - Config included in `bd info` JSON output
+  - Python cache files added to .gitignore
+  - RPC diagnostics available via `BD_RPC_DEBUG` env var
+  - Reduced RPC dial timeout from 2s to 200ms for fast-fail (bd-expt)
+  - Standardized daemon detection with tryDaemonLock probe (bd-wgu4)
+  - Improved internal/daemon test coverage to 60%
+
+- **Code Organization**:
+  - Refactored snapshot management into dedicated module (bd-urob)
+  - Documented external_ref in content hash behavior (bd-9f4a)
+  - Added MCP server functions for repair commands (bd-7bbc4e6a)
+  - Added version number to beads-mcp startup log
+  - Added system requirements section for glibc compatibility in docs
+
+- **Release Automation**:
+  - Automatic Homebrew formula update in release workflow
+  - Gitignore Formula/bd.rb (auto-generated, real source is homebrew-beads tap)
+
+- **Other**:
+  - Added `docs/` directory to links (#242)
+  - RPC monitoring solution with web UI as implementation example (#244)
+  - Remove old install.sh script, replaced by `bd hooks install`
+  - Remove vc.db exclusion from FindDatabasePath filter
+
 ## [0.22.1] - 2025-11-06
 
 ### Added
