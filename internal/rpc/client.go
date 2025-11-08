@@ -29,7 +29,7 @@ type Client struct {
 // TryConnect attempts to connect to the daemon socket
 // Returns nil if no daemon is running or unhealthy
 func TryConnect(socketPath string) (*Client, error) {
-	return TryConnectWithTimeout(socketPath, 2*time.Second)
+	return TryConnectWithTimeout(socketPath, 200*time.Millisecond)
 }
 
 // TryConnectWithTimeout attempts to connect to the daemon socket using the provided dial timeout.
@@ -54,7 +54,7 @@ func TryConnectWithTimeout(socketPath string, dialTimeout time.Duration) (*Clien
 	}
 
 	if dialTimeout <= 0 {
-		dialTimeout = 2 * time.Second
+		dialTimeout = 200 * time.Millisecond
 	}
 
 	conn, err := dialRPC(socketPath, dialTimeout)
