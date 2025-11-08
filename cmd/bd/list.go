@@ -48,6 +48,7 @@ var listCmd = &cobra.Command{
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		titleSearch, _ := cmd.Flags().GetString("title")
 		idFilter, _ := cmd.Flags().GetString("id")
+		longFormat, _ := cmd.Flags().GetBool("long")
 		
 		// Pattern matching flags
 		titleContains, _ := cmd.Flags().GetString("title-contains")
@@ -275,17 +276,35 @@ var listCmd = &cobra.Command{
 				os.Exit(1)
 			}
 
-			fmt.Printf("\nFound %d issues:\n\n", len(issues))
-			for _, issue := range issues {
-				fmt.Printf("%s [P%d] [%s] %s\n", issue.ID, issue.Priority, issue.IssueType, issue.Status)
-				fmt.Printf("  %s\n", issue.Title)
-				if issue.Assignee != "" {
-					fmt.Printf("  Assignee: %s\n", issue.Assignee)
+			if longFormat {
+				// Long format: multi-line with details
+				fmt.Printf("\nFound %d issues:\n\n", len(issues))
+				for _, issue := range issues {
+					fmt.Printf("%s [P%d] [%s] %s\n", issue.ID, issue.Priority, issue.IssueType, issue.Status)
+					fmt.Printf("  %s\n", issue.Title)
+					if issue.Assignee != "" {
+						fmt.Printf("  Assignee: %s\n", issue.Assignee)
+					}
+					if len(issue.Labels) > 0 {
+						fmt.Printf("  Labels: %v\n", issue.Labels)
+					}
+					fmt.Println()
 				}
-				if len(issue.Labels) > 0 {
-					fmt.Printf("  Labels: %v\n", issue.Labels)
+			} else {
+				// Compact format: one line per issue
+				for _, issue := range issues {
+					labelsStr := ""
+					if len(issue.Labels) > 0 {
+						labelsStr = fmt.Sprintf(" %v", issue.Labels)
+					}
+					assigneeStr := ""
+					if issue.Assignee != "" {
+						assigneeStr = fmt.Sprintf(" @%s", issue.Assignee)
+					}
+					fmt.Printf("%s [P%d] [%s] %s%s%s - %s\n",
+						issue.ID, issue.Priority, issue.IssueType, issue.Status,
+						assigneeStr, labelsStr, issue.Title)
 				}
-				fmt.Println()
 			}
 			return
 		}
@@ -349,20 +368,41 @@ var listCmd = &cobra.Command{
 			return
 		}
 
-		fmt.Printf("\nFound %d issues:\n\n", len(issues))
-		for _, issue := range issues {
-			// Load labels for display
-			labels, _ := store.GetLabels(ctx, issue.ID)
+		if longFormat {
+			// Long format: multi-line with details
+			fmt.Printf("\nFound %d issues:\n\n", len(issues))
+			for _, issue := range issues {
+				// Load labels for display
+				labels, _ := store.GetLabels(ctx, issue.ID)
 
-			fmt.Printf("%s [P%d] [%s] %s\n", issue.ID, issue.Priority, issue.IssueType, issue.Status)
-			fmt.Printf("  %s\n", issue.Title)
-			if issue.Assignee != "" {
-				fmt.Printf("  Assignee: %s\n", issue.Assignee)
+				fmt.Printf("%s [P%d] [%s] %s\n", issue.ID, issue.Priority, issue.IssueType, issue.Status)
+				fmt.Printf("  %s\n", issue.Title)
+				if issue.Assignee != "" {
+					fmt.Printf("  Assignee: %s\n", issue.Assignee)
+				}
+				if len(labels) > 0 {
+					fmt.Printf("  Labels: %v\n", labels)
+				}
+				fmt.Println()
 			}
-			if len(labels) > 0 {
-				fmt.Printf("  Labels: %v\n", labels)
+		} else {
+			// Compact format: one line per issue
+			for _, issue := range issues {
+				// Load labels for display
+				labels, _ := store.GetLabels(ctx, issue.ID)
+
+				labelsStr := ""
+				if len(labels) > 0 {
+					labelsStr = fmt.Sprintf(" %v", labels)
+				}
+				assigneeStr := ""
+				if issue.Assignee != "" {
+					assigneeStr = fmt.Sprintf(" @%s", issue.Assignee)
+				}
+				fmt.Printf("%s [P%d] [%s] %s%s%s - %s\n",
+					issue.ID, issue.Priority, issue.IssueType, issue.Status,
+					assigneeStr, labelsStr, issue.Title)
 			}
-			fmt.Println()
 		}
 	},
 }
@@ -379,6 +419,7 @@ func init() {
 	listCmd.Flags().IntP("limit", "n", 0, "Limit results")
 	listCmd.Flags().String("format", "", "Output format: 'digraph' (for golang.org/x/tools/cmd/digraph), 'dot' (Graphviz), or Go template")
 	listCmd.Flags().Bool("all", false, "Show all issues (default behavior; flag provided for CLI familiarity)")
+	listCmd.Flags().Bool("long", false, "Show detailed multi-line output for each issue")
 	
 	// Pattern matching
 	listCmd.Flags().String("title-contains", "", "Filter by title substring (case-insensitive)")
