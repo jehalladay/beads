@@ -262,7 +262,7 @@ bd close bd-42 "Done"                       # Updates via git sync
 - ✅ Infrequent updates (low collision risk)
 - ✅ Simplicity preferred over latency
 
-See [docs/AGENT_MAIL.md](docs/AGENT_MAIL.md) for complete setup, troubleshooting, and architecture details.
+See [docs/AGENT_MAIL_QUICKSTART.md](docs/AGENT_MAIL_QUICKSTART.md) for 5-minute setup, or [docs/AGENT_MAIL.md](docs/AGENT_MAIL.md) for complete documentation. Example code in [examples/python-agent/AGENT_MAIL_EXAMPLE.md](examples/python-agent/AGENT_MAIL_EXAMPLE.md).
 
 ### Issue Types
 
