@@ -4,6 +4,23 @@
 
 This is **beads** (command: `bd`), an issue tracker designed for AI-supervised coding workflows. We dogfood our own tool!
 
+## 🆕 What's New?
+
+**New to bd or upgrading?** Run `bd info --whats-new` to see agent-relevant changes from recent versions:
+
+```bash
+bd info --whats-new          # Human-readable output
+bd info --whats-new --json   # Machine-readable output
+```
+
+This shows the last 3 versions with workflow-impacting changes, avoiding the need to re-read all documentation. Examples:
+- New commands and flags that improve agent workflows
+- Breaking changes that require workflow updates
+- Performance improvements and bug fixes
+- Integration features (MCP, Agent Mail, git hooks)
+
+**Why this matters:** bd releases weekly with major versions. This command helps you quickly understand what changed without parsing the full CHANGELOG.
+
 ## Human Setup vs Agent Usage
 
 **IMPORTANT:** If you need to initialize bd, use the `--quiet` flag:
