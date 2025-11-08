@@ -144,6 +144,19 @@ func compareIssues(existing, incoming *types.Issue) []string {
 }
 
 // hashIssueContent creates a deterministic hash of issue content (excluding ID and timestamps)
+//
+// IMPORTANT: external_ref is included in the content hash. This means:
+//   - Adding/removing/changing external_ref changes the content hash
+//   - A local issue that gains an external_ref will have different content hash
+//   - This is intentional: external_ref is semantically meaningful content
+//
+// Implications:
+//   1. Rename detection won't match issues before/after adding external_ref
+//   2. Content-based collision detection treats external_ref changes as updates
+//   3. Idempotent import only when external_ref is identical
+//
+// This design choice ensures external system linkage is tracked as substantive content,
+// not just metadata. See docs/HASH_ID_DESIGN.md for more on content hash philosophy.
 func hashIssueContent(issue *types.Issue) string {
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "title:%s\n", issue.Title)
@@ -155,6 +168,7 @@ func hashIssueContent(issue *types.Issue) string {
 	_, _ = fmt.Fprintf(h, "design:%s\n", issue.Design)
 	_, _ = fmt.Fprintf(h, "acceptance:%s\n", issue.AcceptanceCriteria)
 	_, _ = fmt.Fprintf(h, "notes:%s\n", issue.Notes)
+	// external_ref is included in content hash (see comment above)
 	if issue.ExternalRef != nil {
 		_, _ = fmt.Fprintf(h, "external_ref:%s\n", *issue.ExternalRef)
 	}
