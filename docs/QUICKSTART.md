@@ -172,6 +172,40 @@ After upgrading bd, use `bd migrate` to check for and migrate old database files
 
 **AI agents:** Use `--inspect` to analyze migration safety before running. The system verifies required config keys and data integrity invariants.
 
+## Advanced: Agent Mail (Optional)
+
+For **multi-agent workflows** (2+ AI agents working concurrently), Agent Mail provides real-time coordination:
+
+**Benefits:**
+- 20-50x latency reduction (<100ms vs 2-5s git sync)
+- Collision prevention via file reservations
+- Agents can't accidentally claim same issue
+
+**Quick setup:**
+```bash
+# Install and start server (one-time)
+git clone https://github.com/Dicklesworthstone/mcp_agent_mail.git
+cd mcp_agent_mail && python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+python -m mcp_agent_mail.cli serve-http
+
+# Configure each agent (environment variables)
+export BEADS_AGENT_MAIL_URL=http://127.0.0.1:8765
+export BEADS_AGENT_NAME=assistant-alpha  # Unique per agent
+export BEADS_PROJECT_ID=my-project
+
+# Use bd normally - Agent Mail auto-activates
+bd ready
+bd update bd-42 --status in_progress  # Reserves instantly
+```
+
+**When to use:**
+- ✅ Multiple agents working simultaneously
+- ✅ High collision risk (frequent status updates)
+- ❌ Single agent workflows (unnecessary overhead)
+
+See [AGENT_MAIL.md](AGENT_MAIL.md) for complete guide.
+
 ## Next Steps
 
 - Add labels: `./bd create "Task" -l "backend,urgent"`
