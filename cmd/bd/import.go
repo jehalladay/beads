@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -127,6 +129,12 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 		}
 
 		result, err := importIssuesCore(ctx, dbPath, store, allIssues, opts)
+
+		// Check for uncommitted changes in JSONL after import
+		// Only check if we have an input file path (not stdin) and it's the default beads file
+		if input != "" && (input == ".beads/issues.jsonl" || input == ".beads/beads.jsonl") {
+			checkUncommittedChanges(input, result)
+		}
 
 		// Handle errors and special cases
 		if err != nil {
@@ -280,6 +288,108 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			fmt.Fprintf(os.Stderr, "Run 'bd duplicates --auto-merge' to merge all duplicates.\n")
 		}
 	},
+}
+
+// checkUncommittedChanges detects if the JSONL file has uncommitted changes
+// and warns the user if the working tree differs from git HEAD
+func checkUncommittedChanges(filePath string, result *ImportResult) {
+	// Only warn if no actual changes were made (database already synced)
+	if result.Created > 0 || result.Updated > 0 {
+		return
+	}
+
+	// Get the directory containing the file to use as git working directory
+	workDir := filepath.Dir(filePath)
+	
+	// Use git diff to check if working tree differs from HEAD
+	cmd := fmt.Sprintf("git diff --quiet HEAD %s", filePath)
+	exitCode, _ := runGitCommand(cmd, workDir)
+	
+	// Exit code 0 = no changes, 1 = changes exist, >1 = error
+	if exitCode == 1 {
+		// Get line counts for context
+		workingTreeLines := countLines(filePath)
+		headLines := countLinesInGitHEAD(filePath, workDir)
+		
+		fmt.Fprintf(os.Stderr, "\n⚠️  Warning: .beads/issues.jsonl has uncommitted changes\n")
+		fmt.Fprintf(os.Stderr, "   Working tree: %d lines\n", workingTreeLines)
+		if headLines > 0 {
+			fmt.Fprintf(os.Stderr, "   Git HEAD: %d lines\n", headLines)
+		}
+		fmt.Fprintf(os.Stderr, "\n   Import complete: database already synced with working tree\n")
+		fmt.Fprintf(os.Stderr, "   Run: git diff %s\n", filePath)
+		fmt.Fprintf(os.Stderr, "   To review uncommitted changes\n")
+	}
+}
+
+// runGitCommand executes a git command and returns exit code and output
+// workDir is the directory to run the command in (empty = current dir)
+func runGitCommand(cmd string, workDir string) (int, string) {
+	// #nosec G204 - command is constructed internally
+	gitCmd := exec.Command("sh", "-c", cmd)
+	if workDir != "" {
+		gitCmd.Dir = workDir
+	}
+	output, err := gitCmd.CombinedOutput()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return exitErr.ExitCode(), string(output)
+		}
+		return -1, string(output)
+	}
+	return 0, string(output)
+}
+
+// countLines counts the number of lines in a file
+func countLines(filePath string) int {
+	// #nosec G304 - file path is controlled by caller
+	f, err := os.Open(filePath)
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = f.Close() }()
+	
+	scanner := bufio.NewScanner(f)
+	lines := 0
+	for scanner.Scan() {
+		lines++
+	}
+	return lines
+}
+
+// countLinesInGitHEAD counts lines in the file as it exists in git HEAD
+func countLinesInGitHEAD(filePath string, workDir string) int {
+	// First, find the git root
+	findRootCmd := "git rev-parse --show-toplevel 2>/dev/null"
+	exitCode, gitRootOutput := runGitCommand(findRootCmd, workDir)
+	if exitCode != 0 {
+		return 0
+	}
+	gitRoot := strings.TrimSpace(gitRootOutput)
+	
+	// Make filePath relative to git root
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return 0
+	}
+	
+	relPath, err := filepath.Rel(gitRoot, absPath)
+	if err != nil {
+		return 0
+	}
+	
+	cmd := fmt.Sprintf("git show HEAD:%s 2>/dev/null | wc -l", relPath)
+	exitCode, output := runGitCommand(cmd, workDir)
+	if exitCode != 0 {
+		return 0
+	}
+	
+	var lines int
+	_, err = fmt.Sscanf(strings.TrimSpace(output), "%d", &lines)
+	if err != nil {
+		return 0
+	}
+	return lines
 }
 
 func init() {
