@@ -415,8 +415,9 @@ var rootCmd = &cobra.Command{
 
 		// Auto-import if JSONL is newer than DB (e.g., after git pull)
 		// Skip for import command itself to avoid recursion
+		// Skip for delete command to prevent resurrection of deleted issues (bd-8kde)
 		// Skip if sync --dry-run to avoid modifying DB in dry-run mode (bd-191)
-		if cmd.Name() != "import" && autoImportEnabled {
+		if cmd.Name() != "import" && cmd.Name() != "delete" && autoImportEnabled {
 			// Check if this is sync command with --dry-run flag
 			if cmd.Name() == "sync" {
 				if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
