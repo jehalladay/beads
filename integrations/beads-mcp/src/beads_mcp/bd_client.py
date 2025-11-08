@@ -226,9 +226,15 @@ class BdCliClient(BdClientBase):
         cmd = [self.bd_path, *args, *self._global_flags(), "--json"]
         working_dir = cwd if cwd is not None else self._get_working_dir()
 
+        # Set up environment with database configuration
+        env = os.environ.copy()
+        if self.beads_dir:
+            env["BEADS_DIR"] = self.beads_dir
+        elif self.beads_db:
+            env["BEADS_DB"] = self.beads_db
+
         # Log database routing for debugging
         import sys
-        working_dir = self._get_working_dir()
         if self.beads_dir:
             db_info = f"BEADS_DIR={self.beads_dir}"
         elif self.beads_db:
@@ -245,6 +251,7 @@ class BdCliClient(BdClientBase):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=working_dir,
+                env=env,
             )
             stdout, stderr = await process.communicate()
         except FileNotFoundError as e:
