@@ -82,3 +82,4 @@ npm-package/package-lock.json
 .beads/beads.db?*
 bd-original
 mcp_agent_mail/
+tests/integration/__pycache__/
