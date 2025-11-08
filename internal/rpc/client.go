@@ -44,6 +44,8 @@ func TryConnectWithTimeout(socketPath string, dialTimeout time.Duration) (*Clien
 		running, _ := lockfile.TryDaemonLock(beadsDir)
 		if !running {
 			debug.Logf("daemon lock not held and socket missing (no daemon running)")
+			// Self-heal: clean up stale artifacts when lock is free and socket is missing
+			cleanupStaleDaemonArtifacts(beadsDir)
 			return nil, nil
 		}
 	}
@@ -332,4 +334,25 @@ func (c *Client) Export(args *ExportArgs) (*Response, error) {
 // EpicStatus gets epic completion status via the daemon
 func (c *Client) EpicStatus(args *EpicStatusArgs) (*Response, error) {
 	return c.Execute(OpEpicStatus, args)
+}
+
+// cleanupStaleDaemonArtifacts removes stale daemon.pid file when socket is missing and lock is free.
+// This prevents stale artifacts from accumulating after daemon crashes.
+// Only removes pid file - lock file is managed by OS (released on process exit).
+func cleanupStaleDaemonArtifacts(beadsDir string) {
+	pidFile := filepath.Join(beadsDir, "daemon.pid")
+	
+	// Check if pid file exists
+	if _, err := os.Stat(pidFile); err != nil {
+		// No pid file to clean up
+		return
+	}
+	
+	// Remove stale pid file
+	if err := os.Remove(pidFile); err != nil {
+		debug.Logf("failed to remove stale pid file: %v", err)
+		return
+	}
+	
+	debug.Logf("removed stale daemon.pid file (lock free, socket missing)")
 }
