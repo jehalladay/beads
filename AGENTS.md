@@ -534,7 +534,7 @@ bd sync
 
 ```bash
 # One-time setup - run this in each beads workspace
-./examples/git-hooks/install.sh
+bd hooks install
 ```
 
 This installs:
@@ -542,11 +542,12 @@ This installs:
 - **pre-commit** - Flushes pending changes immediately before commit (bypasses 30s debounce)
 - **post-merge** - Imports updated JSONL after pull/merge (guaranteed sync)
 - **pre-push** - Exports database to JSONL before push (prevents stale JSONL from reaching remote)
+- **post-checkout** - Imports JSONL after branch checkout (ensures consistency)
 
 **Why git hooks matter:**
 Without the pre-push hook, you can have database changes committed locally but stale JSONL pushed to remote, causing multi-workspace divergence. The hooks guarantee DB ↔ JSONL consistency.
 
-See [examples/git-hooks/README.md](examples/git-hooks/README.md) for details.
+**Note:** Hooks are embedded in the bd binary and work for all bd users (not just source repo users).
 
 
 
