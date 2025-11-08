@@ -245,6 +245,12 @@ bd close <id> [<id>...] --reason "Done" --json
 # Reopen closed issues (supports multiple IDs)
 bd reopen <id> [<id>...] --reason "Reopening" --json
 
+# Clean up closed issues (bulk deletion)
+bd cleanup --force --json                                   # Delete ALL closed issues
+bd cleanup --older-than 30 --force --json                   # Delete closed >30 days ago
+bd cleanup --dry-run --json                                 # Preview what would be deleted
+bd cleanup --older-than 90 --cascade --force --json         # Delete old + dependents
+
 # Show dependency tree
 bd dep tree <id>
 
