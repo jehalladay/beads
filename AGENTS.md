@@ -261,6 +261,17 @@ bd show <id> [<id>...] --json
 bd rename-prefix kw- --dry-run  # Preview changes
 bd rename-prefix kw- --json     # Apply rename
 
+# Agent-driven compaction (memory decay)
+bd compact --analyze --json                           # Get candidates for review
+bd compact --analyze --tier 1 --limit 10 --json       # Limited batch
+bd compact --apply --id bd-42 --summary summary.txt   # Apply compaction
+bd compact --apply --id bd-42 --summary - < summary.txt  # From stdin
+bd compact --stats --json                             # Show statistics
+
+# Legacy AI-powered compaction (requires ANTHROPIC_API_KEY)
+bd compact --auto --dry-run --all                     # Preview
+bd compact --auto --all --tier 1                      # Auto-compact tier 1
+
 # Restore compacted issue from git history
 bd restore <id>  # View full history at time of compaction
 

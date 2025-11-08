@@ -611,14 +611,24 @@ bd config unset jira.url
 
 ### Compaction (Memory Decay)
 
-Beads uses AI to compress old closed issues, keeping databases lightweight as they age:
+Beads provides **agent-driven compaction** - your AI agent decides what to compress, no API keys required:
 
 ```bash
-bd compact --dry-run --all  # Preview candidates
-bd compact --days 90        # Compact closed issues older than 90 days
+# Agent-driven workflow (recommended)
+bd compact --analyze --json              # Get candidates with full content
+bd compact --apply --id bd-42 --summary summary.txt
+
+# Legacy AI-powered workflow (requires ANTHROPIC_API_KEY)
+bd compact --auto --dry-run --all        # Preview candidates
+bd compact --auto --all                  # Auto-compact all eligible issues
 ```
 
-This is agentic memory decay - your database naturally forgets fine-grained details while preserving essential context.
+**How it works:**
+1. Use `--analyze` to export candidates (closed 30+ days) with full content
+2. Summarize the content using any LLM (Claude, GPT, local model, etc.)
+3. Use `--apply` to persist the summary and mark as compacted
+
+This is agentic memory decay - your database naturally forgets fine-grained details while preserving essential context. The agent has full control over compression quality.
 
 ### Export/Import
 

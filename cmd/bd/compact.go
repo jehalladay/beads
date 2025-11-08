@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -13,14 +14,20 @@ import (
 )
 
 var (
-	compactDryRun  bool
-	compactTier    int
-	compactAll     bool
-	compactID      string
-	compactForce   bool
-	compactBatch   int
-	compactWorkers int
-	compactStats   bool
+	compactDryRun     bool
+	compactTier       int
+	compactAll        bool
+	compactID         string
+	compactForce      bool
+	compactBatch      int
+	compactWorkers    int
+	compactStats      bool
+	compactAnalyze    bool
+	compactApply      bool
+	compactAuto       bool
+	compactSummary    string
+	compactActor      string
+	compactLimit      int
 )
 
 var compactCmd = &cobra.Command{
@@ -31,16 +38,28 @@ var compactCmd = &cobra.Command{
 Compaction reduces database size by summarizing closed issues that are no longer
 actively referenced. This is permanent graceful decay - original content is discarded.
 
+Modes:
+  - Analyze: Export candidates for agent review (no API key needed)
+  - Apply: Accept agent-provided summary (no API key needed)
+  - Auto: AI-powered compaction (requires ANTHROPIC_API_KEY, legacy)
+
 Tiers:
   - Tier 1: Semantic compression (30 days closed, 70% reduction)
   - Tier 2: Ultra compression (90 days closed, 95% reduction)
 
 Examples:
-  bd compact --dry-run                  # Preview candidates
-  bd compact --all                      # Compact all eligible issues
-  bd compact --id bd-42                 # Compact specific issue
-  bd compact --id bd-42 --force         # Force compact (bypass checks)
-  bd compact --stats                    # Show statistics
+  # Agent-driven workflow (recommended)
+  bd compact --analyze --json              # Get candidates with full content
+  bd compact --apply --id bd-42 --summary summary.txt
+  bd compact --apply --id bd-42 --summary - < summary.txt
+
+  # Legacy AI-powered workflow
+  bd compact --auto --dry-run              # Preview candidates
+  bd compact --auto --all                  # Compact all eligible issues
+  bd compact --auto --id bd-42             # Compact specific issue
+  
+  # Statistics
+  bd compact --stats                       # Show statistics
 `,
 	Run: func(_ *cobra.Command, _ []string) {
 		ctx := context.Background()
@@ -60,58 +79,106 @@ Examples:
 			return
 		}
 
-		// If using daemon, delegate to RPC
-		if daemonClient != nil {
-			runCompactRPC(ctx)
-			return
+		// Count active modes
+		activeModes := 0
+		if compactAnalyze {
+			activeModes++
+		}
+		if compactApply {
+			activeModes++
+		}
+		if compactAuto {
+			activeModes++
 		}
 
-		// Direct mode - original logic
+		// Check for exactly one mode
+		if activeModes == 0 {
+			fmt.Fprintf(os.Stderr, "Error: must specify one mode: --analyze, --apply, or --auto\n")
+			os.Exit(1)
+		}
+		if activeModes > 1 {
+			fmt.Fprintf(os.Stderr, "Error: cannot use multiple modes together (--analyze, --apply, --auto are mutually exclusive)\n")
+			os.Exit(1)
+		}
+
+		// Get SQLite store
 		sqliteStore, ok := store.(*sqlite.SQLiteStorage)
 		if !ok {
 			fmt.Fprintf(os.Stderr, "Error: compact requires SQLite storage\n")
 			os.Exit(1)
 		}
 
-		if compactID != "" && compactAll {
-			fmt.Fprintf(os.Stderr, "Error: cannot use --id and --all together\n")
-			os.Exit(1)
-		}
-
-		if compactForce && compactID == "" {
-			fmt.Fprintf(os.Stderr, "Error: --force requires --id\n")
-			os.Exit(1)
-		}
-
-		if compactID == "" && !compactAll && !compactDryRun {
-			fmt.Fprintf(os.Stderr, "Error: must specify --all, --id, or --dry-run\n")
-			os.Exit(1)
-		}
-
-		apiKey := os.Getenv("ANTHROPIC_API_KEY")
-		if apiKey == "" && !compactDryRun {
-			fmt.Fprintf(os.Stderr, "Error: ANTHROPIC_API_KEY environment variable not set\n")
-			os.Exit(1)
-		}
-
-		config := &compact.Config{
-			APIKey:      apiKey,
-			Concurrency: compactWorkers,
-			DryRun:      compactDryRun,
-		}
-
-		compactor, err := compact.New(sqliteStore, apiKey, config)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to create compactor: %v\n", err)
-			os.Exit(1)
-		}
-
-		if compactID != "" {
-			runCompactSingle(ctx, compactor, sqliteStore, compactID)
+		// Handle analyze mode
+		if compactAnalyze {
+			if daemonClient != nil {
+				fmt.Fprintf(os.Stderr, "Error: --analyze not yet supported in daemon mode, use --no-daemon\n")
+				os.Exit(1)
+			}
+			runCompactAnalyze(ctx, sqliteStore)
 			return
 		}
 
-		runCompactAll(ctx, compactor, sqliteStore)
+		// Handle apply mode
+		if compactApply {
+			if daemonClient != nil {
+				fmt.Fprintf(os.Stderr, "Error: --apply not yet supported in daemon mode, use --no-daemon\n")
+				os.Exit(1)
+			}
+			if compactID == "" {
+				fmt.Fprintf(os.Stderr, "Error: --apply requires --id\n")
+				os.Exit(1)
+			}
+			if compactSummary == "" {
+				fmt.Fprintf(os.Stderr, "Error: --apply requires --summary\n")
+				os.Exit(1)
+			}
+			runCompactApply(ctx, sqliteStore)
+			return
+		}
+
+		// Handle auto mode (legacy)
+		if compactAuto {
+			// API key check only for auto mode
+			apiKey := os.Getenv("ANTHROPIC_API_KEY")
+			if apiKey == "" && !compactDryRun {
+				fmt.Fprintf(os.Stderr, "Error: --auto mode requires ANTHROPIC_API_KEY environment variable\n")
+				os.Exit(1)
+			}
+
+			if compactID != "" && compactAll {
+				fmt.Fprintf(os.Stderr, "Error: cannot use --id and --all together\n")
+				os.Exit(1)
+			}
+
+			if compactForce && compactID == "" {
+				fmt.Fprintf(os.Stderr, "Error: --force requires --id\n")
+				os.Exit(1)
+			}
+
+			if compactID == "" && !compactAll && !compactDryRun {
+				fmt.Fprintf(os.Stderr, "Error: must specify --all, --id, or --dry-run\n")
+				os.Exit(1)
+			}
+
+			config := &compact.Config{
+				APIKey:      apiKey,
+				Concurrency: compactWorkers,
+				DryRun:      compactDryRun,
+			}
+
+			compactor, err := compact.New(sqliteStore, apiKey, config)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to create compactor: %v\n", err)
+				os.Exit(1)
+			}
+
+			if compactID != "" {
+				runCompactSingle(ctx, compactor, sqliteStore, compactID)
+				return
+			}
+
+			runCompactAll(ctx, compactor, sqliteStore)
+		}
 	},
 }
 
@@ -562,6 +629,227 @@ func runCompactStatsRPC() {
 	fmt.Printf("  Min age: %s\n", result.Stats.Tier2MinAge)
 }
 
+func runCompactAnalyze(ctx context.Context, store *sqlite.SQLiteStorage) {
+	type Candidate struct {
+		ID                 string `json:"id"`
+		Title              string `json:"title"`
+		Description        string `json:"description"`
+		Design             string `json:"design"`
+		Notes              string `json:"notes"`
+		AcceptanceCriteria string `json:"acceptance_criteria"`
+		SizeBytes          int    `json:"size_bytes"`
+		AgeDays            int    `json:"age_days"`
+		Tier               int    `json:"tier"`
+		Compacted          bool   `json:"compacted"`
+	}
+
+	var candidates []Candidate
+
+	// Single issue mode
+	if compactID != "" {
+		issue, err := store.GetIssue(ctx, compactID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to get issue: %v\n", err)
+			os.Exit(1)
+		}
+
+		sizeBytes := len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
+		ageDays := 0
+		if issue.ClosedAt != nil {
+			ageDays = int(time.Since(*issue.ClosedAt).Hours() / 24)
+		}
+
+		candidates = append(candidates, Candidate{
+			ID:                 issue.ID,
+			Title:              issue.Title,
+			Description:        issue.Description,
+			Design:             issue.Design,
+			Notes:              issue.Notes,
+			AcceptanceCriteria: issue.AcceptanceCriteria,
+			SizeBytes:          sizeBytes,
+			AgeDays:            ageDays,
+			Tier:               compactTier,
+			Compacted:          issue.CompactionLevel > 0,
+		})
+	} else {
+		// Get tier candidates
+		var tierCandidates []*sqlite.CompactionCandidate
+		var err error
+		if compactTier == 1 {
+			tierCandidates, err = store.GetTier1Candidates(ctx)
+		} else {
+			tierCandidates, err = store.GetTier2Candidates(ctx)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to get candidates: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Apply limit if specified
+		if compactLimit > 0 && len(tierCandidates) > compactLimit {
+			tierCandidates = tierCandidates[:compactLimit]
+		}
+
+		// Fetch full details for each candidate
+		for _, c := range tierCandidates {
+			issue, err := store.GetIssue(ctx, c.IssueID)
+			if err != nil {
+				continue // Skip issues we can't fetch
+			}
+
+			ageDays := int(time.Since(c.ClosedAt).Hours() / 24)
+
+			candidates = append(candidates, Candidate{
+				ID:                 issue.ID,
+				Title:              issue.Title,
+				Description:        issue.Description,
+				Design:             issue.Design,
+				Notes:              issue.Notes,
+				AcceptanceCriteria: issue.AcceptanceCriteria,
+				SizeBytes:          c.OriginalSize,
+				AgeDays:            ageDays,
+				Tier:               compactTier,
+				Compacted:          issue.CompactionLevel > 0,
+			})
+		}
+	}
+
+	if jsonOutput {
+		outputJSON(candidates)
+		return
+	}
+
+	// Human-readable output
+	fmt.Printf("Compaction Candidates (Tier %d)\n\n", compactTier)
+	for _, c := range candidates {
+		compactStatus := ""
+		if c.Compacted {
+			compactStatus = " (already compacted)"
+		}
+		fmt.Printf("ID: %s%s\n", c.ID, compactStatus)
+		fmt.Printf("  Title: %s\n", c.Title)
+		fmt.Printf("  Size: %d bytes\n", c.SizeBytes)
+		fmt.Printf("  Age: %d days\n\n", c.AgeDays)
+	}
+	fmt.Printf("Total: %d candidates\n", len(candidates))
+}
+
+func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
+	start := time.Now()
+
+	// Read summary
+	var summaryBytes []byte
+	var err error
+	if compactSummary == "-" {
+		// Read from stdin
+		summaryBytes, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to read summary from stdin: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		summaryBytes, err = os.ReadFile(compactSummary)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to read summary file: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	summary := string(summaryBytes)
+
+	// Get issue
+	issue, err := store.GetIssue(ctx, compactID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to get issue: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Calculate sizes
+	originalSize := len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
+	compactedSize := len(summary)
+
+	// Check eligibility unless --force
+	if !compactForce {
+		eligible, reason, err := store.CheckEligibility(ctx, compactID, compactTier)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to check eligibility: %v\n", err)
+			os.Exit(1)
+		}
+		if !eligible {
+			fmt.Fprintf(os.Stderr, "Error: %s is not eligible for Tier %d compaction: %s\n", compactID, compactTier, reason)
+			fmt.Fprintf(os.Stderr, "Hint: use --force to bypass eligibility checks\n")
+			os.Exit(1)
+		}
+
+		// Enforce size reduction unless --force
+		if compactedSize >= originalSize {
+			fmt.Fprintf(os.Stderr, "Error: summary (%d bytes) is not shorter than original (%d bytes)\n", compactedSize, originalSize)
+			fmt.Fprintf(os.Stderr, "Hint: use --force to bypass size validation\n")
+			os.Exit(1)
+		}
+	}
+
+	// Apply compaction
+	actor := compactActor
+	if actor == "" {
+		actor = "agent"
+	}
+
+	updates := map[string]interface{}{
+		"description":         summary,
+		"design":              "",
+		"notes":               "",
+		"acceptance_criteria": "",
+	}
+
+	if err := store.UpdateIssue(ctx, compactID, updates, actor); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to update issue: %v\n", err)
+		os.Exit(1)
+	}
+
+	commitHash := compact.GetCurrentCommitHash()
+	if err := store.ApplyCompaction(ctx, compactID, compactTier, originalSize, compactedSize, commitHash); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to apply compaction: %v\n", err)
+		os.Exit(1)
+	}
+
+	savingBytes := originalSize - compactedSize
+	reductionPct := float64(savingBytes) / float64(originalSize) * 100
+	eventData := fmt.Sprintf("Tier %d compaction: %d → %d bytes (saved %d, %.1f%%)", compactTier, originalSize, compactedSize, savingBytes, reductionPct)
+	if err := store.AddComment(ctx, compactID, actor, eventData); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to record event: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := store.MarkIssueDirty(ctx, compactID); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to mark dirty: %v\n", err)
+		os.Exit(1)
+	}
+
+	elapsed := time.Since(start)
+
+	if jsonOutput {
+		output := map[string]interface{}{
+			"success":        true,
+			"issue_id":       compactID,
+			"tier":           compactTier,
+			"original_size":  originalSize,
+			"compacted_size": compactedSize,
+			"saved_bytes":    savingBytes,
+			"reduction_pct":  reductionPct,
+			"elapsed_ms":     elapsed.Milliseconds(),
+		}
+		outputJSON(output)
+		return
+	}
+
+	fmt.Printf("✓ Compacted %s (Tier %d)\n", compactID, compactTier)
+	fmt.Printf("  %d → %d bytes (saved %d, %.1f%%)\n", originalSize, compactedSize, savingBytes, reductionPct)
+	fmt.Printf("  Time: %v\n", elapsed)
+
+	// Schedule auto-flush to export changes
+	markDirtyAndScheduleFlush()
+}
+
 func init() {
 	compactCmd.Flags().BoolVar(&compactDryRun, "dry-run", false, "Preview without compacting")
 	compactCmd.Flags().IntVar(&compactTier, "tier", 1, "Compaction tier (1 or 2)")
@@ -572,6 +860,14 @@ func init() {
 	compactCmd.Flags().IntVar(&compactWorkers, "workers", 5, "Parallel workers")
 	compactCmd.Flags().BoolVar(&compactStats, "stats", false, "Show compaction statistics")
 	compactCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON format")
+
+	// New mode flags
+	compactCmd.Flags().BoolVar(&compactAnalyze, "analyze", false, "Analyze mode: export candidates for agent review")
+	compactCmd.Flags().BoolVar(&compactApply, "apply", false, "Apply mode: accept agent-provided summary")
+	compactCmd.Flags().BoolVar(&compactAuto, "auto", false, "Auto mode: AI-powered compaction (legacy)")
+	compactCmd.Flags().StringVar(&compactSummary, "summary", "", "Path to summary file (use '-' for stdin)")
+	compactCmd.Flags().StringVar(&compactActor, "actor", "agent", "Actor name for audit trail")
+	compactCmd.Flags().IntVar(&compactLimit, "limit", 0, "Limit number of candidates (0 = no limit)")
 
 	rootCmd.AddCommand(compactCmd)
 }
