@@ -142,337 +142,55 @@ If you must use separate MCP servers:
 
 ### CLI Quick Reference
 
-If you're not using the MCP server, here are the CLI commands:
+**Essential commands for AI agents:**
 
 ```bash
-# Check database path and daemon status
-bd info --json
+# Find work
+bd ready --json                                    # Unblocked issues
+bd stale --days 30 --json                          # Forgotten issues
 
-# Find ready work (no blockers)
-bd ready --json
+# Create and manage issues
+bd create "Issue title" -t bug|feature|task -p 0-4 --json
+bd create "Found bug" -p 1 --deps discovered-from:<parent-id> --json
+bd update <id> --status in_progress --json
+bd close <id> --reason "Done" --json
 
-# Find stale issues (not updated recently)
-bd stale --days 30 --json                    # Default: 30 days
-bd stale --days 90 --status in_progress --json  # Filter by status
-bd stale --limit 20 --json                   # Limit results
+# Search and filter
+bd list --status open --priority 1 --json
+bd list --label-any urgent,critical --json
+bd show <id> --json
 
-# Create new issue
-# IMPORTANT: Always quote titles and descriptions with double quotes
-bd create "Issue title" -t bug|feature|task -p 0-4 -d "Description" --json
-
-# Create with explicit ID (for parallel workers)
-bd create "Issue title" --id worker1-100 -p 1 --json
-
-# Create with labels (--labels or --label work)
-bd create "Issue title" -t bug -p 1 -l bug,critical --json
-bd create "Issue title" -t bug -p 1 --label bug,critical --json
-
-# Examples with special characters (all require quoting):
-bd create "Fix: auth doesn't validate tokens" -t bug -p 1 --json
-bd create "Add support for OAuth 2.0" -d "Implement RFC 6749 (OAuth 2.0 spec)" --json
-
-# Create multiple issues from markdown file
-bd create -f feature-plan.md --json
-
-# Create epic with hierarchical child tasks
-bd create "Auth System" -t epic -p 1 --json         # Returns: bd-a3f8e9
-bd create "Login UI" -p 1 --json                     # Auto-assigned: bd-a3f8e9.1
-bd create "Backend validation" -p 1 --json           # Auto-assigned: bd-a3f8e9.2
-bd create "Tests" -p 1 --json                        # Auto-assigned: bd-a3f8e9.3
-
-# Update one or more issues
-bd update <id> [<id>...] --status in_progress --json
-bd update <id> [<id>...] --priority 1 --json
-
-# Edit issue fields in $EDITOR (HUMANS ONLY - not for agents)
-# NOTE: This command is intentionally NOT exposed via the MCP server
-# Agents should use 'bd update' with field-specific parameters instead
-bd edit <id>                    # Edit description
-bd edit <id> --title            # Edit title
-bd edit <id> --design           # Edit design notes
-bd edit <id> --notes            # Edit notes
-bd edit <id> --acceptance       # Edit acceptance criteria
-
-# Link discovered work (old way)
-bd dep add <discovered-id> <parent-id> --type discovered-from
-
-# Create and link in one command (new way)
-bd create "Issue title" -t bug -p 1 --deps discovered-from:<parent-id> --json
-
-# Label management (supports multiple IDs)
-bd label add <id> [<id>...] <label> --json
-bd label remove <id> [<id>...] <label> --json
-bd label list <id> --json
-bd label list-all --json
-
-# Filter and search issues
-bd list --status open --priority 1 --json               # Status and priority
-bd list --assignee alice --json                         # By assignee
-bd list --type bug --json                               # By issue type
-bd list --label bug,critical --json                     # Labels (AND: must have ALL)
-bd list --label-any frontend,backend --json             # Labels (OR: has ANY)
-bd list --id bd-123,bd-456 --json                       # Specific IDs
-bd list --title "auth" --json                           # Title search (substring)
-
-# Pattern matching (case-insensitive substring)
-bd list --title-contains "auth" --json                  # Search in title
-bd list --desc-contains "implement" --json              # Search in description
-bd list --notes-contains "TODO" --json                  # Search in notes
-
-# Date range filters (YYYY-MM-DD or RFC3339)
-bd list --created-after 2024-01-01 --json               # Created after date
-bd list --created-before 2024-12-31 --json              # Created before date
-bd list --updated-after 2024-06-01 --json               # Updated after date
-bd list --updated-before 2024-12-31 --json              # Updated before date
-bd list --closed-after 2024-01-01 --json                # Closed after date
-bd list --closed-before 2024-12-31 --json               # Closed before date
-
-# Empty/null checks
-bd list --empty-description --json                      # Issues with no description
-bd list --no-assignee --json                            # Unassigned issues
-bd list --no-labels --json                              # Issues with no labels
-
-# Priority ranges
-bd list --priority-min 0 --priority-max 1 --json        # P0 and P1 only
-bd list --priority-min 2 --json                         # P2 and below
-
-# Combine filters
-bd list --status open --priority 1 --label-any urgent,critical --no-assignee --json
-
-# Complete work (supports multiple IDs)
-bd close <id> [<id>...] --reason "Done" --json
-
-# Reopen closed issues (supports multiple IDs)
-bd reopen <id> [<id>...] --reason "Reopening" --json
-
-# Clean up closed issues (bulk deletion)
-bd cleanup --force --json                                   # Delete ALL closed issues
-bd cleanup --older-than 30 --force --json                   # Delete closed >30 days ago
-bd cleanup --dry-run --json                                 # Preview what would be deleted
-bd cleanup --older-than 90 --cascade --force --json         # Delete old + dependents
-
-# Show dependency tree
-bd dep tree <id>
-
-# Get issue details (supports multiple IDs)
-bd show <id> [<id>...] --json
-
-# Rename issue prefix (e.g., from 'knowledge-work-' to 'kw-')
-bd rename-prefix kw- --dry-run  # Preview changes
-bd rename-prefix kw- --json     # Apply rename
-
-# Agent-driven compaction (memory decay)
-bd compact --analyze --json                           # Get candidates for review
-bd compact --analyze --tier 1 --limit 10 --json       # Limited batch
-bd compact --apply --id bd-42 --summary summary.txt   # Apply compaction
-bd compact --apply --id bd-42 --summary - < summary.txt  # From stdin
-bd compact --stats --json                             # Show statistics
-
-# Legacy AI-powered compaction (requires ANTHROPIC_API_KEY)
-bd compact --auto --dry-run --all                     # Preview
-bd compact --auto --all --tier 1                      # Auto-compact tier 1
-
-# Restore compacted issue from git history
-bd restore <id>  # View full history at time of compaction
-
-# Import issues from JSONL
-bd import -i .beads/issues.jsonl --dry-run      # Preview changes
-bd import -i .beads/issues.jsonl                # Import and update issues
-bd import -i .beads/issues.jsonl --dedupe-after # Import + detect duplicates
-
-# Note: Import automatically handles missing parents!
-# - If a hierarchical child's parent is missing (e.g., bd-abc.1 but no bd-abc)
-# - bd will search the JSONL history for the parent
-# - If found, creates a tombstone placeholder (Status=Closed, Priority=4)
-# - Dependencies are also resurrected on best-effort basis
-# - This prevents import failures after parent deletion
-
-# Find and merge duplicate issues
-bd duplicates                                          # Show all duplicates
-bd duplicates --auto-merge                             # Automatically merge all
-bd duplicates --dry-run                                # Preview merge operations
-
-# Merge specific duplicate issues
-bd merge <source-id...> --into <target-id> --json      # Consolidate duplicates
-bd merge bd-42 bd-43 --into bd-41 --dry-run            # Preview merge
-
-# Migrate databases after version upgrade
-bd migrate                                             # Detect and migrate old databases
-bd migrate --dry-run                                   # Preview migration
-bd migrate --cleanup --yes                             # Migrate and remove old files
-
-# AI-supervised migration (check before running bd migrate)
-bd migrate --inspect --json                            # Show migration plan for AI agents
-bd info --schema --json                                # Get schema, tables, config, sample IDs
-
-# Workflow: AI agents should inspect first, then migrate
-# 1. Run --inspect to see pending migrations and warnings
-# 2. Check for missing_config (like issue_prefix)
-# 3. Review invariants_to_check for safety guarantees
-# 4. If warnings exist, fix config issues first
-# 5. Then run bd migrate safely
+# Sync (CRITICAL at end of session!)
+bd sync  # Force immediate export/commit/push
 ```
 
-**Migration safety:** The system verifies data integrity invariants after migrations:
-
-- **required_config_present**: Ensures issue_prefix and schema_version are set
-- **foreign_keys_valid**: No orphaned dependencies or labels
-- **issue_count_stable**: Issue count doesn't decrease unexpectedly
-
-These invariants prevent data loss and would have caught issues like GH #201 (missing issue_prefix after migration).
+**For comprehensive CLI documentation**, see [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md).
 
 ### Managing Daemons
 
-bd runs a background daemon per workspace for auto-sync and RPC operations. Use `bd daemons` to manage multiple daemons:
+bd runs a background daemon per workspace for auto-sync and RPC operations:
 
 ```bash
-# List all running daemons
-bd daemons list --json
-
-# Check health (version mismatches, stale sockets)
-bd daemons health --json
-
-# Stop a specific daemon
-bd daemons stop /path/to/workspace --json
-bd daemons stop 12345 --json  # By PID
-
-# Restart a specific daemon
-bd daemons restart /path/to/workspace --json
-bd daemons restart 12345 --json  # By PID
-
-# View daemon logs
-bd daemons logs /path/to/workspace -n 100
-bd daemons logs 12345 -f  # Follow mode
-
-# Stop all daemons
-bd daemons killall --json
-bd daemons killall --force --json  # Force kill if graceful fails
+bd daemons list --json          # List all running daemons
+bd daemons health --json        # Check for version mismatches
+bd daemons logs . -n 100        # View daemon logs
+bd daemons killall --json       # Restart all daemons
 ```
 
-**When to use:**
+**After upgrading bd**: Run `bd daemons killall` to restart all daemons with new version.
 
-- **After upgrading bd**: Run `bd daemons health` to check for version mismatches, then `bd daemons killall` to restart all daemons with the new version
-- **Debugging**: Use `bd daemons logs <workspace>` to view daemon logs
-- **Cleanup**: `bd daemons list` auto-removes stale sockets
-
-**Troubleshooting:**
-
-- **Stale sockets**: `bd daemons list` auto-cleans them
-- **Version mismatch**: `bd daemons killall` then let daemons auto-start on next command
-- **Daemon won't stop**: `bd daemons killall --force`
-
-See [commands/daemons.md](commands/daemons.md) for detailed documentation.
+**For complete daemon management**, see [docs/DAEMON.md](docs/DAEMON.md).
 
 ### Web Interface (Monitor)
 
-**Note for AI Agents:** The monitor is primarily for human visualization and supervision. Agents should continue using the CLI with `--json` flags.
-
-bd includes a built-in web interface for real-time issue monitoring:
+bd includes a built-in web interface for human visualization:
 
 ```bash
-bd monitor                           # Start on localhost:8080
-bd monitor --port 3000               # Custom port
-bd monitor --host 0.0.0.0 --port 80  # Public access
+bd monitor                  # Start on localhost:8080
+bd monitor --port 3000      # Custom port
 ```
 
-**Features:**
-
-- Real-time issue table with filtering (status, priority)
-- Click-through to detailed issue view
-- WebSocket updates (when daemon is running)
-- Responsive mobile design
-- Statistics dashboard
-
-**When humans might use it:**
-
-- Supervising AI agent work in real-time
-- Quick project status overview
-- Mobile access to issue tracking
-- Team dashboard for shared visibility
-
-**AI agents should NOT:**
-
-- Parse HTML from the monitor (use `--json` flags instead)
-- Try to interact with the web UI programmatically
-- Use monitor for data retrieval (use CLI commands)
-
-### Event-Driven Daemon Mode (Experimental)
-
-**NEW in v0.16+**: The daemon supports an experimental event-driven mode that replaces 5-second polling with instant reactivity.
-
-**Benefits:**
-
-- ⚡ **<500ms latency** (vs ~5000ms with polling)
-- 🔋 **~60% less CPU usage** (no continuous polling)
-- 🎯 **Instant sync** on mutations and file changes
-- 🛡️ **Dropped events safety net** prevents data loss
-
-**How it works:**
-
-- **FileWatcher** monitors `.beads/issues.jsonl` and `.git/refs/heads` using platform-native APIs:
-  - Linux: `inotify`
-  - macOS: `FSEvents` (via kqueue)
-  - Windows: `ReadDirectoryChangesW`
-- **Mutation events** from RPC operations (create, update, close) trigger immediate export
-- **Debouncer** batches rapid changes (500ms window) to avoid export storms
-- **Polling fallback** if fsnotify unavailable (e.g., network filesystems)
-
-**Opt-In (Phase 1):**
-
-Event-driven mode is opt-in during Phase 1. To enable:
-
-```bash
-# Enable event-driven mode for a single daemon
-BEADS_DAEMON_MODE=events bd daemon start
-
-# Or set globally in your shell profile
-export BEADS_DAEMON_MODE=events
-
-# Restart all daemons to apply
-bd daemons killall
-# Next bd command will auto-start daemon with new mode
-```
-
-**Available modes:**
-
-- `poll` (default) - Traditional 5-second polling, stable and battle-tested
-- `events` - New event-driven mode, experimental but thoroughly tested
-
-**Troubleshooting:**
-
-If the watcher fails to start:
-
-- Check daemon logs: `bd daemons logs /path/to/workspace -n 100`
-- Look for "File watcher unavailable" warnings
-- Common causes:
-  - Network filesystem (NFS, SMB) - fsnotify may not work
-  - Container environment - may need privileged mode
-  - Resource limits - check `ulimit -n` (open file descriptors)
-
-**Fallback behavior:**
-
-- If `BEADS_DAEMON_MODE=events` but watcher fails, daemon falls back to polling automatically
-- Set `BEADS_WATCHER_FALLBACK=false` to disable fallback and require fsnotify
-
-**Disable polling fallback:**
-
-```bash
-# Require fsnotify, fail if unavailable
-BEADS_WATCHER_FALLBACK=false BEADS_DAEMON_MODE=events bd daemon start
-```
-
-**Switch back to polling:**
-
-```bash
-# Explicitly use polling mode
-BEADS_DAEMON_MODE=poll bd daemon start
-
-# Or unset to use default
-unset BEADS_DAEMON_MODE
-bd daemons killall  # Restart with default (poll) mode
-```
-
-**Future (Phase 2):** Event-driven mode will become the default once it's proven stable in production use.
+**AI agents**: Continue using CLI with `--json` flags. The monitor is for human supervision only.
 
 ### Workflow
 
@@ -484,6 +202,50 @@ bd daemons killall  # Restart with default (poll) mode
    - New way (one command): `bd create "Found bug in auth" -t bug -p 1 --deps discovered-from:<current-id> --json`
 5. **Complete**: `bd close <id> --reason "Implemented"`
 6. **Sync at end of session**: `bd sync` (see "Agent Session Workflow" below)
+
+### Optional: Agent Mail for Multi-Agent Coordination
+
+**For multi-agent workflows only** - if multiple AI agents work on the same repository simultaneously, consider using Agent Mail for real-time coordination:
+
+**With Agent Mail enabled:**
+```bash
+# Configure environment (one-time per session)
+export BEADS_AGENT_MAIL_URL=http://127.0.0.1:8765
+export BEADS_AGENT_NAME=assistant-alpha
+export BEADS_PROJECT_ID=my-project
+
+# Workflow (identical commands)
+bd ready                                    # Shows available work
+bd update bd-42 --status in_progress       # Reserves issue instantly (<100ms)
+# ... work on issue ...
+bd close bd-42 "Done"                       # Releases reservation automatically
+```
+
+**Without Agent Mail (git-only mode):**
+```bash
+# No environment variables needed
+bd ready                                    # Shows available work
+bd update bd-42 --status in_progress       # Updates via git sync (2-5s latency)
+# ... work on issue ...
+bd close bd-42 "Done"                       # Updates via git sync
+```
+
+**Key differences:**
+- **Latency**: <100ms (Agent Mail) vs 2-5s (git-only)
+- **Collision prevention**: Instant reservation (Agent Mail) vs eventual consistency (git)
+- **Setup**: Requires server + env vars (Agent Mail) vs zero config (git-only)
+
+**When to use Agent Mail:**
+- ✅ Multiple agents working concurrently
+- ✅ Frequent status updates (high collision risk)
+- ✅ Real-time coordination needed
+
+**When to skip:**
+- ✅ Single agent workflows
+- ✅ Infrequent updates (low collision risk)
+- ✅ Simplicity preferred over latency
+
+See [docs/AGENT_MAIL.md](docs/AGENT_MAIL.md) for complete setup, troubleshooting, and architecture details.
 
 ### Issue Types
 
@@ -665,58 +427,15 @@ func TestMyFeature(t *testing.T) {
 
 The 30-second debounce provides a **transaction window** for batch operations - multiple issue changes within 30 seconds get flushed together, avoiding commit spam.
 
-### Protected Branch Workflow
+### Git Integration
 
-**If your repository uses protected branches (GitHub, GitLab, etc.)**, beads can commit to a separate branch instead of `main`:
+**Auto-sync**: bd automatically exports to JSONL (30s debounce), imports after `git pull`, and optionally commits/pushes.
 
-```bash
-# Initialize with separate sync branch
-bd init --branch beads-metadata
+**Protected branches**: Use `bd init --branch beads-metadata` to commit to separate branch. See [docs/PROTECTED_BRANCHES.md](docs/PROTECTED_BRANCHES.md).
 
-# Or configure existing setup
-bd config set sync.branch beads-metadata
-```
+**Git worktrees**: Daemon mode NOT supported. Use `bd --no-daemon` for all commands. See [docs/GIT_INTEGRATION.md](docs/GIT_INTEGRATION.md).
 
-**How it works:**
-
-- Beads commits issue updates to `beads-metadata` instead of `main`
-- Uses git worktrees (lightweight checkouts) in `.git/beads-worktrees/`
-- Your main working directory is never affected
-- Periodically merge `beads-metadata` back to `main` via pull request
-
-**Daily workflow (unchanged for agents):**
-
-```bash
-# Agents work normally - no changes needed!
-bd create "Fix authentication" -t bug -p 1
-bd update bd-a1b2 --status in_progress
-bd close bd-a1b2 "Fixed"
-```
-
-All changes automatically commit to `beads-metadata` branch (if daemon is running with `--auto-commit`).
-
-**Merging to main (humans):**
-
-```bash
-# Check what's changed
-bd sync --status
-
-# Option 1: Create pull request
-git push origin beads-metadata
-# Then create PR on GitHub/GitLab
-
-# Option 2: Direct merge (if allowed)
-bd sync --merge
-```
-
-**Benefits:**
-
-- ✅ Works with protected `main` branches
-- ✅ No disruption to agent workflows
-- ✅ Platform-agnostic (works on any git platform)
-- ✅ Backward compatible (opt-in via config)
-
-**See [docs/PROTECTED_BRANCHES.md](docs/PROTECTED_BRANCHES.md) for complete setup guide, troubleshooting, and examples.**
+**Merge conflicts**: Rare with hash IDs. If conflicts occur, use `git checkout --theirs/.beads/beads.jsonl` and `bd import`. See [docs/GIT_INTEGRATION.md](docs/GIT_INTEGRATION.md).
 
 ### Landing the Plane
 
@@ -829,140 +548,7 @@ Without the pre-push hook, you can have database changes committed locally but s
 
 See [examples/git-hooks/README.md](examples/git-hooks/README.md) for details.
 
-### Git Worktrees
 
-**⚠️ Important Limitation:** Daemon mode does not work correctly with `git worktree`.
-
-**The Problem:**
-Git worktrees share the same `.git` directory and thus share the same `.beads` database. The daemon doesn't know which branch each worktree has checked out, which can cause it to commit/push to the wrong branch.
-
-**What you lose without daemon mode:**
-
-- **Auto-sync** - No automatic commit/push of changes (use `bd sync` manually)
-- **MCP server** - The beads-mcp server requires daemon mode for multi-repo support
-- **Background watching** - No automatic detection of remote changes
-
-**Solutions for Worktree Users:**
-
-1. **Use `--no-daemon` flag** (recommended):
-
-   ```bash
-   bd --no-daemon ready
-   bd --no-daemon create "Fix bug" -p 1
-   bd --no-daemon update bd-42 --status in_progress
-   ```
-
-2. **Disable daemon via environment variable** (for entire worktree session):
-
-   ```bash
-   export BEADS_NO_DAEMON=1
-   bd ready  # All commands use direct mode
-   ```
-
-3. **Disable auto-start** (less safe, still warns):
-   ```bash
-   export BEADS_AUTO_START_DAEMON=false
-   ```
-
-**Automatic Detection:**
-bd automatically detects when you're in a worktree and shows a prominent warning if daemon mode is active. The `--no-daemon` mode works correctly with worktrees since it operates directly on the database without shared state.
-
-**Why It Matters:**
-The daemon maintains its own view of the current working directory and git state. When multiple worktrees share the same `.beads` database, the daemon may commit changes intended for one branch to a different branch, leading to confusion and incorrect git history.
-
-### Handling Git Merge Conflicts
-
-**With hash-based IDs (v0.20.1+), ID collisions are eliminated!** Different issues get different hash IDs, so most git merges succeed cleanly.
-
-**When git merge conflicts occur:**
-Git conflicts in `.beads/beads.jsonl` happen when the same issue is modified on both branches (different timestamps/fields). This is a **same-issue update conflict**, not an ID collision. Conflicts are rare in practice since hash IDs prevent structural collisions.
-
-**Automatic detection:**
-bd automatically detects conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) and shows clear resolution steps:
-
-- `bd import` rejects files with conflict markers and shows resolution commands
-- `bd validate --checks=conflicts` scans for conflicts in JSONL
-
-**Resolution workflow:**
-
-```bash
-# After git merge creates conflict in .beads/beads.jsonl
-
-# Option 1: Accept their version (remote)
-git checkout --theirs .beads/beads.jsonl
-bd import -i .beads/beads.jsonl
-
-# Option 2: Keep our version (local)
-git checkout --ours .beads/beads.jsonl
-bd import -i .beads/beads.jsonl
-
-# Option 3: Manual resolution in editor
-# Edit .beads/beads.jsonl to remove conflict markers
-bd import -i .beads/beads.jsonl
-
-# Commit the merge
-git add .beads/beads.jsonl
-git commit
-```
-
-**Note:** `bd import` automatically handles updates - same ID with different content is a normal update operation. No special flags needed. If you accidentally modified the same issue in both branches, just pick whichever version is more complete.
-
-### Intelligent Merge Driver (Auto-Configured)
-
-**As of v0.21+, bd automatically configures its own merge driver during `bd init`.** This uses the beads-merge algorithm (by @neongreen, vendored into bd) to provide intelligent JSONL merging and prevent conflicts when multiple branches modify issues.
-
-**What it does:**
-
-- Performs field-level 3-way merging (not line-by-line)
-- Matches issues by identity (id + created_at + created_by)
-- Smart field merging: timestamps→max, dependencies→union, status/priority→3-way
-- Outputs conflict markers only for unresolvable conflicts
-- Automatically configured during `bd init` (both interactive and `--quiet` modes)
-
-**Auto-configuration (happens automatically):**
-
-```bash
-# During bd init, these are configured:
-git config merge.beads.driver "bd merge %A %O %L %R"
-git config merge.beads.name "bd JSONL merge driver"
-# .gitattributes entry: .beads/beads.jsonl merge=beads
-```
-
-**Manual setup (if skipped with `--skip-merge-driver`):**
-
-```bash
-git config merge.beads.driver "bd merge %A %O %L %R"
-git config merge.beads.name "bd JSONL merge driver"
-echo ".beads/beads.jsonl merge=beads" >> .gitattributes
-```
-
-**Alternative: Standalone beads-merge binary**
-
-If you prefer to use the standalone beads-merge binary (same algorithm, different package):
-
-```bash
-# Install (requires Go 1.21+)
-git clone https://github.com/neongreen/mono.git
-cd mono/beads-merge
-go install
-
-# Configure Git merge driver (same algorithm as bd merge)
-git config merge.beads.name "JSONL merge driver for beads"
-git config merge.beads.driver "beads-merge %A %O %A %B"
-```
-
-**For Jujutsu users**, add to `~/.jjconfig.toml`:
-
-```toml
-[merge-tools.beads-merge]
-program = "beads-merge"
-merge-args = ["$output", "$base", "$left", "$right"]
-merge-conflict-exit-codes = [1]
-```
-
-Then resolve with: `jj resolve --tool=beads-merge`
-
-**How it works**: During `git merge`, beads-merge merges JSONL files issue-by-issue instead of line-by-line. This prevents spurious conflicts from line renumbering or timestamp updates. If conflicts remain, they're marked in standard format for manual resolution.
 
 ## Current Project Status
 
@@ -984,37 +570,7 @@ We're working toward 1.0. Key blockers tracked in bd. Run:
 bd dep tree bd-8  # Show 1.0 epic dependencies
 ```
 
-## Exclusive Lock Protocol (Advanced)
 
-**For external tools that need full database control** (e.g., CI/CD, deterministic execution systems):
-
-The bd daemon respects exclusive locks via `.beads/.exclusive-lock` file. When this lock exists:
-
-- Daemon skips all operations for the locked database
-- External tool has complete control over git sync and database operations
-- Stale locks (dead process) are automatically cleaned up
-
-**Use case:** Tools like VibeCoder that need deterministic execution without daemon interference.
-
-See [EXCLUSIVE_LOCK.md](EXCLUSIVE_LOCK.md) for:
-
-- Lock file format (JSON schema)
-- Creating and releasing locks (Go/shell examples)
-- Stale lock detection behavior
-- Integration testing guidance
-
-**Quick example:**
-
-```bash
-# Create lock
-echo '{"holder":"my-tool","pid":'$$',"hostname":"'$(hostname)'","started_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","version":"1.0.0"}' > .beads/.exclusive-lock
-
-# Do work...
-bd create "My issue" -p 1
-
-# Release lock
-rm .beads/.exclusive-lock
-```
 
 ## Common Tasks
 
