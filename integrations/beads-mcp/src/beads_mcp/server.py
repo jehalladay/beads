@@ -46,6 +46,10 @@ T = TypeVar("T")
 _daemon_clients: list = []
 _cleanup_done = False
 
+# Persistent workspace context (survives across MCP tool calls)
+# os.environ doesn't persist across MCP requests, so we need module-level storage
+_workspace_context: dict[str, str] = {}
+
 # Create FastMCP server
 mcp = FastMCP(
     name="Beads",
@@ -109,31 +113,35 @@ logger.info(f"beads-mcp v{__version__} initialized with lifecycle management")
 
 def with_workspace(func: Callable[..., T]) -> Callable[..., T]:
     """Decorator to set workspace context for the duration of a tool call.
-    
+
     Extracts workspace_root parameter from tool call kwargs, resolves it,
     and sets current_workspace ContextVar for the request duration.
-    Falls back to BEADS_WORKING_DIR if workspace_root not provided.
-    
+    Falls back to persistent context or BEADS_WORKING_DIR if workspace_root not provided.
+
     This enables per-request workspace routing for multi-project support.
     """
     @wraps(func)
     async def wrapper(*args, **kwargs):
         # Extract workspace_root parameter (if provided)
         workspace_root = kwargs.get('workspace_root')
-        
-        # Determine workspace: parameter > env > None
-        workspace = workspace_root or os.environ.get("BEADS_WORKING_DIR")
-        
+
+        # Determine workspace: parameter > persistent context > env > None
+        workspace = (
+            workspace_root
+            or _workspace_context.get("BEADS_WORKING_DIR")
+            or os.environ.get("BEADS_WORKING_DIR")
+        )
+
         # Set ContextVar for this request
         token = current_workspace.set(workspace)
-        
+
         try:
             # Execute tool with workspace context set
             return await func(*args, **kwargs)
         finally:
             # Always reset ContextVar after tool completes
             current_workspace.reset(token)
-    
+
     return wrapper
 
 
@@ -231,10 +239,10 @@ async def get_quickstart() -> str:
 )
 async def set_context(workspace_root: str) -> str:
     """Set workspace root directory and discover the beads database.
-    
+
     Args:
         workspace_root: Absolute path to workspace/project root directory
-        
+
     Returns:
         Confirmation message with resolved paths
     """
@@ -252,26 +260,32 @@ async def set_context(workspace_root: str) -> str:
             f"  This may indicate a slow filesystem or git configuration issue.\n"
             f"  Please ensure the path is correct and git is responsive."
         )
-    
-    # Always set working directory and context flag
+
+    # Store in persistent context (survives across MCP tool calls)
+    _workspace_context["BEADS_WORKING_DIR"] = resolved_root
+    _workspace_context["BEADS_CONTEXT_SET"] = "1"
+
+    # Also set in os.environ for compatibility
     os.environ["BEADS_WORKING_DIR"] = resolved_root
     os.environ["BEADS_CONTEXT_SET"] = "1"
-    
+
     # Find beads database
     db_path = _find_beads_db(resolved_root)
-    
+
     if db_path is None:
         # Clear any stale DB path
+        _workspace_context.pop("BEADS_DB", None)
         os.environ.pop("BEADS_DB", None)
         return (
             f"Context set successfully:\n"
             f"  Workspace root: {resolved_root}\n"
             f"  Database: Not found (run 'bd init' to create)"
         )
-    
-    # Set database path
+
+    # Set database path in both persistent context and os.environ
+    _workspace_context["BEADS_DB"] = db_path
     os.environ["BEADS_DB"] = db_path
-    
+
     return (
         f"Context set successfully:\n"
         f"  Workspace root: {resolved_root}\n"
@@ -285,18 +299,34 @@ async def set_context(workspace_root: str) -> str:
 )
 async def where_am_i(workspace_root: str | None = None) -> str:
     """Show current workspace context for debugging."""
-    if not os.environ.get("BEADS_CONTEXT_SET"):
+    context_set = (
+        _workspace_context.get("BEADS_CONTEXT_SET")
+        or os.environ.get("BEADS_CONTEXT_SET")
+    )
+
+    if not context_set:
         return (
             "Context not set. Call set_context with your workspace root first.\n"
             f"Current process CWD: {os.getcwd()}\n"
-            f"BEADS_WORKING_DIR env: {os.environ.get('BEADS_WORKING_DIR', 'NOT SET')}\n"
-            f"BEADS_DB env: {os.environ.get('BEADS_DB', 'NOT SET')}"
+            f"BEADS_WORKING_DIR (persistent): {_workspace_context.get('BEADS_WORKING_DIR', 'NOT SET')}\n"
+            f"BEADS_WORKING_DIR (env): {os.environ.get('BEADS_WORKING_DIR', 'NOT SET')}\n"
+            f"BEADS_DB: {_workspace_context.get('BEADS_DB') or os.environ.get('BEADS_DB', 'NOT SET')}"
         )
-    
+
+    working_dir = (
+        _workspace_context.get("BEADS_WORKING_DIR")
+        or os.environ.get("BEADS_WORKING_DIR", "NOT SET")
+    )
+    db_path = (
+        _workspace_context.get("BEADS_DB")
+        or os.environ.get("BEADS_DB", "NOT SET")
+    )
+    actor = os.environ.get("BEADS_ACTOR", "NOT SET")
+
     return (
-        f"Workspace root: {os.environ.get('BEADS_WORKING_DIR', 'NOT SET')}\n"
-        f"Database: {os.environ.get('BEADS_DB', 'NOT SET')}\n"
-        f"Actor: {os.environ.get('BEADS_ACTOR', 'NOT SET')}"
+        f"Workspace root: {working_dir}\n"
+        f"Database: {db_path}\n"
+        f"Actor: {actor}"
     )
 
 
@@ -310,7 +340,15 @@ async def ready_work(
     workspace_root: str | None = None,
 ) -> list[Issue]:
     """Find issues with no blocking dependencies that are ready to work on."""
-    return await beads_ready_work(limit=limit, priority=priority, assignee=assignee)
+    issues = await beads_ready_work(limit=limit, priority=priority, assignee=assignee)
+
+    # Strip dependencies/dependents to reduce payload size
+    # Use show() for full details
+    for issue in issues:
+        issue.dependencies = []
+        issue.dependents = []
+
+    return issues
 
 
 @mcp.tool(
@@ -323,17 +361,25 @@ async def list_issues(
     priority: int | None = None,
     issue_type: IssueType | None = None,
     assignee: str | None = None,
-    limit: int = 50,
+    limit: int = 20,  # Reduced from 50 to avoid MCP buffer overflow
     workspace_root: str | None = None,
 ) -> list[Issue]:
     """List all issues with optional filters."""
-    return await beads_list_issues(
+    issues = await beads_list_issues(
         status=status,
         priority=priority,
         issue_type=issue_type,
         assignee=assignee,
         limit=limit,
     )
+
+    # Strip dependencies/dependents to reduce payload size
+    # Use show() for full details
+    for issue in issues:
+        issue.dependencies = []
+        issue.dependents = []
+
+    return issues
 
 
 @mcp.tool(

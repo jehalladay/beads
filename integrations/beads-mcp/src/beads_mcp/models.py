@@ -119,7 +119,7 @@ class ListIssuesParams(BaseModel):
     priority: int | None = Field(default=None, ge=0, le=4)
     issue_type: IssueType | None = None
     assignee: str | None = None
-    limit: int = Field(default=50, ge=1, le=1000)
+    limit: int = Field(default=20, ge=1, le=100)  # Reduced to avoid MCP buffer overflow
 
 
 class ShowIssueParams(BaseModel):
