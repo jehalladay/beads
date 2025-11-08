@@ -1,13 +1,17 @@
 """MCP tools for beads issue tracker."""
 
 import asyncio
+import logging
 import os
 import subprocess
+import sys
 from contextvars import ContextVar
 from functools import lru_cache
 from typing import Annotated, TYPE_CHECKING
 
 from .bd_client import create_bd_client, BdClientBase, BdError
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from typing import List
@@ -75,10 +79,12 @@ def _resolve_workspace_root(path: str) -> str:
             capture_output=True,
             text=True,
             check=False,
+            shell=sys.platform == "win32",
         )
         if result.returncode == 0:
             return result.stdout.strip()
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Git detection failed for {path}: {e}")
         pass
     
     return os.path.abspath(path)

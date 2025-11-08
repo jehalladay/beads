@@ -213,10 +213,12 @@ def _resolve_workspace_root(path: str) -> str:
             capture_output=True,
             text=True,
             check=False,
+            shell=sys.platform == "win32",
         )
         if result.returncode == 0:
             return result.stdout.strip()
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Git detection failed for {path}: {e}")
         pass
     
     return os.path.abspath(path)
