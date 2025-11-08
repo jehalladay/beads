@@ -163,11 +163,8 @@ else
 fi
 echo -e "${GREEN}✓ Tag v${VERSION} pushed${NC}\n"
 
-# Wait for GitHub to generate tarball
-if [ "$DRY_RUN" = false ]; then
-    echo -e "${YELLOW}Waiting 10 seconds for GitHub to generate release tarball...${NC}"
-    sleep 10
-fi
+# Note: update-homebrew.sh now handles waiting for GitHub Actions (~5 minutes)
+# No need to wait here anymore
 
 # Step 7: Update Homebrew formula
 echo -e "${YELLOW}Step 7/8: Updating Homebrew formula...${NC}"
