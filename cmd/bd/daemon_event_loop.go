@@ -15,6 +15,7 @@ import (
 // - File system changes (JSONL modifications)
 // - RPC mutations (create, update, delete)
 // - Git operations (via hooks, optional)
+// - Parent process monitoring (exit if parent dies)
 func runEventDrivenLoop(
 	ctx context.Context,
 	cancel context.CancelFunc,
@@ -24,6 +25,7 @@ func runEventDrivenLoop(
 	jsonlPath string,
 	doExport func(),
 	doAutoImport func(),
+	parentPID int,
 	log daemonLogger,
 ) {
 	sigChan := make(chan os.Signal, 1)
@@ -83,6 +85,10 @@ func runEventDrivenLoop(
 	healthTicker := time.NewTicker(60 * time.Second)
 	defer healthTicker.Stop()
 
+	// Parent process check (every 10 seconds)
+	parentCheckTicker := time.NewTicker(10 * time.Second)
+	defer parentCheckTicker.Stop()
+
 	// Dropped events safety net (faster recovery than health check)
 	droppedEventsTicker := time.NewTicker(1 * time.Second)
 	defer droppedEventsTicker.Stop()
@@ -100,6 +106,17 @@ func runEventDrivenLoop(
 		case <-healthTicker.C:
 			// Periodic health validation (not sync)
 			checkDaemonHealth(ctx, store, log)
+
+		case <-parentCheckTicker.C:
+			// Check if parent process is still alive
+			if !checkParentProcessAlive(parentPID) {
+				log.log("Parent process (PID %d) died, shutting down daemon", parentPID)
+				cancel()
+				if err := server.Stop(); err != nil {
+					log.log("Error stopping server: %v", err)
+				}
+				return
+			}
 
 		case <-func() <-chan time.Time {
 			if fallbackTicker != nil {

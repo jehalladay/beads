@@ -372,6 +372,10 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 	doSync := createSyncFunc(ctx, store, autoCommit, autoPush, log)
 	doSync()
 
+	// Get parent PID for monitoring (exit if parent dies)
+	parentPID := os.Getppid()
+	log.log("Monitoring parent process (PID %d)", parentPID)
+
 	// Choose event loop based on BEADS_DAEMON_MODE
 	daemonMode := os.Getenv("BEADS_DAEMON_MODE")
 	if daemonMode == "" {
@@ -385,18 +389,18 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 		if jsonlPath == "" {
 			log.log("Error: JSONL path not found, cannot use event-driven mode")
 			log.log("Falling back to polling mode")
-			runEventLoop(ctx, cancel, ticker, doSync, server, serverErrChan, log)
+			runEventLoop(ctx, cancel, ticker, doSync, server, serverErrChan, parentPID, log)
 		} else {
 			// Event-driven mode uses separate export-only and import-only functions
 			doExport := createExportFunc(ctx, store, autoCommit, autoPush, log)
 			doAutoImport := createAutoImportFunc(ctx, store, log)
-			runEventDrivenLoop(ctx, cancel, server, serverErrChan, store, jsonlPath, doExport, doAutoImport, log)
+			runEventDrivenLoop(ctx, cancel, server, serverErrChan, store, jsonlPath, doExport, doAutoImport, parentPID, log)
 		}
 	case "poll":
 		log.log("Using polling mode (interval: %v)", interval)
-		runEventLoop(ctx, cancel, ticker, doSync, server, serverErrChan, log)
+		runEventLoop(ctx, cancel, ticker, doSync, server, serverErrChan, parentPID, log)
 	default:
 		log.log("Unknown BEADS_DAEMON_MODE: %s (valid: poll, events), defaulting to poll", daemonMode)
-		runEventLoop(ctx, cancel, ticker, doSync, server, serverErrChan, log)
+		runEventLoop(ctx, cancel, ticker, doSync, server, serverErrChan, parentPID, log)
 	}
 }

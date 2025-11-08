@@ -73,11 +73,33 @@ func runGlobalDaemon(log daemonLogger) {
 	log.log("Global daemon stopped")
 }
 
+// checkParentProcessAlive checks if the parent process is still running.
+// Returns true if parent is alive, false if it died.
+// Returns true if parent PID is 0 or 1 (not tracked, or adopted by init).
+func checkParentProcessAlive(parentPID int) bool {
+	if parentPID == 0 {
+		// Parent PID not tracked (older lock files)
+		return true
+	}
+	
+	if parentPID == 1 {
+		// Adopted by init - parent died
+		return false
+	}
+	
+	// Check if parent process is running
+	return isProcessRunning(parentPID)
+}
+
 // runEventLoop runs the daemon event loop (polling mode)
-func runEventLoop(ctx context.Context, cancel context.CancelFunc, ticker *time.Ticker, doSync func(), server *rpc.Server, serverErrChan chan error, log daemonLogger) {
+func runEventLoop(ctx context.Context, cancel context.CancelFunc, ticker *time.Ticker, doSync func(), server *rpc.Server, serverErrChan chan error, parentPID int, log daemonLogger) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, daemonSignals...)
 	defer signal.Stop(sigChan)
+
+	// Parent process check (every 10 seconds)
+	parentCheckTicker := time.NewTicker(10 * time.Second)
+	defer parentCheckTicker.Stop()
 
 	for {
 		select {
@@ -86,6 +108,16 @@ func runEventLoop(ctx context.Context, cancel context.CancelFunc, ticker *time.T
 				return
 			}
 			doSync()
+		case <-parentCheckTicker.C:
+			// Check if parent process is still alive
+			if !checkParentProcessAlive(parentPID) {
+				log.log("Parent process (PID %d) died, shutting down daemon", parentPID)
+				cancel()
+				if err := server.Stop(); err != nil {
+					log.log("Error stopping server: %v", err)
+				}
+				return
+			}
 		case sig := <-sigChan:
 			if isReloadSignal(sig) {
 				log.log("Received reload signal, ignoring (daemon continues running)")

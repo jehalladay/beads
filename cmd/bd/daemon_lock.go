@@ -16,6 +16,7 @@ var ErrDaemonLocked = errors.New("daemon lock already held by another process")
 // DaemonLockInfo represents the metadata stored in the daemon.lock file
 type DaemonLockInfo struct {
 	PID        int       `json:"pid"`
+	ParentPID  int       `json:"parent_pid,omitempty"` // Parent process ID (0 if not tracked)
 	Database   string    `json:"database"`
 	Version    string    `json:"version"`
 	StartedAt  time.Time `json:"started_at"`
@@ -63,6 +64,7 @@ func acquireDaemonLock(beadsDir string, dbPath string) (*DaemonLock, error) {
 	// Write JSON metadata to the lock file
 	lockInfo := DaemonLockInfo{
 		PID:       os.Getpid(),
+		ParentPID: os.Getppid(),
 		Database:  dbPath,
 		Version:   Version,
 		StartedAt: time.Now().UTC(),
