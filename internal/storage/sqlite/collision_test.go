@@ -340,6 +340,17 @@ func TestHashIssueContent(t *testing.T) {
 	}
 }
 
+// TestHashIssueContentWithExternalRef verifies that external_ref is included in content hash.
+//
+// This test demonstrates the behavior documented in bd-9f4a:
+//   - Adding external_ref to an issue changes its content hash
+//   - Different external_ref values produce different content hashes
+//   - This is intentional: external_ref is semantically meaningful content
+//
+// Implications:
+//   - Rename detection won't match issues before/after adding external_ref
+//   - Collision detection treats external_ref changes as updates
+//   - Idempotent import only when external_ref is identical
 func TestHashIssueContentWithExternalRef(t *testing.T) {
 	ref1 := "JIRA-123"
 	ref2 := "JIRA-456"
@@ -365,11 +376,17 @@ func TestHashIssueContentWithExternalRef(t *testing.T) {
 	hash2 := hashIssueContent(issueWithRef2)
 	hash3 := hashIssueContent(issueNoRef)
 
+	// Different external_ref values should produce different hashes
 	if hash1 == hash2 {
 		t.Errorf("Expected different external refs to produce different hashes")
 	}
 
+	// Adding external_ref should change the content hash
 	if hash1 == hash3 {
+		t.Errorf("Expected issue with external ref to differ from issue without")
+	}
+
+	if hash2 == hash3 {
 		t.Errorf("Expected issue with external ref to differ from issue without")
 	}
 }

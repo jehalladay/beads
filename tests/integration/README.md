@@ -32,6 +32,22 @@ Agent Mail server failure scenarios test that validates graceful degradation.
 - 1s HTTP timeouts for quick failure detection
 - Mock HTTP server avoids real network calls
 
+### test_reservation_ttl.py
+
+Reservation TTL and expiration test that validates time-based reservation behavior.
+
+**What it tests:**
+- Short TTL reservations (30s)
+- Reservation blocking verification (agent2 cannot claim while agent1 holds reservation)
+- Auto-release after expiration (expired reservations become available)
+- Renewal/heartbeat mechanism (re-reserving extends expiration)
+
+**Performance:**
+- Uses `--no-daemon` flag for fast tests
+- 30s TTL for expiration tests (includes wait time)
+- Total test time: ~57s (includes 30s+ waiting for expiration)
+- Mock HTTP server with full TTL management
+
 ## Prerequisites
 
 - bd installed: `go install github.com/steveyegge/beads/cmd/bd@latest`
@@ -54,10 +70,16 @@ python3 tests/integration/test_agent_race.py
 python3 tests/integration/test_mail_failures.py
 ```
 
+**Run test_reservation_ttl.py:**
+```bash
+python3 tests/integration/test_reservation_ttl.py
+```
+
 **Run all integration tests:**
 ```bash
 python3 tests/integration/test_agent_race.py
 python3 tests/integration/test_mail_failures.py
+python3 tests/integration/test_reservation_ttl.py
 ```
 
 ## Expected Results
@@ -70,6 +92,11 @@ python3 tests/integration/test_mail_failures.py
 - All 7 tests should pass in ~30-35 seconds
 - Each test validates graceful degradation to Beads-only mode
 - JSONL remains consistent across all failure scenarios
+
+### test_reservation_ttl.py
+- All 4 tests should pass in ~57 seconds
+- Tests verify TTL-based reservation expiration and renewal
+- Includes 30s+ wait time to validate actual expiration behavior
 
 ## Adding New Tests
 

@@ -73,6 +73,56 @@ func GenerateHashID(prefix, title, description string, created time.Time, worksp
 - These fields are mutable and shouldn't affect identity
 - Changing priority shouldn't change the issue ID
 
+## Content Hash (Collision Detection)
+
+Separate from ID generation, bd uses content hashing for collision detection during import. See `internal/storage/sqlite/collision.go:hashIssueContent()`.
+
+### Content Hash Fields
+
+The content hash includes ALL semantically meaningful fields:
+- title, description, status, priority, issue_type
+- assignee, design, acceptance_criteria, notes
+- **external_ref** ⚠️ (important: see below)
+
+### External Ref in Content Hash
+
+**IMPORTANT:** `external_ref` is included in the content hash. This has subtle implications:
+
+```
+Local issue (no external_ref)    → content hash A
+Same issue + external_ref         → content hash B  (different!)
+```
+
+**Why include external_ref?**
+- Linkage to external systems (Jira, GitHub, Linear) is semantically meaningful
+- Changing external_ref represents a real content change
+- Ensures external system changes are tracked properly
+
+**Implications:**
+1. **Rename detection** won't match issues before/after adding external_ref
+2. **Collision detection** treats external_ref changes as updates
+3. **Idempotent import** requires identical external_ref
+4. **Import by external_ref** still works (checked before content hash)
+
+**Example scenario:**
+```bash
+# 1. Create local issue
+bd create "Fix auth bug" -p 1
+# → ID: bd-a3f2dd, content_hash: abc123
+
+# 2. Link to Jira
+bd update bd-a3f2dd --external-ref JIRA-456
+# → ID: bd-a3f2dd (same), content_hash: def789 (changed!)
+
+# 3. Re-import from Jira
+bd import -i jira-export.jsonl
+# → Matches by external_ref first (JIRA-456)
+# → Content hash different, triggers update
+# → Idempotent on subsequent imports
+```
+
+**Design rationale:** External system linkage is tracked as substantive content, not just metadata. This ensures proper audit trails and collision resolution.
+
 **Why 6 chars (with progressive extension)?**
 - 6 chars (24 bits) = ~16 million possible IDs
 - Progressive collision handling: extend to 7-8 chars only when needed
