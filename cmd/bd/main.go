@@ -194,12 +194,17 @@ var rootCmd = &cobra.Command{
 			if foundDB := beads.FindDatabasePath(); foundDB != "" {
 				dbPath = foundDB
 			} else {
-				// No database found - error out instead of falling back to ~/.beads
-				fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
-				fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
-				fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
-				fmt.Fprintf(os.Stderr, "      or set BEADS_DB to point to your database file (deprecated)\n")
-				os.Exit(1)
+				// Allow import command to auto-initialize database if missing
+				if cmd.Name() != "import" {
+					// No database found - error out instead of falling back to ~/.beads
+					fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
+					fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
+					fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
+					fmt.Fprintf(os.Stderr, "      or set BEADS_DB to point to your database file (deprecated)\n")
+					os.Exit(1)
+				}
+				// For import command, set default database path
+				dbPath = filepath.Join(".beads", beads.CanonicalDatabaseName)
 			}
 		}
 

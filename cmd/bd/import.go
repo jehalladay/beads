@@ -34,6 +34,13 @@ Behavior:
 NOTE: Import requires direct database access and does not work with daemon mode.
       The command automatically uses --no-daemon when executed.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Ensure database directory exists (auto-create if needed)
+		dbDir := filepath.Dir(dbPath)
+		if err := os.MkdirAll(dbDir, 0750); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to create database directory: %v\n", err)
+			os.Exit(1)
+		}
+		
 		// Import requires direct database access due to complex transaction handling
 		// and collision detection. Force direct mode regardless of daemon state.
 		if daemonClient != nil {
@@ -41,7 +48,6 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			_ = daemonClient.Close()
 			daemonClient = nil
 			
-			// Now initialize direct store
 			var err error
 			store, err = sqlite.New(dbPath)
 			if err != nil {
@@ -50,6 +56,9 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			}
 			defer func() { _ = store.Close() }()
 		}
+		
+		// We'll check if database needs initialization after reading the JSONL
+		// so we can detect the prefix from the imported issues
 
 		input, _ := cmd.Flags().GetString("input")
 		skipUpdate, _ := cmd.Flags().GetBool("skip-existing")
@@ -118,6 +127,32 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			os.Exit(1)
 		}
 
+		// Check if database needs initialization (prefix not set)
+		// Detect prefix from the imported issues
+		initCtx := context.Background()
+		configuredPrefix, err2 := store.GetConfig(initCtx, "issue_prefix")
+		if err2 != nil || strings.TrimSpace(configuredPrefix) == "" {
+			// Database exists but not initialized - detect prefix from issues
+			detectedPrefix := detectPrefixFromIssues(allIssues)
+			if detectedPrefix == "" {
+				// No issues to import or couldn't detect prefix, use directory name
+				cwd, err := os.Getwd()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
+					os.Exit(1)
+				}
+				detectedPrefix = filepath.Base(cwd)
+			}
+			detectedPrefix = strings.TrimRight(detectedPrefix, "-")
+			
+			if err := store.SetConfig(initCtx, "issue_prefix", detectedPrefix); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to set issue prefix: %v\n", err)
+				os.Exit(1)
+			}
+			
+			fmt.Fprintf(os.Stderr, "✓ Initialized database with prefix '%s' (detected from issues)\n", detectedPrefix)
+		}
+
 		// Phase 2: Use shared import logic
 		opts := ImportOptions{
 			DryRun:                     dryRun,
@@ -132,7 +167,7 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 
 		// Check for uncommitted changes in JSONL after import
 		// Only check if we have an input file path (not stdin) and it's the default beads file
-		if input != "" && (input == ".beads/issues.jsonl" || input == ".beads/beads.jsonl") {
+		if result != nil && input != "" && (input == ".beads/issues.jsonl" || input == ".beads/beads.jsonl") {
 			checkUncommittedChanges(input, result)
 		}
 
@@ -390,6 +425,35 @@ func countLinesInGitHEAD(filePath string, workDir string) int {
 		return 0
 	}
 	return lines
+}
+
+// detectPrefixFromIssues extracts the common prefix from issue IDs
+func detectPrefixFromIssues(issues []*types.Issue) string {
+	if len(issues) == 0 {
+		return ""
+	}
+	
+	// Count prefix occurrences
+	prefixCounts := make(map[string]int)
+	for _, issue := range issues {
+		// Extract prefix from issue ID (e.g., "bd-123" -> "bd")
+		parts := strings.SplitN(issue.ID, "-", 2)
+		if len(parts) == 2 {
+			prefixCounts[parts[0]]++
+		}
+	}
+	
+	// Find most common prefix
+	maxCount := 0
+	commonPrefix := ""
+	for prefix, count := range prefixCounts {
+		if count > maxCount {
+			maxCount = count
+			commonPrefix = prefix
+		}
+	}
+	
+	return commonPrefix
 }
 
 func init() {
