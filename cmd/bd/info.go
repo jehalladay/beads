@@ -259,6 +259,22 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.23.0",
+		Date:    "2025-11-08",
+		Changes: []string{
+			"Agent Mail integration - Python adapter library with 98.5% reduction in git traffic",
+			"`bd info --whats-new` - Quick upgrade summaries for agents (shows last 3 versions)",
+			"`bd hooks install` - Embedded git hooks command (replaces external script)",
+			"`bd cleanup` - Bulk deletion for agent-driven compaction",
+			"`bd new` alias added - Agents often tried this instead of `bd create`",
+			"`bd list` now one-line-per-issue by default - Prevents agent miscounting (use --long for old format)",
+			"3-way JSONL merge auto-invoked on conflicts - No manual intervention needed",
+			"Daemon crash recovery - Panic handler with socket cleanup prevents orphaned processes",
+			"Auto-import when database missing - `bd import` now auto-initializes",
+			"Stale database export prevention - ID-based staleness detection",
+		},
+	},
+	{
 		Version: "0.22.1",
 		Date:    "2025-11-06",
 		Changes: []string{
