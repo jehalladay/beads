@@ -46,6 +46,37 @@ func countIssuesInJSONL(path string) (int, error) {
 	return count, nil
 }
 
+// getIssueIDsFromJSONL reads a JSONL file and returns a set of issue IDs
+func getIssueIDsFromJSONL(path string) (map[string]bool, error) {
+	// #nosec G304 - controlled path from config
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close file: %v\n", err)
+		}
+	}()
+
+	ids := make(map[string]bool)
+	decoder := json.NewDecoder(file)
+	lineNum := 0
+	for {
+		var issue types.Issue
+		if err := decoder.Decode(&issue); err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			// Return error for corrupt/invalid JSON
+			return ids, fmt.Errorf("invalid JSON at line %d: %w", lineNum+1, err)
+		}
+		ids[issue.ID] = true
+		lineNum++
+	}
+	return ids, nil
+}
+
 // validateExportPath checks if the output path is safe to write to
 func validateExportPath(path string) error {
 	// Get absolute path to normalize it
@@ -90,6 +121,8 @@ Output to stdout by default, or use -o flag for file output.`,
 		output, _ := cmd.Flags().GetString("output")
 		statusFilter, _ := cmd.Flags().GetString("status")
 		force, _ := cmd.Flags().GetBool("force")
+		
+		debug.Logf("Debug: export flags - output=%q, force=%v\n", output, force)
 
 		if format != "jsonl" {
 			fmt.Fprintf(os.Stderr, "Error: only 'jsonl' format is currently supported\n")
@@ -104,6 +137,10 @@ Output to stdout by default, or use -o flag for file output.`,
 			daemonClient = nil
 		}
 		
+		// Note: We used to check database file timestamps here, but WAL files
+		// get created when opening the DB, making timestamp checks unreliable.
+		// Instead, we check issue counts after loading (see below).
+
 		// Ensure we have a direct store connection
 		if store == nil {
 			var err error
@@ -153,20 +190,61 @@ Output to stdout by default, or use -o flag for file output.`,
 			}
 		}
 
-		// Warning: check if export would lose >50% of issues
-		if output != "" {
-			existingCount, err := countIssuesInJSONL(output)
-			if err == nil && existingCount > 0 {
-				lossPercent := float64(existingCount-len(issues)) / float64(existingCount) * 100
-				if lossPercent > 50 {
-					fmt.Fprintf(os.Stderr, "WARNING: Export would lose %.1f%% of issues!\n", lossPercent)
-					fmt.Fprintf(os.Stderr, "  Existing JSONL: %d issues\n", existingCount)
-					fmt.Fprintf(os.Stderr, "  Database: %d issues\n", len(issues))
-					fmt.Fprintf(os.Stderr, "  This suggests database staleness or corruption.\n")
-					fmt.Fprintf(os.Stderr, "Press Ctrl+C to abort, or Enter to continue: ")
-					// Read a line from stdin to wait for user confirmation
-					var response string
-					_, _ = fmt.Scanln(&response) // ignore EOF on empty input
+		// Safety check: prevent exporting stale database that would lose issues
+		if output != "" && !force {
+			debug.Logf("Debug: checking staleness - output=%s, force=%v\n", output, force)
+			
+			// Read existing JSONL to get issue IDs
+			jsonlIDs, err := getIssueIDsFromJSONL(output)
+			if err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "Warning: failed to read existing JSONL for staleness check: %v\n", err)
+			}
+			
+			if err == nil && len(jsonlIDs) > 0 {
+				// Build set of DB issue IDs
+				dbIDs := make(map[string]bool)
+				for _, issue := range issues {
+					dbIDs[issue.ID] = true
+				}
+				
+				// Check if JSONL has any issues that DB doesn't have
+				var missingIDs []string
+				for id := range jsonlIDs {
+					if !dbIDs[id] {
+						missingIDs = append(missingIDs, id)
+					}
+				}
+				
+				debug.Logf("Debug: JSONL has %d issues, DB has %d issues, missing %d\n", 
+					len(jsonlIDs), len(issues), len(missingIDs))
+				
+				if len(missingIDs) > 0 {
+					sort.Strings(missingIDs)
+					fmt.Fprintf(os.Stderr, "Error: refusing to export stale database that would lose issues\n")
+					fmt.Fprintf(os.Stderr, "  Database has %d issues\n", len(issues))
+					fmt.Fprintf(os.Stderr, "  JSONL has %d issues\n", len(jsonlIDs))
+					fmt.Fprintf(os.Stderr, "  Export would lose %d issue(s):\n", len(missingIDs))
+					
+					// Show first 10 missing issues
+					showCount := len(missingIDs)
+					if showCount > 10 {
+						showCount = 10
+					}
+					for i := 0; i < showCount; i++ {
+						fmt.Fprintf(os.Stderr, "    - %s\n", missingIDs[i])
+					}
+					if len(missingIDs) > 10 {
+						fmt.Fprintf(os.Stderr, "    ... and %d more\n", len(missingIDs)-10)
+					}
+					
+					fmt.Fprintf(os.Stderr, "\n")
+					fmt.Fprintf(os.Stderr, "This usually means:\n")
+					fmt.Fprintf(os.Stderr, "  1. You need to run 'bd import -i %s' to sync the latest changes\n", output)
+					fmt.Fprintf(os.Stderr, "  2. Or another workspace added issues that weren't synced to this database\n")
+					fmt.Fprintf(os.Stderr, "\n")
+					fmt.Fprintf(os.Stderr, "To force export anyway (will lose these issues):\n")
+					fmt.Fprintf(os.Stderr, "  bd export -o %s --force\n", output)
+					os.Exit(1)
 				}
 			}
 		}
