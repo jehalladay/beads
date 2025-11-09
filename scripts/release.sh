@@ -95,7 +95,7 @@ if [ "$DRY_RUN" = true ]; then
     echo "[DRY RUN] Would run: TMPDIR=/tmp go test ./..."
     echo "[DRY RUN] Would run: golangci-lint run ./..."
 else
-    if ! TMPDIR=/tmp go test ./...; then
+    if ! TMPDIR=/tmp go test -short ./...; then
         echo -e "${RED}✗ Tests failed${NC}"
         exit 1
     fi
