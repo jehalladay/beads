@@ -56,8 +56,10 @@ func (s *DoltStore) GetEvents(ctx context.Context, issueID string, limit int) ([
 	return scanEvents(rows)
 }
 
-// GetAllEventsSince returns all events with ID greater than sinceID, ordered by ID ascending.
-// Queries both events and wisp_events tables.
+// GetAllEventsSince returns all events with ID greater than sinceID, ordered by creation time.
+// Queries both events and wisp_events tables. Uses created_at ordering instead of id
+// because events and wisp_events have independent auto-increment sequences whose IDs
+// can collide, making ORDER BY id ambiguous across the UNION.
 func (s *DoltStore) GetAllEventsSince(ctx context.Context, sinceID int64) ([]*types.Event, error) {
 	rows, err := s.queryContext(ctx, `
 		SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at
@@ -67,7 +69,7 @@ func (s *DoltStore) GetAllEventsSince(ctx context.Context, sinceID int64) ([]*ty
 		SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at
 		FROM wisp_events
 		WHERE id > ?
-		ORDER BY id ASC
+		ORDER BY created_at ASC, id ASC
 	`, sinceID, sinceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get events since %d: %w", sinceID, err)

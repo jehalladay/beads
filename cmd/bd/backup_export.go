@@ -170,12 +170,12 @@ func runBackupExport(ctx context.Context, force bool) (*backupState, error) {
 	state.Counts.Issues = n
 
 	// Events: full export (same pattern as other tables)
-	eventsQuery := "SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at FROM events ORDER BY id ASC"
+	eventsQuery := "SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at FROM events ORDER BY created_at ASC, id ASC"
 	if hasWisps {
 		eventsQuery = "SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at FROM events " +
 			"UNION ALL " +
 			"SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at FROM wisp_events " +
-			"ORDER BY id ASC"
+			"ORDER BY created_at ASC, id ASC"
 	}
 	n, err = exportTable(ctx, store, dir, "events.jsonl", eventsQuery)
 	if err != nil {
