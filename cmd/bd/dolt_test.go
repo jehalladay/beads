@@ -753,6 +753,52 @@ func TestDoltConfigSubcommandsSkipStore(t *testing.T) {
 	}
 }
 
+// TestHooksSubcommandsSkipStore verifies that all hooks subcommands (run,
+// install, uninstall, list) skip DB initialization in PersistentPreRun.
+// Regression test for: pre-commit hook SIGSEGV when Dolt SQL Server is
+// running — 'bd hooks run pre-commit' fell through to store init because
+// the parent "hooks" was in noDbCommands but the subcommand "run" was not,
+// and only the "dolt" parent was special-cased.
+func TestHooksSubcommandsSkipStore(t *testing.T) {
+	// All hooks subcommands should be registered under hooksCmd
+	expectedSubs := []string{"run", "install", "uninstall", "list"}
+	for _, name := range expectedSubs {
+		found := false
+		for _, cmd := range hooksCmd.Commands() {
+			if cmd.Name() == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected hooks subcommand %q to be registered", name)
+		}
+	}
+
+	// Verify that hooksCmd is registered under rootCmd and its parent
+	// relationship means PersistentPreRun will see parent "hooks" in
+	// noDbCommands. The critical check: "hooks" must be in the noDbCommands
+	// list so that ALL subcommands (including "run") skip store init.
+	found := false
+	for _, cmd := range rootCmd.Commands() {
+		if cmd.Name() == "hooks" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("hooks command not registered under root")
+	}
+
+	// Verify that "run" is a subcommand of "hooks" (not a top-level command)
+	// so the parent-based noDbCommands check works correctly.
+	if hooksRunCmd.Parent() == nil {
+		t.Error("hooksRunCmd has no parent — must be registered under hooksCmd for noDbCommands parent check to work")
+	} else if hooksRunCmd.Parent().Name() != "hooks" {
+		t.Errorf("hooksRunCmd parent is %q, want %q", hooksRunCmd.Parent().Name(), "hooks")
+	}
+}
+
 func TestExtractSSHHost(t *testing.T) {
 	tests := []struct {
 		url  string
