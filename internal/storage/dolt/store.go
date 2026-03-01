@@ -144,6 +144,11 @@ type Config struct {
 	MaxOpenConns int
 }
 
+// cliExecTimeout is the maximum time to wait for dolt CLI push/pull operations.
+// SSH transfers can hang indefinitely on network issues or SSH key prompts;
+// this prevents the process from blocking forever.
+const cliExecTimeout = 5 * time.Minute
+
 // Retry configuration for transient connection errors (stale pool connections,
 // brief network issues, server restarts).
 const serverRetryMaxElapsed = 30 * time.Second
@@ -1257,6 +1262,8 @@ func (s *DoltStore) isSSHRemote(ctx context.Context) bool {
 // doltCLIPush shells out to `dolt push` from the database directory.
 // Used for SSH remotes where CALL DOLT_PUSH times out through the SQL connection.
 func (s *DoltStore) doltCLIPush(ctx context.Context, force bool) error {
+	ctx, cancel := context.WithTimeout(ctx, cliExecTimeout)
+	defer cancel()
 	args := []string{"push"}
 	if force {
 		args = append(args, "--force")
@@ -1274,6 +1281,8 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, force bool) error {
 // doltCLIPull shells out to `dolt pull` from the database directory.
 // Used for SSH remotes where CALL DOLT_PULL times out through the SQL connection.
 func (s *DoltStore) doltCLIPull(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, cliExecTimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, "dolt", "pull", s.remote, s.branch) // #nosec G204 -- fixed command
 	cmd.Dir = s.dbPath
 	out, err := cmd.CombinedOutput()
