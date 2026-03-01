@@ -36,12 +36,6 @@ func StaleClosedIssues(path string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Dolt backend: this fix uses SQLite-specific storage, skip for now
-	if cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
-		fmt.Println("  Stale closed issues cleanup skipped (dolt backend)")
-		return nil
-	}
-
 	// Get threshold; 0 means disabled
 	var thresholdDays int
 	if cfg != nil {
