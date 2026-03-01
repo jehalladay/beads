@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
@@ -115,28 +113,10 @@ func findAllDescendants(ctx context.Context, store *dolt.DoltStore, dbPath strin
 	return nil
 }
 
-// watchIssues starts watching for changes and re-displays (GH#654)
+// watchIssues polls for changes and re-displays (GH#654)
+// Uses polling instead of fsnotify because Dolt stores data in a server-side
+// database, not files — file watchers never fire.
 func watchIssues(ctx context.Context, store *dolt.DoltStore, filter types.IssueFilter, sortBy string, reverse bool) {
-	// Find .beads directory
-	beadsDir := ".beads"
-	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: .beads directory not found\n")
-		return
-	}
-
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating watcher: %v\n", err)
-		return
-	}
-	defer func() { _ = watcher.Close() }() // Best effort cleanup
-
-	// Watch the .beads directory
-	if err := watcher.Add(beadsDir); err != nil {
-		fmt.Fprintf(os.Stderr, "Error watching directory: %v\n", err)
-		return
-	}
-
 	// Initial display
 	issues, err := store.SearchIssues(ctx, "", filter)
 	if err != nil {
@@ -145,53 +125,49 @@ func watchIssues(ctx context.Context, store *dolt.DoltStore, filter types.IssueF
 	}
 	sortIssues(issues, sortBy, reverse)
 	displayPrettyList(issues, true)
+	lastSnapshot := issueSnapshot(issues)
 
 	fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
 
-	// Handle Ctrl+C
+	// Handle Ctrl+C — deferred Stop prevents signal handler leak
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 
-	// Debounce timer
-	var debounceTimer *time.Timer
-	debounceDelay := 500 * time.Millisecond
+	pollInterval := 2 * time.Second
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-sigChan:
 			fmt.Fprintf(os.Stderr, "\nStopped watching.\n")
 			return
-		case event, ok := <-watcher.Events:
-			if !ok {
-				return
+		case <-ticker.C:
+			issues, err := store.SearchIssues(ctx, "", filter)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error refreshing issues: %v\n", err)
+				continue
 			}
-			// Only react to writes on issues.jsonl or database files
-			if event.Has(fsnotify.Write) {
-				basename := filepath.Base(event.Name)
-				if basename == "issues.jsonl" || strings.HasSuffix(basename, ".db") {
-					// Debounce rapid changes
-					if debounceTimer != nil {
-						debounceTimer.Stop()
-					}
-					debounceTimer = time.AfterFunc(debounceDelay, func() {
-						issues, err := store.SearchIssues(ctx, "", filter)
-						if err != nil {
-							fmt.Fprintf(os.Stderr, "Error refreshing issues: %v\n", err)
-							return
-						}
-						sortIssues(issues, sortBy, reverse)
-						displayPrettyList(issues, true)
-						fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
-					})
-				}
+			sortIssues(issues, sortBy, reverse)
+			snap := issueSnapshot(issues)
+			if snap != lastSnapshot {
+				lastSnapshot = snap
+				displayPrettyList(issues, true)
+				fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
 			}
-		case err, ok := <-watcher.Errors:
-			if !ok {
-				return
-			}
-			fmt.Fprintf(os.Stderr, "Watcher error: %v\n", err)
 		}
 	}
+}
+
+// issueSnapshot builds a comparable string from issue IDs, statuses, and
+// update times so we can detect when the result set has changed.
+func issueSnapshot(issues []*types.Issue) string {
+	var b strings.Builder
+	for _, issue := range issues {
+		fmt.Fprintf(&b, "%s:%s:%d;", issue.ID, issue.Status, issue.UpdatedAt.UnixNano())
+	}
+	return b.String()
 }
 
 // sortIssues sorts a slice of issues by the specified field and direction
