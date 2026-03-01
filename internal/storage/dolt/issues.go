@@ -288,7 +288,7 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 
 		// Only record "created" event for genuinely new issues (not upserts).
 		if existingCount == 0 {
-			if err := recordEventInTable(ctx, tx, eventTable, issue.ID, types.EventCreated, actor, "", ""); err != nil {
+			if err := recordEventInTable(ctx, tx, eventTable, issue.ID, types.EventCreated, actor, ""); err != nil {
 				return fmt.Errorf("failed to record event for %s: %w", issue.ID, err)
 			}
 		}
