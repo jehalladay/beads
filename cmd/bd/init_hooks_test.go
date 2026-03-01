@@ -301,11 +301,7 @@ func TestInstallHooksWithSectionMarkers(t *testing.T) {
 		}
 
 		// Install hooks — should inject section, not replace file
-		embeddedHooks, err := getEmbeddedHooks()
-		if err != nil {
-			t.Fatalf("getEmbeddedHooks() failed: %v", err)
-		}
-		if err := installHooksWithOptions(embeddedHooks, false, false, false, false); err != nil {
+		if err := installHooksWithOptions(managedHookNames, false, false, false, false); err != nil {
 			t.Fatalf("installHooksWithOptions() failed: %v", err)
 		}
 
@@ -326,7 +322,7 @@ func TestInstallHooksWithSectionMarkers(t *testing.T) {
 		}
 
 		// Run install again — should be idempotent (update section only)
-		if err := installHooksWithOptions(embeddedHooks, false, false, false, false); err != nil {
+		if err := installHooksWithOptions(managedHookNames, false, false, false, false); err != nil {
 			t.Fatalf("second installHooksWithOptions() failed: %v", err)
 		}
 

@@ -644,16 +644,11 @@ environment variable.`,
 				}
 			} else if isGitRepo() {
 				// Regular git repo - install hooks to .beads/hooks/
-				embeddedHooks, err := getEmbeddedHooks()
-				if err == nil {
-					if err := installHooksWithOptions(embeddedHooks, false, false, false, true); err != nil && !quiet {
-						fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks to .beads/hooks/: %v\n", ui.RenderWarn("⚠"), err)
-						fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd hooks install --beads"))
-					} else if !quiet {
-						fmt.Printf("  Hooks installed to: .beads/hooks/\n")
-					}
+				if err := installHooksWithOptions(managedHookNames, false, false, false, true); err != nil && !quiet {
+					fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks to .beads/hooks/: %v\n", ui.RenderWarn("⚠"), err)
+					fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd hooks install --beads"))
 				} else if !quiet {
-					fmt.Fprintf(os.Stderr, "\n%s Failed to load embedded hooks: %v\n", ui.RenderWarn("⚠"), err)
+					fmt.Printf("  Hooks installed to: .beads/hooks/\n")
 				}
 			}
 		}

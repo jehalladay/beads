@@ -263,23 +263,9 @@ func buildPostMergeHook(chainHooks bool, existingHooks []hookInfo) string {
 // This path intentionally avoids .old sidecar chaining and uses the same section
 // injection behavior as regular hook installs.
 func installJJHooks() error {
-	embeddedHooks, err := getEmbeddedHooks()
-	if err != nil {
-		return err
-	}
-	jjHooks := map[string]string{}
-	if preCommitHook, ok := embeddedHooks["pre-commit"]; ok {
-		jjHooks["pre-commit"] = preCommitHook
-	} else {
-		return fmt.Errorf("missing embedded pre-commit hook template")
-	}
-	if postMergeHook, ok := embeddedHooks["post-merge"]; ok {
-		jjHooks["post-merge"] = postMergeHook
-	} else {
-		return fmt.Errorf("missing embedded post-merge hook template")
-	}
-
-	return installHooksWithOptions(jjHooks, false, false, false, false)
+	// jj only needs pre-commit and post-merge hooks
+	jjHookNames := []string{"pre-commit", "post-merge"}
+	return installHooksWithOptions(jjHookNames, false, false, false, false)
 }
 
 // buildJJPreCommitHook generates the pre-commit hook for jujutsu repos using section markers (GH#1380).

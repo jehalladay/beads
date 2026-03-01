@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,26 +14,9 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 )
 
-//go:embed templates/hooks/*
-var hooksFS embed.FS
-
-func getEmbeddedHooks() (map[string]string, error) {
-	hooks := make(map[string]string)
-	hookNames := []string{"pre-commit", "post-merge", "pre-push", "post-checkout", "prepare-commit-msg"}
-
-	for _, name := range hookNames {
-		content, err := hooksFS.ReadFile("templates/hooks/" + name)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read embedded hook %s: %w", name, err)
-		}
-		// Normalize line endings to LF — embedded templates may contain CRLF
-		// when built on Windows or from an NTFS-mounted filesystem (e.g. WSL).
-		// Git hooks with CRLF fail: /usr/bin/env: 'sh\r': No such file or directory
-		hooks[name] = strings.ReplaceAll(string(content), "\r\n", "\n")
-	}
-
-	return hooks, nil
-}
+// managedHookNames lists the git hooks managed by beads.
+// Hook content is generated dynamically by generateHookSection().
+var managedHookNames = []string{"pre-commit", "post-merge", "pre-push", "post-checkout", "prepare-commit-msg"}
 
 const hookVersionPrefix = "# bd-hooks-version: "
 const shimVersionPrefix = "# bd-shim "
@@ -319,12 +301,7 @@ Installed hooks:
 		chain, _ := cmd.Flags().GetBool("chain")
 		beadsHooks, _ := cmd.Flags().GetBool("beads")
 
-		embeddedHooks, err := getEmbeddedHooks()
-		if err != nil {
-			FatalErrorRespectJSON("loading hooks: %v", err)
-		}
-
-		if err := installHooksWithOptions(embeddedHooks, force, shared, chain, beadsHooks); err != nil {
+		if err := installHooksWithOptions(managedHookNames, force, shared, chain, beadsHooks); err != nil {
 			FatalErrorRespectJSON("installing hooks: %v", err)
 		}
 
@@ -357,7 +334,7 @@ Installed hooks:
 				fmt.Println()
 			}
 			fmt.Println("Installed hooks:")
-			for hookName := range embeddedHooks {
+			for _, hookName := range managedHookNames {
 				fmt.Printf("  - %s\n", hookName)
 			}
 		}
@@ -417,12 +394,8 @@ var hooksListCmd = &cobra.Command{
 	},
 }
 
-func installHooks(embeddedHooks map[string]string, force bool, shared bool, chain bool) error {
-	return installHooksWithOptions(embeddedHooks, force, shared, chain, false)
-}
-
 //nolint:unparam // force and chain kept for CLI flag compatibility; section markers make them no-ops
-func installHooksWithOptions(embeddedHooks map[string]string, force bool, shared bool, chain bool, beadsHooks bool) error {
+func installHooksWithOptions(hookNames []string, force bool, shared bool, chain bool, beadsHooks bool) error {
 	var hooksDir string
 	if beadsHooks {
 		// Use .beads/hooks/ directory (preferred for Dolt backend)
@@ -451,7 +424,7 @@ func installHooksWithOptions(embeddedHooks map[string]string, force bool, shared
 	// Install each hook using section markers (GH#1380).
 	// Only the content between markers is managed by beads; user content
 	// outside the markers is preserved across reinstalls and upgrades.
-	for hookName := range embeddedHooks {
+	for _, hookName := range hookNames {
 		hookPath := filepath.Join(hooksDir, hookName)
 		section := generateHookSection(hookName)
 
