@@ -236,10 +236,14 @@ func CheckMigrationCompletion(path string) (DoctorCheck, MigrationValidationResu
 	result.DoltCount = stats.TotalIssues
 
 	// Check for Dolt locks/uncommitted changes
-	doltLocked, lockDetail := checkDoltLocks(beadsDir)
-	result.DoltLocked = doltLocked
-	if doltLocked {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("Dolt has uncommitted changes: %s", lockDetail))
+	doltLocked, lockDetail, lockErr := checkDoltLocks(beadsDir)
+	if lockErr != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("Could not check Dolt locks: %v", lockErr))
+	} else {
+		result.DoltLocked = doltLocked
+		if doltLocked {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Dolt has uncommitted changes: %s", lockDetail))
+		}
 	}
 
 	// Find JSONL file for comparison
@@ -332,7 +336,17 @@ func CheckDoltLocks(path string) DoctorCheck {
 		}
 	}
 
-	locked, detail := checkDoltLocks(beadsDir)
+	locked, detail, err := checkDoltLocks(beadsDir)
+	if err != nil {
+		return DoctorCheck{
+			Name:     "Dolt Locks",
+			Status:   StatusWarning,
+			Message:  "Could not check Dolt locks",
+			Detail:   err.Error(),
+			Fix:      "Ensure the Dolt server is running: gt dolt status",
+			Category: CategoryMaintenance,
+		}
+	}
 	if locked {
 		return DoctorCheck{
 			Name:     "Dolt Locks",
@@ -443,10 +457,12 @@ func compareDoltWithJSONL(ctx context.Context, store *dolt.DoltStore, jsonlIDs m
 }
 
 // checkDoltLocks checks for uncommitted changes in Dolt.
-func checkDoltLocks(beadsDir string) (bool, string) {
+// Returns (locked, detail, error). A non-nil error means the check could not
+// be performed (e.g. connection failure) and the locked result is meaningless.
+func checkDoltLocks(beadsDir string) (bool, string, error) {
 	conn, err := openDoltConn(beadsDir)
 	if err != nil {
-		return false, ""
+		return false, "", fmt.Errorf("cannot connect to Dolt: %w", err)
 	}
 	defer conn.Close()
 
@@ -455,7 +471,7 @@ func checkDoltLocks(beadsDir string) (bool, string) {
 	// Check dolt_status for uncommitted changes
 	rows, err := conn.db.QueryContext(ctx, "SELECT table_name, staged, status FROM dolt_status")
 	if err != nil {
-		return false, ""
+		return false, "", fmt.Errorf("cannot query dolt_status: %w", err)
 	}
 	defer rows.Close()
 
@@ -480,10 +496,10 @@ func checkDoltLocks(beadsDir string) (bool, string) {
 	}
 
 	if len(changes) > 0 {
-		return true, strings.Join(changes, ", ")
+		return true, strings.Join(changes, ", "), nil
 	}
 
-	return false, ""
+	return false, "", nil
 }
 
 // categorizeDoltExtras finds issues in Dolt that aren't in JSONL and categorizes them
