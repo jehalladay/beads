@@ -103,7 +103,15 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 			`, metadata, dep.IssueID, dep.DependsOnID); err != nil {
 				return fmt.Errorf("failed to update dependency metadata: %w", err)
 			}
-			return tx.Commit()
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("sql commit: %w", err)
+			}
+			// Record in Dolt version history (bd-2avi)
+			if _, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)",
+				"dependency: update metadata "+dep.IssueID+" -> "+dep.DependsOnID, s.commitAuthorString()); err != nil && !isDoltNothingToCommit(err) {
+				return fmt.Errorf("dolt commit: %w", err)
+			}
+			return nil
 		}
 		return fmt.Errorf("dependency %s -> %s already exists with type %q (requested %q); remove it first with 'bd dep remove' then re-add",
 			dep.IssueID, dep.DependsOnID, existingType, dep.Type)
@@ -119,7 +127,15 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 	}
 
 	s.invalidateBlockedIDsCache()
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("sql commit: %w", err)
+	}
+	// Record in Dolt version history (bd-2avi)
+	if _, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)",
+		"dependency: add "+string(dep.Type)+" "+dep.IssueID+" -> "+dep.DependsOnID, s.commitAuthorString()); err != nil && !isDoltNothingToCommit(err) {
+		return fmt.Errorf("dolt commit: %w", err)
+	}
+	return nil
 }
 
 // RemoveDependency removes a dependency between two issues.
@@ -143,7 +159,15 @@ func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID s
 	}
 
 	s.invalidateBlockedIDsCache()
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("sql commit: %w", err)
+	}
+	// Record in Dolt version history (bd-2avi)
+	if _, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)",
+		"dependency: remove "+issueID+" -> "+dependsOnID, s.commitAuthorString()); err != nil && !isDoltNothingToCommit(err) {
+		return fmt.Errorf("dolt commit: %w", err)
+	}
+	return nil
 }
 
 // GetDependencies retrieves issues that this issue depends on
