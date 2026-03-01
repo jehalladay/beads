@@ -153,13 +153,6 @@ func LargeFromJSONL(ctx context.Context, store *dolt.DoltStore, tempDir string) 
 	return generateFromJSONL(ctx, store, tempDir, cfg)
 }
 
-// xLargeFromJSONL creates a 20K issue database by exporting to JSONL and reimporting
-func xLargeFromJSONL(ctx context.Context, store *dolt.DoltStore, tempDir string) error {
-	cfg := DefaultXLargeConfig()
-	cfg.RandSeed = 45 // different seed for JSONL path
-	return generateFromJSONL(ctx, store, tempDir, cfg)
-}
-
 // generateIssuesWithConfig creates issues with realistic epic hierarchies and cross-links using provided configuration
 func generateIssuesWithConfig(ctx context.Context, store *dolt.DoltStore, cfg DataConfig) error {
 	rng := rand.New(rand.NewSource(cfg.RandSeed)) // #nosec G404 -- deterministic math/rand used for repeatable fixture data
