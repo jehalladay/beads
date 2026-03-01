@@ -24,7 +24,7 @@ var configCmd = &cobra.Command{
 	Short:   "Manage configuration settings",
 	Long: `Manage configuration settings for external integrations and preferences.
 
-Configuration is stored per-project in .beads/*.db and is version-control-friendly.
+Configuration is stored per-project in the beads database and is version-control-friendly.
 
 Common namespaces:
   - jira.*       Jira integration settings
