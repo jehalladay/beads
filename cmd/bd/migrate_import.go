@@ -11,7 +11,6 @@ import (
 
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
-	"github.com/steveyegge/beads/internal/ui"
 )
 
 // migrationData holds all data extracted from the source database.
@@ -327,18 +326,6 @@ func importToDolt(ctx context.Context, store *dolt.DoltStore, data *migrationDat
 func migratePrintProgress(message string) {
 	if !jsonOutput {
 		fmt.Printf("%s\n", message)
-	}
-}
-
-func migratePrintSuccess(message string) {
-	if !jsonOutput {
-		fmt.Printf("%s\n", ui.RenderPass("✓ "+message))
-	}
-}
-
-func migratePrintWarning(message string) {
-	if !jsonOutput {
-		fmt.Printf("%s\n", ui.RenderWarn("Warning: "+message))
 	}
 }
 

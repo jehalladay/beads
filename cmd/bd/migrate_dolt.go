@@ -540,18 +540,6 @@ func exitWithError(code, message, hint string) {
 	os.Exit(1)
 }
 
-func printNoop(message string) {
-	if jsonOutput {
-		outputJSON(map[string]interface{}{
-			"status":  "noop",
-			"message": message,
-		})
-	} else {
-		fmt.Printf("%s\n", ui.RenderPass("✓ "+message))
-		fmt.Println("No migration needed")
-	}
-}
-
 func printSuccess(message string) {
 	if !jsonOutput {
 		fmt.Printf("%s\n", ui.RenderPass("✓ "+message))
