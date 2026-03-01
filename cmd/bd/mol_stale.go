@@ -202,7 +202,6 @@ func init() {
 	molStaleCmd.Flags().Bool("blocking", false, "Only show molecules blocking other work")
 	molStaleCmd.Flags().Bool("unassigned", false, "Only show unassigned molecules")
 	molStaleCmd.Flags().Bool("all", false, "Include molecules with 0 children")
-	molStaleCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 
 	molCmd.AddCommand(molStaleCmd)
 }
