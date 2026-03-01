@@ -267,11 +267,17 @@ Examples:
 			FatalErrorRespectJSON("cannot add dependency: %s is already a child of %s. Children inherit dependency on parent completion via hierarchy. Adding an explicit dependency would create a deadlock", fromID, toID)
 		}
 
+		// Validate dependency type
+		dt := types.DependencyType(depType)
+		if !dt.IsValid() {
+			FatalErrorRespectJSON("invalid dependency type %q: must be non-empty and at most 50 characters", depType)
+		}
+
 		// Direct mode
 		dep := &types.Dependency{
 			IssueID:     fromID,
 			DependsOnID: toID,
-			Type:        types.DependencyType(depType),
+			Type:        dt,
 		}
 
 		if err := store.AddDependency(ctx, dep, actor); err != nil {
@@ -452,9 +458,25 @@ var depRemoveCmd = &cobra.Command{
 			FatalErrorRespectJSON("resolving issue ID %s: %v", args[0], err)
 		}
 
-		toID, err = utils.ResolvePartialID(ctx, store, args[1])
-		if err != nil {
-			FatalErrorRespectJSON("resolving dependency ID %s: %v", args[1], err)
+		// Check if toID is an external reference (don't resolve it)
+		isExternalRef := strings.HasPrefix(args[1], "external:")
+
+		if isExternalRef {
+			toID = args[1]
+			if err := validateExternalRef(toID); err != nil {
+				FatalErrorRespectJSON("%v", err)
+			}
+		} else {
+			toID, err = utils.ResolvePartialID(ctx, store, args[1])
+			if err != nil {
+				// Resolution failed - try auto-converting to external ref
+				beadsDir := getBeadsDir()
+				if extRef := routing.ResolveToExternalRef(args[1], beadsDir); extRef != "" {
+					toID = extRef
+				} else {
+					FatalErrorRespectJSON("resolving dependency ID %s: %v", args[1], err)
+				}
+			}
 		}
 
 		// Direct mode
@@ -1110,7 +1132,8 @@ func init() {
 	depTreeCmd.Flags().String("direction", "", "Tree direction: 'down' (dependencies), 'up' (dependents), or 'both'")
 	depTreeCmd.Flags().String("status", "", "Filter to only show issues with this status (open, in_progress, blocked, deferred, closed)")
 	depTreeCmd.Flags().String("format", "", "Output format: 'mermaid' for Mermaid.js flowchart")
-	depTreeCmd.Flags().StringP("type", "t", "", "Filter to only show dependencies of this type (e.g., tracks, blocks, parent-child)")
+	// Note: --type flag intentionally omitted from depTreeCmd — TreeNode lacks
+	// dependency type info so filtering is not possible. Use 'bd dep list --type' instead.
 
 	depListCmd.Flags().String("direction", "down", "Direction: 'down' (dependencies), 'up' (dependents)")
 	depListCmd.Flags().StringP("type", "t", "", "Filter by dependency type (e.g., tracks, blocks, parent-child)")
