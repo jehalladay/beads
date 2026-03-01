@@ -22,9 +22,10 @@ func TestDatabaseConfigFix_DBMismatch(t *testing.T) {
 		t.Fatalf("Failed to create db: %v", err)
 	}
 
-	// Create metadata.json pointing to wrong database
+	// Create metadata.json pointing to wrong database (SQLite backend)
 	cfg := &configfile.Config{
 		Database: "wrong.db",
+		Backend:  configfile.BackendSQLite,
 	}
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("Failed to save config: %v", err)
@@ -62,6 +63,7 @@ func TestDatabaseConfigFix_NoMismatch(t *testing.T) {
 
 	cfg := &configfile.Config{
 		Database: "beads.db",
+		Backend:  configfile.BackendSQLite,
 	}
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("Failed to save config: %v", err)
@@ -70,6 +72,57 @@ func TestDatabaseConfigFix_NoMismatch(t *testing.T) {
 	err := DatabaseConfig(tmpDir)
 	if err == nil {
 		t.Error("Expected error when no mismatch detected")
+	}
+}
+
+// TestDatabaseConfigFix_DoltBackend tests that DatabaseConfig returns a clear error for Dolt backends.
+func TestDatabaseConfigFix_DoltBackend(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create .beads dir: %v", err)
+	}
+
+	// Create config with Dolt backend (the default and most common case)
+	cfg := &configfile.Config{
+		Backend:  configfile.BackendDolt,
+		Database: "dolt",
+	}
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("Failed to save config: %v", err)
+	}
+
+	err := DatabaseConfig(tmpDir)
+	if err == nil {
+		t.Fatal("Expected error for Dolt backend, got nil")
+	}
+	if got := err.Error(); got != "database config fix not applicable for Dolt backend (data is on the server)" {
+		t.Errorf("Unexpected error message: %q", got)
+	}
+}
+
+// TestDatabaseConfigFix_DoltBackendDefault tests that empty backend (defaults to Dolt) is handled.
+func TestDatabaseConfigFix_DoltBackendDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create .beads dir: %v", err)
+	}
+
+	// Empty backend defaults to Dolt
+	cfg := &configfile.Config{
+		Database: "",
+	}
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("Failed to save config: %v", err)
+	}
+
+	err := DatabaseConfig(tmpDir)
+	if err == nil {
+		t.Fatal("Expected error for default (Dolt) backend, got nil")
+	}
+	if got := err.Error(); got != "database config fix not applicable for Dolt backend (data is on the server)" {
+		t.Errorf("Unexpected error message: %q", got)
 	}
 }
 
