@@ -145,6 +145,13 @@ func TestValidateCheck_DetectsGitConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Write a non-Dolt backend config so the JSONL conflict scanner runs.
+	// Without this, getBackendAndBeadsDir defaults to "dolt" (which skips the check).
+	configPath := filepath.Join(beadsDir, "metadata.json")
+	if err := os.WriteFile(configPath, []byte(`{"backend":"sqlite"}`), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 	conflictContent := `{"id":"test-1","title":"Issue 1","status":"open"}
 <<<<<<< HEAD
