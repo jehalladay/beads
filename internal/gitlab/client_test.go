@@ -693,6 +693,7 @@ func TestCreateIssue_InvalidJSON(t *testing.T) {
 }
 
 // TestFetchIssuesSince_Error verifies error handling for FetchIssuesSince.
+// Uses a short context timeout because 500s are now retried with backoff.
 func TestFetchIssuesSince_Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -701,11 +702,67 @@ func TestFetchIssuesSince_Error(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient("token", server.URL, "123")
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
 
 	_, err := client.FetchIssuesSince(ctx, "all", time.Now().Add(-24*time.Hour))
 	if err == nil {
 		t.Fatal("FetchIssuesSince() error = nil, want error for 500")
+	}
+}
+
+// TestServerErrorRetry verifies retry behavior on 5xx server errors.
+func TestServerErrorRetry(t *testing.T) {
+	for _, code := range []int{500, 502, 503, 504} {
+		t.Run(http.StatusText(code), func(t *testing.T) {
+			attempts := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts++
+				if attempts == 1 {
+					w.WriteHeader(code)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode([]Issue{{ID: 1, IID: 1, Title: "Recovered"}})
+			}))
+			defer server.Close()
+
+			client := NewClient("token", server.URL, "123")
+			ctx := context.Background()
+
+			issues, err := client.FetchIssues(ctx, "all")
+			if err != nil {
+				t.Fatalf("FetchIssues() error = %v, want success after retry on %d", err, code)
+			}
+			if attempts < 2 {
+				t.Errorf("attempts = %d, want >= 2 (retry after %d)", attempts, code)
+			}
+			if len(issues) != 1 || issues[0].Title != "Recovered" {
+				t.Errorf("got %v, want 1 issue titled 'Recovered'", issues)
+			}
+		})
+	}
+}
+
+// TestNonRetriableError verifies that 4xx errors (except 429) are not retried.
+func TestNonRetriableError(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message": "403 Forbidden"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("token", server.URL, "123")
+	ctx := context.Background()
+
+	_, err := client.FetchIssues(ctx, "all")
+	if err == nil {
+		t.Fatal("FetchIssues() error = nil, want error for 403")
+	}
+	if attempts != 1 {
+		t.Errorf("attempts = %d, want 1 (403 should not be retried)", attempts)
 	}
 }
 
