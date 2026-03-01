@@ -75,7 +75,8 @@ type DoltStore struct {
 	closed   atomic.Bool  // Tracks whether Close() has been called
 	connStr  string       // Connection string for reconnection
 	mu       sync.RWMutex // Protects concurrent access
-	readOnly bool         // True if opened in read-only mode
+	readOnly      bool   // True if opened in read-only mode
+	credentialKey []byte // Random encryption key for federation credentials
 
 	// Per-invocation caches (lifetime = DoltStore lifetime)
 	customStatusCache  []string        // cached result of GetCustomStatuses
@@ -674,6 +675,14 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			return nil
 		}, backoff.WithContext(schemaBO, ctx)); err != nil {
 			return nil, fmt.Errorf("failed to initialize schema: %w", err)
+		}
+	}
+
+	// Initialize credential encryption key (loads from file or generates new random key).
+	// This must run after schema init so federation_peers table exists for migration.
+	if !cfg.ReadOnly {
+		if err := store.initCredentialKey(ctx); err != nil {
+			return nil, fmt.Errorf("failed to initialize credential key: %w", err)
 		}
 	}
 
