@@ -463,10 +463,7 @@ func importFromJSONL(ctx context.Context, store *dolt.DoltStore, path string) er
 		issue.Labels = nil
 
 		if err := store.CreateIssue(ctx, issue, "fixture"); err != nil {
-			// Ignore duplicate errors
-			if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
-				return fmt.Errorf("failed to create issue %s: %w", issue.ID, err)
-			}
+			return fmt.Errorf("failed to create issue %s: %w", issue.ID, err)
 		}
 	}
 
