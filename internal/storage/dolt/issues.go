@@ -1389,7 +1389,7 @@ func isAllowedUpdateField(key string) bool {
 		"source_repo": true,
 		"sender":      true, "wisp": true, "wisp_type": true, "pinned": true,
 		"hook_bead": true, "role_bead": true, "agent_state": true, "last_activity": true,
-		"role_type": true, "rig": true, "mol_type": true,
+		"role_type": true, "rig": true, "mol_type": true, "holder": true,
 		"event_category": true, "event_actor": true, "event_target": true, "event_payload": true,
 		"due_at": true, "defer_until": true, "await_id": true, "waiters": true,
 		"metadata": true,

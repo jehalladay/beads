@@ -19,9 +19,15 @@ import (
 // - .git/info/exclude is designed for user-specific, repo-local ignores
 // - Patterns are relative to repo root, so ".beads/" works correctly
 func setupStealthMode(verbose bool) error {
-	// Setup per-repository git exclude file
+	// Setup per-repository git exclude file (skip if not in a git repo)
 	if err := setupGitExclude(verbose); err != nil {
-		return fmt.Errorf("failed to setup git exclude: %w", err)
+		if strings.Contains(err.Error(), "not a git repository") {
+			if verbose {
+				fmt.Printf("Not in a git repository — skipping git exclude setup\n")
+			}
+		} else {
+			return fmt.Errorf("failed to setup git exclude: %w", err)
+		}
 	}
 
 	if verbose {

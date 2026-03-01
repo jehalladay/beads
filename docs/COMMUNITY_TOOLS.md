@@ -32,8 +32,6 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 
 - **[BeadBoard](https://github.com/zenchantlive/beadboard)** - Windows-native control center with multi-project registry, dependency graph explorer, agent sessions hub, and timeline. Reads `.beads/issues.jsonl` directly (JSONL-era; Dolt compatibility TBD). Built by [@zenchantlive](https://github.com/zenchantlive). (Next.js/TypeScript)
 
-- **[Monitor WebUI](https://github.com/steveyegge/beads/tree/main/examples/monitor-webui)** - Real-time Issue Tracking Dashboard. Standalone web-based monitoring interface with clean, responsive design. Built by Beads core team. (Go)
-
 - **[beads-viz-prototype](https://github.com/mattbeane/beads-viz-prototype)** - Web-based visualization generating interactive HTML from `bd export`. Built by [@mattbeane](https://github.com/mattbeane). (Python)
 
 - **[beads-dashboard](https://github.com/rhydlewis/beads-dashboard)** - A local, lean metrics dashboard for your beads data. Provides insights into lead time, throughput and other continuous improvement metrics. Includes a filterable table view of "all issues". Built by [@rhydlewis](https://github.com/rhydlewis). (Node.js/React)
