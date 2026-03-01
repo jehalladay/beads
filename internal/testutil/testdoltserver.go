@@ -181,7 +181,8 @@ func StartIsolatedDoltContainer(t *testing.T) string {
 		t.Skip("Docker not available, skipping test")
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), serverStartTimeout)
+	defer cancel()
 	ctr, err := dolt.Run(ctx, DoltDockerImage,
 		dolt.WithDatabase("beads_test"),
 	)
