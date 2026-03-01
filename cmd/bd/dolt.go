@@ -644,7 +644,8 @@ var doltRemoteAddCmd = &cobra.Command{
 			if err := doltutil.AddCLIRemote(dbPath, name, url); err != nil {
 				// Non-fatal: SQL remote was added successfully
 				fmt.Fprintf(os.Stderr, "Warning: SQL remote added but CLI remote failed: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Run: cd %s && dolt remote add %s %s\n", dbPath, name, url)
+				fmt.Fprintf(os.Stderr, "Run: cd %s && dolt remote add %s %s\n",
+				doltutil.ShellQuote(dbPath), doltutil.ShellQuote(name), doltutil.ShellQuote(url))
 			}
 		}
 
@@ -819,7 +820,8 @@ var doltRemoteRemoveCmd = &cobra.Command{
 		if cliURL != "" {
 			if err := doltutil.RemoveCLIRemote(dbPath, name); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: SQL remote removed but CLI remote failed: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Run: cd %s && dolt remote remove %s\n", dbPath, name)
+				fmt.Fprintf(os.Stderr, "Run: cd %s && dolt remote remove %s\n",
+				doltutil.ShellQuote(dbPath), doltutil.ShellQuote(name))
 			}
 		}
 
