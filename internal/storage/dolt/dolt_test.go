@@ -1562,12 +1562,18 @@ func TestValidateRef(t *testing.T) {
 		{"valid branch", "main", false},
 		{"valid with underscore", "feature_branch", false},
 		{"valid with dash", "feature-branch", false},
+		{"valid with dot", "release.v2", false},
+		{"valid with slash", "release/v2.0", false},
+		{"valid nested slash", "feature/auth/login", false},
+		{"valid dot and slash", "feature/auth.flow", false},
 		{"empty", "", true},
 		{"too long", string(make([]byte, 200)), true},
 		{"with SQL injection", "main'; DROP TABLE issues; --", true},
 		{"with quotes", "main'test", true},
 		{"with semicolon", "main;test", true},
 		{"with space", "main test", true},
+		{"with backtick", "main`test", true},
+		{"with backslash", `main\test`, true},
 	}
 
 	for _, tt := range tests {

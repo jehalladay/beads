@@ -11,8 +11,9 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// validRefPattern matches valid Dolt commit hashes (32 hex chars) or branch names
-var validRefPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-]+$`)
+// validRefPattern matches valid Dolt commit hashes (32 hex chars) or branch names.
+// Allows dots and slashes for branch names like "release/v2.0" or "feature/auth.flow".
+var validRefPattern = regexp.MustCompile(`^[a-zA-Z0-9_./-]+$`)
 
 // validTablePattern matches valid table names
 var validTablePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
