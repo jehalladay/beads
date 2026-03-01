@@ -1073,7 +1073,7 @@ func setDoltConfig(key, value string, updateConfig bool) {
 
 	default:
 		fmt.Fprintf(os.Stderr, "Error: unknown key '%s'\n", key)
-		fmt.Fprintf(os.Stderr, "Valid keys: mode, database, host, port, user, data-dir\n")
+		fmt.Fprintf(os.Stderr, "Valid keys: database, host, port, user, data-dir\n")
 		os.Exit(1)
 	}
 
