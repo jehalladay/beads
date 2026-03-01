@@ -380,7 +380,10 @@ func (s *DoltStore) updateWisp(ctx context.Context, id string, updates map[strin
 		}
 		setClauses = append(setClauses, fmt.Sprintf("`%s` = ?", columnName))
 		if key == "waiters" {
-			waitersJSON, _ := json.Marshal(value)
+			waitersJSON, err := json.Marshal(value)
+			if err != nil {
+				return fmt.Errorf("invalid waiters: %w", err)
+			}
 			args = append(args, string(waitersJSON))
 		} else if key == "metadata" {
 			metadataStr, err := storage.NormalizeMetadataValue(value)

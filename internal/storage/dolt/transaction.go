@@ -530,7 +530,10 @@ func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates ma
 
 		// Handle JSON serialization for array fields stored as TEXT
 		if key == "waiters" {
-			waitersJSON, _ := json.Marshal(value)
+			waitersJSON, err := json.Marshal(value)
+			if err != nil {
+				return fmt.Errorf("invalid waiters: %w", err)
+			}
 			args = append(args, string(waitersJSON))
 		} else if key == "metadata" {
 			// GH#1417: Normalize metadata to string, accepting string/[]byte/json.RawMessage
