@@ -1287,8 +1287,8 @@ func TestSpawnAttachDryRunOutput(t *testing.T) {
 }
 
 // TestWispFilteringFromExport verifies that wisp issues are filtered
-// from JSONL export (bd-687g). Wisp issues should only exist in SQLite,
-// not in issues.jsonl, to prevent "zombie" resurrection after mol squash.
+// from sync (bd-687g). Wisp issues are stored in the dolt_ignore table,
+// excluded from push/pull, to prevent "zombie" resurrection after mol squash.
 func TestWispFilteringFromExport(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"

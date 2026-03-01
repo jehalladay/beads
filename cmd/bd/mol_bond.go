@@ -45,7 +45,7 @@ Phase control:
 
   Override with:
   --pour  Force spawn as liquid (persistent, Ephemeral=false)
-  --ephemeral  Force spawn as vapor (ephemeral, Ephemeral=true, excluded from JSONL export)
+  --ephemeral  Force spawn as vapor (ephemeral, Ephemeral=true, excluded from Dolt sync via dolt_ignore)
 
 Dynamic bonding (Christmas Ornament pattern):
   Use --ref to specify a custom child reference with variable substitution.
@@ -106,8 +106,8 @@ func runMolBond(cmd *cobra.Command, args []string) {
 	}
 
 	// All issues go in the main store; ephemeral vs pour determines the Wisp flag
-	// --ephemeral: create with Ephemeral=true (ephemeral, excluded from JSONL export)
-	// --pour: create with Ephemeral=false (persistent, exported to JSONL)
+	// --ephemeral: create with Ephemeral=true (ephemeral, stored in dolt_ignore table, excluded from sync)
+	// --pour: create with Ephemeral=false (persistent, synced via Dolt)
 	// Default: follow target's phase (ephemeral if target is ephemeral, otherwise persistent)
 
 	// Validate bond type

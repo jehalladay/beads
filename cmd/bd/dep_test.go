@@ -1221,11 +1221,11 @@ func TestMergeBidirectionalTrees_PreservesDepth(t *testing.T) {
 // ============================================================================
 //
 // These tests verify that foreign key constraint violations produce
-// user-friendly error messages instead of raw SQLite errors.
+// user-friendly error messages instead of raw database errors.
 //
 // Expected behavior:
 //   - Error should say "issue X or Y not found" (user-friendly)
-//   - Error should NOT say "FOREIGN KEY constraint failed" (raw SQLite)
+//   - Error should NOT say "FOREIGN KEY constraint failed" (raw database error)
 //
 // TRACER BULLET FINDING (Phase 1):
 //   The storage layer (dependencies.go) already validates issue existence

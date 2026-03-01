@@ -79,8 +79,8 @@ var createCmd = &cobra.Command{
 		if isTestIssue(title) && !silent && !debug.IsQuiet() {
 			fmt.Fprintf(os.Stderr, "%s Creating test issue in production database\n", ui.RenderWarn("⚠"))
 			fmt.Fprintf(os.Stderr, "  Title: %q appears to be test data\n", title)
-			fmt.Fprintf(os.Stderr, "  Recommendation: Use isolated test database with BEADS_DB\n")
-			fmt.Fprintf(os.Stderr, "    BEADS_DB=/tmp/test.db ./bd create %q\n", title)
+			fmt.Fprintf(os.Stderr, "  Recommendation: Use isolated test database with --db\n")
+			fmt.Fprintf(os.Stderr, "    bd --db /tmp/test-beads create %q\n", title)
 		}
 
 		// Get field values

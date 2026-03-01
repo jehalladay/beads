@@ -284,13 +284,13 @@ var hooksCmd = &cobra.Command{
 	Use:     "hooks",
 	GroupID: "setup",
 	Short:   "Manage git hooks for bd auto-sync",
-	Long: `Install, uninstall, or list git hooks that provide automatic bd sync.
+	Long: `Install, uninstall, or list git hooks that provide automatic Dolt commit/sync.
 
 The hooks ensure that:
-- pre-commit: Syncs pending changes before commit
-- post-merge: Syncs database after pull/merge
-- pre-push: Validates database state before push
-- post-checkout: Syncs database after branch checkout
+- pre-commit: Commits pending Dolt changes before git commit
+- post-merge: Syncs Dolt state after pull/merge
+- pre-push: Validates Dolt state before push
+- post-checkout: Syncs Dolt state after branch checkout
 - prepare-commit-msg: Adds agent identity trailers for forensics`,
 }
 
