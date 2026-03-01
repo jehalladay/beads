@@ -93,6 +93,32 @@ func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issu
 		return fmt.Errorf("failed to update child_counters: %w", err)
 	}
 
+	// Update references in wisp tables
+	_, err = tx.ExecContext(ctx, `UPDATE wisp_dependencies SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update issue_id in wisp_dependencies: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `UPDATE wisp_dependencies SET depends_on_id = ? WHERE depends_on_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update depends_on_id in wisp_dependencies: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `UPDATE wisp_events SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update wisp_events: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `UPDATE wisp_labels SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update wisp_labels: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `UPDATE wisp_comments SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update wisp_comments: %w", err)
+	}
+
 	// Record rename event
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO events (issue_id, event_type, actor, old_value, new_value)
