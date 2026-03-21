@@ -139,6 +139,23 @@ func RunDoltHealthChecksWithLock(path string, lockCheck DoctorCheck) []DoctorChe
 
 	conn, err := openDoltConn(beadsDir)
 	if err != nil {
+		// GH#2722: In owned/embedded mode, no running server is normal —
+		// the server auto-starts on the next bd command. Skip gracefully
+		// instead of reporting false errors.
+		if doltserver.ResolveServerMode(beadsDir) != doltserver.ServerModeExternal {
+			skipMsg := "Skipped (no server running; will auto-start on next bd command)"
+			return []DoctorCheck{
+				{Name: "Dolt Connection", Status: StatusOK, Message: skipMsg, Category: CategoryCore},
+				{Name: "Dolt Schema", Status: StatusOK, Message: skipMsg, Category: CategoryCore},
+				{Name: "Dolt Issue Count", Status: StatusOK, Message: skipMsg, Category: CategoryData},
+				{Name: "Dolt Status", Status: StatusOK, Message: skipMsg, Category: CategoryData},
+				lockCheck,
+				{Name: "Phantom Databases", Status: StatusOK, Message: skipMsg, Category: CategoryData},
+				checkSharedServerHealth(beadsDir),
+			}
+		}
+
+		// External mode: a server is expected — report the real error.
 		connErr := err.Error()
 		return []DoctorCheck{
 			{Name: "Dolt Connection", Status: StatusError, Message: "Failed to connect to Dolt server", Detail: connErr, Fix: "Ensure dolt sql-server is running, or check server host/port configuration", Category: CategoryCore},
