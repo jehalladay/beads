@@ -26,6 +26,9 @@ var issueIIDPattern = regexp.MustCompile(`/(?:issues|work_items)/(\d+)`)
 // when a full URL is unavailable.
 var glShorthandPattern = regexp.MustCompile(`^gitlab:([1-9]\d*)$`)
 
+// milestoneIDPattern matches GitLab milestone URLs: .../-/milestones/5
+var milestoneIDPattern = regexp.MustCompile(`/-/milestones/(\d+)`)
+
 // Tracker implements tracker.IssueTracker for GitLab.
 type Tracker struct {
 	client *Client
@@ -169,6 +172,11 @@ func (t *Tracker) FetchIssue(ctx context.Context, identifier string) (*tracker.T
 }
 
 func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker.TrackerIssue, error) {
+	// Epic → milestone
+	if issue.IssueType == types.TypeEpic {
+		return t.createMilestone(ctx, issue)
+	}
+
 	fields := BeadsIssueToGitLabFields(issue, t.config)
 	labels, _ := fields["labels"].([]string)
 
@@ -177,17 +185,39 @@ func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker
 		return nil, err
 	}
 
+	// Assign milestone from parent epic if one exists
+	if t.store != nil {
+		if milestoneID := t.findParentEpicMilestone(ctx, issue.ID); milestoneID > 0 {
+			_, _ = t.client.UpdateIssue(ctx, created.IID, map[string]interface{}{
+				"milestone_id": milestoneID,
+			})
+		}
+	}
+
 	ti := gitlabToTrackerIssue(created)
 	return &ti, nil
 }
 
 func (t *Tracker) UpdateIssue(ctx context.Context, externalID string, issue *types.Issue) (*tracker.TrackerIssue, error) {
+	// Epic → milestone
+	if issue.IssueType == types.TypeEpic {
+		return t.updateMilestone(ctx, externalID, issue)
+	}
+
 	iid, err := strconv.Atoi(externalID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid GitLab IID %q: %w", externalID, err)
 	}
 
 	updates := BeadsIssueToGitLabFields(issue, t.config)
+
+	// Assign milestone from parent epic if one exists
+	if t.store != nil {
+		if milestoneID := t.findParentEpicMilestone(ctx, issue.ID); milestoneID > 0 {
+			updates["milestone_id"] = milestoneID
+		}
+	}
+
 	updated, err := t.client.UpdateIssue(ctx, iid, updates)
 	if err != nil {
 		return nil, err
@@ -195,6 +225,76 @@ func (t *Tracker) UpdateIssue(ctx context.Context, externalID string, issue *typ
 
 	ti := gitlabToTrackerIssue(updated)
 	return &ti, nil
+}
+
+// createMilestone creates a GitLab milestone for an epic bead.
+func (t *Tracker) createMilestone(ctx context.Context, issue *types.Issue) (*tracker.TrackerIssue, error) {
+	ms, err := t.client.CreateMilestone(ctx, issue.Title, issue.Description)
+	if err != nil {
+		return nil, fmt.Errorf("creating milestone for epic: %w", err)
+	}
+	return milestoneToTrackerIssue(ms), nil
+}
+
+// updateMilestone updates a GitLab milestone for an epic bead.
+func (t *Tracker) updateMilestone(ctx context.Context, externalID string, issue *types.Issue) (*tracker.TrackerIssue, error) {
+	mid, err := strconv.Atoi(externalID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid milestone ID %q: %w", externalID, err)
+	}
+
+	updates := map[string]interface{}{
+		"title":       issue.Title,
+		"description": issue.Description,
+	}
+	if issue.Status == types.StatusClosed {
+		updates["state_event"] = "close"
+	} else {
+		updates["state_event"] = "activate"
+	}
+
+	ms, err := t.client.UpdateMilestone(ctx, mid, updates)
+	if err != nil {
+		return nil, fmt.Errorf("updating milestone for epic: %w", err)
+	}
+	return milestoneToTrackerIssue(ms), nil
+}
+
+// findParentEpicMilestone looks up the parent epic of an issue and returns
+// its GitLab milestone ID, or 0 if no parent epic or no milestone found.
+func (t *Tracker) findParentEpicMilestone(ctx context.Context, issueID string) int {
+	deps, err := t.store.GetDependenciesWithMetadata(ctx, issueID)
+	if err != nil {
+		return 0
+	}
+	for _, dep := range deps {
+		if dep.DependencyType == types.DepParentChild && dep.Issue.IssueType == types.TypeEpic {
+			ref := ""
+			if dep.Issue.ExternalRef != nil {
+				ref = *dep.Issue.ExternalRef
+			}
+			if ref == "" {
+				continue
+			}
+			matches := milestoneIDPattern.FindStringSubmatch(ref)
+			if len(matches) >= 2 {
+				if mid, err := strconv.Atoi(matches[1]); err == nil {
+					return mid
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// milestoneToTrackerIssue converts a GitLab Milestone to a TrackerIssue.
+func milestoneToTrackerIssue(ms *Milestone) *tracker.TrackerIssue {
+	return &tracker.TrackerIssue{
+		ID:         strconv.Itoa(ms.ID),
+		Identifier: strconv.Itoa(ms.ID),
+		URL:        ms.WebURL,
+		Title:      ms.Title,
+	}
 }
 
 func (t *Tracker) FieldMapper() tracker.FieldMapper {
@@ -208,7 +308,10 @@ func (t *Tracker) IsExternalRef(ref string) bool {
 	if glShorthandPattern.MatchString(ref) {
 		return true
 	}
-	return strings.Contains(ref, "gitlab") && issueIIDPattern.MatchString(ref)
+	if !strings.Contains(ref, "gitlab") && !strings.Contains(ref, "milestones") {
+		return false
+	}
+	return issueIIDPattern.MatchString(ref) || milestoneIDPattern.MatchString(ref)
 }
 
 // ExtractIdentifier extracts the issue IID from a GitLab URL or shorthand ref.
@@ -216,11 +319,20 @@ func (t *Tracker) ExtractIdentifier(ref string) string {
 	if m := glShorthandPattern.FindStringSubmatch(ref); len(m) >= 2 {
 		return m[1]
 	}
-	matches := issueIIDPattern.FindStringSubmatch(ref)
-	if len(matches) < 2 {
-		return ""
+	// Try milestone pattern first (more specific path)
+	if matches := milestoneIDPattern.FindStringSubmatch(ref); len(matches) >= 2 {
+		return matches[1]
 	}
-	return matches[1]
+	// Fall back to issue pattern
+	if matches := issueIIDPattern.FindStringSubmatch(ref); len(matches) >= 2 {
+		return matches[1]
+	}
+	return ""
+}
+
+// IsMilestoneRef checks if an external_ref points to a milestone (not an issue).
+func (t *Tracker) IsMilestoneRef(ref string) bool {
+	return milestoneIDPattern.MatchString(ref)
 }
 
 func (t *Tracker) BuildExternalRef(issue *tracker.TrackerIssue) string {

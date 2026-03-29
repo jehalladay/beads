@@ -406,6 +406,67 @@ func (c *Client) FetchIssueByIID(ctx context.Context, iid int) (*Issue, error) {
 	return &issue, nil
 }
 
+// FetchMilestones retrieves milestones from the project with optional state filter.
+// state can be: "active", "closed", or "" (all).
+func (c *Client) FetchMilestones(ctx context.Context, state string) ([]Milestone, error) {
+	params := map[string]string{
+		"per_page": strconv.Itoa(MaxPageSize),
+	}
+	if state != "" {
+		params["state"] = state
+	}
+
+	urlStr := c.buildURL("/projects/"+c.projectPath()+"/milestones", params)
+	respBody, _, err := c.doRequest(ctx, http.MethodGet, urlStr, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch milestones: %w", err)
+	}
+
+	var milestones []Milestone
+	if err := json.Unmarshal(respBody, &milestones); err != nil {
+		return nil, fmt.Errorf("failed to parse milestones response: %w", err)
+	}
+
+	return milestones, nil
+}
+
+// CreateMilestone creates a new milestone in GitLab.
+func (c *Client) CreateMilestone(ctx context.Context, title, description string) (*Milestone, error) {
+	body := map[string]interface{}{
+		"title":       title,
+		"description": description,
+	}
+
+	urlStr := c.buildURL("/projects/"+c.projectPath()+"/milestones", nil)
+	respBody, _, err := c.doRequest(ctx, http.MethodPost, urlStr, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create milestone: %w", err)
+	}
+
+	var milestone Milestone
+	if err := json.Unmarshal(respBody, &milestone); err != nil {
+		return nil, fmt.Errorf("failed to parse milestone response: %w", err)
+	}
+
+	return &milestone, nil
+}
+
+// UpdateMilestone updates an existing milestone in GitLab.
+func (c *Client) UpdateMilestone(ctx context.Context, milestoneID int, updates map[string]interface{}) (*Milestone, error) {
+	urlStr := c.buildURL("/projects/"+c.projectPath()+"/milestones/"+strconv.Itoa(milestoneID), nil)
+	respBody, _, err := c.doRequest(ctx, http.MethodPut, urlStr, updates)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update milestone: %w", err)
+	}
+
+	var milestone Milestone
+	if err := json.Unmarshal(respBody, &milestone); err != nil {
+		return nil, fmt.Errorf("failed to parse milestone response: %w", err)
+	}
+
+	return &milestone, nil
+}
+
 // ListProjects retrieves projects accessible to the authenticated user.
 func (c *Client) ListProjects(ctx context.Context) ([]Project, error) {
 	params := map[string]string{
