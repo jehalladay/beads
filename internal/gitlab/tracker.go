@@ -31,10 +31,11 @@ var milestoneIDPattern = regexp.MustCompile(`/-/milestones/(\d+)`)
 
 // Tracker implements tracker.IssueTracker for GitLab.
 type Tracker struct {
-	client *Client
-	config *MappingConfig
-	store  storage.Storage
-	filter *IssueFilter // Optional filters for issue fetching
+	client      *Client
+	config      *MappingConfig
+	store       storage.Storage
+	filter      *IssueFilter // Optional filters for issue fetching
+	projectPath string       // GitLab project path (e.g., "socwave/socwave") for GraphQL
 }
 
 func (t *Tracker) Name() string         { return "gitlab" }
@@ -77,6 +78,9 @@ func (t *Tracker) Init(ctx context.Context, store storage.Storage) error {
 		t.client = t.client.WithGroupID(groupID)
 	}
 	t.config = DefaultMappingConfig()
+
+	// Load project path for GraphQL (e.g., "socwave/socwave")
+	t.projectPath, _ = t.getConfig(ctx, "gitlab.project_path", "GITLAB_PROJECT_PATH")
 
 	// Load optional filter config
 	t.filter = t.loadFilterConfig(ctx)
@@ -175,6 +179,13 @@ func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker
 	// Epic → milestone
 	if issue.IssueType == types.TypeEpic {
 		return t.createMilestone(ctx, issue)
+	}
+
+	// Task with a story/feature parent → GitLab Task work item (child of parent Issue)
+	if issue.IssueType == types.TypeTask && t.projectPath != "" && t.store != nil {
+		if parentGID := t.findParentStoryGID(ctx, issue.ID); parentGID != "" {
+			return t.createTaskWorkItem(ctx, issue, parentGID)
+		}
 	}
 
 	fields := BeadsIssueToGitLabFields(issue, t.config)
@@ -285,6 +296,74 @@ func (t *Tracker) findParentEpicMilestone(ctx context.Context, issueID string) i
 		}
 	}
 	return 0
+}
+
+// createTaskWorkItem creates a GitLab Task work item as a child of a parent Issue.
+func (t *Tracker) createTaskWorkItem(ctx context.Context, issue *types.Issue, parentGID string) (*tracker.TrackerIssue, error) {
+	wi, err := t.client.CreateTaskWorkItem(ctx, t.projectPath, issue.Title, issue.Description, parentGID)
+	if err != nil {
+		return nil, fmt.Errorf("creating task work item: %w", err)
+	}
+
+	// Build URL from project path and IID
+	webURL := fmt.Sprintf("%s/%s/-/work_items/%s", t.client.BaseURL, t.projectPath, wi.IID)
+
+	// Also set milestone if there's a grandparent epic
+	if milestoneID := t.findParentEpicMilestone(ctx, issue.ID); milestoneID > 0 {
+		iid, _ := strconv.Atoi(wi.IID)
+		if iid > 0 {
+			_, _ = t.client.UpdateIssue(ctx, iid, map[string]interface{}{
+				"milestone_id": milestoneID,
+			})
+		}
+	}
+
+	return &tracker.TrackerIssue{
+		ID:         wi.ID,
+		Identifier: wi.IID,
+		URL:        webURL,
+		Title:      wi.Title,
+	}, nil
+}
+
+// findParentStoryGID finds the GitLab global ID (gid://...) of a parent story/feature.
+// Returns empty string if no story/feature parent or if the parent isn't synced to GitLab.
+func (t *Tracker) findParentStoryGID(ctx context.Context, issueID string) string {
+	deps, err := t.store.GetDependenciesWithMetadata(ctx, issueID)
+	if err != nil {
+		return ""
+	}
+	for _, dep := range deps {
+		if dep.DependencyType != types.DepParentChild {
+			continue
+		}
+		// Only match story/feature parents (not epics — those become milestones)
+		if dep.Issue.IssueType == types.TypeEpic {
+			continue
+		}
+		ref := ""
+		if dep.Issue.ExternalRef != nil {
+			ref = *dep.Issue.ExternalRef
+		}
+		if ref == "" {
+			continue
+		}
+		// Extract IID from the issue URL and look up the GID
+		matches := issueIIDPattern.FindStringSubmatch(ref)
+		if len(matches) < 2 {
+			continue
+		}
+		iid, err := strconv.Atoi(matches[1])
+		if err != nil {
+			continue
+		}
+		gid, err := t.client.GetWorkItemGID(ctx, t.projectPath, iid)
+		if err != nil {
+			continue
+		}
+		return gid
+	}
+	return ""
 }
 
 // milestoneToTrackerIssue converts a GitLab Milestone to a TrackerIssue.
