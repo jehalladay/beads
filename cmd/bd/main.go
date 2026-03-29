@@ -691,6 +691,12 @@ var rootCmd = &cobra.Command{
 			hookRunner = hooks.NewRunner(filepath.Join(beadsDir, "hooks"))
 		}
 
+		// Wrap store with hook-firing decorator so ALL mutations
+		// automatically fire on_create/on_update/on_close hooks.
+		if hookRunner != nil && store != nil {
+			store = storage.NewHookFiringStore(store, hookRunner)
+		}
+
 		// Warn if multiple databases detected in directory hierarchy
 		warnMultipleDatabases(dbPath)
 
