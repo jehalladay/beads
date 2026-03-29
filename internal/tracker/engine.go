@@ -710,12 +710,9 @@ func (e *Engine) doPush(ctx context.Context, opts SyncOptions, skipIDs, forceIDs
 				continue
 			}
 
-			// Update local issue with external ref and source system
+			// Update local issue with external ref
 			ref := e.Tracker.BuildExternalRef(created)
-			updates := map[string]interface{}{
-				"external_ref":  ref,
-				"source_system": fmt.Sprintf("%s:%s", e.Tracker.ConfigPrefix(), created.Identifier),
-			}
+			updates := map[string]interface{}{"external_ref": ref}
 			if err := e.Store.UpdateIssue(ctx, issue.ID, updates, e.Actor); err != nil {
 				e.warn("Failed to update external_ref for %s: %v", issue.ID, err)
 				stats.Errors++
