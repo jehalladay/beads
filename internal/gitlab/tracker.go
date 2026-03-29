@@ -19,8 +19,8 @@ func init() {
 	})
 }
 
-// issueIIDPattern matches GitLab issue URLs: .../issues/42
-var issueIIDPattern = regexp.MustCompile(`/issues/(\d+)`)
+// issueIIDPattern matches GitLab issue URLs: .../issues/42 or .../work_items/42
+var issueIIDPattern = regexp.MustCompile(`/(?:issues|work_items)/(\d+)`)
 
 // glShorthandPattern matches the "gitlab:{digits}" shorthand produced by BuildExternalRef
 // when a full URL is unavailable.
