@@ -693,7 +693,10 @@ var rootCmd = &cobra.Command{
 
 		// Wrap store with hook-firing decorator so ALL mutations
 		// automatically fire on_create/on_update/on_close hooks.
-		if hookRunner != nil && store != nil {
+		// Set BD_NO_HOOKS=1 to disable all hook firing (useful for
+		// bulk imports, migrations, or environments where hooks
+		// should not run).
+		if hookRunner != nil && store != nil && !config.GetBool("no-hooks") {
 			store = storage.NewHookFiringStore(store, hookRunner)
 		}
 
