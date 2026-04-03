@@ -88,8 +88,8 @@ var antonymPairs = map[string][]string{
 
 var (
 	headingRe = regexp.MustCompile(`(?m)^#\s+(.+)`)
-	doRe   = regexp.MustCompile(`(?i)^\*\*Do:?\*\*:?\s*(.*)`)
-	dontRe = regexp.MustCompile(`(?i)^\*\*Don'?t:?\*\*:?\s*(.*)`)
+	doRe      = regexp.MustCompile(`(?i)^\*\*Do:?\*\*:?\s*(.*)`)
+	dontRe    = regexp.MustCompile(`(?i)^\*\*Don'?t:?\*\*:?\s*(.*)`)
 )
 
 // --- Core Functions ---
