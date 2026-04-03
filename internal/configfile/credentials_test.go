@@ -178,6 +178,9 @@ password=tunnelPass
 	}
 	t.Setenv("BEADS_CREDENTIALS_FILE", credFile)
 	t.Setenv("BEADS_DOLT_PASSWORD", "")
+	// Clear port env vars so GetDoltServerPort() returns the config value (3308).
+	t.Setenv("BEADS_DOLT_PORT", "")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 
 	cfg := DefaultConfig()
 	cfg.DoltServerHost = "127.0.0.1"

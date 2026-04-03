@@ -169,6 +169,11 @@ func TestGetDeletionsRetentionDays(t *testing.T) {
 
 // TestDoltServerMode tests the Dolt server mode configuration (bd-dolt.2.2)
 func TestDoltServerMode(t *testing.T) {
+	// Clear env vars that leak from the host environment and interfere with
+	// config-only assertions (e.g. BEADS_DOLT_PORT=3307 from orchestrator).
+	t.Setenv("BEADS_DOLT_PORT", "")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+
 	t.Run("IsDoltServerMode", func(t *testing.T) {
 		tests := []struct {
 			name string
@@ -430,6 +435,10 @@ func TestGetCapabilities(t *testing.T) {
 
 // TestDoltServerModeRoundtrip tests that server mode config survives save/load
 func TestDoltServerModeRoundtrip(t *testing.T) {
+	// Clear env vars that leak from the host environment.
+	t.Setenv("BEADS_DOLT_PORT", "")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0750); err != nil {
@@ -491,6 +500,7 @@ func TestEnvVarOverrides(t *testing.T) {
 
 	t.Run("invalid port env var falls through to config", func(t *testing.T) {
 		t.Setenv("BEADS_DOLT_SERVER_PORT", "not-a-number")
+		t.Setenv("BEADS_DOLT_PORT", "") // Clear fallback env var so config value wins
 		cfg := &Config{DoltServerPort: 3308}
 		if got := cfg.GetDoltServerPort(); got != 3308 {
 			t.Errorf("GetDoltServerPort() = %d, want 3308", got)
