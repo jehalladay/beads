@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/git"
 )
 
 // CheckResult represents the result of a single preflight check.
@@ -307,13 +308,21 @@ func runBeadsPollutionCheck() CheckResult {
 	// cannot diff paths outside the working tree.
 	issuesPath := filepath.Join(beadsDir, "issues.jsonl")
 	if filepath.IsAbs(issuesPath) {
-		cwd, _ := os.Getwd()
-		rel, err := filepath.Rel(cwd, issuesPath)
-		if err != nil || strings.HasPrefix(rel, "..") {
+		repoRoot := git.GetRepoRoot()
+		if repoRoot == "" {
 			return CheckResult{
 				Name:    "No beads pollution",
 				Passed:  true,
 				Command: command,
+			}
+		}
+		rel, err := filepath.Rel(repoRoot, issuesPath)
+		if err != nil || isPathOutsideRepo(rel) {
+			return CheckResult{
+				Name:    "No beads pollution",
+				Passed:  true,
+				Command: command,
+				Output:  "Skipped: .beads is outside working tree (worktree setup)",
 			}
 		}
 		issuesPath = rel
@@ -358,6 +367,19 @@ func runBeadsPollutionCheck() CheckResult {
 		Passed:  true,
 		Command: command,
 	}
+}
+
+// isPathOutsideRepo checks if a relative path (from filepath.Rel) points
+// outside the base directory by inspecting the first path segment.
+func isPathOutsideRepo(rel string) bool {
+	if rel == "" {
+		return false
+	}
+	first := rel
+	if i := strings.IndexAny(rel, "/\\"); i > 0 {
+		first = rel[:i]
+	}
+	return first == ".."
 }
 
 // runNixHashCheck checks if go.sum has uncommitted changes that may require vendorHash update.
