@@ -195,7 +195,7 @@ func FixGitignore(repoPath string) error {
 // If committed, they cause warnings in other clones where the path is invalid.
 // repoPath is the project root directory.
 func CheckRedirectNotTracked(repoPath string) DoctorCheck {
-	redirectPath := filepath.Join(repoPath, ".beads", "redirect")
+	redirectPath := filepath.Join(ResolveBeadsDirForRepo(repoPath), "redirect")
 
 	// First check if the file exists
 	if _, err := os.Stat(redirectPath); os.IsNotExist(err) {
@@ -243,7 +243,7 @@ func CheckRedirectNotTracked(repoPath string) DoctorCheck {
 // FixRedirectTracking untracks the .beads/redirect file from git.
 // repoPath is the project root directory.
 func FixRedirectTracking(repoPath string) error {
-	redirectPath := filepath.Join(repoPath, ".beads", "redirect")
+	redirectPath := filepath.Join(ResolveBeadsDirForRepo(repoPath), "redirect")
 
 	// Check if file is actually tracked first
 	cmd := exec.Command("git", "ls-files", redirectPath) // #nosec G204 - args are hardcoded paths
@@ -311,7 +311,7 @@ func resolveRedirectTarget(beadsDir string, target string) string {
 // This catches cases where the redirect points to a non-existent directory or one without a database.
 // repoPath is the project root directory.
 func CheckRedirectTargetValid(repoPath string) DoctorCheck {
-	redirectPath := filepath.Join(repoPath, ".beads", "redirect")
+	redirectPath := filepath.Join(ResolveBeadsDirForRepo(repoPath), "redirect")
 
 	// Check if redirect file exists
 	data, err := os.ReadFile(redirectPath) // #nosec G304 - path is hardcoded
@@ -422,7 +422,7 @@ func CheckRedirectTargetValid(repoPath string) DoctorCheck {
 // This is important for repos using sync-branch mode with redirects.
 // repoPath is the project root directory.
 func CheckRedirectTargetSyncWorktree(repoPath string) DoctorCheck {
-	redirectPath := filepath.Join(repoPath, ".beads", "redirect")
+	redirectPath := filepath.Join(ResolveBeadsDirForRepo(repoPath), "redirect")
 
 	// Check if redirect file exists
 	data, err := os.ReadFile(redirectPath) // #nosec G304 - path is hardcoded
@@ -503,7 +503,7 @@ func CheckRedirectTargetSyncWorktree(repoPath string) DoctorCheck {
 // sync operations happen in the redirect target. These vestigial worktrees waste space.
 // repoPath is the project root directory.
 func CheckNoVestigialSyncWorktrees(repoPath string) DoctorCheck {
-	redirectPath := filepath.Join(repoPath, ".beads", "redirect")
+	redirectPath := filepath.Join(ResolveBeadsDirForRepo(repoPath), "redirect")
 
 	// Check if redirect file exists
 	if _, err := os.Stat(redirectPath); os.IsNotExist(err) {
@@ -559,7 +559,7 @@ func CheckNoVestigialSyncWorktrees(repoPath string) DoctorCheck {
 // If committed, it causes spurious diffs in other clones.
 // repoPath is the project root directory.
 func CheckLastTouchedNotTracked(repoPath string) DoctorCheck {
-	lastTouchedPath := filepath.Join(repoPath, ".beads", "last-touched")
+	lastTouchedPath := filepath.Join(ResolveBeadsDirForRepo(repoPath), "last-touched")
 
 	// First check if the file exists
 	if _, err := os.Stat(lastTouchedPath); os.IsNotExist(err) {
@@ -607,7 +607,7 @@ func CheckLastTouchedNotTracked(repoPath string) DoctorCheck {
 // FixLastTouchedTracking untracks the .beads/last-touched file from git.
 // repoPath is the project root directory.
 func FixLastTouchedTracking(repoPath string) error {
-	lastTouchedPath := filepath.Join(repoPath, ".beads", "last-touched")
+	lastTouchedPath := filepath.Join(ResolveBeadsDirForRepo(repoPath), "last-touched")
 
 	// Check if file is actually tracked first
 	cmd := exec.Command("git", "ls-files", lastTouchedPath) // #nosec G204 - args are hardcoded paths
