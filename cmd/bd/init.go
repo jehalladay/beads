@@ -1376,13 +1376,11 @@ func countExistingIssues(_ string) (int, error) {
 	var beadsDir string
 	if envBeadsDir := os.Getenv("BEADS_DIR"); envBeadsDir != "" {
 		beadsDir = utils.CanonicalizePath(envBeadsDir)
-	} else if isGitRepo() && git.IsWorktree() {
-		beadsDir = beads.GetWorktreeFallbackBeadsDir()
+	} else {
+		beadsDir = beads.FindBeadsDir()
 		if beadsDir == "" {
 			return 0, nil
 		}
-	} else {
-		beadsDir = beads.FollowRedirect(".beads")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
