@@ -57,6 +57,18 @@ func runReset(cmd *cobra.Command, args []string) {
 
 	// Resolve .beads directory (worktree-aware)
 	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"message": "beads not initialized",
+				"reset":   false,
+			})
+		} else {
+			fmt.Println("Beads is not initialized in this repository.")
+			fmt.Println("Nothing to reset.")
+		}
+		return
+	}
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
