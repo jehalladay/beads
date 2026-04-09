@@ -10,11 +10,15 @@ set -euo pipefail
 #   2. Storage mode (embedded stays embedded, shared stays shared)
 #   3. Role config (beads.role git config is not cleared or changed)
 #   4. Doctor health (bd doctor quick passes after upgrade)
+#   5. Mutations (bd update after upgrade persists correctly)
 #
 # Usage:
 #   ./scripts/upgrade-smoke-test.sh              # test previous release → candidate
 #   ./scripts/upgrade-smoke-test.sh v0.62.0      # test specific version → candidate
 #   CANDIDATE_BIN=./bd ./scripts/upgrade-smoke-test.sh  # use prebuilt candidate
+#
+#   # Test multiple versions (space-separated):
+#   SMOKE_VERSIONS="v0.62.0 v0.61.0 v0.60.0" ./scripts/upgrade-smoke-test.sh
 #
 # The candidate binary is built from the current worktree if CANDIDATE_BIN
 # is not set. The previous release binary is downloaded and cached in
@@ -32,6 +36,25 @@ NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# ---------------------------------------------------------------------------
+# Multi-version mode: SMOKE_VERSIONS overrides single-version argument
+# ---------------------------------------------------------------------------
+
+if [ -n "${SMOKE_VERSIONS:-}" ]; then
+    # Run ourselves once per version, collecting exit codes
+    OVERALL_FAIL=0
+    for _ver in $SMOKE_VERSIONS; do
+        if ! CANDIDATE_BIN="${CANDIDATE_BIN:-}" "$0" "$_ver"; then
+            OVERALL_FAIL=1
+        fi
+    done
+    exit $OVERALL_FAIL
+fi
+
+# ---------------------------------------------------------------------------
+# Single-version mode
+# ---------------------------------------------------------------------------
 
 # Determine previous release version
 if [ -n "${1:-}" ]; then
@@ -81,7 +104,7 @@ get_previous_binary() {
     fi
 
     local asset="beads_${PREV_VER_BARE}_${OS}_${ARCH}.tar.gz"
-    local url="https://github.com/steveyegge/beads/releases/download/${PREV_VERSION}/${asset}"
+    local url="https://github.com/gastownhall/beads/releases/download/${PREV_VERSION}/${asset}"
 
     echo -e "${YELLOW}Downloading ${PREV_VERSION} binary...${NC}" >&2
     local tmpdir
@@ -310,6 +333,46 @@ fi
 
 rm -rf "$WS"
 finish_scenario
+
+# ---------------------------------------------------------------------------
+# Scenario 5: Mutation — bd update after version upgrade must persist
+# ---------------------------------------------------------------------------
+
+scenario "MUTATION: init with old → create → upgrade → bd update → verify persisted"
+
+WS=$(new_workspace)
+
+# Init and create an issue with the previous version
+"$PREV_BIN" --db "$WS/.beads/beads.db" init --quiet --non-interactive 2>/dev/null || true
+git -C "$WS" config beads.role maintainer
+
+MUT_ID=$("$PREV_BIN" --db "$WS/.beads/beads.db" create --silent --title "Mutation target issue" --type task 2>/dev/null) || true
+
+if [ -z "${MUT_ID:-}" ]; then
+    fail "Could not create issue with previous binary (init problem?)"
+    rm -rf "$WS"
+    finish_scenario
+else
+    pass "Issue created with previous binary (id: $MUT_ID)"
+
+    # Upgrade: run candidate init
+    "$CAND_BIN" --db "$WS/.beads/beads.db" init --quiet --non-interactive 2>/dev/null || true
+
+    # Mutate using the candidate binary
+    UPDATE_OUT=$("$CAND_BIN" --db "$WS/.beads/beads.db" update "$MUT_ID" --notes "smoke test mutation" 2>&1) || true
+    pass "bd update ran without fatal error"
+
+    # Read back and verify the mutation persisted
+    SHOW_OUT=$("$CAND_BIN" --db "$WS/.beads/beads.db" show "$MUT_ID" 2>/dev/null || echo "")
+    if echo "$SHOW_OUT" | grep -q "smoke test mutation"; then
+        pass "Updated notes persisted and visible after mutation"
+    else
+        fail "Updated notes NOT visible after bd update (mutation did not persist)"
+    fi
+
+    rm -rf "$WS"
+    finish_scenario
+fi
 
 # ---------------------------------------------------------------------------
 # Summary
