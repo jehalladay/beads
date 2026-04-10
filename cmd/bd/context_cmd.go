@@ -12,21 +12,22 @@ import (
 
 // ContextInfo contains the effective backend identity and repository context.
 type ContextInfo struct {
-	BeadsDir     string `json:"beads_dir"`
-	RepoRoot     string `json:"repo_root"`
-	CWDRepoRoot  string `json:"cwd_repo_root,omitempty"`
-	IsRedirected bool   `json:"is_redirected"`
-	IsWorktree   bool   `json:"is_worktree"`
-	Backend      string `json:"backend"`
-	DoltMode     string `json:"dolt_mode"`
-	ServerHost   string `json:"server_host,omitempty"`
-	ServerPort   int    `json:"server_port,omitempty"`
-	Database     string `json:"database"`
-	DataDir      string `json:"data_dir,omitempty"`
-	ProjectID    string `json:"project_id,omitempty"`
-	SyncRemote   string `json:"sync_remote,omitempty"`
-	Role         string `json:"role,omitempty"`
-	BdVersion    string `json:"bd_version"`
+	BeadsDir      string `json:"beads_dir"`
+	RepoRoot      string `json:"repo_root"`
+	CWDRepoRoot   string `json:"cwd_repo_root,omitempty"`
+	IsRedirected  bool   `json:"is_redirected"`
+	IsWorktree    bool   `json:"is_worktree"`
+	Backend       string `json:"backend"`
+	DoltMode      string `json:"dolt_mode"`
+	ServerHost    string `json:"server_host,omitempty"`
+	ServerPort    int    `json:"server_port,omitempty"`
+	Database      string `json:"database"`
+	DataDir       string `json:"data_dir,omitempty"`
+	ProjectID     string `json:"project_id,omitempty"`
+	SyncRemote    string `json:"sync_remote,omitempty"`
+	SyncGitRemote string `json:"sync_git_remote,omitempty"` // Deprecated: use sync_remote
+	Role          string `json:"role,omitempty"`
+	BdVersion     string `json:"bd_version"`
 }
 
 var contextCmd = &cobra.Command{
@@ -104,6 +105,7 @@ Examples:
 		// Read sync remote from the selected repo's config.yaml.
 		if remote := resolveSyncRemoteFromDir(rc.BeadsDir); remote != "" {
 			info.SyncRemote = remote
+			info.SyncGitRemote = remote // Deprecated: kept for backwards compat
 		}
 
 		if jsonOutput {
