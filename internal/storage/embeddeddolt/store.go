@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
+	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -31,6 +33,11 @@ var _ storage.Compactor = (*EmbeddedDoltStore)(nil)
 // SQL transaction, and closes the connection immediately. This minimizes the
 // time the embedded engine's write lock is held, reducing contention when
 // multiple processes access the same database concurrently.
+//
+// The store holds an exclusive flock on the data directory for its entire
+// lifetime. This prevents concurrent processes from initializing the embedded
+// Dolt engine on the same directory, which causes a nil-pointer panic in
+// DoltDB.SetCrashOnFatalError (GH#2571).
 type EmbeddedDoltStore struct {
 	dataDir       string
 	beadsDir      string
@@ -38,15 +45,44 @@ type EmbeddedDoltStore struct {
 	branch        string
 	credentialKey []byte
 	closed        atomic.Bool
+	lock          Unlocker // exclusive flock held for the store's lifetime
+	ownsLock      bool     // true when New acquired the lock (false when caller supplied it via WithLock)
 }
 
 // errClosed is returned when a method is called after Close.
 var errClosed = errors.New("embeddeddolt: store is closed")
 
+// Option configures optional behavior for New.
+type Option func(*options)
+
+type options struct {
+	lock Unlocker // pre-acquired lock; nil means New acquires its own
+}
+
+// WithLock passes a pre-acquired exclusive lock to New so it does not attempt
+// to acquire a second one. The caller retains ownership — Close will NOT
+// release a caller-supplied lock. This is used by bd init, which acquires the
+// lock earlier to protect pre-initialization steps.
+func WithLock(lock Unlocker) Option {
+	return func(o *options) { o.lock = lock }
+}
+
 // New creates an EmbeddedDoltStore using the embedded Dolt engine.
 // beadsDir is the .beads/ root; the data directory is derived as <beadsDir>/embeddeddolt/.
 // The database is created automatically if it doesn't exist (initSchema handles this).
-func New(ctx context.Context, beadsDir, database, branch string) (*EmbeddedDoltStore, error) {
+//
+// An exclusive flock is held on the data directory for the store's entire
+// lifetime. If another process already holds the lock, New queues with
+// exponential backoff until the lock becomes available or the context is
+// canceled, instead of panicking during concurrent engine initialization
+// (GH#2571). The lock is released when Close is called, unless a pre-acquired
+// lock was supplied via WithLock (in which case the caller is responsible for it).
+func New(ctx context.Context, beadsDir, database, branch string, opts ...Option) (*EmbeddedDoltStore, error) {
+	var o options
+	for _, fn := range opts {
+		fn(&o)
+	}
+
 	// Resolve to absolute path — the embedded dolt driver resolves file://
 	// DSN paths relative to its data directory, so relative paths cause
 	// doubled-path errors on subsequent opens.
@@ -59,14 +95,32 @@ func New(ctx context.Context, beadsDir, database, branch string) (*EmbeddedDoltS
 		return nil, fmt.Errorf("embeddeddolt: creating data directory: %w", err)
 	}
 
+	// Acquire an exclusive flock before initializing the embedded engine.
+	// Without this, concurrent processes race through NewConnector →
+	// DoltDB.SetCrashOnFatalError → newDatabase → CollectDBs and one of
+	// them panics with a nil-pointer dereference (GH#2571).
+	lock := o.lock
+	ownsLock := lock == nil
+	if ownsLock {
+		lock, err = WaitLock(ctx, dataDir)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	s := &EmbeddedDoltStore{
 		dataDir:  dataDir,
 		beadsDir: absBeadsDir,
 		database: database,
 		branch:   branch,
+		lock:     lock,
+		ownsLock: ownsLock,
 	}
 
 	if err := s.initSchema(ctx); err != nil {
+		if ownsLock {
+			lock.Unlock()
+		}
 		return nil, fmt.Errorf("embeddeddolt: init schema: %w", err)
 	}
 
@@ -182,7 +236,7 @@ func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {
 			}
 		}
 
-		applied, err := migrateUp(ctx, tx)
+		applied, err := schema.MigrateUp(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -191,7 +245,11 @@ func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {
 				return fmt.Errorf("dolt add after migrations: %w", err)
 			}
 			if _, err := tx.ExecContext(ctx, "CALL DOLT_COMMIT('-m', 'schema: apply migrations')"); err != nil {
-				return fmt.Errorf("dolt commit after migrations: %w", err)
+				// Backfill migrations may only create dolt_ignore'd tables (e.g. wisps),
+				// leaving nothing staged for commit. This is expected.
+				if !strings.Contains(err.Error(), "nothing to commit") {
+					return fmt.Errorf("dolt commit after migrations: %w", err)
+				}
 			}
 		}
 		return nil
@@ -346,10 +404,18 @@ func (s *EmbeddedDoltStore) GetAllEventsSince(ctx context.Context, since time.Ti
 
 // RunInTransaction is implemented in transaction.go.
 
-// Close marks the store as closed. Subsequent method calls will return errClosed.
-// It is safe to call multiple times.
+// Close marks the store as closed and releases the exclusive flock on the data
+// directory (if the store owns it). Subsequent method calls will return errClosed.
+// It is safe to call multiple times. When the lock was supplied by the caller
+// via WithLock, Close does NOT release it — the caller retains ownership.
 func (s *EmbeddedDoltStore) Close() error {
-	s.closed.Store(true)
+	// Use CompareAndSwap so we only unlock once even if Close is called
+	// multiple times (the Lock.Unlock method panics on double-unlock).
+	if s.closed.CompareAndSwap(false, true) {
+		if s.lock != nil && s.ownsLock {
+			s.lock.Unlock()
+		}
+	}
 	return nil
 }
 
@@ -638,16 +704,11 @@ func (s *EmbeddedDoltStore) DeleteConfig(ctx context.Context, key string) error 
 }
 
 func (s *EmbeddedDoltStore) GetCustomStatuses(ctx context.Context) ([]string, error) {
-	var result []string
-	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
-		var err error
-		result, err = issueops.GetCustomStatusesTx(ctx, tx)
-		return err
-	})
-	if err != nil || len(result) == 0 {
-		return config.GetCustomStatusesFromYAML(), nil
+	detailed, err := s.GetCustomStatusesDetailed(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return result, nil
+	return types.CustomStatusNames(detailed), nil
 }
 
 func (s *EmbeddedDoltStore) GetCustomStatusesDetailed(ctx context.Context) ([]types.CustomStatus, error) {

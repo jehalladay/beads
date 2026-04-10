@@ -3,21 +3,87 @@ package main
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
 	"golang.org/x/term"
 )
+
+type bootstrapServerProbeConfig struct {
+	host     string
+	port     int
+	user     string
+	pass     string
+	database string
+	tls      bool
+}
+
+type bootstrapServerDBCheck struct {
+	Exists    bool
+	Reachable bool
+	Err       error
+}
+
+var checkBootstrapServerDB = func(probeCfg bootstrapServerProbeConfig) bootstrapServerDBCheck {
+	host := probeCfg.host
+	port := probeCfg.port
+	dbName := probeCfg.database
+	dsn := doltutil.ServerDSN{
+		Host:     host,
+		Port:     port,
+		User:     probeCfg.user,
+		Password: probeCfg.pass,
+		TLS:      probeCfg.tls,
+	}.String()
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return bootstrapServerDBCheck{Reachable: false, Err: err}
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		return bootstrapServerDBCheck{Reachable: false, Err: err}
+	}
+
+	rows, err := db.QueryContext(ctx, "SHOW DATABASES")
+	if err != nil {
+		return bootstrapServerDBCheck{Reachable: true, Err: err}
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return bootstrapServerDBCheck{Reachable: true, Err: err}
+		}
+		if name == dbName {
+			return bootstrapServerDBCheck{Exists: true, Reachable: true}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return bootstrapServerDBCheck{Reachable: true, Err: err}
+	}
+
+	return bootstrapServerDBCheck{Exists: false, Reachable: true}
+}
 
 var bootstrapCmd = &cobra.Command{
 	Use:     "bootstrap",
@@ -38,13 +104,23 @@ This is the recommended command for:
   • Recovering after moving to a new machine
   • Repairing a broken database configuration
 
+Non-interactive mode (--non-interactive, --yes/-y, or BD_NON_INTERACTIVE=1):
+  Skips the confirmation prompt before executing the bootstrap plan.
+  Also auto-detected when stdin is not a terminal or CI=true is set.
+
 Examples:
   bd bootstrap              # Auto-detect and set up
   bd bootstrap --dry-run    # Show what would be done
   bd bootstrap --json       # Output plan as JSON
+  bd bootstrap --yes        # Skip confirmation prompt
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		yesFlag, _ := cmd.Flags().GetBool("yes")
+		nonInteractiveFlag, _ := cmd.Flags().GetBool("non-interactive")
+
+		// Resolve non-interactive mode: flag > env var > CI env > terminal detection.
+		nonInteractive := isNonInteractiveBootstrap(yesFlag || nonInteractiveFlag)
 
 		// Find beads directory
 		beadsDir := beads.FindBeadsDir()
@@ -87,9 +163,17 @@ Examples:
 			os.Exit(1)
 		}
 
-		// Load config
+		// Load config from .beads/metadata.json. When the beadsDir was
+		// synthesized (fresh clone or rig with no local .beads), the file
+		// won't exist. In that case, walk up parent directories to find a
+		// workspace-level metadata.json that contains the correct database
+		// name (e.g. dolt_database). Without this, server-mode rigs get the
+		// default name "beads" instead of their configured name. (GH#3029)
 		cfg, err := configfile.Load(beadsDir)
 		if err != nil || cfg == nil {
+			cfg = findParentConfig(beadsDir)
+		}
+		if cfg == nil {
 			cfg = configfile.DefaultConfig()
 		}
 
@@ -109,7 +193,7 @@ Examples:
 		}
 
 		// Execute the plan
-		if err := executeBootstrapPlan(plan, cfg); err != nil {
+		if err := executeBootstrapPlan(plan, cfg, nonInteractive); err != nil {
 			FatalError("Bootstrap failed: %v", err)
 		}
 	},
@@ -133,20 +217,49 @@ func detectBootstrapAction(beadsDir string, cfg *configfile.Config) BootstrapPla
 		Database: cfg.GetDoltDatabase(),
 	}
 
-	// Check for existing database (path differs between server and embedded mode)
+	// Check for existing database (path differs between server and embedded mode).
+	// Use cfg.IsDoltServerMode() (which checks metadata.json + env vars) plus
+	// doltserver.IsSharedServerMode() (which also checks config.yaml) so that
+	// shared-server mode configured via dolt.shared-server: true in config.yaml
+	// correctly resolves the database path. (GH#30)
+	isServer := cfg.IsDoltServerMode() || doltserver.IsSharedServerMode()
 	var dbPath string
-	if isEmbeddedMode() {
-		dbPath = filepath.Join(beadsDir, "embeddeddolt")
-	} else {
+	if isServer {
 		dbPath = doltserver.ResolveDoltDir(beadsDir)
+	} else {
+		dbPath = filepath.Join(beadsDir, "embeddeddolt")
 	}
 	if info, err := os.Stat(dbPath); err == nil && info.IsDir() {
 		entries, _ := os.ReadDir(dbPath)
 		if len(entries) > 0 {
-			plan.HasExisting = true
-			plan.Action = "none"
-			plan.Reason = "Database already exists at " + dbPath
-			return plan
+			if isServer {
+				resolved := doltserver.DefaultConfig(beadsDir)
+				probeCfg := bootstrapServerProbeConfig{
+					host:     cfg.GetDoltServerHost(),
+					port:     resolved.Port,
+					user:     cfg.GetDoltServerUser(),
+					pass:     cfg.GetDoltServerPassword(),
+					database: cfg.GetDoltDatabase(),
+					tls:      cfg.GetDoltServerTLS(),
+				}
+				result := checkBootstrapServerDB(probeCfg)
+				if result.Err != nil {
+					plan.Action = "none"
+					plan.Reason = fmt.Sprintf("Could not verify existing server database %s: %v", cfg.GetDoltDatabase(), result.Err)
+					return plan
+				}
+				if result.Exists {
+					plan.HasExisting = true
+					plan.Action = "none"
+					plan.Reason = fmt.Sprintf("Database %s already exists on server at %s:%d", probeCfg.database, probeCfg.host, probeCfg.port)
+					return plan
+				}
+			} else {
+				plan.HasExisting = true
+				plan.Action = "none"
+				plan.Reason = "Database already exists at " + dbPath
+				return plan
+			}
 		}
 	}
 
@@ -222,9 +335,12 @@ func printBootstrapPlan(plan BootstrapPlan) {
 	}
 }
 
-// confirmPrompt asks the user to confirm an action. Returns true if the user
-// confirms or if stdin is not a terminal (non-interactive/CI contexts).
-func confirmPrompt(message string) bool {
+// confirmPrompt asks the user to confirm an action. Returns true if
+// nonInteractive is set, stdin is not a terminal, or the user confirms.
+func confirmPrompt(message string, nonInteractive bool) bool {
+	if nonInteractive {
+		return true
+	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return true
 	}
@@ -235,8 +351,8 @@ func confirmPrompt(message string) bool {
 	return line == "" || line == "y" || line == "yes"
 }
 
-func executeBootstrapPlan(plan BootstrapPlan, cfg *configfile.Config) error {
-	if !confirmPrompt("Proceed?") {
+func executeBootstrapPlan(plan BootstrapPlan, cfg *configfile.Config, nonInteractive bool) error {
+	if !confirmPrompt("Proceed?", nonInteractive) {
 		fmt.Fprintf(os.Stderr, "Aborted.\n")
 		return nil
 	}
@@ -412,7 +528,54 @@ func inferPrefix(cfg *configfile.Config) string {
 	return filepath.Base(cwd)
 }
 
+// isNonInteractiveBootstrap returns true if bootstrap should skip confirmation prompts.
+// Precedence: explicit flag > BD_NON_INTERACTIVE env > CI env > terminal detection.
+func isNonInteractiveBootstrap(flagValue bool) bool {
+	if flagValue {
+		return true
+	}
+	if v := os.Getenv("BD_NON_INTERACTIVE"); v == "1" || v == "true" {
+		return true
+	}
+	if v := os.Getenv("CI"); v == "true" || v == "1" {
+		return true
+	}
+	return !term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// findParentConfig walks up from beadsDir's parent looking for a
+// .beads/metadata.json in ancestor directories. This handles the case where a
+// rig subdirectory (its own git repo) doesn't have a local .beads but its
+// parent workspace does. Returns nil if no parent config is found.
+func findParentConfig(beadsDir string) *configfile.Config {
+	// Start from the parent of beadsDir's enclosing directory.
+	// beadsDir is typically "<project>/.beads", so we start from <project>'s parent.
+	start := filepath.Dir(filepath.Dir(beadsDir))
+	homeDir, _ := os.UserHomeDir()
+
+	for dir := start; dir != "/" && dir != "."; {
+		candidate := filepath.Join(dir, ".beads")
+		if cfg, err := configfile.Load(candidate); err == nil && cfg != nil {
+			return cfg
+		}
+
+		// Don't search above $HOME
+		if homeDir != "" && dir == homeDir {
+			break
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return nil
+}
+
 func init() {
 	bootstrapCmd.Flags().Bool("dry-run", false, "Show what would be done without doing it")
+	bootstrapCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts (for CI/automation)")
+	bootstrapCmd.Flags().Bool("non-interactive", false, "Alias for --yes")
 	rootCmd.AddCommand(bootstrapCmd)
 }

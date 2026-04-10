@@ -520,14 +520,17 @@ type IssueType string
 // Core work type constants - these are the built-in types that beads validates.
 // All other types require configuration via types.custom in config.yaml.
 const (
-	TypeBug      IssueType = "bug"
-	TypeFeature  IssueType = "feature"
-	TypeTask     IssueType = "task"
-	TypeEpic     IssueType = "epic"
-	TypeChore    IssueType = "chore"
-	TypeDecision IssueType = "decision"
-	TypeMessage  IssueType = "message"
-	TypeMolecule IssueType = "molecule" // Molecule type for swarm coordination (internal use)
+	TypeBug       IssueType = "bug"
+	TypeFeature   IssueType = "feature"
+	TypeTask      IssueType = "task"
+	TypeEpic      IssueType = "epic"
+	TypeChore     IssueType = "chore"
+	TypeDecision  IssueType = "decision"
+	TypeMessage   IssueType = "message"
+	TypeMolecule  IssueType = "molecule"  // Molecule type for swarm coordination (internal use)
+	TypeSpike     IssueType = "spike"     // Timeboxed investigation to reduce uncertainty
+	TypeStory     IssueType = "story"     // User story describing a feature from the user's perspective
+	TypeMilestone IssueType = "milestone" // Marks completion of a set of related issues (no work itself)
 )
 
 // TypeEvent is a system-internal type used by set-state for audit trail beads.
@@ -543,11 +546,12 @@ const TypeEvent IssueType = "event"
 // (message was re-promoted to built-in for inter-agent communication — GH#1347.)
 
 // IsValid checks if the issue type is a core work type.
-// Core work types (bug, feature, task, epic, chore, decision, message) and molecule type are built-in.
-// Other types (gate, convoy, etc.) require types.custom configuration.
+// Core work types (bug, feature, task, epic, chore, decision, message, spike, story, milestone)
+// and molecule type are built-in. Other types require types.custom configuration.
 func (t IssueType) IsValid() bool {
 	switch t {
-	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeDecision, TypeMessage, TypeMolecule:
+	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeDecision, TypeMessage, TypeMolecule,
+		TypeSpike, TypeStory, TypeMilestone:
 		return true
 	}
 	return false
@@ -585,6 +589,12 @@ func (t IssueType) Normalize() IssueType {
 		return TypeFeature
 	case "dec", "adr":
 		return TypeDecision
+	case "investigation", "timebox":
+		return TypeSpike
+	case "user-story", "user_story":
+		return TypeStory
+	case "ms":
+		return TypeMilestone
 	default:
 		return t
 	}
@@ -606,7 +616,7 @@ func (t IssueType) RequiredSections() []RequiredSection {
 			{Heading: "## Steps to Reproduce", Hint: "Describe how to reproduce the bug"},
 			{Heading: "## Acceptance Criteria", Hint: "Define criteria to verify the fix"},
 		}
-	case TypeTask, TypeFeature:
+	case TypeTask, TypeFeature, TypeStory:
 		return []RequiredSection{
 			{Heading: "## Acceptance Criteria", Hint: "Define criteria to verify completion"},
 		}
@@ -620,8 +630,13 @@ func (t IssueType) RequiredSections() []RequiredSection {
 			{Heading: "## Rationale", Hint: "Explain why this option was chosen"},
 			{Heading: "## Alternatives Considered", Hint: "List alternatives and why they were rejected"},
 		}
+	case TypeSpike:
+		return []RequiredSection{
+			{Heading: "## Goal", Hint: "What question does this spike answer?"},
+			{Heading: "## Findings", Hint: "What was learned? (fill in when complete)"},
+		}
 	default:
-		// Chore and custom types have no required sections
+		// Chore, milestone, and custom types have no required sections
 		return nil
 	}
 }
@@ -906,6 +921,33 @@ type Comment struct {
 	Author    string    `json:"author"`
 	Text      string    `json:"text"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// UnmarshalJSON handles backward compatibility for Comment.
+// Pre-v1.0 exported Comment.ID as int64; current schema uses string.
+func (c *Comment) UnmarshalJSON(data []byte) error {
+	type commentAlias Comment // avoid recursion
+	var raw struct {
+		commentAlias
+		RawID json.RawMessage `json:"id"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*c = Comment(raw.commentAlias)
+	if len(raw.RawID) > 0 {
+		// try string first, fall back to number
+		var s string
+		if err := json.Unmarshal(raw.RawID, &s); err == nil {
+			c.ID = s
+		} else {
+			var n json.Number
+			if err := json.Unmarshal(raw.RawID, &n); err == nil {
+				c.ID = n.String()
+			}
+		}
+	}
+	return nil
 }
 
 // Event represents an audit trail entry
@@ -1327,6 +1369,24 @@ type BondRef struct {
 	SourceID  string `json:"source_id"`            // Source proto or molecule ID
 	BondType  string `json:"bond_type"`            // sequential, parallel, conditional
 	BondPoint string `json:"bond_point,omitempty"` // Attachment site (issue ID or empty for root)
+}
+
+// UnmarshalJSON handles backward compatibility for BondRef.
+// Pre-v0.63 used "proto_id" instead of "source_id".
+func (b *BondRef) UnmarshalJSON(data []byte) error {
+	type bondAlias BondRef // avoid recursion
+	var raw struct {
+		bondAlias
+		ProtoID string `json:"proto_id"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*b = BondRef(raw.bondAlias)
+	if b.SourceID == "" && raw.ProtoID != "" {
+		b.SourceID = raw.ProtoID
+	}
+	return nil
 }
 
 // Bond type constants for compound molecules

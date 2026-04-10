@@ -338,6 +338,10 @@ func init() {
 	doctorCmd.Flags().BoolVar(&doctorAgent, "agent", false, "Agent-facing diagnostic mode: rich context for AI agents (ZFC-compliant)")
 }
 
+func shouldSkipDoctorNetworkChecks() bool {
+	return jsonOutput || !ui.IsTerminal()
+}
+
 func runDiagnostics(path string) doctorResult {
 	result := doctorResult{
 		Path:       path,
@@ -479,13 +483,22 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 4: CLI version (GitHub)
-	versionCheck := convertWithCategory(doctor.CheckCLIVersion(Version), doctor.CategoryCore)
+	// Network-based update checks are skipped in machine-readable and other
+	// non-interactive contexts so doctor remains deterministic under wrappers.
+	versionCheckFn := doctor.CheckCLIVersion
+	pluginCheckFn := doctor.CheckClaudePlugin
+	if shouldSkipDoctorNetworkChecks() {
+		versionCheckFn = doctor.CheckCLIVersionLocalOnly
+		pluginCheckFn = doctor.CheckClaudePluginLocalOnly
+	}
+
+	// Check 4: CLI version
+	versionCheck := convertWithCategory(versionCheckFn(Version), doctor.CategoryCore)
 	result.Checks = append(result.Checks, versionCheck)
 	// Don't fail overall check for outdated CLI, just warn
 
 	// Check 4.5: Claude plugin version (if running in Claude Code)
-	pluginCheck := convertWithCategory(doctor.CheckClaudePlugin(), doctor.CategoryIntegration)
+	pluginCheck := convertWithCategory(pluginCheckFn(), doctor.CategoryIntegration)
 	result.Checks = append(result.Checks, pluginCheck)
 	// Don't fail overall check for outdated plugin, just warn
 
@@ -522,6 +535,13 @@ func runDiagnostics(path string) doctorResult {
 	staleLockCheck := convertDoctorCheck(doctor.CheckStaleLockFiles(path))
 	result.Checks = append(result.Checks, staleLockCheck)
 	if staleLockCheck.Status == statusWarning || staleLockCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	// Check 7e2: Stale circuit breaker files
+	circuitCheck := convertDoctorCheck(doctor.CheckCircuitBreaker())
+	result.Checks = append(result.Checks, circuitCheck)
+	if circuitCheck.Status == statusWarning || circuitCheck.Status == statusError {
 		result.OverallOK = false
 	}
 

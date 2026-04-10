@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
@@ -18,10 +19,17 @@ import (
 // (embedded) when the mode hasn't been set yet.
 func isEmbeddedMode() bool {
 	if shouldUseGlobals() {
-		return !serverMode
+		if serverMode {
+			return false
+		}
+	} else if cmdCtx != nil && cmdCtx.ServerMode {
+		return false
 	}
-	if cmdCtx != nil {
-		return !cmdCtx.ServerMode
+	// Shared server mode is a form of server mode. This check covers
+	// commands that skip DB init (dolt status, dolt start, etc.) where
+	// serverMode hasn't been set from metadata.json yet (GH#2946).
+	if doltserver.IsSharedServerMode() {
+		return false
 	}
 	return true // default: embedded
 }
@@ -30,11 +38,11 @@ func isEmbeddedMode() bool {
 // When cfg.ServerMode is true, connects to an external dolt sql-server;
 // otherwise uses the embedded Dolt engine (default).
 // Used by bd init and PersistentPreRun.
-func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.DoltStorage, error) {
+func newDoltStore(ctx context.Context, cfg *dolt.Config, opts ...embeddeddolt.Option) (storage.DoltStorage, error) {
 	if cfg.ServerMode {
 		return dolt.New(ctx, cfg)
 	}
-	return embeddeddolt.New(ctx, cfg.BeadsDir, cfg.Database, "main")
+	return embeddeddolt.New(ctx, cfg.BeadsDir, cfg.Database, "main", opts...)
 }
 
 // acquireEmbeddedLock acquires an exclusive flock on the embeddeddolt data
@@ -57,7 +65,7 @@ func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltS
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfig(ctx, beadsDir)
 	}
-	database := ""
+	database := configfile.DefaultDoltDatabase
 	if cfg != nil {
 		database = cfg.GetDoltDatabase()
 	}

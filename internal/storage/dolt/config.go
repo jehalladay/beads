@@ -15,7 +15,21 @@ import (
 // SetConfig sets a configuration value
 func (s *DoltStore) SetConfig(ctx context.Context, key, value string) error {
 	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
-		return issueops.SetConfigInTx(ctx, tx, key, value)
+		if err := issueops.SetConfigInTx(ctx, tx, key, value); err != nil {
+			return err
+		}
+		// Sync normalized tables when config keys change
+		switch key {
+		case "status.custom":
+			if err := issueops.SyncCustomStatusesTable(ctx, tx, value); err != nil {
+				return fmt.Errorf("syncing custom_statuses table: %w", err)
+			}
+		case "types.custom":
+			if err := issueops.SyncCustomTypesTable(ctx, tx, value); err != nil {
+				return fmt.Errorf("syncing custom_types table: %w", err)
+			}
+		}
+		return nil
 	}); err != nil {
 		return err
 	}

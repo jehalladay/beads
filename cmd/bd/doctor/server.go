@@ -14,6 +14,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 )
 
 // ServerHealthResult holds the results of all server health checks
@@ -295,14 +296,12 @@ func checkDoltVersion(cfg *configfile.Config, beadsDir string) (DoctorCheck, *sq
 	password := os.Getenv("BEADS_DOLT_PASSWORD")
 
 	// Build DSN without database (just to test server connectivity)
-	var connStr string
-	if password != "" {
-		connStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true&timeout=5s",
-			user, password, host, port)
-	} else {
-		connStr = fmt.Sprintf("%s@tcp(%s:%d)/?parseTime=true&timeout=5s",
-			user, host, port)
-	}
+	connStr := doltutil.ServerDSN{
+		Host:     host,
+		Port:     port,
+		User:     user,
+		Password: password,
+	}.String()
 
 	db, err := sql.Open("mysql", connStr)
 	if err != nil {
@@ -433,7 +432,7 @@ func checkDatabaseExists(db *sql.DB, database string) DoctorCheck {
 			Name:     "Database Exists",
 			Status:   StatusError,
 			Message:  fmt.Sprintf("Database '%s' not found", database),
-			Fix:      fmt.Sprintf("Run 'bd init' to create the '%s' database", database),
+			Fix:      fmt.Sprintf("Run 'bd bootstrap' to recover the existing '%s' database safely. Use 'bd init' only for brand-new projects.", database),
 			Category: CategoryFederation,
 		}
 	}

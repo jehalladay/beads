@@ -20,9 +20,9 @@ func isEmbeddedMode() bool {
 
 // newDoltStore creates a server-mode storage backend. Embedded Dolt is not
 // available without CGO.
-func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.DoltStorage, error) {
+func newDoltStore(ctx context.Context, cfg *dolt.Config, _ ...embeddeddolt.Option) (storage.DoltStorage, error) {
 	if !cfg.ServerMode {
-		return nil, fmt.Errorf("embedded Dolt requires CGO; use server mode (bd init --mode server)")
+		return nil, fmt.Errorf("embedded Dolt requires CGO; use server mode (bd init --server)")
 	}
 	return dolt.New(ctx, cfg)
 }
@@ -38,7 +38,7 @@ func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltS
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfig(ctx, beadsDir)
 	}
-	return nil, fmt.Errorf("embedded Dolt requires CGO; use server mode (bd init --mode server)")
+	return nil, fmt.Errorf("embedded Dolt requires CGO; use server mode (bd init --server)")
 }
 
 // newReadOnlyStoreFromConfig creates a read-only server-mode storage backend.
@@ -47,5 +47,5 @@ func newReadOnlyStoreFromConfig(ctx context.Context, beadsDir string) (storage.D
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{ReadOnly: true})
 	}
-	return nil, fmt.Errorf("embedded Dolt requires CGO; use server mode (bd init --mode server)")
+	return nil, fmt.Errorf("embedded Dolt requires CGO; use server mode (bd init --server)")
 }

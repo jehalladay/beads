@@ -828,16 +828,36 @@ func TestIsAutoStartDisabled(t *testing.T) {
 		envVal string
 		want   bool
 	}{
+		// strconv.ParseBool falsy values → disabled
 		{"0", true},
+		{"f", true},
+		{"F", true},
 		{"false", true},
 		{"FALSE", true},
 		{"False", true},
+		// backward-compat "off" (case-insensitive) → disabled
 		{"off", true},
 		{"OFF", true},
 		{"Off", true},
+		// whitespace-trimmed falsy values → disabled
+		{" 0 ", true},
+		{" false ", true},
+		{"\toff\n", true},
+		// whitespace-trimmed truthy value → enabled (not disabled)
+		{" true ", false},
+		// strconv.ParseBool truthy values → enabled (not disabled)
 		{"1", false},
+		{"t", false},
+		{"T", false},
 		{"true", false},
+		{"TRUE", false},
+		{"True", false},
+		// empty / unset → enabled (not disabled)
 		{"", false},
+		// unrecognized values → enabled (fail-open, not disabled)
+		{"no", false},
+		{"disabled", false},
+		{"nope", false},
 	}
 	for _, tt := range tests {
 		t.Run("env="+tt.envVal, func(t *testing.T) {
@@ -873,6 +893,10 @@ func TestIsAutoStartDisabled_Sources(t *testing.T) {
 		{"env_enabled_config_disabled", "1", "false", true}, // config still disables; env can't force-enable
 		{"both_empty", "", "", false},                       // neither set
 		{"env_off_config_true", "off", "true", true},        // env wins
+		// config with ParseBool-expanded values
+		{"env_empty_config_f", "", "f", true},  // config "f"
+		{"env_empty_config_F", "", "F", true},  // config "F"
+		{"env_t_config_empty", "t", "", false}, // env truthy, config unset
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1236,6 +1260,31 @@ func TestSharedDoltDir(t *testing.T) {
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
 		t.Errorf("expected directory to exist: %s", dir)
+	}
+}
+
+func TestSharedServerDir_EnvOverride(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("BEADS_SHARED_SERVER_DIR", tmp)
+	dir, err := SharedServerDir()
+	if err != nil {
+		t.Fatalf("SharedServerDir: %v", err)
+	}
+	if dir != tmp {
+		t.Errorf("SharedServerDir = %q, want %q (from BEADS_SHARED_SERVER_DIR)", dir, tmp)
+	}
+}
+
+func TestSharedDoltDir_EnvOverride(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("BEADS_SHARED_SERVER_DIR", tmp)
+	dir, err := SharedDoltDir()
+	if err != nil {
+		t.Fatalf("SharedDoltDir: %v", err)
+	}
+	expected := filepath.Join(tmp, "dolt")
+	if dir != expected {
+		t.Errorf("SharedDoltDir = %q, want %q", dir, expected)
 	}
 }
 

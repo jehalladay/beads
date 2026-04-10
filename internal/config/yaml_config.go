@@ -65,6 +65,12 @@ var YamlOnlyKeys = map[string]bool{
 	// Dolt server settings
 	"dolt.idle-timeout":  true, // Idle auto-stop timeout (default "30m", "0" disables)
 	"dolt.shared-server": true, // Shared Dolt server at ~/.beads/shared-server/ (GH#2377)
+
+	// Secrets: tokens and API keys must NOT be stored in the Dolt database
+	// because that data is pushed to remotes, triggering secret-scanning
+	// blocks on GitHub. Store them in local config.yaml instead.
+	"github.token":   true,
+	"linear.api_key": true,
 }
 
 // IsYamlOnlyKey returns true if the given key should be stored in config.yaml
@@ -172,8 +178,24 @@ func UnsetYamlConfig(key string) error {
 	return nil
 }
 
-// findProjectConfigYaml finds the project's .beads/config.yaml file.
+// findProjectConfigYaml finds the active config.yaml path for YAML-only config writes.
+//
+// Resolution order:
+//  1. BEADS_DIR/config.yaml (when BEADS_DIR is set)
+//  2. Walk up from CWD to find .beads/config.yaml
+//
+// This keeps YAML-only config behavior aligned with runtime resolution when
+// BEADS_DIR points to an external runtime directory.
 func findProjectConfigYaml() (string, error) {
+	// Respect BEADS_DIR first when set.
+	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
+		configPath := filepath.Join(beadsDir, "config.yaml")
+		if _, err := os.Stat(configPath); err == nil {
+			return configPath, nil
+		}
+		return "", fmt.Errorf("no config.yaml found in BEADS_DIR (%s) (run 'bd init' first)", beadsDir)
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("failed to get working directory: %w", err)

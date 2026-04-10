@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
@@ -146,6 +145,46 @@ func isRemoteNotFoundErr(err error) bool {
 	return strings.Contains(msg, "remote") && strings.Contains(msg, "not found")
 }
 
+// isDivergedHistoryErr checks whether the error indicates that local and remote
+// Dolt histories have diverged. This happens when independent pushes create
+// separate commit histories with no common merge base (e.g., two agents
+// bootstrapping from scratch and pushing to the same remote, or a local
+// database being re-initialized while the remote retains the old history).
+func isDivergedHistoryErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no common ancestor") ||
+		strings.Contains(msg, "can't find common ancestor") ||
+		strings.Contains(msg, "cannot find common ancestor")
+}
+
+// printDivergedHistoryGuidance prints recovery guidance when push/pull fails
+// due to diverged local and remote histories.
+func printDivergedHistoryGuidance(operation string) {
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Local and remote Dolt histories have diverged.")
+	fmt.Fprintln(os.Stderr, "This means the local database and the remote have independent commit")
+	fmt.Fprintln(os.Stderr, "histories with no common merge base.")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Recovery options:")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  1. Keep remote, discard local (recommended if remote is authoritative):")
+	fmt.Fprintln(os.Stderr, "       bd bootstrap              # re-clone from remote")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  2. Keep local, overwrite remote (if local is authoritative):")
+	fmt.Fprintln(os.Stderr, "       bd dolt push --force       # force-push local history to remote")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  3. Manual recovery (re-initialize local database):")
+	fmt.Fprintln(os.Stderr, "       rm -rf .beads/dolt         # delete local Dolt database")
+	fmt.Fprintln(os.Stderr, "       bd bootstrap              # re-clone from remote")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Tip: This usually happens when multiple agents independently initialize")
+	fmt.Fprintln(os.Stderr, "databases and push to the same remote. Use 'bd bootstrap' to clone an")
+	fmt.Fprintln(os.Stderr, "existing remote instead of 'bd init' to avoid divergent histories.")
+}
+
 var doltPushCmd = &cobra.Command{
 	Use:   "push",
 	Short: "Push commits to Dolt remote",
@@ -183,6 +222,8 @@ uncommitted changes in its working set).`,
 					fmt.Fprintln(os.Stderr, "Supported remote URLs:")
 					fmt.Fprintln(os.Stderr, "  • GitHub (via git):   git+ssh://git@github.com/org/repo.git")
 					fmt.Fprintln(os.Stderr, "  • DoltHub:            https://doltremoteapi.dolthub.com/org/repo")
+				} else if isDivergedHistoryErr(err) {
+					printDivergedHistoryGuidance("push --force")
 				}
 				os.Exit(1)
 			}
@@ -203,6 +244,8 @@ uncommitted changes in its working set).`,
 					fmt.Fprintln(os.Stderr, "Supported remote URLs:")
 					fmt.Fprintln(os.Stderr, "  • GitHub (via git):   git+ssh://git@github.com/org/repo.git")
 					fmt.Fprintln(os.Stderr, "  • DoltHub:            https://doltremoteapi.dolthub.com/org/repo")
+				} else if isDivergedHistoryErr(err) {
+					printDivergedHistoryGuidance("push")
 				}
 				os.Exit(1)
 			}
@@ -233,6 +276,8 @@ variables for authentication.`,
 				fmt.Fprintf(os.Stderr, "Hint: use 'bd dolt remote add <name> <url>' (not 'dolt remote add').\n")
 				fmt.Fprintf(os.Stderr, "  Running 'dolt remote add' directly may add the remote to the wrong directory.\n")
 				fmt.Fprintf(os.Stderr, "  Use 'bd dolt remote list' to check for discrepancies.\n")
+			} else if isDivergedHistoryErr(err) {
+				printDivergedHistoryGuidance("pull")
 			}
 			os.Exit(1)
 		}
@@ -309,7 +354,7 @@ required. Use this command for explicit control or diagnostics.`,
 			fmt.Fprintln(os.Stderr, "Error: 'bd dolt start' is not supported in embedded mode (no Dolt server)")
 			os.Exit(1)
 		}
-		beadsDir := beads.FindBeadsDir()
+		beadsDir := selectedDoltBeadsDir()
 		if beadsDir == "" {
 			fmt.Fprintf(os.Stderr, "Error: not in a beads repository (no .beads directory found)\n")
 			os.Exit(1)
@@ -347,7 +392,7 @@ on the next bd command unless auto-start is disabled.`,
 			fmt.Fprintln(os.Stderr, "Error: 'bd dolt stop' is not supported in embedded mode (no Dolt server)")
 			os.Exit(1)
 		}
-		beadsDir := beads.FindBeadsDir()
+		beadsDir := selectedDoltBeadsDir()
 		if beadsDir == "" {
 			fmt.Fprintf(os.Stderr, "Error: not in a beads repository (no .beads directory found)\n")
 			os.Exit(1)
@@ -374,7 +419,7 @@ Displays whether the server is running, its PID, port, and data directory.`,
 			fmt.Fprintln(os.Stderr, "Error: 'bd dolt status' is not supported in embedded mode (no Dolt server)")
 			os.Exit(1)
 		}
-		beadsDir := beads.FindBeadsDir()
+		beadsDir := selectedDoltBeadsDir()
 		if beadsDir == "" {
 			fmt.Fprintf(os.Stderr, "Error: not in a beads repository (no .beads directory found)\n")
 			os.Exit(1)
@@ -428,7 +473,7 @@ servers are preserved.`,
 			fmt.Fprintln(os.Stderr, "Error: 'bd dolt killall' is not supported in embedded mode (no Dolt server)")
 			os.Exit(1)
 		}
-		beadsDir := beads.FindBeadsDir()
+		beadsDir := selectedDoltBeadsDir()
 		if beadsDir == "" {
 			beadsDir = "." // best effort
 		}
@@ -950,8 +995,17 @@ func init() {
 	rootCmd.AddCommand(doltCmd)
 }
 
+func selectedDoltBeadsDir() string {
+	beadsDir := selectedNoDBBeadsDir()
+	if beadsDir == "" {
+		return ""
+	}
+	prepareSelectedNoDBContext(beadsDir)
+	return beadsDir
+}
+
 func showDoltConfig(testConnection bool) {
-	beadsDir := beads.FindBeadsDir()
+	beadsDir := selectedDoltBeadsDir()
 	if beadsDir == "" {
 		fmt.Fprintf(os.Stderr, "Error: not in a beads repository (no .beads directory found)\n")
 		os.Exit(1)
@@ -1071,7 +1125,7 @@ func showDoltConfig(testConnection bool) {
 }
 
 func setDoltConfig(key, value string, updateConfig bool) {
-	beadsDir := beads.FindBeadsDir()
+	beadsDir := selectedDoltBeadsDir()
 	if beadsDir == "" {
 		fmt.Fprintf(os.Stderr, "Error: not in a beads repository (no .beads directory found)\n")
 		os.Exit(1)
@@ -1234,7 +1288,7 @@ func setDoltConfig(key, value string, updateConfig bool) {
 }
 
 func testDoltConnection() {
-	beadsDir := beads.FindBeadsDir()
+	beadsDir := selectedDoltBeadsDir()
 	if beadsDir == "" {
 		fmt.Fprintf(os.Stderr, "Error: not in a beads repository (no .beads directory found)\n")
 		os.Exit(1)
@@ -1403,7 +1457,7 @@ func testHTTPConnectivity(url string) bool {
 // initialized for dolt subcommands (beads-9vt). Connects without selecting a
 // database so callers can operate on all databases (SHOW DATABASES, DROP DATABASE).
 func openDoltServerConnection() (*sql.DB, func()) {
-	beadsDir := beads.FindBeadsDir()
+	beadsDir := selectedDoltBeadsDir()
 	if beadsDir == "" {
 		fmt.Fprintln(os.Stderr, "Error: not in a beads repository (no .beads directory found)")
 		os.Exit(1)
@@ -1423,14 +1477,12 @@ func openDoltServerConnection() (*sql.DB, func()) {
 	user := cfg.GetDoltServerUser()
 	password := os.Getenv("BEADS_DOLT_PASSWORD")
 
-	var connStr string
-	if password != "" {
-		connStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true&timeout=5s",
-			user, password, host, port)
-	} else {
-		connStr = fmt.Sprintf("%s@tcp(%s:%d)/?parseTime=true&timeout=5s",
-			user, host, port)
-	}
+	connStr := doltutil.ServerDSN{
+		Host:     host,
+		Port:     port,
+		User:     user,
+		Password: password,
+	}.String()
 
 	db, err := sql.Open("mysql", connStr)
 	if err != nil {

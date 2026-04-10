@@ -174,57 +174,52 @@ go test -race -coverprofile=coverage.out ./...
 - Use `t.Run()` for subtests to organize related test cases
 - Mark slow tests with `if testing.Short() { t.Skip("slow test") }`
 
-### Dual-Mode Testing Pattern
+### CGO vs Non-CGO Tests
 
-**IMPORTANT**: bd supports two execution modes: *embedded mode* (direct Dolt database access) and *server mode* (RPC via Dolt server). Commands must work identically in both modes. To prevent bugs like GH#719, GH#751, and bd-fu83, use the dual-mode test framework for testing commands.
+Tests are split into two categories based on whether they need the embedded Dolt database (which requires CGO):
+
+- **Non-CGO tests** (no build tag): Unit tests for CLI parsing, helpers, and pure logic. These run everywhere.
+- **CGO tests** (`//go:build cgo`): Integration tests that create a real Dolt database. Files often use the `_embedded_test.go` suffix.
+
+```bash
+# Fast non-CGO tests (recommended for development)
+make test                     # or: go test -short ./...
+
+# Full CGO-enabled suite (before committing)
+make test-full-cgo            # or: ./scripts/test-cgo.sh ./...
+
+# Run a specific CGO test
+./scripts/test-cgo.sh -run '^TestMyFeature$' ./cmd/bd/...
+```
+
+On macOS, always use the script or Make target for CGO tests — they configure the required ICU linker flags automatically.
+
+### Test Isolation with `t.TempDir()`
+
+Database tests use `t.TempDir()` for isolation so each test gets a clean environment and nothing touches the production database:
 
 ```go
-// cmd/bd/dual_mode_test.go provides the framework
+func TestMyFeature(t *testing.T) {
+    tmpDir := t.TempDir()
+    dbPath := filepath.Join(tmpDir, "test.db")
+    store := newTestStoreWithPrefix(t, dbPath, "bd")
 
-func TestMyCommand(t *testing.T) {
-    // This test runs TWICE: once in embedded mode, once with a live Dolt server
-    RunDualModeTest(t, "my_test", func(t *testing.T, env *DualModeTestEnv) {
-        // Create test data using mode-agnostic helpers
-        issue := &types.Issue{
-            Title:     "Test issue",
-            IssueType: types.TypeTask,
-            Status:    types.StatusOpen,
-            Priority:  2,
-        }
-        if err := env.CreateIssue(issue); err != nil {
-            t.Fatalf("[%s] CreateIssue failed: %v", env.Mode(), err)
-        }
-
-        // Verify behavior - works in both modes
-        got, err := env.GetIssue(issue.ID)
-        if err != nil {
-            t.Fatalf("[%s] GetIssue failed: %v", env.Mode(), err)
-        }
-        if got.Title != "Test issue" {
-            t.Errorf("[%s] wrong title: got %q", env.Mode(), got.Title)
-        }
-    })
+    ctx := context.Background()
+    issue := &types.Issue{
+        ID:     "bd-1",
+        Title:  "Test issue",
+        Status: types.StatusOpen,
+    }
+    if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+        t.Fatalf("CreateIssue failed: %v", err)
+    }
+    // ... assertions ...
 }
 ```
 
-Available `DualModeTestEnv` helper methods:
-- `CreateIssue(issue)` - Create an issue
-- `GetIssue(id)` - Retrieve an issue by ID
-- `UpdateIssue(id, updates)` - Update issue fields
-- `DeleteIssue(id, force)` - Delete (tombstone) an issue
-- `AddDependency(from, to, type)` - Add a dependency
-- `ListIssues(filter)` - List issues matching filter
-- `GetReadyWork()` - Get issues ready for work
-- `AddLabel(id, label)` - Add a label to an issue
-- `Mode()` - Returns "embedded" or "server" for error messages
+Test helpers in `cmd/bd/test_helpers_test.go` provide database setup functions like `newTestStore`, `newTestStoreWithPrefix`, and `newTestStoreSharedBranch` (which uses branch-per-test isolation to avoid expensive CREATE/DROP DATABASE overhead).
 
-Run dual-mode tests:
-```bash
-# Run dual-mode tests (requires integration tag)
-go test -v -tags integration -run "TestDualMode" ./cmd/bd/
-```
-
-Example:
+### Table-Driven Test Example
 
 ```go
 func TestIssueValidation(t *testing.T) {
@@ -281,6 +276,17 @@ When proposing new features:
 - Describe the proposed solution
 - Consider backwards compatibility
 - Discuss alternatives you've considered
+
+## Your PR Will Not Be Overwritten
+
+This project uses AI agents for maintenance. We've established strict rules to protect contributor work:
+
+- **Your PR has priority.** If you've submitted a PR, agents must review and build on your work — not rewrite it from scratch.
+- **Your tests matter.** Agents must preserve contributor tests unless they're actually wrong.
+- **You'll get attribution.** Your commits and `Co-authored-by:` will be preserved.
+- **No silent closes.** Your PR will never be auto-closed by a parallel rewrite. If changes are needed, they'll be discussed on your PR.
+
+If any of this goes wrong, please open an issue — we take contributor experience seriously.
 
 ## Code Review Process
 

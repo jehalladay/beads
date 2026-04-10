@@ -52,8 +52,11 @@ By default, performs bidirectional sync:
 
 Use --pull-only or --push-only to limit direction.
 
-Pull filters (--area-path, --iteration-path, --types, --states) restrict
-which ADO work items are fetched. Filters can also be persisted via config:
+Filters (--area-path, --iteration-path, --types, --states) restrict
+which work items are synced. On pull, they limit the WIQL query. On push,
+--types and --states filter local beads before pushing to ADO. Use
+--no-create with push to skip creating new ADO work items (only update
+existing linked items). Filters can also be persisted via config:
   ado.filter.area_path, ado.filter.iteration_path,
   ado.filter.types, ado.filter.states
 CLI flags override config values when both are set.`,
@@ -150,7 +153,7 @@ func init() {
 
 	// Additional sync options
 	adoSyncCmd.Flags().BoolVar(&adoBootstrapMatch, "bootstrap-match", false, "Enable heuristic matching for first sync")
-	adoSyncCmd.Flags().BoolVar(&adoNoCreate, "no-create", false, "Pull-only mode: never create issues in ADO")
+	adoSyncCmd.Flags().BoolVar(&adoNoCreate, "no-create", false, "Never create new items in either direction (pull or push)")
 	adoSyncCmd.Flags().BoolVar(&adoReconcile, "reconcile", false, "Force reconciliation scan for deleted items")
 
 	// Pull filter flags (override config keys ado.filter.*)
@@ -159,6 +162,7 @@ func init() {
 	adoSyncCmd.Flags().StringVar(&adoFilterTypes, "types", "", "Filter to work item types, comma-separated (e.g., \"Bug,Task,User Story\")")
 	adoSyncCmd.Flags().StringVar(&adoFilterStates, "states", "", "Filter to ADO states, comma-separated (e.g., \"New,Active,Resolved\")")
 	adoSyncCmd.Flags().StringSlice("project", nil, "Project name(s) to sync (overrides configured project/projects)")
+	registerSelectiveSyncFlags(adoSyncCmd)
 
 	// Register ado command with root
 	rootCmd.AddCommand(adoCmd)
@@ -235,10 +239,10 @@ func adoConfigToEnvVar(key string) string {
 // validateADOConfig checks that required configuration is present.
 func validateADOConfig(cfg ADOConfig) error {
 	if cfg.PAT == "" {
-		return fmt.Errorf("ado.pat not configured: set via 'bd config ado.pat <token>' or AZURE_DEVOPS_PAT env var")
+		return fmt.Errorf("ado.pat not configured: set via 'bd config set ado.pat <token>' or AZURE_DEVOPS_PAT env var")
 	}
 	if cfg.Org == "" && cfg.URL == "" {
-		return fmt.Errorf("ado.org not configured: set via 'bd config ado.org <org>' or AZURE_DEVOPS_ORG env var")
+		return fmt.Errorf("ado.org not configured: set via 'bd config set ado.org <org>' or AZURE_DEVOPS_ORG env var")
 	}
 	if len(cfg.Projects) == 0 {
 		return fmt.Errorf("no ADO project configured\nSet via 'bd config set ado.project <project>'\nOr:  'bd config set ado.projects \"proj1,proj2\"'\nOr: AZURE_DEVOPS_PROJECT env var")
@@ -400,10 +404,10 @@ func runADOStatus(cmd *cobra.Command, _ []string) error {
 func runADOProjects(cmd *cobra.Command, _ []string) error {
 	cfg := getADOConfig()
 	if cfg.PAT == "" {
-		return fmt.Errorf("ado.pat not configured: set via 'bd config ado.pat <token>' or AZURE_DEVOPS_PAT env var")
+		return fmt.Errorf("ado.pat not configured: set via 'bd config set ado.pat <token>' or AZURE_DEVOPS_PAT env var")
 	}
 	if cfg.Org == "" && cfg.URL == "" {
-		return fmt.Errorf("ado.org not configured: set via 'bd config ado.org <org>' or AZURE_DEVOPS_ORG env var")
+		return fmt.Errorf("ado.org not configured: set via 'bd config set ado.org <org>' or AZURE_DEVOPS_ORG env var")
 	}
 
 	out := cmd.OutOrStdout()
@@ -521,6 +525,9 @@ func runADOSync(cmd *cobra.Command, _ []string) error {
 	var bootstrapMatched int
 	engine.PullHooks = buildADOPullHooks(ctx, at, adoBootstrapMatch, adoNoCreate, &bootstrapMatched, engine.OnWarning)
 
+	// Set up ADO-specific push hooks (type/state/no-create filtering for push)
+	engine.PushHooks = buildADOPushHooks(at.FieldMapper(), at.IsExternalRef, filters, adoNoCreate)
+
 	// Build sync options from CLI flags
 	pull := !adoSyncPushOnly
 	push := !adoSyncPullOnly
@@ -529,6 +536,10 @@ func runADOSync(cmd *cobra.Command, _ []string) error {
 		Pull:   pull,
 		Push:   push,
 		DryRun: adoSyncDryRun,
+	}
+
+	if err := applySelectiveSyncFlags(cmd, &opts, push); err != nil {
+		return err
 	}
 
 	// Map conflict resolution
@@ -880,4 +891,51 @@ func buildADOPullHooks(ctx context.Context, at *ado.Tracker, bootstrapMatch, noC
 	}
 
 	return hooks
+}
+
+// buildADOPushHooks creates PushHooks for ADO-specific push filtering.
+// When --types or --states are set, local beads are filtered before pushing
+// to ADO by mapping the ADO filter values to beads types/statuses.
+// When noCreate is true, only issues already linked to ADO work items
+// are pushed (no new work items are created).
+func buildADOPushHooks(mapper tracker.FieldMapper, isExternalRef func(string) bool, filters *ado.PullFilters, noCreate bool) *tracker.PushHooks {
+	var allowedTypes map[types.IssueType]bool
+	var allowedStatuses map[types.Status]bool
+
+	if filters != nil && len(filters.WorkItemTypes) > 0 {
+		allowedTypes = make(map[types.IssueType]bool, len(filters.WorkItemTypes))
+		for _, adoType := range filters.WorkItemTypes {
+			beadsType := mapper.TypeToBeads(adoType)
+			allowedTypes[beadsType] = true
+		}
+	}
+
+	if filters != nil && len(filters.States) > 0 {
+		allowedStatuses = make(map[types.Status]bool, len(filters.States))
+		for _, adoState := range filters.States {
+			beadsStatus := mapper.StatusToBeads(adoState)
+			allowedStatuses[beadsStatus] = true
+		}
+	}
+
+	if allowedTypes == nil && allowedStatuses == nil && !noCreate {
+		return nil
+	}
+
+	return &tracker.PushHooks{
+		ShouldPush: func(issue *types.Issue) bool {
+			if allowedTypes != nil && !allowedTypes[issue.IssueType] {
+				return false
+			}
+			if allowedStatuses != nil && !allowedStatuses[issue.Status] {
+				return false
+			}
+			if noCreate {
+				if issue.ExternalRef == nil || *issue.ExternalRef == "" || !isExternalRef(*issue.ExternalRef) {
+					return false
+				}
+			}
+			return true
+		},
+	}
 }

@@ -72,13 +72,23 @@ func (s *EmbeddedDoltStore) HasRemote(ctx context.Context, name string) (bool, e
 
 func (s *EmbeddedDoltStore) Branch(ctx context.Context, name string) error {
 	return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		return versioncontrolops.CreateBranch(ctx, db, name)
+		if err := versioncontrolops.CreateBranch(ctx, db, name); err != nil {
+			return err
+		}
+		// dolt_ignore'd tables (wisps, wisp_*) don't carry over to new branches —
+		// ensure they exist on the newly created branch.
+		return versioncontrolops.EnsureIgnoredTables(ctx, db)
 	})
 }
 
 func (s *EmbeddedDoltStore) Checkout(ctx context.Context, branch string) error {
 	return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		return versioncontrolops.CheckoutBranch(ctx, db, branch)
+		if err := versioncontrolops.CheckoutBranch(ctx, db, branch); err != nil {
+			return err
+		}
+		// dolt_ignore'd tables (wisps, wisp_*) may not exist on the target branch —
+		// ensure they exist after checkout.
+		return versioncontrolops.EnsureIgnoredTables(ctx, db)
 	})
 }
 
@@ -201,7 +211,7 @@ func (s *EmbeddedDoltStore) Push(ctx context.Context) error {
 
 func (s *EmbeddedDoltStore) Pull(ctx context.Context) error {
 	return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		return versioncontrolops.Pull(ctx, db, defaultRemote)
+		return versioncontrolops.Pull(ctx, db, defaultRemote, s.branch)
 	})
 }
 
@@ -232,7 +242,7 @@ func (s *EmbeddedDoltStore) PullFrom(ctx context.Context, peer string) ([]storag
 
 	var conflicts []storage.Conflict
 	err := s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		if pullErr := versioncontrolops.Pull(ctx, db, peer); pullErr != nil {
+		if pullErr := versioncontrolops.Pull(ctx, db, peer, s.branch); pullErr != nil {
 			// Check if the error is due to merge conflicts.
 			c, conflictErr := versioncontrolops.GetConflicts(ctx, db)
 			if conflictErr == nil && len(c) > 0 {
@@ -290,6 +300,15 @@ func (s *EmbeddedDoltStore) BackupDatabase(ctx context.Context, dir string) erro
 		// Register as a backup remote (idempotent — remove first if exists).
 		_ = versioncontrolops.BackupRemove(ctx, db, backupName)
 		if err := versioncontrolops.BackupAdd(ctx, db, backupName, backupURL); err != nil {
+			// Another backup (e.g. "default" registered by `bd backup init`) may
+			// already point to this URL. In that case, sync using the existing
+			// remote name rather than failing.
+			if conflict := versioncontrolops.ExtractAddressConflictName(err); conflict != "" {
+				if syncErr := versioncontrolops.BackupSync(ctx, db, conflict); syncErr != nil {
+					return fmt.Errorf("sync to backup: %w", syncErr)
+				}
+				return nil
+			}
 			return fmt.Errorf("register backup remote: %w", err)
 		}
 		if err := versioncontrolops.BackupSync(ctx, db, backupName); err != nil {

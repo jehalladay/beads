@@ -20,6 +20,7 @@ set -euo pipefail
 #   # Test multiple versions (space-separated):
 #   SMOKE_VERSIONS="v0.62.0 v0.61.0 v0.60.0" ./scripts/upgrade-smoke-test.sh
 #
+
 # The candidate binary is built from the current worktree if CANDIDATE_BIN
 # is not set. The previous release binary is downloaded and cached in
 # ~/.cache/beads-regression/.
@@ -55,6 +56,7 @@ fi
 # ---------------------------------------------------------------------------
 # Single-version mode
 # ---------------------------------------------------------------------------
+
 
 # Determine previous release version
 if [ -n "${1:-}" ]; then
