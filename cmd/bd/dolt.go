@@ -701,9 +701,13 @@ var doltRemoteAddCmd = &cobra.Command{
 				fmt.Println("Canceled.")
 				return
 			}
-			if err := doltutil.RemoveCLIRemote(dbPath, name); err != nil {
-				fmt.Fprintf(os.Stderr, "Error removing existing CLI remote: %v\n", err)
-				os.Exit(1)
+			// In embedded mode, SQL and CLI share the same directory,
+			// so the SQL remove above already deleted the remote config.
+			if !isEmbeddedMode() {
+				if err := doltutil.RemoveCLIRemote(dbPath, name); err != nil {
+					fmt.Fprintf(os.Stderr, "Error removing existing CLI remote: %v\n", err)
+					os.Exit(1)
+				}
 			}
 		}
 
