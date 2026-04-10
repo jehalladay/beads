@@ -553,7 +553,11 @@ func installHooksWithOptions(hookNames []string, force bool, shared bool, chain 
 		hooksDir = filepath.Join(beadsDir, "hooks")
 	} else if shared {
 		// Use versioned directory for shared hooks
-		hooksDir = ".beads-hooks"
+		if mainRoot, err := git.GetMainRepoRoot(); err == nil && mainRoot != "" {
+			hooksDir = filepath.Join(mainRoot, ".beads-hooks")
+		} else {
+			hooksDir = ".beads-hooks"
+		}
 	} else {
 		// Use common git directory for hooks (shared across worktrees)
 		var err error
@@ -665,7 +669,10 @@ func preservePreexistingHooks(targetDir string) {
 	}
 
 	// If current dir is already a beads-managed directory, skip.
-	repoRoot := git.GetRepoRoot()
+	repoRoot, _ := git.GetMainRepoRoot()
+	if repoRoot == "" {
+		repoRoot = git.GetRepoRoot()
+	}
 	if repoRoot != "" {
 		absBeadsHooks, _ := filepath.Abs(filepath.Join(repoRoot, ".beads", "hooks"))
 		absSharedHooks, _ := filepath.Abs(filepath.Join(repoRoot, ".beads-hooks"))
@@ -718,8 +725,10 @@ func configureSharedHooksPath() error {
 	// Set git config core.hooksPath to an absolute path pointing to .beads-hooks.
 	// Using an absolute path is critical for git worktrees (GH#2414):
 	// git resolves relative core.hooksPath relative to the working tree root.
-	// Note: This may run before .beads exists, so it uses git.GetRepoRoot() directly.
-	repoRoot := git.GetRepoRoot()
+	repoRoot, _ := git.GetMainRepoRoot()
+	if repoRoot == "" {
+		repoRoot = git.GetRepoRoot()
+	}
 	if repoRoot == "" {
 		return fmt.Errorf("not in a git repository")
 	}
@@ -738,7 +747,10 @@ func configureBeadsHooksPath() error {
 	// git resolves relative core.hooksPath relative to the working tree root,
 	// so in a worktree ".beads/hooks" would resolve to <worktree>/.beads/hooks/
 	// which doesn't exist — the hooks live in the main repo's .beads/hooks/.
-	repoRoot := git.GetRepoRoot()
+	repoRoot, _ := git.GetMainRepoRoot()
+	if repoRoot == "" {
+		repoRoot = git.GetRepoRoot()
+	}
 	if repoRoot == "" {
 		return fmt.Errorf("not in a git repository")
 	}
@@ -817,7 +829,10 @@ func uninstallHooks() error {
 // resetHooksPathIfBeadsManaged unsets core.hooksPath if it points to a
 // beads-managed hooks directory (.beads/hooks or .beads-hooks).
 func resetHooksPathIfBeadsManaged() error {
-	repoRoot := git.GetRepoRoot()
+	repoRoot, _ := git.GetMainRepoRoot()
+	if repoRoot == "" {
+		repoRoot = git.GetRepoRoot()
+	}
 	if repoRoot == "" {
 		return nil // not in a git repo
 	}
