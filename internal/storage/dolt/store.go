@@ -219,9 +219,9 @@ type Config struct {
 	RemoteUser     string // Hosted Dolt remote user (set via DOLT_REMOTE_USER env var)
 	RemotePassword string // Hosted Dolt remote password (set via DOLT_REMOTE_PASSWORD env var)
 
-	// SyncGitRemote holds the sync.git-remote config value (if any).
-	// Used to provide context-aware hints in "database not found" errors.
-	SyncGitRemote string
+	// SyncRemote holds the effective sync remote URL (from sync.remote
+	// or deprecated sync.git-remote). Used for context-aware error hints.
+	SyncRemote string
 
 	// CreateIfMissing allows CREATE DATABASE when the target database does not
 	// exist on the server. Only explicit initialization, migration, or new-board

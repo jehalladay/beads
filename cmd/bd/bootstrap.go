@@ -13,7 +13,6 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/storage/dolt"
@@ -93,7 +92,8 @@ var bootstrapCmd = &cobra.Command{
 Unlike 'bd init --force', bootstrap will never delete existing issues.
 
 Bootstrap auto-detects the right action:
-  • If sync.git-remote is configured: clones from the remote
+  • If sync.remote is configured: clones from the remote
+  • If git origin has Dolt data (refs/dolt/data): clones from git
   • If .beads/backup/*.jsonl exists: restores from backup
   • If .beads/issues.jsonl exists: imports from git-tracked JSONL
   • If no database exists: creates a fresh one
@@ -126,9 +126,11 @@ Examples:
 		beadsDir := beads.FindBeadsDir()
 		if beadsDir == "" {
 			// No .beads directory exists yet. Before giving up, probe the
-			// git remote for existing Beads data (refs/dolt/data). This is
-			// the "fresh second clone" case: clone1 pushed Beads state to
-			// origin, and clone2 needs to bootstrap from it. (GH#2792)
+			// git remote for Dolt data stored in git (refs/dolt/data). This
+			// is the "fresh second clone" case: clone1 pushed Beads state
+			// to a git remote, and clone2 needs to bootstrap from it.
+			// Only applies to git remotes — Dolt-native remotes (DoltHub,
+			// S3, etc.) should be configured via sync.remote. (GH#2792)
 			//
 			// If found, synthesize the theoretical .beads path and fall
 			// through to the normal detectBootstrapAction + executeBootstrapPlan
@@ -267,22 +269,24 @@ func detectBootstrapAction(beadsDir string, cfg *configfile.Config) BootstrapPla
 		}
 	}
 
-	// Check sync.git-remote
-	syncRemote := config.GetString("sync.git-remote")
+	// Check sync.remote (primary) or sync.git-remote (deprecated fallback)
+	syncRemote := resolveSyncRemote()
 	if syncRemote != "" {
-		plan.SyncRemote = syncRemote
+		plan.SyncRemote = normalizeRemoteURL(syncRemote)
 		plan.Action = "sync"
-		plan.Reason = "sync.git-remote configured — will clone from " + syncRemote
+		plan.Reason = "sync.remote configured — will clone from " + syncRemote
 		return plan
 	}
 
-	// Auto-detect: probe origin for refs/dolt/data
+	// Auto-detect: probe git origin for Dolt data stored in git
+	// (refs/dolt/data). This only applies to git remotes — Dolt-native
+	// remotes (DoltHub, S3, etc.) must be configured via sync.remote.
 	if isGitRepo() && !isBareGitRepo() {
 		if originURL, err := gitRemoteGetURL("origin"); err == nil && originURL != "" {
 			if gitLsRemoteHasRef("origin", "refs/dolt/data") {
-				plan.SyncRemote = gitURLToDoltRemote(originURL)
+				plan.SyncRemote = normalizeRemoteURL(originURL)
 				plan.Action = "sync"
-				plan.Reason = "Found existing beads database on origin (refs/dolt/data) — will clone from " + originURL
+				plan.Reason = "Found Dolt data on git origin (refs/dolt/data) — will clone from " + originURL
 				return plan
 			}
 		}
@@ -479,46 +483,39 @@ func executeSyncAction(ctx context.Context, plan BootstrapPlan, cfg *configfile.
 	}
 
 	dbName := cfg.GetDoltDatabase()
+	return cloneFromRemote(ctx, plan.BeadsDir, plan.SyncRemote, dbName)
+}
 
+// cloneFromRemote clones a Dolt database from a remote URL.
+// In embedded mode, uses the embedded engine's DOLT_CLONE procedure.
+// In server mode, shells out to dolt clone via BootstrapFromRemoteWithDB.
+// Shared by bd init and bd bootstrap to keep clone logic in one place.
+func cloneFromRemote(ctx context.Context, beadsDir, remoteURL, dbName string) error {
 	if isEmbeddedMode() {
-		// Embedded mode: open a connection to the embedded engine and use
-		// DOLT_CLONE to create the database from the remote URL.
-		dataDir := filepath.Join(plan.BeadsDir, "embeddeddolt")
+		dataDir := filepath.Join(beadsDir, "embeddeddolt")
 		if err := os.MkdirAll(dataDir, 0o750); err != nil {
 			return fmt.Errorf("create embeddeddolt directory: %w", err)
 		}
-
-		// Open a connection without specifying a database (clone creates it).
 		db, cleanup, err := embeddeddolt.OpenSQL(ctx, dataDir, "", "")
 		if err != nil {
 			return fmt.Errorf("open embedded engine for clone: %w", err)
 		}
 		defer func() { _ = cleanup() }()
 
-		if err := versioncontrolops.DoltClone(ctx, db, plan.SyncRemote, dbName); err != nil {
+		if err := versioncontrolops.DoltClone(ctx, db, remoteURL, dbName); err != nil {
 			return fmt.Errorf("clone from remote: %w", err)
 		}
-
-		// WARNING: DO NOT remove, delete, or modify files inside Dolt's .dolt/
-		// directory — including noms/LOCK files. These are Dolt-internal files.
-		// Removing them WILL cause unrecoverable data corruption and data loss.
-		// Dolt manages these files itself; external interference is never safe.
-
-		fmt.Fprintf(os.Stderr, "Synced database from %s\n", plan.SyncRemote)
+		fmt.Fprintf(os.Stderr, "Synced database from %s\n", remoteURL)
 		return nil
 	}
 
-	doltDir := doltserver.ResolveDoltDir(plan.BeadsDir)
-	synced, err := dolt.BootstrapFromGitRemoteWithDB(ctx, doltDir, plan.SyncRemote, dbName)
+	doltDir := doltserver.ResolveDoltDir(beadsDir)
+	synced, err := dolt.BootstrapFromRemoteWithDB(ctx, doltDir, remoteURL, dbName)
 	if err != nil {
 		return fmt.Errorf("sync from remote: %w", err)
 	}
 	if synced {
-		// WARNING: DO NOT remove, delete, or modify files inside Dolt's .dolt/
-		// directory — including noms/LOCK files. These are Dolt-internal files.
-		// Removing them WILL cause unrecoverable data corruption and data loss.
-		// Dolt manages these files itself; external interference is never safe.
-		fmt.Fprintf(os.Stderr, "Synced database from %s\n", plan.SyncRemote)
+		fmt.Fprintf(os.Stderr, "Synced database from %s\n", remoteURL)
 	}
 	return nil
 }
