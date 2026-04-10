@@ -733,7 +733,7 @@ var rootCmd = &cobra.Command{
 			// Log so silent fallback to default DB is visible.
 			fmt.Fprintf(os.Stderr, "warning: no beads configuration found in %s; database name may default incorrectly\n", beadsDir)
 		}
-		doltCfg.SyncGitRemote = config.GetString("sync.git-remote")
+		doltCfg.SyncRemote = resolveSyncRemote()
 
 		// Keep standalone CLI auto-start behavior centralized so doctor and
 		// other helper paths stay in lockstep with the main command path.

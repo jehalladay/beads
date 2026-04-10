@@ -460,28 +460,32 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 
 		// Auto-bootstrap from git remote if sync.git-remote is configured
 		// or origin has refs/dolt/data. This makes bd init and bd bootstrap
+		// Auto-bootstrap from remote if sync.remote (or deprecated
+		// sync.git-remote) is configured, or git origin has Dolt data
+		// (refs/dolt/data). This makes bd init and bd bootstrap
 		// interchangeable — both clone from the remote when one exists.
-		gitRemoteURL := config.GetString("sync.git-remote")
+		syncURL := resolveSyncRemote()
 		bootstrappedFromRemote := false
 		syncFromRemote := false
-		if gitRemoteURL != "" {
+		if syncURL != "" {
+			syncURL = normalizeRemoteURL(syncURL)
 			syncFromRemote = true
 		} else if isGitRepo() && !isBareGitRepo() {
 			if originURL, err := gitRemoteGetURL("origin"); err == nil && originURL != "" {
-				gitRemoteURL = gitURLToDoltRemote(originURL)
+				syncURL = normalizeRemoteURL(originURL)
 				if !force && gitLsRemoteHasRef("origin", "refs/dolt/data") {
 					syncFromRemote = true
 				}
 			}
 		}
 		if syncFromRemote {
-			if err := cloneFromRemote(ctx, beadsDir, gitRemoteURL, dbName); err != nil {
+			if err := cloneFromRemote(ctx, beadsDir, syncURL, dbName); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 			bootstrappedFromRemote = true
 			if !quiet {
-				fmt.Printf("  %s Bootstrapped from git remote: %s\n", ui.RenderPass("✓"), gitRemoteURL)
+				fmt.Printf("  %s Bootstrapped from remote: %s\n", ui.RenderPass("✓"), syncURL)
 			}
 		}
 
@@ -565,18 +569,18 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			os.Exit(1)
 		}
 
-		// Configure the git remote in the Dolt store so bd dolt push/pull
+		// Configure the remote in the Dolt store so bd dolt push/pull
 		// work immediately after bootstrap. Also add the remote when
-		// sync.git-remote is configured but bootstrap was skipped (DB already
+		// sync.remote is configured but bootstrap was skipped (DB already
 		// existed) — ensures the remote is always wired up.
-		if gitRemoteURL != "" {
+		if syncURL != "" {
 			hasRemote, _ := store.HasRemote(ctx, "origin")
 			if !hasRemote {
-				if err := store.AddRemote(ctx, "origin", gitRemoteURL); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to add git remote 'origin': %v\n", err)
+				if err := store.AddRemote(ctx, "origin", syncURL); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to add remote 'origin': %v\n", err)
 					// Non-fatal — user can add manually with: bd dolt remote add origin <url>
 				} else if !quiet {
-					fmt.Printf("  %s Configured Dolt remote: origin → %s\n", ui.RenderPass("✓"), gitRemoteURL)
+					fmt.Printf("  %s Configured Dolt remote: origin → %s\n", ui.RenderPass("✓"), syncURL)
 				}
 			}
 		}
@@ -723,6 +727,17 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			if err := createConfigYaml(beadsDir, false, ""); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", err)
 				// Non-fatal - continue anyway
+			}
+
+			// Persist sync.remote to config.yaml so fresh clones can
+			// bootstrap from it (the Dolt database is gitignored).
+			// Must run AFTER createConfigYaml which creates the file.
+			if syncURL != "" {
+				if existing := config.GetYamlConfig("sync.remote"); existing == "" {
+					if err := config.SetYamlConfig("sync.remote", syncURL); err != nil {
+						FatalError("failed to persist sync.remote to config.yaml: %v", err)
+					}
+				}
 			}
 
 			// Enable shared server mode if requested via flag OR env var (GH#2377).

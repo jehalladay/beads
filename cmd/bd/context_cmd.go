@@ -6,28 +6,27 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
 )
 
 // ContextInfo contains the effective backend identity and repository context.
 type ContextInfo struct {
-	BeadsDir      string `json:"beads_dir"`
-	RepoRoot      string `json:"repo_root"`
-	CWDRepoRoot   string `json:"cwd_repo_root,omitempty"`
-	IsRedirected  bool   `json:"is_redirected"`
-	IsWorktree    bool   `json:"is_worktree"`
-	Backend       string `json:"backend"`
-	DoltMode      string `json:"dolt_mode"`
-	ServerHost    string `json:"server_host,omitempty"`
-	ServerPort    int    `json:"server_port,omitempty"`
-	Database      string `json:"database"`
-	DataDir       string `json:"data_dir,omitempty"`
-	ProjectID     string `json:"project_id,omitempty"`
-	SyncGitRemote string `json:"sync_git_remote,omitempty"`
-	Role          string `json:"role,omitempty"`
-	BdVersion     string `json:"bd_version"`
+	BeadsDir     string `json:"beads_dir"`
+	RepoRoot     string `json:"repo_root"`
+	CWDRepoRoot  string `json:"cwd_repo_root,omitempty"`
+	IsRedirected bool   `json:"is_redirected"`
+	IsWorktree   bool   `json:"is_worktree"`
+	Backend      string `json:"backend"`
+	DoltMode     string `json:"dolt_mode"`
+	ServerHost   string `json:"server_host,omitempty"`
+	ServerPort   int    `json:"server_port,omitempty"`
+	Database     string `json:"database"`
+	DataDir      string `json:"data_dir,omitempty"`
+	ProjectID    string `json:"project_id,omitempty"`
+	SyncRemote   string `json:"sync_remote,omitempty"`
+	Role         string `json:"role,omitempty"`
+	BdVersion    string `json:"bd_version"`
 }
 
 var contextCmd = &cobra.Command{
@@ -102,9 +101,9 @@ Examples:
 			info.DataDir = dataDir
 		}
 
-		// Read sync.git-remote from the selected repo's config.yaml.
-		if remote := config.GetStringFromDir(rc.BeadsDir, "sync.git-remote"); remote != "" {
-			info.SyncGitRemote = remote
+		// Read sync remote from the selected repo's config.yaml.
+		if remote := resolveSyncRemoteFromDir(rc.BeadsDir); remote != "" {
+			info.SyncRemote = remote
 		}
 
 		if jsonOutput {
@@ -153,10 +152,10 @@ func printContextText(info ContextInfo) {
 	}
 
 	// Sync
-	if info.SyncGitRemote != "" {
+	if info.SyncRemote != "" {
 		fmt.Println()
 		fmt.Println("Sync:")
-		fmt.Printf("  git remote:   %s\n", info.SyncGitRemote)
+		fmt.Printf("  remote:       %s\n", info.SyncRemote)
 	}
 }
 

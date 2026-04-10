@@ -314,8 +314,11 @@ func CheckFreshClone(repoPath string) DoctorCheck {
 			dbName := cfg.GetDoltDatabase()
 			result := checkFreshCloneDB(host, port, user, password, dbName, cfg.GetDoltServerTLS())
 			if result.Reachable {
-				syncGitRemote := config.GetStringFromDir(beadsDir, "sync.git-remote")
-				return freshCloneServerResult(result.Exists, dbName, host, port, syncGitRemote)
+				syncRemote := config.GetStringFromDir(beadsDir, "sync.remote")
+				if syncRemote == "" {
+					syncRemote = config.GetStringFromDir(beadsDir, "sync.git-remote")
+				}
+				return freshCloneServerResult(result.Exists, dbName, host, port, syncRemote)
 			}
 			// Server unreachable — fall through to existing behavior (FR-030).
 		}
