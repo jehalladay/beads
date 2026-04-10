@@ -1486,6 +1486,7 @@ func openDoltServerConnection() (*sql.DB, func()) {
 		Port:     port,
 		User:     user,
 		Password: password,
+		TLS:      cfg.GetDoltServerTLS(),
 	}.String()
 
 	db, err := sql.Open("mysql", connStr)
