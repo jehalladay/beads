@@ -84,6 +84,7 @@ test-upgrade: build
 	@echo "Running upgrade smoke tests..."
 	@CANDIDATE_BIN=./bd ./scripts/upgrade-smoke-test.sh
 
+
 # Run cross-version smoke tests (last 30 tags → candidate).
 # Creates epic, issues, and dependencies with old versions, upgrades, verifies.
 # Specific versions: ./scripts/cross-version-smoke-test.sh v0.55.0 v0.56.1
@@ -99,6 +100,7 @@ test-cross-version: build
 test-migration: build
 	@echo "Running migration test harness..."
 	@CANDIDATE_BIN=./bd ./scripts/migration-test/run.sh
+
 
 # Run performance benchmarks against Dolt storage backend
 # Requires CGO and Dolt; generates CPU profile files
