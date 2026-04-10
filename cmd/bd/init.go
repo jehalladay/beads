@@ -458,34 +458,30 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
-		// Auto-bootstrap from git remote if sync.git-remote is configured.
-		// This enables the new-machine story: set sync.git-remote in config.yaml,
-		// run bd init, and the Dolt database is cloned from the git remote
-		// automatically — no manual dolt clone needed.
+		// Auto-bootstrap from git remote if sync.git-remote is configured
+		// or origin has refs/dolt/data. This makes bd init and bd bootstrap
+		// interchangeable — both clone from the remote when one exists.
 		gitRemoteURL := config.GetString("sync.git-remote")
 		bootstrappedFromRemote := false
+		syncFromRemote := false
 		if gitRemoteURL != "" {
-			cloned, bootstrapErr := dolt.BootstrapFromGitRemoteWithDB(ctx, storagePath, gitRemoteURL, dbName)
-			if bootstrapErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to bootstrap from git remote %s: %v\n", gitRemoteURL, bootstrapErr)
-				fmt.Fprintf(os.Stderr, "  Continuing with fresh database initialization.\n")
-				// Non-fatal: fall through to normal init
-			} else if cloned {
-				bootstrappedFromRemote = true
-				if !quiet {
-					fmt.Printf("  %s Bootstrapped from git remote: %s\n", ui.RenderPass("✓"), gitRemoteURL)
-				}
-			}
+			syncFromRemote = true
 		} else if isGitRepo() && !isBareGitRepo() {
-			// Auto-detect git origin and use it as the Dolt remote.
-			// This enables push/pull against the git remote by default.
 			if originURL, err := gitRemoteGetURL("origin"); err == nil && originURL != "" {
 				gitRemoteURL = gitURLToDoltRemote(originURL)
 				if !force && gitLsRemoteHasRef("origin", "refs/dolt/data") {
-					fmt.Fprintf(os.Stderr, "Note: origin has an existing beads database (refs/dolt/data).\n")
-					fmt.Fprintf(os.Stderr, "  Run 'bd bootstrap' instead to clone it.\n")
-					fmt.Fprintf(os.Stderr, "  Continuing with fresh database initialization.\n\n")
+					syncFromRemote = true
 				}
+			}
+		}
+		if syncFromRemote {
+			if err := cloneFromRemote(ctx, beadsDir, gitRemoteURL, dbName); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			bootstrappedFromRemote = true
+			if !quiet {
+				fmt.Printf("  %s Bootstrapped from git remote: %s\n", ui.RenderPass("✓"), gitRemoteURL)
 			}
 		}
 

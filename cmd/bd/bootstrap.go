@@ -479,46 +479,39 @@ func executeSyncAction(ctx context.Context, plan BootstrapPlan, cfg *configfile.
 	}
 
 	dbName := cfg.GetDoltDatabase()
+	return cloneFromRemote(ctx, plan.BeadsDir, plan.SyncRemote, dbName)
+}
 
+// cloneFromRemote clones a Dolt database from a git remote URL.
+// In embedded mode, uses the embedded engine's DOLT_CLONE procedure.
+// In server mode, shells out to dolt clone via BootstrapFromGitRemoteWithDB.
+// Shared by bd init and bd bootstrap to keep clone logic in one place.
+func cloneFromRemote(ctx context.Context, beadsDir, remoteURL, dbName string) error {
 	if isEmbeddedMode() {
-		// Embedded mode: open a connection to the embedded engine and use
-		// DOLT_CLONE to create the database from the remote URL.
-		dataDir := filepath.Join(plan.BeadsDir, "embeddeddolt")
+		dataDir := filepath.Join(beadsDir, "embeddeddolt")
 		if err := os.MkdirAll(dataDir, 0o750); err != nil {
 			return fmt.Errorf("create embeddeddolt directory: %w", err)
 		}
-
-		// Open a connection without specifying a database (clone creates it).
 		db, cleanup, err := embeddeddolt.OpenSQL(ctx, dataDir, "", "")
 		if err != nil {
 			return fmt.Errorf("open embedded engine for clone: %w", err)
 		}
 		defer func() { _ = cleanup() }()
 
-		if err := versioncontrolops.DoltClone(ctx, db, plan.SyncRemote, dbName); err != nil {
+		if err := versioncontrolops.DoltClone(ctx, db, remoteURL, dbName); err != nil {
 			return fmt.Errorf("clone from remote: %w", err)
 		}
-
-		// WARNING: DO NOT remove, delete, or modify files inside Dolt's .dolt/
-		// directory — including noms/LOCK files. These are Dolt-internal files.
-		// Removing them WILL cause unrecoverable data corruption and data loss.
-		// Dolt manages these files itself; external interference is never safe.
-
-		fmt.Fprintf(os.Stderr, "Synced database from %s\n", plan.SyncRemote)
+		fmt.Fprintf(os.Stderr, "Synced database from %s\n", remoteURL)
 		return nil
 	}
 
-	doltDir := doltserver.ResolveDoltDir(plan.BeadsDir)
-	synced, err := dolt.BootstrapFromGitRemoteWithDB(ctx, doltDir, plan.SyncRemote, dbName)
+	doltDir := doltserver.ResolveDoltDir(beadsDir)
+	synced, err := dolt.BootstrapFromGitRemoteWithDB(ctx, doltDir, remoteURL, dbName)
 	if err != nil {
 		return fmt.Errorf("sync from remote: %w", err)
 	}
 	if synced {
-		// WARNING: DO NOT remove, delete, or modify files inside Dolt's .dolt/
-		// directory — including noms/LOCK files. These are Dolt-internal files.
-		// Removing them WILL cause unrecoverable data corruption and data loss.
-		// Dolt manages these files itself; external interference is never safe.
-		fmt.Fprintf(os.Stderr, "Synced database from %s\n", plan.SyncRemote)
+		fmt.Fprintf(os.Stderr, "Synced database from %s\n", remoteURL)
 	}
 	return nil
 }
