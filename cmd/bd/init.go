@@ -1379,11 +1379,14 @@ Aborting.`, ui.RenderWarn("⚠"), dbPath, ui.RenderAccent("bd list"), prefix)
 // issues. Returns 0 if the database is unreachable or empty. Used by --force
 // safeguard to show users what they're about to destroy.
 func countExistingIssues(_ string) (int, error) {
-	beadsDir := ".beads"
+	var beadsDir string
 	if envBeadsDir := os.Getenv("BEADS_DIR"); envBeadsDir != "" {
 		beadsDir = utils.CanonicalizePath(envBeadsDir)
 	} else {
-		beadsDir = beads.FollowRedirect(beadsDir)
+		beadsDir = beads.FindBeadsDir()
+		if beadsDir == "" {
+			return 0, nil
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
