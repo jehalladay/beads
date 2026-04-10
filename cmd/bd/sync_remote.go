@@ -40,7 +40,7 @@ func commitBeadsConfig(msg string) {
 	if err := addCmd.Run(); err != nil {
 		return
 	}
-	commitCmd := exec.Command("git", "commit", "-m", msg)
+	commitCmd := exec.Command("git", "commit", "-m", msg) //nolint:gosec // G702: msg is from internal callers only, not user input
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		// "nothing to commit" is normal if the file was already staged
 		if !strings.Contains(string(out), "nothing to commit") {
