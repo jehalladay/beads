@@ -69,18 +69,6 @@ func runReset(cmd *cobra.Command, args []string) {
 		}
 		return
 	}
-	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
-		if jsonOutput {
-			outputJSON(map[string]interface{}{
-				"message": "beads not initialized",
-				"reset":   false,
-			})
-		} else {
-			fmt.Println("Beads is not initialized in this repository.")
-			fmt.Println("Nothing to reset.")
-		}
-		return
-	}
 
 	// Collect what would be deleted
 	items := collectResetItems(gitCommonDir, beadsDir)
