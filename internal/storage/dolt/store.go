@@ -437,10 +437,14 @@ var doltTracer = otel.Tracer("github.com/steveyegge/beads/storage/dolt")
 // Instruments are registered against the global delegating provider at init time,
 // so they automatically forward to the real provider once telemetry.Init() runs.
 var doltMetrics struct {
-	retryCount      metric.Int64Counter
-	lockWaitMs      metric.Float64Histogram
-	circuitTrips    metric.Int64Counter
-	circuitRejected metric.Int64Counter
+	retryCount          metric.Int64Counter
+	lockWaitMs          metric.Float64Histogram
+	circuitTrips        metric.Int64Counter
+	circuitRejected     metric.Int64Counter
+	serializationErrors metric.Int64Counter
+	connAcquireMs       metric.Float64Histogram
+	poolWaitCount       metric.Int64Counter
+	poolWaitMs          metric.Float64Histogram
 }
 
 func init() {
@@ -460,6 +464,63 @@ func init() {
 	doltMetrics.circuitRejected, _ = m.Int64Counter("bd.db.circuit_rejected",
 		metric.WithDescription("Requests rejected by open circuit breaker (fail-fast)"),
 		metric.WithUnit("{request}"),
+	)
+	doltMetrics.serializationErrors, _ = m.Int64Counter("bd.db.serialization_errors",
+		metric.WithDescription("Serialization failures (MySQL 1213/1205) before retry"),
+		metric.WithUnit("{error}"),
+	)
+	doltMetrics.connAcquireMs, _ = m.Float64Histogram("bd.db.conn_acquire_ms",
+		metric.WithDescription("Time to acquire a pooled connection for a Dolt transaction"),
+		metric.WithUnit("ms"),
+	)
+	doltMetrics.poolWaitCount, _ = m.Int64Counter("bd.db.pool_wait_count",
+		metric.WithDescription("Number of times a connection acquisition had to wait for the pool"),
+		metric.WithUnit("{wait}"),
+	)
+	doltMetrics.poolWaitMs, _ = m.Float64Histogram("bd.db.pool_wait_ms",
+		metric.WithDescription("Total time connections spent waiting due to pool exhaustion"),
+		metric.WithUnit("ms"),
+	)
+}
+
+// registerPoolGauges registers observable gauges that report sql.DB pool stats
+// on each OTel collection cycle. These are essential for diagnosing shared-server
+// degradation under multi-worktree load (GH#3140).
+func (s *DoltStore) registerPoolGauges() {
+	m := otel.Meter("github.com/steveyegge/beads/storage/dolt")
+	db := s.db
+
+	m.Int64ObservableGauge("bd.db.pool_open", //nolint:errcheck,gosec
+		metric.WithDescription("Current number of open connections (in-use + idle)"),
+		metric.WithUnit("{connection}"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			o.Observe(int64(db.Stats().OpenConnections))
+			return nil
+		}),
+	)
+	m.Int64ObservableGauge("bd.db.pool_in_use", //nolint:errcheck,gosec
+		metric.WithDescription("Connections currently in use"),
+		metric.WithUnit("{connection}"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			o.Observe(int64(db.Stats().InUse))
+			return nil
+		}),
+	)
+	m.Int64ObservableGauge("bd.db.pool_idle", //nolint:errcheck,gosec
+		metric.WithDescription("Idle connections in pool"),
+		metric.WithUnit("{connection}"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			o.Observe(int64(db.Stats().Idle))
+			return nil
+		}),
+	)
+	m.Int64ObservableGauge("bd.db.pool_max_open", //nolint:errcheck,gosec
+		metric.WithDescription("Maximum number of open connections (pool limit)"),
+		metric.WithUnit("{connection}"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			o.Observe(int64(db.Stats().MaxOpenConnections))
+			return nil
+		}),
 	)
 }
 
@@ -520,6 +581,9 @@ func (s *DoltStore) withReadTx(ctx context.Context, fn func(tx *sql.Tx) error) e
 // (MySQL 1213 deadlock, 1205 lock wait timeout). These errors guarantee the
 // transaction was rolled back, so retrying is always safe.
 //
+// In shared-server mode the retry window is extended to 15s (from 5s) because
+// multiple worktrees sharing one server produce higher contention (GH#3140).
+//
 // Connection-level errors (broken pipe, bad connection) are NOT retried here
 // because they can occur after a successful commit, making retry unsafe for
 // non-idempotent operations. Callers that need connection-level retry should
@@ -528,9 +592,13 @@ func (s *DoltStore) withRetryTx(ctx context.Context, fn func(tx *sql.Tx) error) 
 	bo := backoff.NewExponentialBackOff()
 	bo.InitialInterval = 25 * time.Millisecond
 	bo.MaxElapsedTime = 5 * time.Second
+	if s.serverMode {
+		bo.MaxElapsedTime = 15 * time.Second
+	}
 	return backoff.Retry(func() error {
 		err := s.withWriteTx(ctx, fn)
 		if err != nil && isSerializationError(err) {
+			doltMetrics.serializationErrors.Add(ctx, 1)
 			return err // retryable
 		}
 		if err != nil {
@@ -856,7 +924,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	// state from previous sessions poisoning fresh inits (GH#2598).
 	CleanStaleCircuitBreakerFiles()
 
-	breaker := maybeNewCircuitBreaker(cfg.ServerHost, cfg.ServerPort)
+	breaker := maybeNewCircuitBreaker(cfg.ServerHost, cfg.ServerPort, cfg.Database)
 
 	// Circuit breaker: fail-fast if the server is known to be down.
 	if breaker != nil && !breaker.Allow() {
@@ -904,7 +972,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 				}
 				cfg.ServerPort = port
 				addr = net.JoinHostPort(cfg.ServerHost, fmt.Sprintf("%d", cfg.ServerPort))
-				breaker = maybeNewCircuitBreaker(cfg.ServerHost, cfg.ServerPort)
+				breaker = maybeNewCircuitBreaker(cfg.ServerHost, cfg.ServerPort, cfg.Database)
 			}
 			// Retry connection with longer timeout (server just started)
 			conn, dialErr = net.DialTimeout("tcp", addr, 2*time.Second)
@@ -1047,6 +1115,10 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	if !cfg.ReadOnly {
 		store.syncCLIRemotesToSQL(ctx)
 	}
+
+	// Register observable pool gauges for diagnosing shared-server degradation (GH#3140).
+	// These report sql.DB.Stats() on each OTel scrape — no-op when telemetry is off.
+	store.registerPoolGauges()
 
 	return store, nil
 }
