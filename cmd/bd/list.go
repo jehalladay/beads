@@ -151,14 +151,19 @@ func displayWatchedIssueList(ctx context.Context, store watchListDependencyStore
 	displayPrettyListWithDeps(issues, true, allDeps)
 }
 
-func watchIssues(ctx context.Context, store storage.DoltStorage, filter types.IssueFilter, parentID string, sortBy string, reverse bool) {
+func watchIssues(ctx context.Context, store storage.DoltStorage, filter types.IssueFilter, parentID string, sortBy string, reverse bool, effectiveLimit int) {
 	// Initial display
 	issues, err := loadWatchedIssues(ctx, store, filter, parentID, sortBy, reverse)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error querying issues: %v\n", err)
 		return
 	}
+	truncated := effectiveLimit > 0 && len(issues) > effectiveLimit
+	if truncated {
+		issues = issues[:effectiveLimit]
+	}
 	displayWatchedIssueList(ctx, store, issues)
+	printTruncationHint(truncated, effectiveLimit)
 	lastSnapshot := issueSnapshot(issues)
 
 	fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
@@ -183,10 +188,15 @@ func watchIssues(ctx context.Context, store storage.DoltStorage, filter types.Is
 				fmt.Fprintf(os.Stderr, "Error refreshing issues: %v\n", err)
 				continue
 			}
+			truncated := effectiveLimit > 0 && len(issues) > effectiveLimit
+			if truncated {
+				issues = issues[:effectiveLimit]
+			}
 			snap := issueSnapshot(issues)
 			if snap != lastSnapshot {
 				lastSnapshot = snap
 				displayWatchedIssueList(ctx, store, issues)
+				printTruncationHint(truncated, effectiveLimit)
 				fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
 			}
 		}
@@ -459,6 +469,12 @@ var listCmd = &cobra.Command{
 		sqlLimit := effectiveLimit
 		if sortBy != "" {
 			sqlLimit = 0
+		}
+
+		// Fetch one extra row so we can distinguish "exactly N matches" from
+		// "N+ matches truncated" without running a second count query (GH#3212).
+		if sqlLimit > 0 {
+			sqlLimit++
 		}
 
 		filter := types.IssueFilter{
@@ -834,14 +850,16 @@ var listCmd = &cobra.Command{
 		// Apply sorting
 		sortIssues(issues, sortBy, reverse)
 
-		// Apply limit after sorting when --sort deferred it from SQL (GH#1237)
-		if sortBy != "" && effectiveLimit > 0 && len(issues) > effectiveLimit {
+		// Detect truncation (GH#3212). We fetched effectiveLimit+1 above, so any
+		// overflow means more matches exist than we're displaying.
+		truncated := effectiveLimit > 0 && len(issues) > effectiveLimit
+		if truncated {
 			issues = issues[:effectiveLimit]
 		}
 
 		// Handle watch mode (GH#654) - must be before other output modes
 		if watchMode {
-			watchIssues(ctx, activeStore, filter, parentID, sortBy, reverse)
+			watchIssues(ctx, activeStore, filter, parentID, sortBy, reverse, effectiveLimit)
 			return
 		}
 
@@ -872,10 +890,7 @@ var listCmd = &cobra.Command{
 			// Best effort: display gracefully degrades with empty data
 			allDeps, _ := activeStore.GetAllDependencyRecords(ctx)
 			displayPrettyListWithDeps(issues, false, allDeps)
-			// Show truncation hint if we hit the limit (GH#788)
-			if effectiveLimit > 0 && len(issues) == effectiveLimit {
-				fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", effectiveLimit)
-			}
+			printTruncationHint(truncated, effectiveLimit)
 			return
 		}
 
@@ -884,6 +899,7 @@ var listCmd = &cobra.Command{
 			if err := outputFormattedList(ctx, activeStore, issues, formatStr); err != nil {
 				FatalError("%v", err)
 			}
+			printTruncationHint(truncated, effectiveLimit)
 			return
 		}
 
@@ -929,6 +945,7 @@ var listCmd = &cobra.Command{
 				}
 			}
 			outputJSON(issuesWithCounts)
+			printTruncationHint(truncated, effectiveLimit)
 			return
 		}
 
@@ -957,6 +974,7 @@ var listCmd = &cobra.Command{
 				formatAgentIssue(&buf, issue, blockedByMap[issue.ID], blocksMap[issue.ID], parentMap[issue.ID])
 			}
 			fmt.Print(buf.String())
+			printTruncationHint(truncated, effectiveLimit)
 			return
 		} else if longFormat {
 			// Long format: multi-line with details
@@ -980,10 +998,7 @@ var listCmd = &cobra.Command{
 			}
 		}
 
-		// Show truncation hint if we hit the limit (GH#788)
-		if effectiveLimit > 0 && len(issues) == effectiveLimit {
-			fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", effectiveLimit)
-		}
+		printTruncationHint(truncated, effectiveLimit)
 
 		// Show tip after successful list (direct mode only)
 		maybeShowTip(store)
