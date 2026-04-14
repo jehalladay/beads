@@ -82,7 +82,7 @@ Examples:
 			ctx := rootCtx
 
 			// Get schema version
-			schemaVersion, err := store.GetMetadata(ctx, "bd_version")
+			schemaVersion, err := store.GetLocalMetadata(ctx, "bd_version")
 			if err != nil {
 				schemaVersion = "unknown"
 			}

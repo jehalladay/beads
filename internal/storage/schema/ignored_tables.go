@@ -1,15 +1,35 @@
 package schema
 
 // IgnoredTableDDL is the ordered list of CREATE TABLE IF NOT EXISTS statements
-// for all dolt_ignore'd tables. This is the single source of truth for the
-// wisp table schemas used by both DoltStore and EmbeddedDoltStore.
+// for all dolt_ignore'd tables. This is the single source of truth for
+// ignored table schemas used by both DoltStore and EmbeddedDoltStore.
 var IgnoredTableDDL = []string{
+	LocalMetadataSchema,
+	RepoMtimesSchema,
 	WispsTableSchema,
 	WispLabelsSchema,
 	WispDependenciesSchema,
 	WispEventsSchema,
 	WispCommentsSchema,
 }
+
+// LocalMetadataSchema stores clone-local key-value state (tip timestamps,
+// bd version stamps, tracker sync cursors) that should not be replicated
+// across Dolt clones. See migration 0028.
+const LocalMetadataSchema = `CREATE TABLE IF NOT EXISTS local_metadata (
+    ` + "`key`" + ` VARCHAR(255) PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+)`
+
+// RepoMtimesSchema tracks when this clone last checked external repos for
+// import. Purely clone-local cache. See migration 0028.
+const RepoMtimesSchema = `CREATE TABLE IF NOT EXISTS repo_mtimes (
+    repo_path VARCHAR(512) PRIMARY KEY,
+    jsonl_path VARCHAR(512) NOT NULL,
+    mtime_ns BIGINT NOT NULL,
+    last_checked DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_repo_mtimes_checked (last_checked)
+)`
 
 // WispsTableSchema mirrors the issues table schema exactly.
 // This table is ignored by dolt_ignore and will not appear in Dolt commits.

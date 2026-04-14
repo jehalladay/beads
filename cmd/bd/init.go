@@ -662,8 +662,10 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// but the system works without it. Failures here degrade gracefully - we warn but continue.
 		// Belt-and-suspenders: write then verify read-back for each field.
 
-		// Store and verify the bd version (for version mismatch detection)
-		verifyMetadata(ctx, store, "bd_version", Version)
+		// Store bd version in clone-local metadata (dolt-ignored, no merge conflicts)
+		if err := store.SetLocalMetadata(ctx, "bd_version", Version); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to write bd_version local metadata: %v\n", err)
+		}
 
 		// Compute and store repository fingerprint (FR-015)
 		repoID, err := beads.ComputeRepoID()
