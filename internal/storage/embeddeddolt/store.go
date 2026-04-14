@@ -128,6 +128,17 @@ func New(ctx context.Context, beadsDir, database, branch string, opts ...Option)
 		return nil, fmt.Errorf("embeddeddolt: init schema: %w", err)
 	}
 
+	// Ensure dolt_ignore'd wisp tables exist in the working set.
+	// After a clone or branch switch, these tables are absent because
+	// dolt_ignore prevents them from being committed. Server mode handles
+	// this in newServerMode(); embedded mode must do it here. (GH#3270)
+	if err := s.ensureIgnoredTables(ctx); err != nil {
+		if ownsLock {
+			lock.Unlock()
+		}
+		return nil, fmt.Errorf("embeddeddolt: ensure ignored tables: %w", err)
+	}
+
 	return s, nil
 }
 
@@ -257,6 +268,14 @@ func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {
 			}
 		}
 		return nil
+	})
+}
+
+// ensureIgnoredTables creates dolt_ignore'd wisp tables if they don't exist.
+// Uses withConn (not withRootConn) because the database is already created.
+func (s *EmbeddedDoltStore) ensureIgnoredTables(ctx context.Context) error {
+	return s.withConn(ctx, false, func(tx *sql.Tx) error {
+		return schema.EnsureIgnoredTables(ctx, tx)
 	})
 }
 
