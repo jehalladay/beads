@@ -251,6 +251,13 @@ func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {
 			}
 		}
 
+		// Ensure dolt_ignore'd tables exist before migrations — some migrations
+		// reference these tables (e.g. 0027 alters wisps, 0030 inserts into
+		// local_metadata). After a clone they don't exist yet.
+		if err := schema.EnsureIgnoredTables(ctx, tx); err != nil {
+			return fmt.Errorf("ensure ignored tables before migration: %w", err)
+		}
+
 		applied, err := schema.MigrateUp(ctx, tx)
 		if err != nil {
 			return err

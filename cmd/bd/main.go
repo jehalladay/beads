@@ -890,7 +890,7 @@ var rootCmd = &cobra.Command{
 				for tipID := range commandTipIDsShown {
 					key := fmt.Sprintf("tip_%s_last_shown", tipID)
 					value := time.Now().Format(time.RFC3339)
-					if err := store.SetMetadata(rootCtx, key, value); err != nil {
+					if err := store.SetLocalMetadata(rootCtx, key, value); err != nil {
 						FatalError("dolt tip auto-commit failed: %v", err)
 					}
 				}
