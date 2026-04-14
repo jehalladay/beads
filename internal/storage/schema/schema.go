@@ -107,8 +107,7 @@ func parseVersion(name string) (int, error) {
 func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 	// Bootstrap the tracking table.
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-		version INT PRIMARY KEY,
-		applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		version INT PRIMARY KEY
 	)`); err != nil {
 		return 0, fmt.Errorf("creating schema_migrations table: %w", err)
 	}

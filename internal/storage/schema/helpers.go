@@ -34,9 +34,15 @@ func EnsureIgnoredTables(ctx context.Context, db DBConn) error {
 // This does NOT set up dolt_ignore entries or commit — those are migration
 // concerns handled separately during bd init.
 func CreateIgnoredTables(ctx context.Context, db DBConn) error {
-	for _, ddl := range IgnoredTableDDL {
+	for _, ddl := range IgnoredTableDDL() {
 		if _, err := db.ExecContext(ctx, ddl); err != nil {
-			return fmt.Errorf("create ignored table: %w", err)
+			// Tolerate "already exists" / "duplicate column" errors: when
+			// wisps exists but local_metadata doesn't (or vice versa), the
+			// ALTER TABLE statements for existing tables may hit columns
+			// that are already present.
+			if !isConcurrentInitError(err) {
+				return fmt.Errorf("create ignored table: %w", err)
+			}
 		}
 	}
 	return nil
