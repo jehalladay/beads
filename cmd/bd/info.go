@@ -210,6 +210,13 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "1.0.2",
+		Date:    "2026-04-15",
+		Changes: []string{
+			"FIX: npm publish — updated npm-package/package.json URLs (repository, bugs, homepage) from steveyegge/beads to gastownhall/beads so sigstore provenance validation accepts the artifact (v1.0.0 and v1.0.1 npm publishes failed E422 on provenance verification)",
+		},
+	},
+	{
 		Version: "1.0.1",
 		Date:    "2026-04-15",
 		Changes: []string{

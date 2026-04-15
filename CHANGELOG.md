@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-04-15
+
+### Fixed
+
+- **npm publish: provenance validation** — `npm-package/package.json` `repository.url`, `bugs.url`, and `homepage` updated from `steveyegge/beads` to `gastownhall/beads` so that npm's sigstore provenance validator accepts the published artifact. The repo move in v1.0.0 left these URLs stale, which caused npm publishes for v1.0.0 and v1.0.1 to be rejected after provenance check (E422).
+
 ## [1.0.1] - 2026-04-15
 
 ### Added
