@@ -236,7 +236,11 @@ func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {
 	return s.withRootConn(ctx, true, func(tx *sql.Tx) error {
 		if s.database != "" {
 			if !validIdentifier.MatchString(s.database) {
-				return fmt.Errorf("embeddeddolt: invalid database name: %q", s.database)
+				msg := fmt.Sprintf("embeddeddolt: invalid database name: %q", s.database)
+				if strings.ContainsRune(s.database, '-') {
+					msg += "; hyphens are not allowed in embedded mode — replace with underscores in .beads/metadata.json dolt_database field, or run 'bd doctor'"
+				}
+				return errors.New(msg)
 			}
 			if _, err := tx.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS `"+s.database+"`"); err != nil {
 				return fmt.Errorf("embeddeddolt: creating database: %w", err)
