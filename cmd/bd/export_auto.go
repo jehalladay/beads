@@ -106,9 +106,9 @@ func maybeAutoExport(ctx context.Context) {
 		return
 	}
 
-	// Optional git add — skip silently when not in a git repo (standalone
-	// BEADS_DIR flow) to avoid noisy "exit status 128" warnings on every write.
-	if config.GetBool("export.git-add") && isGitRepo() {
+	// Optional git add — skip when no-git-ops is set (GH#3314), when not in a
+	// git repo (standalone BEADS_DIR flow), or when export.git-add is false.
+	if config.GetBool("export.git-add") && !config.GetBool("no-git-ops") && isGitRepo() {
 		if err := gitAddFile(fullPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: auto-export: git add failed: %v\n", err)
 		}

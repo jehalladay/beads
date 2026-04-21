@@ -1091,8 +1091,8 @@ func exportJSONLForCommit() {
 		return
 	}
 
-	// Stage the exported file if configured.
-	if config.GetBool("export.git-add") {
+	// Stage the exported file if configured. Skip when no-git-ops is set (GH#3314).
+	if config.GetBool("export.git-add") && !config.GetBool("no-git-ops") {
 		addCmd := exec.Command("git", "add", fullPath)
 		addCmd.Dir = filepath.Dir(fullPath)
 		if err := addCmd.Run(); err != nil {
