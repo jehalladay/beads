@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"reflect"
+
+	"github.com/steveyegge/beads/internal/ui"
 )
 
 // JSONSchemaVersion is the current version of the bd JSON output schema.
@@ -11,18 +14,31 @@ import (
 // fields are added, renamed, or removed from any --json output.
 const JSONSchemaVersion = 1
 
+// jsonEnvelopeEnabled returns true when BD_JSON_ENVELOPE=1 is set,
+// opting into the uniform {"schema_version": N, "data": <payload>}
+// envelope for all --json output. This will become the default in v2.0.
+func jsonEnvelopeEnabled() bool {
+	return os.Getenv("BD_JSON_ENVELOPE") == "1"
+}
+
 // outputJSON outputs data as pretty-printed JSON to stdout.
 //
-// Object input: schema_version is injected as a top-level field so consumers
-// (Jawnt MCP, BeadsX, gt mail, sync scripts) can detect format changes.
-// Array/slice input: output as-is (no envelope wrapping) to preserve
-// backwards compatibility with existing consumers that parse raw arrays.
+// When BD_JSON_ENVELOPE=1: all output is wrapped uniformly as
+// {"schema_version": N, "data": <original>}. The original payload
+// is untouched inside .data — no type corruption, no injection.
+//
+// Legacy mode (default): objects get schema_version injected as a
+// top-level field; arrays pass through unchanged.
 func outputJSON(v interface{}) {
 	wrapped := wrapWithSchemaVersion(v)
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(wrapped); err != nil {
 		FatalError("encoding JSON: %v", err)
+	}
+
+	if !jsonEnvelopeEnabled() {
+		emitEnvelopeDeprecation()
 	}
 }
 
@@ -36,10 +52,23 @@ func outputJSONRaw(v interface{}) {
 	}
 }
 
-// wrapWithSchemaVersion adds schema_version to object output. Arrays
-// and slices are returned unchanged to preserve backwards compatibility
-// with existing consumers that parse raw JSON arrays.
+// wrapWithSchemaVersion wraps output with schema_version metadata.
+//
+// Envelope mode (BD_JSON_ENVELOPE=1): all output wrapped uniformly as
+// {"schema_version": N, "data": <original>}. Type-safe for all payload
+// types including map[string]string and slices.
+//
+// Legacy mode: objects get schema_version injected inline; arrays and
+// slices pass through unchanged for backwards compatibility.
 func wrapWithSchemaVersion(v interface{}) interface{} {
+	if jsonEnvelopeEnabled() {
+		return map[string]interface{}{
+			"schema_version": JSONSchemaVersion,
+			"data":           v,
+		}
+	}
+
+	// Legacy mode: inline injection for objects, passthrough for arrays.
 	if v == nil {
 		return map[string]interface{}{"schema_version": JSONSchemaVersion}
 	}
@@ -49,12 +78,10 @@ func wrapWithSchemaVersion(v interface{}) interface{} {
 		rv = rv.Elem()
 	}
 
-	// Arrays/slices: return as-is (no envelope) for backwards compat.
 	if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
 		return v
 	}
 
-	// Objects: inject schema_version as a top-level field.
 	data, err := json.Marshal(v)
 	if err != nil {
 		return v
@@ -67,14 +94,38 @@ func wrapWithSchemaVersion(v interface{}) interface{} {
 	return m
 }
 
+var envelopeDeprecationEmitted bool
+
+// emitEnvelopeDeprecation prints a one-time deprecation notice to stderr
+// when --json output is used without BD_JSON_ENVELOPE=1.
+func emitEnvelopeDeprecation() {
+	if envelopeDeprecationEmitted || !ui.IsStderrTerminal() {
+		return
+	}
+	envelopeDeprecationEmitted = true
+	fmt.Fprintf(os.Stderr,
+		"NOTE: bd --json output format will change in v2.0. "+
+			"Set BD_JSON_ENVELOPE=1 to opt in early. "+
+			"See docs/JSON_SCHEMA.md for migration details.\n")
+}
+
 // outputJSONError outputs an error as JSON to stderr and exits with code 1.
 func outputJSONError(err error, code string) {
-	errObj := map[string]interface{}{
-		"error":          err.Error(),
-		"schema_version": JSONSchemaVersion,
+	var errObj interface{}
+	base := map[string]interface{}{
+		"error": err.Error(),
 	}
 	if code != "" {
-		errObj["code"] = code
+		base["code"] = code
+	}
+	if jsonEnvelopeEnabled() {
+		errObj = map[string]interface{}{
+			"schema_version": JSONSchemaVersion,
+			"data":           base,
+		}
+	} else {
+		base["schema_version"] = JSONSchemaVersion
+		errObj = base
 	}
 	encoder := json.NewEncoder(os.Stderr)
 	encoder.SetIndent("", "  ")

@@ -1,8 +1,49 @@
 # JSON Output Schema Contract
 
-Commands that return a single object (show, create, close, ping, etc.) include a
-`schema_version` field at the top level. Commands that return arrays (list, ready,
-blocked, etc.) output a raw JSON array for backwards compatibility.
+All `bd` commands that support `--json` output can wrap their response in
+a uniform envelope by setting `BD_JSON_ENVELOPE=1`. This will become the
+default format in v2.0.
+
+## Migration Guide
+
+### Opt in to the envelope format
+
+```bash
+export BD_JSON_ENVELOPE=1
+```
+
+### Envelope format (BD_JSON_ENVELOPE=1, default in v2.0)
+
+Every `--json` command wraps output as:
+
+```json
+{"schema_version": 1, "data": <original-payload>}
+```
+
+The original payload is untouched inside `.data` — no type corruption,
+no field injection. Works identically for objects, arrays, and maps.
+
+### Updating consumers
+
+```bash
+# Before (legacy):
+bd list --json | jq '.[0].id'
+bd show beads-abc --json | jq '.title'
+
+# After (envelope):
+bd list --json | jq '.data[0].id'
+bd show beads-abc --json | jq '.data.title'
+
+# Version check:
+bd show beads-abc --json | jq '.schema_version'
+```
+
+### Timeline
+
+- **Current release**: Legacy format is default. Set `BD_JSON_ENVELOPE=1` to opt in.
+  A deprecation notice is printed to stderr when `--json` is used without the env var.
+- **v2.0**: Envelope becomes the default. `BD_JSON_ENVELOPE=0` available as
+  temporary escape hatch for one release cycle.
 
 ## Schema Version
 
@@ -16,6 +57,35 @@ The `schema_version` field is an integer that increments when:
 Additive changes (new optional fields) do NOT bump the version.
 
 ## Output Formats
+
+### Envelope mode (BD_JSON_ENVELOPE=1)
+
+All commands emit a uniform envelope:
+
+```json
+{
+  "schema_version": 1,
+  "data": {
+    "id": "beads-abc",
+    "title": "Example issue",
+    "status": "open"
+  }
+}
+```
+
+Arrays are wrapped the same way:
+
+```json
+{
+  "schema_version": 1,
+  "data": [
+    {"id": "beads-abc", "title": "First"},
+    {"id": "beads-def", "title": "Second"}
+  ]
+}
+```
+
+### Legacy mode (default, until v2.0)
 
 ### Object commands (show, create, close, update, etc.)
 

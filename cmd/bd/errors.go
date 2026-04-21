@@ -38,35 +38,38 @@ func workspaceDiagHint(includeWhere bool) string {
 	return "check BEADS_DIR/worktree setup, run 'bd doctor' to diagnose, or run 'bd init' to create a new database"
 }
 
-// jsonStderrError writes a structured JSON error to stderr when --json is active.
-// All JSON errors include schema_version for consumer compatibility.
-func jsonStderrError(message, hint string) {
-	obj := map[string]interface{}{
-		"schema_version": JSONSchemaVersion,
-		"error":          message,
+// buildJSONError constructs a JSON error object respecting envelope mode.
+func buildJSONError(message, hint string) interface{} {
+	inner := map[string]interface{}{
+		"error": message,
 	}
 	if hint != "" {
-		obj["hint"] = hint
+		inner["hint"] = hint
 	}
+	if jsonEnvelopeEnabled() {
+		return map[string]interface{}{
+			"schema_version": JSONSchemaVersion,
+			"data":           inner,
+		}
+	}
+	inner["schema_version"] = JSONSchemaVersion
+	return inner
+}
+
+// jsonStderrError writes a structured JSON error to stderr when --json is active.
+func jsonStderrError(message, hint string) {
 	encoder := json.NewEncoder(os.Stderr)
 	encoder.SetIndent("", "  ")
-	_ = encoder.Encode(obj)
+	_ = encoder.Encode(buildJSONError(message, hint))
 }
 
 // jsonStdoutError writes a structured JSON error to stdout when --json is active.
 // Used by FatalErrorRespectJSON and FatalErrorWithHintRespectJSON where
 // callers expect errors on stdout (e.g., bd show nonexistent-id --json).
 func jsonStdoutError(message, hint string) {
-	obj := map[string]interface{}{
-		"schema_version": JSONSchemaVersion,
-		"error":          message,
-	}
-	if hint != "" {
-		obj["hint"] = hint
-	}
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
-	_ = encoder.Encode(obj)
+	_ = encoder.Encode(buildJSONError(message, hint))
 }
 
 // FatalError writes an error message to stderr and exits with code 1.

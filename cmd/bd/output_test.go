@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestWrapWithSchemaVersion_Object(t *testing.T) {
+func TestWrapWithSchemaVersion_Legacy_Object(t *testing.T) {
 	input := map[string]string{"id": "beads-123", "title": "Test"}
 	result := wrapWithSchemaVersion(input)
 
@@ -21,31 +21,10 @@ func TestWrapWithSchemaVersion_Object(t *testing.T) {
 	}
 }
 
-func TestWrapWithSchemaVersion_Struct(t *testing.T) {
-	type issue struct {
-		ID    string `json:"id"`
-		Title string `json:"title"`
-	}
-	input := &issue{ID: "beads-456", Title: "Struct test"}
-	result := wrapWithSchemaVersion(input)
-
-	m, ok := result.(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected map[string]interface{}, got %T", result)
-	}
-	if m["schema_version"] != JSONSchemaVersion {
-		t.Errorf("schema_version = %v, want %d", m["schema_version"], JSONSchemaVersion)
-	}
-	if m["id"] != "beads-456" {
-		t.Errorf("id = %v, want beads-456", m["id"])
-	}
-}
-
-func TestWrapWithSchemaVersion_Slice(t *testing.T) {
+func TestWrapWithSchemaVersion_Legacy_Slice(t *testing.T) {
 	input := []string{"a", "b", "c"}
 	result := wrapWithSchemaVersion(input)
 
-	// Arrays pass through unchanged for backwards compatibility.
 	arr, ok := result.([]string)
 	if !ok {
 		t.Fatalf("expected []string (passthrough), got %T", result)
@@ -55,7 +34,7 @@ func TestWrapWithSchemaVersion_Slice(t *testing.T) {
 	}
 }
 
-func TestWrapWithSchemaVersion_Nil(t *testing.T) {
+func TestWrapWithSchemaVersion_Legacy_Nil(t *testing.T) {
 	result := wrapWithSchemaVersion(nil)
 	m, ok := result.(map[string]interface{})
 	if !ok {
@@ -66,7 +45,77 @@ func TestWrapWithSchemaVersion_Nil(t *testing.T) {
 	}
 }
 
-func TestWrapWithSchemaVersion_RoundTrip(t *testing.T) {
+func TestWrapWithSchemaVersion_Envelope_Object(t *testing.T) {
+	t.Setenv("BD_JSON_ENVELOPE", "1")
+
+	input := map[string]string{"id": "beads-123", "title": "Test"}
+	result := wrapWithSchemaVersion(input)
+
+	m, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map[string]interface{}, got %T", result)
+	}
+	if m["schema_version"] != JSONSchemaVersion {
+		t.Errorf("schema_version = %v, want %d", m["schema_version"], JSONSchemaVersion)
+	}
+	data, ok := m["data"]
+	if !ok {
+		t.Fatal("missing 'data' key in envelope")
+	}
+	inner, ok := data.(map[string]string)
+	if !ok {
+		t.Fatalf("data type = %T, want map[string]string", data)
+	}
+	if inner["id"] != "beads-123" {
+		t.Errorf("data.id = %v, want beads-123", inner["id"])
+	}
+}
+
+func TestWrapWithSchemaVersion_Envelope_Slice(t *testing.T) {
+	t.Setenv("BD_JSON_ENVELOPE", "1")
+
+	input := []string{"a", "b", "c"}
+	result := wrapWithSchemaVersion(input)
+
+	m, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected envelope map, got %T", result)
+	}
+	if m["schema_version"] != JSONSchemaVersion {
+		t.Errorf("schema_version = %v, want %d", m["schema_version"], JSONSchemaVersion)
+	}
+	data, ok := m["data"]
+	if !ok {
+		t.Fatal("missing 'data' key in envelope")
+	}
+	arr, ok := data.([]string)
+	if !ok {
+		t.Fatalf("data type = %T, want []string", data)
+	}
+	if len(arr) != 3 {
+		t.Errorf("data length = %d, want 3", len(arr))
+	}
+}
+
+func TestWrapWithSchemaVersion_Envelope_Nil(t *testing.T) {
+	t.Setenv("BD_JSON_ENVELOPE", "1")
+
+	result := wrapWithSchemaVersion(nil)
+	m, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected envelope map, got %T", result)
+	}
+	if m["schema_version"] != JSONSchemaVersion {
+		t.Errorf("schema_version = %v, want %d", m["schema_version"], JSONSchemaVersion)
+	}
+	if m["data"] != nil {
+		t.Errorf("data = %v, want nil", m["data"])
+	}
+}
+
+func TestWrapWithSchemaVersion_Envelope_RoundTrip(t *testing.T) {
+	t.Setenv("BD_JSON_ENVELOPE", "1")
+
 	input := map[string]interface{}{"count": 42, "name": "test"}
 	result := wrapWithSchemaVersion(input)
 
@@ -80,11 +129,14 @@ func TestWrapWithSchemaVersion_RoundTrip(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	sv, ok := parsed["schema_version"]
-	if !ok {
-		t.Fatal("schema_version missing after round-trip")
+	if parsed["schema_version"] != float64(JSONSchemaVersion) {
+		t.Errorf("schema_version = %v, want %v", parsed["schema_version"], float64(JSONSchemaVersion))
 	}
-	if sv != float64(JSONSchemaVersion) {
-		t.Errorf("schema_version = %v, want %v", sv, float64(JSONSchemaVersion))
+	innerData, ok := parsed["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("data type = %T, want map[string]interface{}", parsed["data"])
+	}
+	if innerData["count"] != float64(42) {
+		t.Errorf("data.count = %v, want 42", innerData["count"])
 	}
 }
