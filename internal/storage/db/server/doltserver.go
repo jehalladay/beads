@@ -180,7 +180,10 @@ func (s *DoltServer) Restart(_ context.Context) error {
 }
 
 func (s *DoltServer) Running(_ context.Context) bool {
-	return false
+	if s.egCtx == nil {
+		return false
+	}
+	return s.egCtx.Err() == nil
 }
 
 func (s *DoltServer) Ping(ctx context.Context) error {
