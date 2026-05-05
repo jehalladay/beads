@@ -48,12 +48,16 @@ const (
 	readyInitialBackoff    = 50 * time.Millisecond
 	readyMaxBackoff        = 1 * time.Second
 	idleWatcherMinInterval = 1 * time.Second
+	// backendStopTimeout bounds the final server.Stop call so a misbehaving
+	// backend that ignores ctx can't hang the proxy on shutdown.
+	backendStopTimeout = 10 * time.Second
+	// tcpKeepAlivePeriod sets keepalive on accepted client connections so
+	// half-open conns from a dead parent (e.g. SIGKILLed bd) get reaped in
+	// bounded time instead of waiting for the OS default (~2 hours on Linux).
+	tcpKeepAlivePeriod = 30 * time.Second
 )
 
-var (
-	errIdleTimeout    = errors.New("idle timeout reached")
-	errSignalReceived = errors.New("signal received")
-)
+var errIdleTimeout = errors.New("idle timeout reached")
 
 func NewProxyServer(opts ProxyOpts) *proxyServer {
 	return &proxyServer{
@@ -65,7 +69,29 @@ func NewProxyServer(opts ProxyOpts) *proxyServer {
 	}
 }
 
-func (p *proxyServer) Start(ctx context.Context) error {
+func (p *proxyServer) Start(parentCtx context.Context) error {
+	ctx, cancel := context.WithCancel(parentCtx)
+	defer cancel()
+
+	// Install signal handlers BEFORE Listen. Without this, Go's default
+	// SIGTERM action terminates the process during the startup window
+	// (Listen, pidfile write, backend Start, readiness wait), bypassing all
+	// deferred cleanup including RemoveDatabaseProxyPidFile.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(sigCh)
+
+	var sigReceived atomic.Bool
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-sigCh:
+			sigReceived.Store(true)
+			p.stats.IncSignalReceived()
+			cancel()
+		}
+	}()
+
 	addr := fmt.Sprintf("127.0.0.1:%d", p.port)
 
 	ln, err := net.Listen("tcp", addr)
@@ -83,13 +109,13 @@ func (p *proxyServer) Start(ctx context.Context) error {
 	defer RemoveDatabaseProxyPidFile(p.rootDir)
 
 	p.stats.IncBackendStart()
-	if err := p.server.Start(); err != nil {
+	if err := p.server.Start(ctx); err != nil {
 		return fmt.Errorf("start database server: %w", err)
 	}
 
 	if err := waitForServerReady(ctx, p.server, serverReadyTimeout); err != nil {
 		p.stats.IncBackendStop()
-		_ = p.server.Stop()
+		_ = stopBackendBounded(p.server)
 		return fmt.Errorf("database server not ready: %w", err)
 	}
 
@@ -100,32 +126,29 @@ func (p *proxyServer) Start(ctx context.Context) error {
 		return nil
 	})
 	g.Go(func() error { return p.idleWatcher(gctx) })
-	g.Go(func() error { return p.signalHandler(gctx) })
 	g.Go(func() error { return p.acceptLoop(gctx) })
 
 	runErr := g.Wait()
 	_ = p.conns.Wait()
 	p.stats.IncBackendStop()
-	if stopErr := p.server.Stop(); stopErr != nil && runErr == nil {
+	if stopErr := stopBackendBounded(p.server); stopErr != nil && runErr == nil {
 		runErr = fmt.Errorf("stop database server: %w", stopErr)
 	}
-	if errors.Is(runErr, errIdleTimeout) || errors.Is(runErr, errSignalReceived) {
+	if errors.Is(runErr, errIdleTimeout) || sigReceived.Load() {
 		return nil
 	}
 	return runErr
 }
 
-func (p *proxyServer) signalHandler(ctx context.Context) error {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-	defer signal.Stop(sigCh)
-	select {
-	case <-ctx.Done():
-		return nil
-	case <-sigCh:
-		p.stats.IncSignalReceived()
-		return errSignalReceived
-	}
+// stopBackendBounded calls server.Stop with a fresh, time-bounded context.
+// We use Background here (not the parent ctx) because by the time Stop
+// runs, the parent ctx is typically already canceled — a backend that
+// honors ctx would bail immediately and skip its cleanup. The bound
+// protects against backends that ignore ctx entirely.
+func stopBackendBounded(s server.DatabaseServer) error {
+	ctx, cancel := context.WithTimeout(context.Background(), backendStopTimeout)
+	defer cancel()
+	return s.Stop(ctx)
 }
 
 func (p *proxyServer) idleWatcher(ctx context.Context) error {
@@ -168,8 +191,16 @@ func (p *proxyServer) acceptLoop(ctx context.Context) error {
 			if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
 				return nil
 			}
+			// Surface non-shutdown accept errors to the errgroup so the
+			// proxy fails fast instead of busy-looping. Specific errors that
+			// warrant retry (e.g. transient EMFILE under load) can be added
+			// here as the need arises.
 			p.stats.IncAcceptError()
-			continue
+			return fmt.Errorf("accept: %w", err)
+		}
+		if tc, ok := conn.(*net.TCPConn); ok {
+			_ = tc.SetKeepAlive(true)
+			_ = tc.SetKeepAlivePeriod(tcpKeepAlivePeriod)
 		}
 		p.stats.IncAccept()
 		p.conns.Go(func() error {
@@ -232,7 +263,7 @@ func waitForServerReady(ctx context.Context, s server.DatabaseServer, timeout ti
 	bo.MaxElapsedTime = timeout
 
 	return backoff.Retry(func() error {
-		if !s.Running() {
+		if !s.Running(ctx) {
 			return errors.New("database server not running")
 		}
 		pingCtx, cancel := context.WithTimeout(ctx, readyPingTimeout)

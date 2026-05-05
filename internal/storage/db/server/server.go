@@ -5,13 +5,18 @@ import (
 	"net"
 )
 
+// DatabaseServer is the contract a backend must satisfy to sit behind the
+// proxy. Every method takes a context so callers can bound or cancel any
+// operation — implementations MUST honor cancellation, especially in Start /
+// Stop / Dial. The proxy relies on this to avoid wedging on a misbehaving
+// backend during shutdown.
 type DatabaseServer interface {
-	ID() string
-	Start() error
-	Stop() error
-	Restart() error
-	Running() bool
+	ID(ctx context.Context) string
+	DSN(ctx context.Context) string
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+	Restart(ctx context.Context) error
+	Running(ctx context.Context) bool
 	Ping(ctx context.Context) error
 	Dial(ctx context.Context) (net.Conn, error)
-	DSN() string
 }

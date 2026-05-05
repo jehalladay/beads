@@ -78,21 +78,21 @@ func (s *TestDatabaseServerImpl) Snapshot() Counters {
 	return s.counters
 }
 
-func (s *TestDatabaseServerImpl) ID() string {
+func (s *TestDatabaseServerImpl) ID(_ context.Context) string {
 	s.mu.Lock()
 	s.counters.IDCalls++
 	s.mu.Unlock()
 	return s.ID_
 }
 
-func (s *TestDatabaseServerImpl) DSN() string {
+func (s *TestDatabaseServerImpl) DSN(_ context.Context) string {
 	s.mu.Lock()
 	s.counters.DSNCalls++
 	s.mu.Unlock()
 	return s.DSN_
 }
 
-func (s *TestDatabaseServerImpl) Start() error {
+func (s *TestDatabaseServerImpl) Start(_ context.Context) error {
 	s.mu.Lock()
 	s.counters.StartCalls++
 	if s.StartErr == nil {
@@ -103,7 +103,7 @@ func (s *TestDatabaseServerImpl) Start() error {
 	return err
 }
 
-func (s *TestDatabaseServerImpl) Stop() error {
+func (s *TestDatabaseServerImpl) Stop(_ context.Context) error {
 	s.mu.Lock()
 	s.counters.StopCalls++
 	s.started = false
@@ -117,24 +117,24 @@ func (s *TestDatabaseServerImpl) Stop() error {
 	return err
 }
 
-func (s *TestDatabaseServerImpl) Restart() error {
+func (s *TestDatabaseServerImpl) Restart(ctx context.Context) error {
 	s.mu.Lock()
 	s.counters.RestartCalls++
 	s.mu.Unlock()
-	if err := s.Stop(); err != nil {
+	if err := s.Stop(ctx); err != nil {
 		return err
 	}
-	return s.Start()
+	return s.Start(ctx)
 }
 
-func (s *TestDatabaseServerImpl) Running() bool {
+func (s *TestDatabaseServerImpl) Running(_ context.Context) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.counters.RunningCalls++
 	return s.started
 }
 
-func (s *TestDatabaseServerImpl) Ping(ctx context.Context) error {
+func (s *TestDatabaseServerImpl) Ping(_ context.Context) error {
 	s.mu.Lock()
 	s.counters.PingCalls++
 	if s.PingErr != nil {
@@ -145,7 +145,7 @@ func (s *TestDatabaseServerImpl) Ping(ctx context.Context) error {
 	return err
 }
 
-func (s *TestDatabaseServerImpl) Dial(ctx context.Context) (net.Conn, error) {
+func (s *TestDatabaseServerImpl) Dial(_ context.Context) (net.Conn, error) {
 	s.mu.Lock()
 	s.counters.DialCalls++
 	if s.DialErr != nil {

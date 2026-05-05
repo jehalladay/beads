@@ -57,13 +57,14 @@ func TestNew_Defaults(t *testing.T) {
 }
 
 func TestID_DSN_CountAndReturn(t *testing.T) {
+	ctx := context.Background()
 	srv := server.New()
 	srv.ID_ = "custom-id"
 	srv.DSN_ = "custom://dsn"
 
 	for i := 0; i < 3; i++ {
-		assert.Equal(t, "custom-id", srv.ID())
-		assert.Equal(t, "custom://dsn", srv.DSN())
+		assert.Equal(t, "custom-id", srv.ID(ctx))
+		assert.Equal(t, "custom://dsn", srv.DSN(ctx))
 	}
 
 	c := srv.Snapshot()
@@ -72,58 +73,64 @@ func TestID_DSN_CountAndReturn(t *testing.T) {
 }
 
 func TestStart_Success(t *testing.T) {
+	ctx := context.Background()
 	srv := server.New()
 
-	require.NoError(t, srv.Start())
+	require.NoError(t, srv.Start(ctx))
 	assert.Equal(t, int64(1), srv.Snapshot().StartCalls)
-	assert.True(t, srv.Running())
+	assert.True(t, srv.Running(ctx))
 }
 
 func TestStart_Error(t *testing.T) {
+	ctx := context.Background()
 	srv := server.New()
 	srv.StartErr = errors.New("boom")
 
-	assert.EqualError(t, srv.Start(), "boom")
+	assert.EqualError(t, srv.Start(ctx), "boom")
 	assert.Equal(t, int64(1), srv.Snapshot().StartCalls)
-	assert.False(t, srv.Running())
+	assert.False(t, srv.Running(ctx))
 }
 
 func TestStop_Success(t *testing.T) {
+	ctx := context.Background()
 	srv := server.New()
-	require.NoError(t, srv.Start())
+	require.NoError(t, srv.Start(ctx))
 
-	require.NoError(t, srv.Stop())
+	require.NoError(t, srv.Stop(ctx))
 	assert.Equal(t, int64(1), srv.Snapshot().StopCalls)
-	assert.False(t, srv.Running())
+	assert.False(t, srv.Running(ctx))
 }
 
 func TestStop_Error(t *testing.T) {
+	ctx := context.Background()
 	srv := server.New()
 	srv.StopErr = errors.New("nope")
 
-	assert.EqualError(t, srv.Stop(), "nope")
+	assert.EqualError(t, srv.Stop(ctx), "nope")
 	assert.Equal(t, int64(1), srv.Snapshot().StopCalls)
 }
 
 func TestRestart_Success(t *testing.T) {
+	ctx := context.Background()
 	srv := server.New()
-	require.NoError(t, srv.Start())
+	require.NoError(t, srv.Start(ctx))
 
-	require.NoError(t, srv.Restart())
+	require.NoError(t, srv.Restart(ctx))
 
 	c := srv.Snapshot()
 	assert.Equal(t, int64(1), c.RestartCalls)
 	assert.Equal(t, int64(2), c.StartCalls) // initial Start + Restart's Start
 	assert.Equal(t, int64(1), c.StopCalls)
-	assert.True(t, srv.Running())
+	assert.True(t, srv.Running(ctx))
 }
 
 func TestRestart_StopError(t *testing.T) {
+	ctx := context.Background()
 	srv := server.New()
-	require.NoError(t, srv.Start())
+	require.NoError(t, srv.Start(ctx))
 	srv.StopErr = errors.New("stop failed")
 
-	assert.EqualError(t, srv.Restart(), "stop failed")
+	assert.EqualError(t, srv.Restart(ctx), "stop failed")
 
 	c := srv.Snapshot()
 	assert.Equal(t, int64(1), c.RestartCalls)
@@ -132,19 +139,21 @@ func TestRestart_StopError(t *testing.T) {
 }
 
 func TestRestart_StartError(t *testing.T) {
+	ctx := context.Background()
 	srv := server.New()
-	require.NoError(t, srv.Start())
+	require.NoError(t, srv.Start(ctx))
 	srv.StartErr = errors.New("start failed")
 
-	assert.EqualError(t, srv.Restart(), "start failed")
-	assert.False(t, srv.Running())
+	assert.EqualError(t, srv.Restart(ctx), "start failed")
+	assert.False(t, srv.Running(ctx))
 }
 
 func TestRunning_Counter(t *testing.T) {
+	ctx := context.Background()
 	srv := server.New()
 
 	for i := 0; i < 5; i++ {
-		_ = srv.Running()
+		_ = srv.Running(ctx)
 	}
 	assert.Equal(t, int64(5), srv.Snapshot().RunningCalls)
 }
@@ -171,10 +180,11 @@ func TestPing_Error(t *testing.T) {
 }
 
 func TestDial_Echo(t *testing.T) {
+	ctx := context.Background()
 	srv := server.New()
-	t.Cleanup(func() { _ = srv.Stop() })
+	t.Cleanup(func() { _ = srv.Stop(ctx) })
 
-	conn, err := srv.Dial(context.Background())
+	conn, err := srv.Dial(ctx)
 	require.NoError(t, err)
 
 	c := srv.Snapshot()
@@ -211,11 +221,12 @@ func TestDial_Error(t *testing.T) {
 }
 
 func TestDial_DiscardHandler(t *testing.T) {
+	ctx := context.Background()
 	srv := server.New()
 	srv.Handler = server.DiscardHandler
-	t.Cleanup(func() { _ = srv.Stop() })
+	t.Cleanup(func() { _ = srv.Stop(ctx) })
 
-	conn, err := srv.Dial(context.Background())
+	conn, err := srv.Dial(ctx)
 	require.NoError(t, err)
 
 	mustWrite(t, conn, "0123456789")
@@ -229,15 +240,16 @@ func TestDial_DiscardHandler(t *testing.T) {
 }
 
 func TestDial_CustomHandler(t *testing.T) {
+	ctx := context.Background()
 	srv := server.New()
 	payload := "from-backend"
 	srv.Handler = func(c net.Conn) {
 		defer c.Close()
 		_, _ = c.Write([]byte(payload))
 	}
-	t.Cleanup(func() { _ = srv.Stop() })
+	t.Cleanup(func() { _ = srv.Stop(ctx) })
 
-	conn, err := srv.Dial(context.Background())
+	conn, err := srv.Dial(ctx)
 	require.NoError(t, err)
 
 	got := mustReadN(t, conn, len(payload))
@@ -252,16 +264,17 @@ func TestDial_CustomHandler(t *testing.T) {
 }
 
 func TestStop_ClosesOpenConns(t *testing.T) {
+	ctx := context.Background()
 	srv := server.New()
 	srv.Handler = server.DiscardHandler
-	require.NoError(t, srv.Start())
+	require.NoError(t, srv.Start(ctx))
 
-	conn1, err := srv.Dial(context.Background())
+	conn1, err := srv.Dial(ctx)
 	require.NoError(t, err)
-	conn2, err := srv.Dial(context.Background())
+	conn2, err := srv.Dial(ctx)
 	require.NoError(t, err)
 
-	require.NoError(t, srv.Stop())
+	require.NoError(t, srv.Stop(ctx))
 
 	// Stop closed the backend side of each pipe, so proxy-side Read returns
 	// EOF immediately — no deadline needed (and SetReadDeadline on a pipe
@@ -276,7 +289,7 @@ func TestStop_ClosesOpenConns(t *testing.T) {
 
 func TestSnapshot_IsValueCopy(t *testing.T) {
 	srv := server.New()
-	require.NoError(t, srv.Start())
+	require.NoError(t, srv.Start(context.Background()))
 
 	snap := srv.Snapshot()
 	snap.StartCalls = 9999
@@ -285,9 +298,10 @@ func TestSnapshot_IsValueCopy(t *testing.T) {
 }
 
 func TestDial_ConcurrentTracking(t *testing.T) {
+	ctx := context.Background()
 	srv := server.New()
 	srv.Handler = server.DiscardHandler
-	t.Cleanup(func() { _ = srv.Stop() })
+	t.Cleanup(func() { _ = srv.Stop(ctx) })
 
 	const n = 10
 	conns := make([]net.Conn, n)
@@ -297,7 +311,7 @@ func TestDial_ConcurrentTracking(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			c, err := srv.Dial(context.Background())
+			c, err := srv.Dial(ctx)
 			if err != nil {
 				dialErrs.Add(1)
 				return
