@@ -11,7 +11,7 @@ import (
 	"github.com/dolthub/dolt/go/libraries/doltcore/servercfg"
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
 
-	"github.com/steveyegge/beads/internal/storage/doltutil"
+	"github.com/steveyegge/beads/internal/storage/db/util"
 )
 
 type DoltServer struct {
@@ -47,17 +47,22 @@ func (s *DoltServer) ID(_ context.Context) string {
 	return s.id
 }
 
-// TODO: support unix-socket connections (servercfg.Socket()) instead of
-// always building a TCP DSN.
 func (s *DoltServer) DSN(_ context.Context, database string) string {
-	return doltutil.ServerDSN{
-		Host:     s.config.Host(),
-		Port:     s.config.Port(),
-		User:     s.config.User(),
-		Password: s.config.Password(),
-		Database: database,
-		TLS:      false,
-	}.String()
+	dsn := util.DoltServerDSN{
+		User:        s.config.User(),
+		Password:    s.config.Password(),
+		Database:    database,
+		TLSRequired: s.config.RequireSecureTransport(),
+		TLSCert:     s.config.TLSCert(),
+		TLSKey:      s.config.TLSKey(),
+	}
+	if sock := s.config.Socket(); sock != "" {
+		dsn.Socket = sock
+	} else {
+		dsn.Host = s.config.Host()
+		dsn.Port = s.config.Port()
+	}
+	return dsn.String()
 }
 
 func (s *DoltServer) Start(_ context.Context) error {
