@@ -98,11 +98,6 @@ func (p *proxyServer) Start(parentCtx context.Context) error {
 	defer func() { _ = ln.Close() }()
 	p.stats.IncStart()
 
-	if err := WriteDatabaseProxyPidFile(p.rootDir, PidFile{Pid: os.Getpid(), Port: p.port}); err != nil {
-		return fmt.Errorf("write pid file: %w", err)
-	}
-	defer func() { _ = RemoveDatabaseProxyPidFile(p.rootDir) }()
-
 	p.stats.IncBackendStart()
 	if err := p.server.Start(ctx); err != nil {
 		return fmt.Errorf("start database server: %w", err)
@@ -113,6 +108,13 @@ func (p *proxyServer) Start(parentCtx context.Context) error {
 		_ = stopBackendBounded(p.server)
 		return fmt.Errorf("database server not ready: %w", err)
 	}
+
+	if err := WriteDatabaseProxyPidFile(p.rootDir, PidFile{Pid: os.Getpid(), Port: p.port}); err != nil {
+		p.stats.IncBackendStop()
+		_ = stopBackendBounded(p.server)
+		return fmt.Errorf("write pid file: %w", err)
+	}
+	defer func() { _ = RemoveDatabaseProxyPidFile(p.rootDir) }()
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
