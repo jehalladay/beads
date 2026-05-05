@@ -61,14 +61,14 @@ func New() *TestDatabaseServerImpl {
 
 // EchoHandler reads bytes from c and writes them back. Default Dial handler.
 func EchoHandler(c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_, _ = io.Copy(c, c)
 }
 
 // DiscardHandler reads bytes from c and throws them away. Useful when tests
 // only care that the proxy attempted Dial / forwarded one direction.
 func DiscardHandler(c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_, _ = io.Copy(io.Discard, c)
 }
 

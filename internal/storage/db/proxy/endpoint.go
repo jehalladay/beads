@@ -157,8 +157,8 @@ func forkExecChild(rootDir string, port int, idleTimeout time.Duration, backend 
 		"--backend", string(backend),
 	}
 
-	logFile, err := os.OpenFile(filepath.Join(rootDir, "proxy.log"),
-		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	logFile, err := os.OpenFile(filepath.Join(rootDir, "proxy.log"), //nolint:gosec // rootDir is caller-derived (workspace path), not user request input
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open proxy.log: %w", err)
 	}

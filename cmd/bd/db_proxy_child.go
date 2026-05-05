@@ -74,7 +74,13 @@ not intended to be invoked directly by users.`,
 	},
 }
 
-func newDatabaseServer(backend proxy.Backend, rootDir string) (server.DatabaseServer, error) {
+// rootDir is currently unused — every backend dispatch returns
+// "not yet implemented". Once a real implementation lands it will need
+// rootDir to locate per-workspace state, and the first return value will
+// no longer always be nil.
+//
+//nolint:unparam // first return is always nil while every backend is a stub
+func newDatabaseServer(backend proxy.Backend, _ string) (server.DatabaseServer, error) {
 	switch backend {
 	case proxy.BackendExternal, proxy.BackendLocalServer, proxy.BackendLocalSharedServer:
 		return nil, fmt.Errorf("backend %q: not yet implemented", backend)

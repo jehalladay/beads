@@ -95,13 +95,13 @@ func (p *proxyServer) Start(parentCtx context.Context) error {
 	}
 
 	p.listener = ln
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	p.stats.IncStart()
 
 	if err := WriteDatabaseProxyPidFile(p.rootDir, PidFile{Pid: os.Getpid(), Port: p.port}); err != nil {
 		return fmt.Errorf("write pid file: %w", err)
 	}
-	defer RemoveDatabaseProxyPidFile(p.rootDir)
+	defer func() { _ = RemoveDatabaseProxyPidFile(p.rootDir) }()
 
 	p.stats.IncBackendStart()
 	if err := p.server.Start(ctx); err != nil {
@@ -234,16 +234,16 @@ func (p *proxyServer) handleConn(ctx context.Context, client net.Conn) error {
 	})
 	g.Go(func() error {
 		defer finish()
-		defer backend.Close()
-		defer client.Close()
+		defer func() { _ = backend.Close() }()
+		defer func() { _ = client.Close() }()
 		n, err := io.Copy(backend, client)
 		p.stats.AddBytesClientToBackend(n)
 		return err
 	})
 	g.Go(func() error {
 		defer finish()
-		defer backend.Close()
-		defer client.Close()
+		defer func() { _ = backend.Close() }()
+		defer func() { _ = client.Close() }()
 		n, err := io.Copy(client, backend)
 		p.stats.AddBytesBackendToClient(n)
 		return err
