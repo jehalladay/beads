@@ -110,44 +110,6 @@ func TestStop_Error(t *testing.T) {
 	assert.Equal(t, int64(1), srv.Snapshot().StopCalls)
 }
 
-func TestRestart_Success(t *testing.T) {
-	ctx := context.Background()
-	srv := server.New()
-	require.NoError(t, srv.Start(ctx))
-
-	require.NoError(t, srv.Restart(ctx))
-
-	c := srv.Snapshot()
-	assert.Equal(t, int64(1), c.RestartCalls)
-	assert.Equal(t, int64(2), c.StartCalls) // initial Start + Restart's Start
-	assert.Equal(t, int64(1), c.StopCalls)
-	assert.True(t, srv.Running(ctx))
-}
-
-func TestRestart_StopError(t *testing.T) {
-	ctx := context.Background()
-	srv := server.New()
-	require.NoError(t, srv.Start(ctx))
-	srv.StopErr = errors.New("stop failed")
-
-	assert.EqualError(t, srv.Restart(ctx), "stop failed")
-
-	c := srv.Snapshot()
-	assert.Equal(t, int64(1), c.RestartCalls)
-	assert.Equal(t, int64(1), c.StopCalls)
-	assert.Equal(t, int64(1), c.StartCalls) // Restart's Start was never reached
-}
-
-func TestRestart_StartError(t *testing.T) {
-	ctx := context.Background()
-	srv := server.New()
-	require.NoError(t, srv.Start(ctx))
-	srv.StartErr = errors.New("start failed")
-
-	assert.EqualError(t, srv.Restart(ctx), "start failed")
-	assert.False(t, srv.Running(ctx))
-}
-
 func TestRunning_Counter(t *testing.T) {
 	ctx := context.Background()
 	srv := server.New()

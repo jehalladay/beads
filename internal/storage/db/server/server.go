@@ -18,7 +18,6 @@ type DatabaseServer interface {
 	DSN(ctx context.Context, database string) string
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
-	Restart(ctx context.Context) error
 	Running(ctx context.Context) bool
 	Ping(ctx context.Context) error
 	Dial(ctx context.Context) (net.Conn, error)

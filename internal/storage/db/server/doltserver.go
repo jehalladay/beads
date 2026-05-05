@@ -233,10 +233,6 @@ func (s *DoltServer) Stop(_ context.Context) error {
 	return nil
 }
 
-func (s *DoltServer) Restart(_ context.Context) error {
-	return errors.New("server: DoltServer.Restart not implemented")
-}
-
 func (s *DoltServer) Running(_ context.Context) bool {
 	if s.egCtx == nil {
 		return false
