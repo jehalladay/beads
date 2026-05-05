@@ -25,10 +25,11 @@ type DoltServer struct {
 	configPath  string
 	config      servercfg.ServerConfig
 
-	cmd     *exec.Cmd       // the dolt sql-server process; nil when not started
-	logFile *os.File        // stdout/stderr destination; closed by Stop
-	errChan chan error      // single-buffered; receives cmd.Wait() result on non-nil error
-	egCtx   context.Context // canceled when the wait goroutine returns an error or parent ctx cancels
+	cmd     *exec.Cmd
+	logFile *os.File
+	eg      *errgroup.Group
+	egCtx   context.Context
+	cancel  context.CancelFunc // cancels the parent of egCtx; called by Stop
 }
 
 var _ DatabaseServer = (*DoltServer)(nil)
@@ -103,42 +104,63 @@ func (s *DoltServer) DSN(_ context.Context, database string) string {
 	return dsn.String()
 }
 
-func (s *DoltServer) Start(ctx context.Context) error {
+func (s *DoltServer) Start(_ context.Context) error {
 	args := []string{
 		"sql-server",
 		"-c", s.configPath,
 	}
 
-	cmd := exec.Command(s.doltBinExec, args...)
+	if s.eg != nil || s.egCtx != nil {
+		return fmt.Errorf("server: DoltServer.Start: server already started")
+	}
+
+	managedCtx, cancel := context.WithCancel(context.Background())
+	eg, egCtx := errgroup.WithContext(managedCtx)
+	s.eg = eg
+	s.egCtx = egCtx
+	s.cancel = cancel
+
+	cmd := exec.CommandContext(managedCtx, s.doltBinExec, args...)
 	cmd.Dir = s.rootDir
 	cmd.Stdin = nil
 	if s.logFile != nil {
 		cmd.Stdout = s.logFile
 		cmd.Stderr = s.logFile
 	}
+
 	cmd.Env = os.Environ()
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("server: DoltServer.Start: launch dolt sql-server: %w", err)
-	}
-
-	eg, egCtx := errgroup.WithContext(ctx)
-	s.cmd = cmd
-	s.errChan = make(chan error, 1)
-	s.egCtx = egCtx
-
 	eg.Go(func() error {
-		defer close(s.errChan)
-		waitErr := cmd.Wait()
-		s.errChan <- waitErr
-		return waitErr
+		return cmd.Run()
 	})
 
 	return nil
 }
 
 func (s *DoltServer) Stop(_ context.Context) error {
-	return errors.New("server: DoltServer.Stop not implemented")
+	if s.cancel != nil {
+		s.cancel()
+	}
+	var waitErr error
+	if s.eg != nil {
+		waitErr = s.eg.Wait()
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) || errors.Is(waitErr, context.Canceled) {
+			waitErr = nil
+		}
+	}
+	var closeErr error
+	if s.logFile != nil {
+		closeErr = s.logFile.Close()
+		s.logFile = nil
+	}
+	if waitErr != nil {
+		return fmt.Errorf("server: DoltServer.Stop: %w", waitErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("server: DoltServer.Stop: close log: %w", closeErr)
+	}
+	return nil
 }
 
 func (s *DoltServer) Restart(_ context.Context) error {
