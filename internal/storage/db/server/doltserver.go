@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/servercfg"
@@ -20,23 +21,26 @@ import (
 	"github.com/steveyegge/beads/internal/storage/db/util"
 )
 
+const defaultKeepAlivePeriod = 30 * time.Second
+
 type DoltServer struct {
-	id          string
-	doltBinExec string
-	rootDir     string
-	configPath  string
-	config      servercfg.ServerConfig
+	id              string
+	doltBinExec     string
+	rootDir         string
+	configPath      string
+	config          servercfg.ServerConfig
+	keepAlivePeriod time.Duration
 
 	cmd     *exec.Cmd
 	logFile *os.File
 	eg      *errgroup.Group
 	egCtx   context.Context
-	cancel  context.CancelFunc // cancels the parent of egCtx; called by Stop
+	cancel  context.CancelFunc
 }
 
 var _ DatabaseServer = (*DoltServer)(nil)
 
-func NewDoltServer(doltBinExec, rootDir, configPath, logFilePath string) (*DoltServer, error) {
+func NewDoltServer(doltBinExec, rootDir, configPath, logFilePath string, keepAlivePeriod time.Duration) (*DoltServer, error) {
 	if doltBinExec == "" {
 		return nil, errors.New("server: NewDoltServer: doltBinExec is required")
 	}
@@ -73,14 +77,18 @@ func NewDoltServer(doltBinExec, rootDir, configPath, logFilePath string) (*DoltS
 			return nil, fmt.Errorf("server: NewDoltServer: open log %q: %w", logFilePath, err)
 		}
 	}
+	if keepAlivePeriod == 0 {
+		keepAlivePeriod = defaultKeepAlivePeriod
+	}
 	sum := sha256.Sum256([]byte(rootDir))
 	return &DoltServer{
-		id:          hex.EncodeToString(sum[:]),
-		doltBinExec: absDoltBinExec,
-		rootDir:     absRootDir,
-		configPath:  absConfigPath,
-		config:      cfg,
-		logFile:     logFile,
+		id:              hex.EncodeToString(sum[:]),
+		doltBinExec:     absDoltBinExec,
+		rootDir:         absRootDir,
+		configPath:      absConfigPath,
+		config:          cfg,
+		keepAlivePeriod: keepAlivePeriod,
+		logFile:         logFile,
 	}, nil
 }
 
@@ -187,6 +195,19 @@ func (s *DoltServer) Ping(ctx context.Context) error {
 	return nil
 }
 
-func (s *DoltServer) Dial(_ context.Context) (net.Conn, error) {
-	return nil, errors.New("server: DoltServer.Dial not implemented")
+func (s *DoltServer) Dial(ctx context.Context) (net.Conn, error) {
+	network, addr := "tcp", net.JoinHostPort(s.config.Host(), strconv.Itoa(s.config.Port()))
+	if sock := s.config.Socket(); sock != "" {
+		network, addr = "unix", sock
+	}
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, network, addr)
+	if err != nil {
+		return nil, fmt.Errorf("server: DoltServer.Dial: %w", err)
+	}
+	if tc, ok := conn.(*net.TCPConn); ok {
+		_ = tc.SetKeepAlive(true)
+		_ = tc.SetKeepAlivePeriod(s.keepAlivePeriod)
+	}
+	return conn, nil
 }
