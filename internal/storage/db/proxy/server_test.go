@@ -268,10 +268,12 @@ func TestProxy_BackendNotReady_CtxCancel(t *testing.T) {
 	h := runProxy(t, proxy.ProxyOpts{
 		RootDir: root, Port: port, Server: ts, Stats: stats,
 	})
-	// Give the proxy a moment to listen + start the readiness loop.
-	waitListening(t, root, listenWait)
-	time.Sleep(100 * time.Millisecond)
-
+	// The pidfile is written only after readiness succeeds, but PingErr
+	// keeps readiness failing — so waitListening would hang. Wait until
+	// the proxy is in the readiness loop (>=1 Ping attempt observed).
+	require.Eventually(t, func() bool {
+		return ts.Snapshot().PingCalls >= 1
+	}, listenWait, 10*time.Millisecond)
 	h.Cancel()
 	err := h.waitErr(t, shutdownWait)
 	require.Error(t, err)
