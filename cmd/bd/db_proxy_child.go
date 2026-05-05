@@ -70,10 +70,10 @@ not intended to be invoked directly by users.`,
 
 func newDatabaseServer(backend, rootDir string) (server.DatabaseServer, error) {
 	switch backend {
-	case "external", "local-server", "local-shared-server", "test-server":
+	case "external", "local-server", "local-shared-server":
 		return nil, fmt.Errorf("backend %q: not yet implemented", backend)
 	default:
-		return nil, fmt.Errorf("unknown backend %q (want one of: external, local-server, local-shared-server, test-server)", backend)
+		return nil, fmt.Errorf("unknown backend %q (want one of: external, local-server, local-shared-server)", backend)
 	}
 }
 
@@ -81,7 +81,7 @@ func init() {
 	dbProxyChildCmd.Flags().StringVar(&dbProxyChildRoot, "root", "", "root directory holding proxy.lock, proxy.pid, proxy.log")
 	dbProxyChildCmd.Flags().IntVar(&dbProxyChildPort, "port", 0, "port to listen on")
 	dbProxyChildCmd.Flags().DurationVar(&dbProxyChildIdleTimeout, "idle-timeout", 5*time.Minute, "idle timeout before shutdown (0 disables)")
-	dbProxyChildCmd.Flags().StringVar(&dbProxyChildBackend, "backend", "", "backend kind: external | local-server | local-shared-server | test-server")
+	dbProxyChildCmd.Flags().StringVar(&dbProxyChildBackend, "backend", "", "backend kind: external | local-server | local-shared-server")
 	_ = dbProxyChildCmd.MarkFlagRequired("root")
 	_ = dbProxyChildCmd.MarkFlagRequired("port")
 	_ = dbProxyChildCmd.MarkFlagRequired("backend")

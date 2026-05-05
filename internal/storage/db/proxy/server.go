@@ -24,6 +24,10 @@ type ProxyOpts struct {
 	Port        int
 	IdleTimeout time.Duration
 	Server      server.DatabaseServer
+	// Stats is optional. When non-nil, the proxy records per-event counters
+	// against it; tests use Snapshot() to assert. Production code should
+	// leave this nil.
+	Stats *Stats
 }
 
 type proxyServer struct {
@@ -31,6 +35,7 @@ type proxyServer struct {
 	port        int
 	idleTimeout time.Duration
 	server      server.DatabaseServer
+	stats       *Stats
 
 	listener    net.Listener
 	activeConns atomic.Int64
@@ -56,6 +61,7 @@ func NewProxyServer(opts ProxyOpts) *proxyServer {
 		port:        opts.Port,
 		idleTimeout: opts.IdleTimeout,
 		server:      opts.Server,
+		stats:       opts.Stats,
 	}
 }
 
@@ -69,17 +75,20 @@ func (p *proxyServer) Start(ctx context.Context) error {
 
 	p.listener = ln
 	defer ln.Close()
+	p.stats.IncStart()
 
 	if err := WriteDatabaseProxyPidFile(p.rootDir, PidFile{Pid: os.Getpid(), Port: p.port}); err != nil {
 		return fmt.Errorf("write pid file: %w", err)
 	}
 	defer RemoveDatabaseProxyPidFile(p.rootDir)
 
+	p.stats.IncBackendStart()
 	if err := p.server.Start(); err != nil {
 		return fmt.Errorf("start database server: %w", err)
 	}
 
 	if err := waitForServerReady(ctx, p.server, serverReadyTimeout); err != nil {
+		p.stats.IncBackendStop()
 		_ = p.server.Stop()
 		return fmt.Errorf("database server not ready: %w", err)
 	}
@@ -96,6 +105,7 @@ func (p *proxyServer) Start(ctx context.Context) error {
 
 	runErr := g.Wait()
 	_ = p.conns.Wait()
+	p.stats.IncBackendStop()
 	if stopErr := p.server.Stop(); stopErr != nil && runErr == nil {
 		runErr = fmt.Errorf("stop database server: %w", stopErr)
 	}
@@ -113,6 +123,7 @@ func (p *proxyServer) signalHandler(ctx context.Context) error {
 	case <-ctx.Done():
 		return nil
 	case <-sigCh:
+		p.stats.IncSignalReceived()
 		return errSignalReceived
 	}
 }
@@ -143,6 +154,7 @@ func (p *proxyServer) idleWatcher(ctx context.Context) error {
 				continue
 			}
 			if time.Since(idleSince) >= p.idleTimeout {
+				p.stats.IncIdleTimeout()
 				return errIdleTimeout
 			}
 		}
@@ -156,8 +168,10 @@ func (p *proxyServer) acceptLoop(ctx context.Context) error {
 			if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
 				return nil
 			}
+			p.stats.IncAcceptError()
 			continue
 		}
+		p.stats.IncAccept()
 		p.conns.Go(func() error {
 			return p.handleConn(ctx, conn)
 		})
@@ -168,11 +182,15 @@ func (p *proxyServer) handleConn(ctx context.Context, client net.Conn) error {
 	p.activeConns.Add(1)
 	defer p.activeConns.Add(-1)
 
+	p.stats.IncBackendDialAttempt()
 	backend, err := p.server.Dial(ctx)
 	if err != nil {
+		p.stats.IncBackendDialError()
 		_ = client.Close()
 		return err
 	}
+	p.stats.IncBackendDialSuccess()
+	p.stats.IncHandledConn()
 
 	done := make(chan struct{})
 	var doneOnce sync.Once
@@ -192,14 +210,16 @@ func (p *proxyServer) handleConn(ctx context.Context, client net.Conn) error {
 		defer finish()
 		defer backend.Close()
 		defer client.Close()
-		_, err := io.Copy(backend, client)
+		n, err := io.Copy(backend, client)
+		p.stats.AddBytesClientToBackend(n)
 		return err
 	})
 	g.Go(func() error {
 		defer finish()
 		defer backend.Close()
 		defer client.Close()
-		_, err := io.Copy(client, backend)
+		n, err := io.Copy(client, backend)
+		p.stats.AddBytesBackendToClient(n)
 		return err
 	})
 	return g.Wait()
