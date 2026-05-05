@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/servercfg"
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
@@ -134,6 +136,8 @@ func (s *DoltServer) Start(_ context.Context) error {
 		return cmd.Run()
 	})
 
+	// give server time to come up
+	time.Sleep(200 * time.Millisecond)
 	return nil
 }
 
@@ -171,8 +175,16 @@ func (s *DoltServer) Running(_ context.Context) bool {
 	return false
 }
 
-func (s *DoltServer) Ping(_ context.Context) error {
-	return errors.New("server: DoltServer.Ping not implemented")
+func (s *DoltServer) Ping(ctx context.Context) error {
+	db, err := sql.Open("mysql", s.DSN(ctx, ""))
+	if err != nil {
+		return fmt.Errorf("server: DoltServer.Ping: open: %w", err)
+	}
+	defer db.Close()
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("server: DoltServer.Ping: %w", err)
+	}
+	return nil
 }
 
 func (s *DoltServer) Dial(_ context.Context) (net.Conn, error) {
