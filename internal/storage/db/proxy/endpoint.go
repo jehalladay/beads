@@ -31,7 +31,7 @@ type OpenOpts struct {
 
 const openDeadline = 15 * time.Second
 
-func Open(rootDir string, opts OpenOpts) (Endpoint, error) {
+func GetCreateDatabaseProxyServerEndpoint(rootDir string, opts OpenOpts) (Endpoint, error) {
 	deadline := time.Now().Add(openDeadline)
 	for {
 		lock, err := util.TryLock(filepath.Join(rootDir, lockFileName))
