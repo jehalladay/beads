@@ -48,10 +48,12 @@ func (h *proxyHandle) Cancel() { h.cancel() }
 
 func (h *proxyHandle) waitErr(t *testing.T, timeout time.Duration) error {
 	t.Helper()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case err := <-h.done:
 		return err
-	case <-time.After(timeout):
+	case <-timer.C:
 		t.Fatalf("proxy.Start did not return within %s", timeout)
 		return nil
 	}
@@ -72,9 +74,11 @@ func runProxy(t *testing.T, opts proxy.ProxyOpts) *proxyHandle {
 	}()
 	t.Cleanup(func() {
 		cancel()
+		timer := time.NewTimer(shutdownWait)
+		defer timer.Stop()
 		select {
 		case <-h.exited:
-		case <-time.After(shutdownWait):
+		case <-timer.C:
 			t.Errorf("proxy did not exit within %s of cancel", shutdownWait)
 		}
 	})

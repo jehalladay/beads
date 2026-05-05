@@ -26,22 +26,27 @@ func (e Endpoint) Address() string {
 
 type OpenOpts struct {
 	IdleTimeout time.Duration
-	Backend     string
+	Backend     Backend
 }
 
 const (
 	openDeadline          = 15 * time.Second
 	spawnReadyHardTimeout = 2 * time.Minute
+	openPollInterval      = 100 * time.Millisecond
 )
 
 func GetCreateDatabaseProxyServerEndpoint(rootDir string, opts OpenOpts) (Endpoint, error) {
-	if opts.Backend == "" {
-		return Endpoint{}, fmt.Errorf("OpenOpts.Backend must be set")
+	if err := opts.Backend.Validate(); err != nil {
+		return Endpoint{}, fmt.Errorf("OpenOpts.Backend: %w", err)
 	}
 	deadline := time.Now().Add(openDeadline)
-	timeout := time.After(openDeadline)
-	var lastSpawnErr error
 
+	timeout := time.NewTimer(openDeadline)
+	defer timeout.Stop()
+	poll := time.NewTicker(openPollInterval)
+	defer poll.Stop()
+
+	var lastSpawnErr error
 	for {
 		if ep, ok := readAndDial(rootDir); ok {
 			return ep, nil
@@ -60,12 +65,12 @@ func GetCreateDatabaseProxyServerEndpoint(rootDir string, opts OpenOpts) (Endpoi
 		}
 
 		select {
-		case <-timeout:
+		case <-timeout.C:
 			if lastSpawnErr != nil {
 				return Endpoint{}, lastSpawnErr
 			}
 			return Endpoint{}, fmt.Errorf("timeout waiting for proxy on %s", rootDir)
-		case <-time.After(100 * time.Millisecond):
+		case <-poll.C:
 		}
 	}
 }
@@ -93,7 +98,11 @@ func spawnAndHandoff(rootDir string, opts OpenOpts, deadline time.Time, lock *ut
 		return Endpoint{}, fmt.Errorf("fork child: %w", err)
 	}
 
-	hardTimeout := time.After(spawnReadyHardTimeout)
+	hard := time.NewTimer(spawnReadyHardTimeout)
+	defer hard.Stop()
+	poll := time.NewTicker(openPollInterval)
+	defer poll.Stop()
+
 	for {
 		if ep, ok := readAndDial(rootDir); ok {
 			return ep, nil
@@ -101,11 +110,10 @@ func spawnAndHandoff(rootDir string, opts OpenOpts, deadline time.Time, lock *ut
 		select {
 		case <-done:
 			return Endpoint{}, fmt.Errorf("proxy child on port %d exited before becoming ready (likely lost lock race)", port)
-		case <-hardTimeout:
+		case <-hard.C:
 			_ = cmd.Process.Kill()
 			return Endpoint{}, fmt.Errorf("hard timeout (%s) waiting for proxy on port %d", spawnReadyHardTimeout, port)
-		case <-time.After(100 * time.Millisecond):
-			// fall through to next poll
+		case <-poll.C:
 		}
 		if time.Now().After(deadline) {
 			_ = cmd.Process.Kill()
@@ -124,7 +132,7 @@ func pickFreePort() (int, error) {
 	return port, nil
 }
 
-func forkExecChild(rootDir string, port int, idleTimeout time.Duration, backend string, lock *util.Lock) (*exec.Cmd, <-chan struct{}, error) {
+func forkExecChild(rootDir string, port int, idleTimeout time.Duration, backend Backend, lock *util.Lock) (*exec.Cmd, <-chan struct{}, error) {
 	released := false
 	defer func() {
 		if !released {
@@ -146,7 +154,7 @@ func forkExecChild(rootDir string, port int, idleTimeout time.Duration, backend 
 		"--root", rootDir,
 		"--port", strconv.Itoa(port),
 		"--idle-timeout", idleTimeout.String(),
-		"--backend", backend,
+		"--backend", string(backend),
 	}
 
 	logFile, err := os.OpenFile(filepath.Join(rootDir, "proxy.log"),

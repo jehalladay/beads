@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -41,6 +42,11 @@ not intended to be invoked directly by users.`,
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {},
 
 	RunE: func(cmd *cobra.Command, _ []string) error {
+		backend := proxy.Backend(dbProxyChildBackend)
+		if err := backend.Validate(); err != nil {
+			return err
+		}
+
 		// Acquire proxy.lock. If already held, another proxy is alive — exit
 		// cleanly with EX_TEMPFAIL so the spawning parent retries via
 		// readAndDial.
@@ -53,7 +59,7 @@ not intended to be invoked directly by users.`,
 		}
 		defer lock.Unlock()
 
-		srv, err := newDatabaseServer(dbProxyChildBackend, dbProxyChildRoot)
+		srv, err := newDatabaseServer(backend, dbProxyChildRoot)
 		if err != nil {
 			return err
 		}
@@ -68,20 +74,21 @@ not intended to be invoked directly by users.`,
 	},
 }
 
-func newDatabaseServer(backend, rootDir string) (server.DatabaseServer, error) {
+func newDatabaseServer(backend proxy.Backend, rootDir string) (server.DatabaseServer, error) {
 	switch backend {
-	case "external", "local-server", "local-shared-server":
+	case proxy.BackendExternal, proxy.BackendLocalServer, proxy.BackendLocalSharedServer:
 		return nil, fmt.Errorf("backend %q: not yet implemented", backend)
-	default:
-		return nil, fmt.Errorf("unknown backend %q (want one of: external, local-server, local-shared-server)", backend)
 	}
+	// Unreachable in normal flow: RunE validates before reaching here.
+	return nil, fmt.Errorf("unknown backend %q", backend)
 }
 
 func init() {
 	dbProxyChildCmd.Flags().StringVar(&dbProxyChildRoot, "root", "", "root directory holding proxy.lock, proxy.pid, proxy.log")
 	dbProxyChildCmd.Flags().IntVar(&dbProxyChildPort, "port", 0, "port to listen on")
 	dbProxyChildCmd.Flags().DurationVar(&dbProxyChildIdleTimeout, "idle-timeout", 5*time.Minute, "idle timeout before shutdown (0 disables)")
-	dbProxyChildCmd.Flags().StringVar(&dbProxyChildBackend, "backend", "", "backend kind: external | local-server | local-shared-server")
+	dbProxyChildCmd.Flags().StringVar(&dbProxyChildBackend, "backend", "",
+		"backend kind: "+strings.Join(proxy.KnownBackendNames(), " | "))
 	_ = dbProxyChildCmd.MarkFlagRequired("root")
 	_ = dbProxyChildCmd.MarkFlagRequired("port")
 	_ = dbProxyChildCmd.MarkFlagRequired("backend")
