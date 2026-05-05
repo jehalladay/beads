@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/servercfg"
@@ -31,7 +32,6 @@ type DoltServer struct {
 	config          servercfg.ServerConfig
 	keepAlivePeriod time.Duration
 
-	cmd     *exec.Cmd
 	logFile *os.File
 	eg      *errgroup.Group
 	egCtx   context.Context
@@ -114,14 +114,72 @@ func (s *DoltServer) DSN(_ context.Context, database string) string {
 	return dsn.String()
 }
 
-func (s *DoltServer) Start(_ context.Context) error {
+func (s *DoltServer) doltConfigure(ctx context.Context) error {
+	probe := exec.CommandContext(ctx, s.doltBinExec, "config", "--global", "--get", "user.name")
+	if out, err := probe.Output(); err == nil && strings.TrimSpace(string(out)) != "" {
+		return nil
+	}
+	name, email := "beads", "beads@localhost"
+	if out, err := exec.CommandContext(ctx, "git", "config", "user.name").Output(); err == nil {
+		if v := strings.TrimSpace(string(out)); v != "" {
+			name = v
+		}
+	}
+	if out, err := exec.CommandContext(ctx, "git", "config", "user.email").Output(); err == nil {
+		if v := strings.TrimSpace(string(out)); v != "" {
+			email = v
+		}
+	}
+	if out, err := exec.CommandContext(ctx, s.doltBinExec, "config", "--global", "--add", "user.name", name).CombinedOutput(); err != nil {
+		return fmt.Errorf("server: DoltServer.doltConfigure: set user.name: %w\n%s", err, out)
+	}
+	if out, err := exec.CommandContext(ctx, s.doltBinExec, "config", "--global", "--add", "user.email", email).CombinedOutput(); err != nil {
+		return fmt.Errorf("server: DoltServer.doltConfigure: set user.email: %w\n%s", err, out)
+	}
+	return nil
+}
+
+func (s *DoltServer) doltInit(ctx context.Context) error {
+	if err := os.MkdirAll(s.rootDir, 0o755); err != nil {
+		return fmt.Errorf("server: DoltServer.doltInit: mkdir %q: %w", s.rootDir, err)
+	}
+
+	probe := exec.CommandContext(ctx, s.doltBinExec, "status")
+	probe.Dir = s.rootDir
+	probeOut, probeErr := probe.CombinedOutput()
+	if probeErr == nil {
+		return nil
+	}
+
+	if !strings.Contains(string(probeOut), "not a valid dolt repository") {
+		return fmt.Errorf("server: DoltServer.doltInit: probe status: %w\n%s", probeErr, probeOut)
+	}
+
+	cmd := exec.CommandContext(ctx, s.doltBinExec, "init")
+	cmd.Dir = s.rootDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("server: DoltServer.doltInit: %w\n%s", err, out)
+	}
+
+	return nil
+}
+
+func (s *DoltServer) Start(ctx context.Context) error {
+	if s.eg != nil || s.egCtx != nil {
+		return fmt.Errorf("server: DoltServer.Start: server already started")
+	}
+
+	if err := s.doltConfigure(ctx); err != nil {
+		return err
+	}
+
+	if err := s.doltInit(ctx); err != nil {
+		return err
+	}
+
 	args := []string{
 		"sql-server",
 		"-c", s.configPath,
-	}
-
-	if s.eg != nil || s.egCtx != nil {
-		return fmt.Errorf("server: DoltServer.Start: server already started")
 	}
 
 	managedCtx, cancel := context.WithCancel(context.Background())
