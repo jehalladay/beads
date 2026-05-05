@@ -48,13 +48,8 @@ const (
 	readyInitialBackoff    = 50 * time.Millisecond
 	readyMaxBackoff        = 1 * time.Second
 	idleWatcherMinInterval = 1 * time.Second
-	// backendStopTimeout bounds the final server.Stop call so a misbehaving
-	// backend that ignores ctx can't hang the proxy on shutdown.
-	backendStopTimeout = 10 * time.Second
-	// tcpKeepAlivePeriod sets keepalive on accepted client connections so
-	// half-open conns from a dead parent (e.g. SIGKILLed bd) get reaped in
-	// bounded time instead of waiting for the OS default (~2 hours on Linux).
-	tcpKeepAlivePeriod = 30 * time.Second
+	backendStopTimeout     = 10 * time.Second
+	tcpKeepAlivePeriod     = 30 * time.Second
 )
 
 var errIdleTimeout = errors.New("idle timeout reached")
