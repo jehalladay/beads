@@ -89,6 +89,9 @@ func (p *proxyServer) Start(parentCtx context.Context) error {
 
 	addr := fmt.Sprintf("127.0.0.1:%d", p.port)
 
+	// TODO: support listening on a unix socket as an alternative to
+	// 127.0.0.1:port (requires plumbing through the backend's transport
+	// choice from servercfg).
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", addr, err)

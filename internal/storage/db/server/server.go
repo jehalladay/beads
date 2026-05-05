@@ -12,7 +12,10 @@ import (
 // backend during shutdown.
 type DatabaseServer interface {
 	ID(ctx context.Context) string
-	DSN(ctx context.Context) string
+	// DSN returns a connection string to the backend. If database is
+	// non-empty, the resulting DSN selects that database; otherwise the
+	// caller must select one explicitly (e.g. via USE).
+	DSN(ctx context.Context, database string) string
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 	Restart(ctx context.Context) error

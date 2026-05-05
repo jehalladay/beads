@@ -85,7 +85,7 @@ func (s *TestDatabaseServerImpl) ID(_ context.Context) string {
 	return s.ID_
 }
 
-func (s *TestDatabaseServerImpl) DSN(_ context.Context) string {
+func (s *TestDatabaseServerImpl) DSN(_ context.Context, _ string) string {
 	s.mu.Lock()
 	s.counters.DSNCalls++
 	s.mu.Unlock()

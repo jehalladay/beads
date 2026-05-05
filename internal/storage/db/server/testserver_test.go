@@ -64,7 +64,7 @@ func TestID_DSN_CountAndReturn(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		assert.Equal(t, "custom-id", srv.ID(ctx))
-		assert.Equal(t, "custom://dsn", srv.DSN(ctx))
+		assert.Equal(t, "custom://dsn", srv.DSN(ctx, ""))
 	}
 
 	c := srv.Snapshot()
