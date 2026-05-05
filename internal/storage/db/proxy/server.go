@@ -38,20 +38,10 @@ type proxyServer struct {
 }
 
 const (
-	// serverReadyTimeout caps how long Start waits for DatabaseServer.Running()+Ping()
-	// to succeed after Start() returns.
-	serverReadyTimeout = 30 * time.Second
-
-	// readyPingTimeout bounds each individual Ping attempt during the readiness loop.
-	readyPingTimeout = 2 * time.Second
-
-	// readyInitialBackoff is the first sleep between readiness probe attempts;
-	// doubles up to readyMaxBackoff.
-	readyInitialBackoff = 50 * time.Millisecond
-	readyMaxBackoff     = 1 * time.Second
-
-	// idleWatcherMinInterval floors the idle-check tick rate so that very short
-	// IdleTimeouts don't cause a busy loop.
+	serverReadyTimeout     = 30 * time.Second
+	readyPingTimeout       = 2 * time.Second
+	readyInitialBackoff    = 50 * time.Millisecond
+	readyMaxBackoff        = 1 * time.Second
 	idleWatcherMinInterval = 1 * time.Second
 )
 
@@ -69,17 +59,14 @@ func NewProxyServer(opts ProxyOpts) *proxyServer {
 	}
 }
 
-func runChild(args []string) error {
-	// TODO: implement me
-	return nil
-}
-
 func (p *proxyServer) Start(ctx context.Context) error {
 	addr := fmt.Sprintf("127.0.0.1:%d", p.port)
+
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", addr, err)
 	}
+
 	p.listener = ln
 	defer ln.Close()
 
@@ -91,6 +78,7 @@ func (p *proxyServer) Start(ctx context.Context) error {
 	if err := p.server.Start(); err != nil {
 		return fmt.Errorf("start database server: %w", err)
 	}
+
 	if err := waitForServerReady(ctx, p.server, serverReadyTimeout); err != nil {
 		_ = p.server.Stop()
 		return fmt.Errorf("database server not ready: %w", err)
