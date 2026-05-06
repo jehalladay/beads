@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/dolthub/dolt/go/libraries/doltcore/servercfg"
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
 	"golang.org/x/sync/errgroup"
@@ -174,6 +175,44 @@ func (s *DoltServer) doltInit(ctx context.Context) error {
 	return nil
 }
 
+var retryableDoltInitErrSubstrings = []string{
+	"repository state is invalid",
+}
+
+func isRetryableDoltInitErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, s := range retryableDoltInitErrSubstrings {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *DoltServer) doltInitWithRetries(ctx context.Context) error {
+	const maxRetries = 4
+	bo := backoff.NewExponentialBackOff()
+	bo.InitialInterval = 100 * time.Millisecond
+	bo.MaxInterval = 1 * time.Second
+	bo.MaxElapsedTime = 0
+
+	op := func() error {
+		err := s.doltInit(ctx)
+		if err == nil {
+			return nil
+		}
+		if !isRetryableDoltInitErr(err) {
+			return backoff.Permanent(err)
+		}
+		return err
+	}
+
+	return backoff.Retry(op, backoff.WithMaxRetries(backoff.WithContext(bo, ctx), maxRetries))
+}
+
 func (s *DoltServer) Start(ctx context.Context) error {
 	if s.eg != nil || s.egCtx != nil {
 		return fmt.Errorf("server: DoltServer.Start: server already started")
@@ -183,7 +222,7 @@ func (s *DoltServer) Start(ctx context.Context) error {
 		return err
 	}
 
-	if err := s.doltInit(ctx); err != nil {
+	if err := s.doltInitWithRetries(ctx); err != nil {
 		return err
 	}
 
