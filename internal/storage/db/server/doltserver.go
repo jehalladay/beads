@@ -152,17 +152,6 @@ func (s *DoltServer) doltInit(ctx context.Context) error {
 		return fmt.Errorf("server: DoltServer.doltInit: mkdir %q: %w", s.rootDir, err)
 	}
 
-	probe := exec.CommandContext(ctx, s.doltBinExec, "status")
-	probe.Dir = s.rootDir
-	probeOut, probeErr := probe.CombinedOutput()
-	if probeErr == nil {
-		return nil
-	}
-
-	if !strings.Contains(string(probeOut), "not a valid dolt repository") {
-		return fmt.Errorf("server: DoltServer.doltInit: probe status: %w\n%s", probeErr, probeOut)
-	}
-
 	cmd := exec.CommandContext(ctx, s.doltBinExec, "init")
 	cmd.Dir = s.rootDir
 	if out, err := cmd.CombinedOutput(); err != nil {
