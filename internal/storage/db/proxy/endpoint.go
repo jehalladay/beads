@@ -25,8 +25,11 @@ func (e Endpoint) Address() string {
 }
 
 type OpenOpts struct {
-	IdleTimeout time.Duration
-	Backend     Backend
+	IdleTimeout    time.Duration
+	Backend        Backend
+	ConfigFilePath string
+	LogFilePath    string
+	DoltBinPath    string
 }
 
 const (
@@ -35,9 +38,30 @@ const (
 	openPollInterval      = 100 * time.Millisecond
 )
 
+func PickFreePort() (int, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	return port, nil
+}
+
 func GetCreateDatabaseProxyServerEndpoint(rootDir string, opts OpenOpts) (Endpoint, error) {
 	if err := opts.Backend.Validate(); err != nil {
 		return Endpoint{}, fmt.Errorf("OpenOpts.Backend: %w", err)
+	}
+	if opts.Backend == BackendLocalServer {
+		if opts.ConfigFilePath == "" {
+			return Endpoint{}, fmt.Errorf("OpenOpts.ConfigFilePath is required for backend %q", opts.Backend)
+		}
+		if opts.LogFilePath == "" {
+			return Endpoint{}, fmt.Errorf("OpenOpts.LogFilePath is required for backend %q", opts.Backend)
+		}
+		if opts.DoltBinPath == "" {
+			return Endpoint{}, fmt.Errorf("OpenOpts.DoltBinPath is required for backend %q", opts.Backend)
+		}
 	}
 	deadline := time.Now().Add(openDeadline)
 
@@ -87,13 +111,13 @@ func spawnAndHandoff(rootDir string, opts OpenOpts, deadline time.Time, lock *ut
 	// readers into dialing a port that nobody is listening on.
 	_ = RemoveDatabaseProxyPidFile(rootDir)
 
-	port, err := pickFreePort()
+	port, err := PickFreePort()
 	if err != nil {
 		return Endpoint{}, fmt.Errorf("pick port: %w", err)
 	}
 
 	handedOff = true
-	cmd, done, err := forkExecChild(rootDir, port, opts.IdleTimeout, opts.Backend, lock)
+	cmd, done, err := forkExecChild(rootDir, opts.ConfigFilePath, opts.LogFilePath, opts.DoltBinPath, port, opts.IdleTimeout, opts.Backend, lock)
 	if err != nil {
 		return Endpoint{}, fmt.Errorf("fork child: %w", err)
 	}
@@ -122,17 +146,7 @@ func spawnAndHandoff(rootDir string, opts OpenOpts, deadline time.Time, lock *ut
 	}
 }
 
-func pickFreePort() (int, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-	return port, nil
-}
-
-func forkExecChild(rootDir string, port int, idleTimeout time.Duration, backend Backend, lock *util.Lock) (*exec.Cmd, <-chan struct{}, error) {
+func forkExecChild(rootDir, configFilePath, logFilePath, doltBinPath string, port int, idleTimeout time.Duration, backend Backend, lock *util.Lock) (*exec.Cmd, <-chan struct{}, error) {
 	released := false
 	defer func() {
 		if !released {
@@ -156,11 +170,19 @@ func forkExecChild(rootDir string, port int, idleTimeout time.Duration, backend 
 		"--idle-timeout", idleTimeout.String(),
 		"--backend", string(backend),
 	}
+	if configFilePath != "" {
+		args = append(args, "--config", configFilePath)
+	}
+	if logFilePath != "" {
+		args = append(args, "--logpath", logFilePath)
+	}
+	if doltBinPath != "" {
+		args = append(args, "--dolt-bin", doltBinPath)
+	}
 
-	logFile, err := os.OpenFile(filepath.Join(rootDir, "proxy.log"), //nolint:gosec // rootDir is caller-derived (workspace path), not user request input
-		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: logFilePath is caller-derived (workspace path), not user-request input
 	if err != nil {
-		return nil, nil, fmt.Errorf("open proxy.log: %w", err)
+		return nil, nil, fmt.Errorf("open log file %q: %w", logFilePath, err)
 	}
 
 	cmd := exec.Command(self, args...)
