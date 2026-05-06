@@ -2,10 +2,7 @@ package doltserver
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
