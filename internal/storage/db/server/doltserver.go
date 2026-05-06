@@ -165,6 +165,13 @@ func (s *DoltServer) doltInit(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, s.doltBinExec, "init")
 	cmd.Dir = s.rootDir
 	if out, err := cmd.CombinedOutput(); err != nil {
+		// Concurrent Starts on the same rootDir race here: only one `dolt
+		// init` wins; the rest see "This directory has already been
+		// initialized." and exit non-zero. The repo is initialized either
+		// way, so treat that case as success.
+		if strings.Contains(string(out), "already been initialized") {
+			return nil
+		}
 		return fmt.Errorf("server: DoltServer.doltInit: %w\n%s", err, out)
 	}
 

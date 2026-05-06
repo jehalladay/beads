@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -398,6 +399,96 @@ func TestDoltServer_StopCancelsBeforeReady(t *testing.T) {
 		t.Fatal("Stop did not return in time")
 	}
 	assert.False(t, s.Running(ctx))
+}
+
+func TestDoltServer_ConcurrentStart_SameRootDir_OneWins(t *testing.T) {
+	bin := requireDolt(t)
+	t.Setenv("HOME", t.TempDir())
+
+	// Pre-configure dolt's global user.name/email so doltConfigure is a
+	// no-op for every concurrent Start (no JSON-write race on
+	// ~/.dolt/config_global.json).
+	require.NoError(t, exec.Command(bin, "config", "--global", "--add", "user.name", "beads-test").Run())
+	require.NoError(t, exec.Command(bin, "config", "--global", "--add", "user.email", "beads@test").Run())
+
+	rootDir := t.TempDir()
+	// Pre-init disabled — let the 10 concurrent Starts race through
+	// doltInit themselves.
+	// initCmd := exec.Command(bin, "init")
+	// initCmd.Dir = rootDir
+	// initOut, err := initCmd.CombinedOutput()
+	// require.NoError(t, err, "manual dolt init failed: %s", initOut)
+
+	const n = 10
+	servers := make([]*server.DoltServer, n)
+	logDir := t.TempDir()
+	for i := 0; i < n; i++ {
+		port := freePort(t)
+		cfg := writeConfig(t, port)
+		log := filepath.Join(logDir, fmt.Sprintf("server-%d.log", i))
+		s, err := server.NewDoltServer(bin, rootDir, cfg, log, "root", "", 0)
+		require.NoError(t, err)
+		servers[i] = s
+	}
+	t.Cleanup(func() {
+		for _, s := range servers {
+			ctx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+			_ = s.Stop(ctx)
+			cancel()
+		}
+	})
+
+	// Fire all Starts concurrently. Start currently returns nil even if
+	// the spawned sql-server later dies (the 200ms sleep returns before
+	// cmd.Run reports failure), so the test checks Running()/Ping() to
+	// determine the actual winner.
+	var wg sync.WaitGroup
+	startErrs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			startErrs[i] = servers[i].Start(context.Background())
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range startErrs {
+		require.NoError(t, err, "server %d Start returned err", i)
+	}
+
+	// Wait for the losers' subprocesses to exit. A loser is a DoltServer
+	// whose dolt sql-server child failed to acquire the rootDir lock and
+	// exited non-zero — that cancels its egCtx and flips Running() to
+	// false. The fight can take a moment to settle, so poll.
+	tally := func() (winners, losers int) {
+		for _, s := range servers {
+			if s.Running(context.Background()) {
+				winners++
+			} else {
+				losers++
+			}
+		}
+		return winners, losers
+	}
+	require.Eventually(t, func() bool {
+		w, l := tally()
+		return w == 1 && l == n-1
+	}, 10*time.Second, 100*time.Millisecond, "expected 1 winner + %d losers after rootDir lock fight", n-1)
+
+	winners, losers := tally()
+	assert.Equal(t, 1, winners, "exactly 1 Start must win the rootDir lock")
+	assert.Equal(t, n-1, losers, "the other %d Starts must lose", n-1)
+
+	// The single survivor must be ping-able (i.e., actually serving SQL).
+	winner := -1
+	for i, s := range servers {
+		if s.Running(context.Background()) {
+			winner = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, winner, 0)
+	require.NoError(t, servers[winner].Ping(context.Background()))
 }
 
 func TestDoltServer_DoltInit_Idempotent(t *testing.T) {
