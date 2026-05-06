@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -186,16 +187,81 @@ func TestDoltServer_StartStop_HappyPath(t *testing.T) {
 
 	db, err := sql.Open("mysql", s.DSN(ctx, "", "root", ""))
 	require.NoError(t, err)
-	defer func() { _ = db.Close() }()
 	var got int
 	require.NoError(t, db.QueryRowContext(ctx, "SELECT 1").Scan(&got))
 	assert.Equal(t, 1, got)
+	// Close the pool before stopping the server so COM_QUIT is sent while
+	// the listener is still alive. Otherwise the driver logs broken-pipe
+	// errors when it tries to drain the pool against a dead socket.
+	require.NoError(t, db.Close())
 
 	require.NoError(t, s.Stop(ctx))
 	assert.False(t, s.Running(ctx))
 
 	// Second Stop is a no-op.
 	require.NoError(t, s.Stop(ctx))
+}
+
+func TestDoltServer_StartStop_UnixSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix domain sockets not supported on windows")
+	}
+	bin := requireDolt(t)
+	t.Setenv("HOME", t.TempDir())
+	rootDir := t.TempDir()
+
+	sock := filepath.Join(t.TempDir(), "s.sock")
+	// Linux sun_path is 108 bytes including the NUL terminator; macOS is 104.
+	// Skip on systems where t.TempDir() pushes us past the limit rather than
+	// surface a confusing bind() error.
+	if len(sock) >= 104 {
+		t.Skipf("socket path too long (%d bytes): %s", len(sock), sock)
+	}
+
+	port := freePort(t)
+	cfgDir := t.TempDir()
+	cfgPath := filepath.Join(cfgDir, "config.yaml")
+	body := fmt.Sprintf(`log_level: debug
+listener:
+  host: 127.0.0.1
+  port: %d
+  socket: %s
+`, port, sock)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(body), 0o600))
+
+	logPath := filepath.Join(t.TempDir(), "server.log")
+	s, err := server.NewDoltServer(bin, rootDir, cfgPath, logPath, "root", "", 0)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, s.Start(ctx))
+	t.Cleanup(func() { stopWithTimeout(t, s) })
+	waitReady(t, s)
+	assert.True(t, s.Running(ctx))
+
+	// DSN must select the unix transport when a socket is configured.
+	dsn := s.DSN(ctx, "", "root", "")
+	parsed, err := mysqldrv.ParseDSN(dsn)
+	require.NoError(t, err)
+	assert.Equal(t, "unix", parsed.Net, "DSN must use unix transport when socket is configured")
+	assert.Equal(t, sock, parsed.Addr)
+
+	db, err := sql.Open("mysql", dsn)
+	require.NoError(t, err)
+	var got int
+	require.NoError(t, db.QueryRowContext(ctx, "SELECT 1").Scan(&got))
+	assert.Equal(t, 1, got)
+	// Close the pool before stopping the server (see HappyPath comment).
+	require.NoError(t, db.Close())
+
+	// Dial uses the socket too.
+	conn, err := s.Dial(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "unix", conn.RemoteAddr().Network())
+	require.NoError(t, conn.Close())
+
+	require.NoError(t, s.Stop(ctx))
+	assert.False(t, s.Running(ctx))
 }
 
 func TestDoltServer_DoubleStart_Errors(t *testing.T) {
