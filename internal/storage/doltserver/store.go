@@ -1,27 +1,31 @@
-// Package doltserver provides a storage.DoltStorage implementation backed by
-// a managed dolt sql-server subprocess. All methods are currently
-// unimplemented stubs.
 package doltserver
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/db/proxy"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 type DoltServerStore struct {
-	serverRootDir        string
-	beadsDir             string
-	database             string
-	committerName        string
-	committerEmail       string
+	serverRootDir          string
+	beadsDir               string
+	database               string
+	committerName          string
+	committerEmail         string
 	serverLogFilePath      string
 	serverConfigFilePath   string
 	backend                proxy.Backend
 	autoSyncToOriginRemote bool
+	user                   string
+	password               string
+	doltBinExec            string
 }
 
 var (
@@ -31,6 +35,86 @@ var (
 	_ storage.Flattener        = (*DoltServerStore)(nil)
 	_ storage.Compactor        = (*DoltServerStore)(nil)
 )
+
+func newDoltServerStore(
+	ctx context.Context,
+	serverRootDir string,
+	beadsDir string,
+	database string,
+	committerName string,
+	committerEmail string,
+	serverLogFilePath string,
+	serverConfigFilePath string,
+	backend proxy.Backend,
+	autoSyncToOriginRemote bool,
+	user string,
+	password string,
+	doltBinExec string,
+) (*DoltServerStore, error) {
+	if database == "" {
+		return nil, fmt.Errorf("doltserver: database name must not be empty (caller should default to %q)", "beads")
+	}
+	if err := backend.Validate(); err != nil {
+		return nil, fmt.Errorf("doltserver: backend: %w", err)
+	}
+	if user == "" {
+		return nil, fmt.Errorf("doltserver: user must not be empty")
+	}
+	if doltBinExec == "" {
+		return nil, fmt.Errorf("doltserver: doltBinExec must not be empty")
+	}
+
+	absServerRootDir, err := filepath.Abs(serverRootDir)
+	if err != nil {
+		return nil, fmt.Errorf("doltserver: resolving server root dir: %w", err)
+	}
+	absBeadsDir, err := filepath.Abs(beadsDir)
+	if err != nil {
+		return nil, fmt.Errorf("doltserver: resolving beads dir: %w", err)
+	}
+	absDoltBinExec, err := filepath.Abs(doltBinExec)
+	if err != nil {
+		return nil, fmt.Errorf("doltserver: resolving dolt bin exec: %w", err)
+	}
+	if err := os.MkdirAll(absServerRootDir, config.BeadsDirPerm); err != nil {
+		return nil, fmt.Errorf("doltserver: creating server root directory: %w", err)
+	}
+
+	s := &DoltServerStore{
+		serverRootDir:          absServerRootDir,
+		beadsDir:               absBeadsDir,
+		database:               database,
+		committerName:          committerName,
+		committerEmail:         committerEmail,
+		serverLogFilePath:      serverLogFilePath,
+		serverConfigFilePath:   serverConfigFilePath,
+		backend:                backend,
+		autoSyncToOriginRemote: autoSyncToOriginRemote,
+		user:                   user,
+		password:               password,
+		doltBinExec:            absDoltBinExec,
+	}
+
+	if err := s.initSchema(ctx); err != nil {
+		return nil, fmt.Errorf("doltserver: init schema: %w", err)
+	}
+
+	if err := s.ensureIgnoredTables(ctx); err != nil {
+		return nil, fmt.Errorf("doltserver: ensure ignored tables: %w", err)
+	}
+
+	return s, nil
+}
+
+// initSchema creates the database (if needed) and runs all pending migrations.
+func (s *DoltServerStore) initSchema(ctx context.Context) error {
+	panic("unimplemented")
+}
+
+// ensureIgnoredTables creates dolt_ignore'd wisp tables if they don't exist.
+func (s *DoltServerStore) ensureIgnoredTables(ctx context.Context) error {
+	panic("unimplemented")
+}
 
 // Storage — issue CRUD
 
