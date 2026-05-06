@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -31,8 +30,6 @@ type DoltServer struct {
 	rootDir         string
 	configPath      string
 	config          servercfg.ServerConfig
-	user            string
-	password        string
 	keepAlivePeriod time.Duration
 
 	logFile *os.File
@@ -43,7 +40,7 @@ type DoltServer struct {
 
 var _ DatabaseServer = (*DoltServer)(nil)
 
-func NewDoltServer(doltBinExec, rootDir, configPath, logFilePath, user, password string, keepAlivePeriod time.Duration) (*DoltServer, error) {
+func NewDoltServer(doltBinExec, rootDir, configPath, logFilePath string, keepAlivePeriod time.Duration) (*DoltServer, error) {
 	if doltBinExec == "" {
 		return nil, errors.New("server: NewDoltServer: doltBinExec is required")
 	}
@@ -52,9 +49,6 @@ func NewDoltServer(doltBinExec, rootDir, configPath, logFilePath, user, password
 	}
 	if configPath == "" {
 		return nil, errors.New("server: NewDoltServer: configPath is required")
-	}
-	if user == "" {
-		return nil, errors.New("server: NewDoltServer: user is required")
 	}
 	absDoltBinExec, err := filepath.Abs(doltBinExec)
 	if err != nil {
@@ -93,8 +87,6 @@ func NewDoltServer(doltBinExec, rootDir, configPath, logFilePath, user, password
 		rootDir:         absRootDir,
 		configPath:      absConfigPath,
 		config:          cfg,
-		user:            user,
-		password:        password,
 		keepAlivePeriod: keepAlivePeriod,
 		logFile:         logFile,
 	}, nil
@@ -276,18 +268,6 @@ func (s *DoltServer) Running(_ context.Context) bool {
 		return false
 	}
 	return s.egCtx.Err() == nil
-}
-
-func (s *DoltServer) Ping(ctx context.Context) error {
-	db, err := sql.Open("mysql", s.DSN(ctx, "", s.user, s.password))
-	if err != nil {
-		return fmt.Errorf("server: DoltServer.Ping: open: %w", err)
-	}
-	defer db.Close()
-	if err := db.PingContext(ctx); err != nil {
-		return fmt.Errorf("server: DoltServer.Ping: %w", err)
-	}
-	return nil
 }
 
 func (s *DoltServer) Dial(ctx context.Context) (net.Conn, error) {

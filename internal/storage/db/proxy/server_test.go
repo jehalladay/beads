@@ -170,9 +170,9 @@ func TestProxy_HappyPath_Echo(t *testing.T) {
 
 	bs := ts.Snapshot()
 	assert.Equal(t, int64(1), bs.StartCalls)
-	assert.GreaterOrEqual(t, bs.PingCalls, int64(1))
-	assert.Equal(t, int64(1), bs.DialCalls)
-	assert.Equal(t, int64(1), bs.AcceptedConns)
+	// readiness Dial + client Dial both go through the backend
+	assert.Equal(t, int64(2), bs.DialCalls)
+	assert.Equal(t, int64(2), bs.AcceptedConns)
 	assert.Equal(t, int64(5), bs.BytesIn)
 	assert.Equal(t, int64(5), bs.BytesOut)
 	assert.Equal(t, int64(1), bs.StopCalls)
@@ -260,7 +260,7 @@ func TestProxy_BackendNotReady_CtxCancel(t *testing.T) {
 	t.Parallel()
 
 	ts := server.New()
-	ts.PingErr = errors.New("not ready")
+	ts.DialErr = errors.New("not ready")
 	stats := &proxy.Stats{}
 	port := freeTCPPort(t)
 	root := t.TempDir()
@@ -268,11 +268,11 @@ func TestProxy_BackendNotReady_CtxCancel(t *testing.T) {
 	h := runProxy(t, proxy.ProxyOpts{
 		RootDir: root, Port: port, Server: ts, Stats: stats,
 	})
-	// The pidfile is written only after readiness succeeds, but PingErr
+	// The pidfile is written only after readiness succeeds, but DialErr
 	// keeps readiness failing — so waitListening would hang. Wait until
-	// the proxy is in the readiness loop (>=1 Ping attempt observed).
+	// the proxy is in the readiness loop (>=1 Dial attempt observed).
 	require.Eventually(t, func() bool {
-		return ts.Snapshot().PingCalls >= 1
+		return ts.Snapshot().DialCalls >= 1
 	}, listenWait, 10*time.Millisecond)
 	h.Cancel()
 	err := h.waitErr(t, shutdownWait)
@@ -286,7 +286,7 @@ func TestProxy_BackendNotReady_CtxCancel(t *testing.T) {
 
 	bs := ts.Snapshot()
 	assert.Equal(t, int64(1), bs.StartCalls)
-	assert.GreaterOrEqual(t, bs.PingCalls, int64(1))
+	assert.GreaterOrEqual(t, bs.DialCalls, int64(1))
 	assert.Equal(t, int64(1), bs.StopCalls)
 
 	assertNoPidFile(t, root)
@@ -296,7 +296,6 @@ func TestProxy_BackendDialError(t *testing.T) {
 	t.Parallel()
 
 	ts := server.New()
-	ts.DialErr = errors.New("refused")
 	stats := &proxy.Stats{}
 	port := freeTCPPort(t)
 	root := t.TempDir()
@@ -304,7 +303,10 @@ func TestProxy_BackendDialError(t *testing.T) {
 	h := runProxy(t, proxy.ProxyOpts{
 		RootDir: root, Port: port, Server: ts, Stats: stats,
 	})
+	// Wait for readiness Dial to succeed, then flip DialErr so subsequent
+	// proxied connections fail.
 	waitListening(t, root, listenWait)
+	ts.SetDialErr(errors.New("refused"))
 
 	for i := 0; i < 2; i++ {
 		c := dialProxy(t, port)
@@ -456,7 +458,8 @@ func TestProxy_ConcurrentConnections(t *testing.T) {
 	assert.Equal(t, int64(N*payloadLen), s.BytesClientToBackend)
 	assert.Equal(t, int64(N*payloadLen), s.BytesBackendToClient)
 
-	assert.Equal(t, int64(N), ts.Snapshot().AcceptedConns)
+	// readiness Dial counts as one extra AcceptedConn against the backend
+	assert.Equal(t, int64(N+1), ts.Snapshot().AcceptedConns)
 
 	h.Cancel()
 	require.NoError(t, h.waitErr(t, shutdownWait))

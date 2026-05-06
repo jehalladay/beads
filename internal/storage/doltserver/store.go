@@ -3,6 +3,7 @@ package doltserver
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -110,11 +111,6 @@ func newDoltServerStore(
 		db:                     db,
 	}
 
-	if err := s.ensureSQLUserAndPermissions(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("doltserver: ensureSQLUserAndPermissions: %w", err)
-	}
-
 	if err := s.initSchema(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("doltserver: init schema: %w", err)
@@ -152,8 +148,27 @@ func openDB(dsn string) (*sql.DB, error) {
 	return db, nil
 }
 
-func (s *DoltServerStore) ensureSQLUserAndPermissions(ctx context.Context) error {
-	panic("unimplemented")
+func (s *DoltServerStore) withReadTx(ctx context.Context, fn func(ctx context.Context, tx *sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("doltserver: begin read tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	return fn(ctx, tx)
+}
+
+func (s *DoltServerStore) withWriteTx(ctx context.Context, fn func(ctx context.Context, tx *sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("doltserver: begin write tx: %w", err)
+	}
+	if err := fn(ctx, tx); err != nil {
+		return errors.Join(err, tx.Rollback())
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("doltserver: commit: %w", err)
+	}
+	return nil
 }
 
 func (s *DoltServerStore) initSchema(ctx context.Context) error {

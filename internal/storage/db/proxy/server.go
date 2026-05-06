@@ -44,7 +44,7 @@ type proxyServer struct {
 
 const (
 	serverReadyTimeout     = 30 * time.Second
-	readyPingTimeout       = 2 * time.Second
+	readyDialTimeout       = 2 * time.Second
 	readyInitialBackoff    = 50 * time.Millisecond
 	readyMaxBackoff        = 1 * time.Second
 	idleWatcherMinInterval = 1 * time.Second
@@ -263,8 +263,13 @@ func waitForServerReady(ctx context.Context, s server.DatabaseServer, timeout ti
 		if !s.Running(ctx) {
 			return errors.New("database server not running")
 		}
-		pingCtx, cancel := context.WithTimeout(ctx, readyPingTimeout)
+		dialCtx, cancel := context.WithTimeout(ctx, readyDialTimeout)
 		defer cancel()
-		return s.Ping(pingCtx)
+		conn, err := s.Dial(dialCtx)
+		if err != nil {
+			return err
+		}
+		_ = conn.Close()
+		return nil
 	}, backoff.WithContext(bo, ctx))
 }

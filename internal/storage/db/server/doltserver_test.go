@@ -73,9 +73,7 @@ func newDoltServer(t *testing.T) (*server.DoltServer, string) {
 	port := freePort(t)
 	cfg := writeConfig(t, port)
 	log := filepath.Join(t.TempDir(), "server.log")
-	// dolt auto-creates root@localhost with empty password; match those
-	// credentials so Ping/Dial/SELECT actually authenticate.
-	s, err := server.NewDoltServer(bin, rootDir, cfg, log, "root", "", 0)
+	s, err := server.NewDoltServer(bin, rootDir, cfg, log, 0)
 	require.NoError(t, err)
 	return s, rootDir
 }
@@ -87,10 +85,17 @@ func stopWithTimeout(t *testing.T, s *server.DoltServer) {
 	require.NoError(t, s.Stop(ctx))
 }
 
+// waitReady polls Dial until the listener accepts. Proves the server's
+// socket is up but does not authenticate a SQL session.
 func waitReady(t *testing.T, s *server.DoltServer) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		return s.Ping(context.Background()) == nil
+		conn, err := s.Dial(context.Background())
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
 	}, pingPollTimeout, pingPollInterval, "server never became ready")
 }
 
@@ -108,19 +113,17 @@ func TestNewDoltServer_Validation(t *testing.T) {
 		bin  string
 		root string
 		cfg  string
-		user string
 		want string
 	}{
-		{"empty bin", "", t.TempDir(), goodCfg, "root", "doltBinExec is required"},
-		{"empty root", "dolt", "", goodCfg, "root", "rootDir is required"},
-		{"empty cfg", "dolt", t.TempDir(), "", "root", "configPath is required"},
-		{"empty user", "dolt", t.TempDir(), goodCfg, "", "user is required"},
-		{"missing cfg", "dolt", t.TempDir(), missingCfg, "root", "parse config"},
-		{"bad yaml", "dolt", t.TempDir(), badYAML, "root", "parse config"},
+		{"empty bin", "", t.TempDir(), goodCfg, "doltBinExec is required"},
+		{"empty root", "dolt", "", goodCfg, "rootDir is required"},
+		{"empty cfg", "dolt", t.TempDir(), "", "configPath is required"},
+		{"missing cfg", "dolt", t.TempDir(), missingCfg, "parse config"},
+		{"bad yaml", "dolt", t.TempDir(), badYAML, "parse config"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s, err := server.NewDoltServer(tc.bin, tc.root, tc.cfg, "", tc.user, "", 0)
+			s, err := server.NewDoltServer(tc.bin, tc.root, tc.cfg, "", 0)
 			assert.Nil(t, s)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
@@ -133,11 +136,11 @@ func TestDoltServer_ID_Stable(t *testing.T) {
 	rootA := t.TempDir()
 	rootB := t.TempDir()
 
-	a1, err := server.NewDoltServer("dolt", rootA, cfgPath, "", "root", "", 0)
+	a1, err := server.NewDoltServer("dolt", rootA, cfgPath, "", 0)
 	require.NoError(t, err)
-	a2, err := server.NewDoltServer("dolt", rootA, cfgPath, "", "root", "", 0)
+	a2, err := server.NewDoltServer("dolt", rootA, cfgPath, "", 0)
 	require.NoError(t, err)
-	b, err := server.NewDoltServer("dolt", rootB, cfgPath, "", "root", "", 0)
+	b, err := server.NewDoltServer("dolt", rootB, cfgPath, "", 0)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -147,18 +150,14 @@ func TestDoltServer_ID_Stable(t *testing.T) {
 
 func TestDoltServer_DSN(t *testing.T) {
 	cfgPath := writeConfig(t, 13306)
-
-	// Construct with one set of credentials, then call DSN with a different
-	// set — the args must win. This proves DSN does not silently fall back
-	// to the DoltServer's stored creds.
-	s, err := server.NewDoltServer("dolt", t.TempDir(), cfgPath, "", "stored-user", "stored-pass", 0)
+	s, err := server.NewDoltServer("dolt", t.TempDir(), cfgPath, "", 0)
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	parsed, err := mysqldrv.ParseDSN(s.DSN(ctx, "", "alice", "s3cret"))
 	require.NoError(t, err)
-	assert.Equal(t, "alice", parsed.User, "DSN must use the user arg, not s.user")
-	assert.Equal(t, "s3cret", parsed.Passwd, "DSN must use the password arg, not s.password")
+	assert.Equal(t, "alice", parsed.User)
+	assert.Equal(t, "s3cret", parsed.Passwd)
 	assert.Equal(t, "tcp", parsed.Net)
 	assert.Equal(t, "127.0.0.1:13306", parsed.Addr)
 	assert.Empty(t, parsed.DBName)
@@ -231,7 +230,7 @@ listener:
 	require.NoError(t, os.WriteFile(cfgPath, []byte(body), 0o600))
 
 	logPath := filepath.Join(t.TempDir(), "server.log")
-	s, err := server.NewDoltServer(bin, rootDir, cfgPath, logPath, "root", "", 0)
+	s, err := server.NewDoltServer(bin, rootDir, cfgPath, logPath, 0)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -297,7 +296,7 @@ func TestDoltServer_StartStopStart_NewInstanceSameRootDirSucceeds(t *testing.T) 
 
 	port1 := freePort(t)
 	cfg1 := writeConfig(t, port1)
-	s1, err := server.NewDoltServer(bin, rootDir, cfg1, logPath, "root", "", 0)
+	s1, err := server.NewDoltServer(bin, rootDir, cfg1, logPath, 0)
 	require.NoError(t, err)
 	require.NoError(t, s1.Start(ctx))
 	waitReady(t, s1)
@@ -306,7 +305,7 @@ func TestDoltServer_StartStopStart_NewInstanceSameRootDirSucceeds(t *testing.T) 
 	// Fresh port to dodge any TIME_WAIT lingering on the old one.
 	port2 := freePort(t)
 	cfg2 := writeConfig(t, port2)
-	s2, err := server.NewDoltServer(bin, rootDir, cfg2, logPath, "root", "", 0)
+	s2, err := server.NewDoltServer(bin, rootDir, cfg2, logPath, 0)
 	require.NoError(t, err)
 	require.NoError(t, s2.Start(ctx), "new instance at same rootDir must start")
 	t.Cleanup(func() { stopWithTimeout(t, s2) })
@@ -315,12 +314,6 @@ func TestDoltServer_StartStopStart_NewInstanceSameRootDirSucceeds(t *testing.T) 
 
 	// ID is rootDir-derived and therefore stable across instances.
 	assert.Equal(t, s1.ID(ctx), s2.ID(ctx))
-}
-
-func TestDoltServer_Ping_BeforeStart(t *testing.T) {
-	s, _ := newDoltServer(t)
-	err := s.Ping(context.Background())
-	require.Error(t, err, "Ping must fail before Start")
 }
 
 func TestDoltServer_Dial_AfterStart(t *testing.T) {
@@ -367,7 +360,7 @@ func TestDoltServer_LogFile_CapturesOutput(t *testing.T) {
 	cfgPath := writeConfig(t, port)
 	logPath := filepath.Join(t.TempDir(), "server.log")
 
-	s, err := server.NewDoltServer(bin, rootDir, cfgPath, logPath, "root", "", 0)
+	s, err := server.NewDoltServer(bin, rootDir, cfgPath, logPath, 0)
 	require.NoError(t, err)
 	ctx := context.Background()
 	require.NoError(t, s.Start(ctx))
@@ -426,7 +419,7 @@ func TestDoltServer_ConcurrentStart_SameRootDir_OneWins(t *testing.T) {
 		port := freePort(t)
 		cfg := writeConfig(t, port)
 		log := filepath.Join(logDir, fmt.Sprintf("server-%d.log", i))
-		s, err := server.NewDoltServer(bin, rootDir, cfg, log, "root", "", 0)
+		s, err := server.NewDoltServer(bin, rootDir, cfg, log, 0)
 		require.NoError(t, err)
 		servers[i] = s
 	}
@@ -479,7 +472,7 @@ func TestDoltServer_ConcurrentStart_SameRootDir_OneWins(t *testing.T) {
 	assert.Equal(t, 1, winners, "exactly 1 Start must win the rootDir lock")
 	assert.Equal(t, n-1, losers, "the other %d Starts must lose", n-1)
 
-	// The single survivor must be ping-able (i.e., actually serving SQL).
+	// The single survivor must be dial-able (i.e., its listener is up).
 	winner := -1
 	for i, s := range servers {
 		if s.Running(context.Background()) {
@@ -488,7 +481,9 @@ func TestDoltServer_ConcurrentStart_SameRootDir_OneWins(t *testing.T) {
 		}
 	}
 	require.GreaterOrEqual(t, winner, 0)
-	require.NoError(t, servers[winner].Ping(context.Background()))
+	conn, err := servers[winner].Dial(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, conn.Close())
 }
 
 func TestDoltServer_DoltInit_Idempotent(t *testing.T) {
@@ -507,7 +502,7 @@ func TestDoltServer_DoltInit_Idempotent(t *testing.T) {
 
 	port := freePort(t)
 	cfgPath := writeConfig(t, port)
-	s, err := server.NewDoltServer(bin, rootDir, cfgPath, "", "root", "", 0)
+	s, err := server.NewDoltServer(bin, rootDir, cfgPath, "", 0)
 	require.NoError(t, err)
 
 	ctx := context.Background()
