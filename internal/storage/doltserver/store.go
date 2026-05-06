@@ -28,8 +28,8 @@ type DoltServerStore struct {
 	serverConfigFilePath   string
 	backend                proxy.Backend
 	autoSyncToOriginRemote bool
-	user                   string
-	password               string
+	rootUser               string
+	rootPassword           string
 	doltBinExec            string
 	db                     *sql.DB
 }
@@ -53,8 +53,8 @@ func newDoltServerStore(
 	serverConfigFilePath string,
 	backend proxy.Backend,
 	autoSyncToOriginRemote bool,
-	user string,
-	password string,
+	rootUser string,
+	rootPassword string,
 	doltBinExec string,
 ) (*DoltServerStore, error) {
 	if database == "" {
@@ -63,8 +63,8 @@ func newDoltServerStore(
 	if err := backend.Validate(); err != nil {
 		return nil, fmt.Errorf("doltserver: backend: %w", err)
 	}
-	if user == "" {
-		return nil, fmt.Errorf("doltserver: user must not be empty")
+	if rootUser == "" {
+		return nil, fmt.Errorf("doltserver: rootUser must not be empty")
 	}
 	if doltBinExec == "" {
 		return nil, fmt.Errorf("doltserver: doltBinExec must not be empty")
@@ -90,7 +90,8 @@ func newDoltServerStore(
 	if err != nil {
 		return nil, fmt.Errorf("doltserver: get proxy endpoint: %w", err)
 	}
-	db, err := openDB(buildDSN(ep, database, user, password))
+
+	db, err := openDB(ctx, buildDSN(ep, database, rootUser, rootPassword))
 	if err != nil {
 		return nil, err
 	}
@@ -105,8 +106,8 @@ func newDoltServerStore(
 		serverConfigFilePath:   serverConfigFilePath,
 		backend:                backend,
 		autoSyncToOriginRemote: autoSyncToOriginRemote,
-		user:                   user,
-		password:               password,
+		rootUser:               rootUser,
+		rootPassword:           rootPassword,
 		doltBinExec:            absDoltBinExec,
 		db:                     db,
 	}
@@ -140,10 +141,13 @@ func buildDSN(ep proxy.Endpoint, database, user, password string) string {
 	}.String()
 }
 
-func openDB(dsn string) (*sql.DB, error) {
+func openDB(ctx context.Context, dsn string) (*sql.DB, error) {
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("doltserver: open db: %w", err)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		return nil, errors.Join(fmt.Errorf("doltserver: ping db: %w", err), db.Close())
 	}
 	return db, nil
 }
