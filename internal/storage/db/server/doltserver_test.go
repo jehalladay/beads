@@ -1,5 +1,10 @@
 package server_test
 
+// doltserver_test.go covers the DoltServer lifecycle. Most tests start a real
+// `dolt sql-server` subprocess; those skip when `dolt` is not on PATH.
+// Validation tests (constructor argument checks, ID stability, DSN building)
+// run unconditionally.
+
 import (
 	"context"
 	"database/sql"
@@ -19,9 +24,6 @@ import (
 )
 
 const (
-	testUser     = "testuser"
-	testPassword = "testpass"
-
 	pingPollInterval = 100 * time.Millisecond
 	pingPollTimeout  = 10 * time.Second
 	stopTimeout      = 15 * time.Second
@@ -49,14 +51,14 @@ func writeConfig(t *testing.T, port int) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
+	// dolt deprecated user/password in sql-server YAML (it now creates
+	// root@localhost as the superuser regardless). DoltServer takes
+	// credentials via NewDoltServer instead.
 	body := fmt.Sprintf(`log_level: debug
 listener:
   host: 127.0.0.1
   port: %d
-user:
-  name: %s
-  password: %s
-`, port, testUser, testPassword)
+`, port)
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 	return path
 }
@@ -69,7 +71,9 @@ func newDoltServer(t *testing.T) (*server.DoltServer, string) {
 	port := freePort(t)
 	cfg := writeConfig(t, port)
 	log := filepath.Join(t.TempDir(), "server.log")
-	s, err := server.NewDoltServer(bin, rootDir, cfg, log, 0)
+	// dolt auto-creates root@localhost with empty password; match those
+	// credentials so Ping/Dial/SELECT actually authenticate.
+	s, err := server.NewDoltServer(bin, rootDir, cfg, log, "root", "", 0)
 	require.NoError(t, err)
 	return s, rootDir
 }
@@ -102,17 +106,19 @@ func TestNewDoltServer_Validation(t *testing.T) {
 		bin  string
 		root string
 		cfg  string
+		user string
 		want string
 	}{
-		{"empty bin", "", t.TempDir(), goodCfg, "doltBinExec is required"},
-		{"empty root", "dolt", "", goodCfg, "rootDir is required"},
-		{"empty cfg", "dolt", t.TempDir(), "", "configPath is required"},
-		{"missing cfg", "dolt", t.TempDir(), missingCfg, "parse config"},
-		{"bad yaml", "dolt", t.TempDir(), badYAML, "parse config"},
+		{"empty bin", "", t.TempDir(), goodCfg, "root", "doltBinExec is required"},
+		{"empty root", "dolt", "", goodCfg, "root", "rootDir is required"},
+		{"empty cfg", "dolt", t.TempDir(), "", "root", "configPath is required"},
+		{"empty user", "dolt", t.TempDir(), goodCfg, "", "user is required"},
+		{"missing cfg", "dolt", t.TempDir(), missingCfg, "root", "parse config"},
+		{"bad yaml", "dolt", t.TempDir(), badYAML, "root", "parse config"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s, err := server.NewDoltServer(tc.bin, tc.root, tc.cfg, "", 0)
+			s, err := server.NewDoltServer(tc.bin, tc.root, tc.cfg, "", tc.user, "", 0)
 			assert.Nil(t, s)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
@@ -125,11 +131,11 @@ func TestDoltServer_ID_Stable(t *testing.T) {
 	rootA := t.TempDir()
 	rootB := t.TempDir()
 
-	a1, err := server.NewDoltServer("dolt", rootA, cfgPath, "", 0)
+	a1, err := server.NewDoltServer("dolt", rootA, cfgPath, "", "root", "", 0)
 	require.NoError(t, err)
-	a2, err := server.NewDoltServer("dolt", rootA, cfgPath, "", 0)
+	a2, err := server.NewDoltServer("dolt", rootA, cfgPath, "", "root", "", 0)
 	require.NoError(t, err)
-	b, err := server.NewDoltServer("dolt", rootB, cfgPath, "", 0)
+	b, err := server.NewDoltServer("dolt", rootB, cfgPath, "", "root", "", 0)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -139,23 +145,34 @@ func TestDoltServer_ID_Stable(t *testing.T) {
 
 func TestDoltServer_DSN(t *testing.T) {
 	cfgPath := writeConfig(t, 13306)
-	s, err := server.NewDoltServer("dolt", t.TempDir(), cfgPath, "", 0)
+
+	// Construct with one set of credentials, then call DSN with a different
+	// set — the args must win. This proves DSN does not silently fall back
+	// to the DoltServer's stored creds.
+	s, err := server.NewDoltServer("dolt", t.TempDir(), cfgPath, "", "stored-user", "stored-pass", 0)
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	parsed, err := mysqldrv.ParseDSN(s.DSN(ctx, ""))
+	parsed, err := mysqldrv.ParseDSN(s.DSN(ctx, "", "alice", "s3cret"))
 	require.NoError(t, err)
-	assert.Equal(t, testUser, parsed.User)
-	assert.Equal(t, testPassword, parsed.Passwd)
+	assert.Equal(t, "alice", parsed.User, "DSN must use the user arg, not s.user")
+	assert.Equal(t, "s3cret", parsed.Passwd, "DSN must use the password arg, not s.password")
 	assert.Equal(t, "tcp", parsed.Net)
 	assert.Equal(t, "127.0.0.1:13306", parsed.Addr)
 	assert.Empty(t, parsed.DBName)
 	assert.True(t, parsed.ParseTime)
 	assert.True(t, parsed.MultiStatements)
 
-	parsedDB, err := mysqldrv.ParseDSN(s.DSN(ctx, "mydb"))
+	// database arg is independent of credentials.
+	parsedDB, err := mysqldrv.ParseDSN(s.DSN(ctx, "mydb", "alice", "s3cret"))
 	require.NoError(t, err)
 	assert.Equal(t, "mydb", parsedDB.DBName)
+
+	// Empty password is allowed.
+	parsedEmpty, err := mysqldrv.ParseDSN(s.DSN(ctx, "", "root", ""))
+	require.NoError(t, err)
+	assert.Equal(t, "root", parsedEmpty.User)
+	assert.Empty(t, parsedEmpty.Passwd)
 }
 
 func TestDoltServer_StartStop_HappyPath(t *testing.T) {
@@ -167,7 +184,7 @@ func TestDoltServer_StartStop_HappyPath(t *testing.T) {
 	waitReady(t, s)
 	assert.True(t, s.Running(ctx))
 
-	db, err := sql.Open("mysql", s.DSN(ctx, ""))
+	db, err := sql.Open("mysql", s.DSN(ctx, "", "root", ""))
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 	var got int
@@ -213,7 +230,7 @@ func TestDoltServer_StartStopStart_NewInstanceSameRootDirSucceeds(t *testing.T) 
 
 	port1 := freePort(t)
 	cfg1 := writeConfig(t, port1)
-	s1, err := server.NewDoltServer(bin, rootDir, cfg1, logPath, 0)
+	s1, err := server.NewDoltServer(bin, rootDir, cfg1, logPath, "root", "", 0)
 	require.NoError(t, err)
 	require.NoError(t, s1.Start(ctx))
 	waitReady(t, s1)
@@ -222,7 +239,7 @@ func TestDoltServer_StartStopStart_NewInstanceSameRootDirSucceeds(t *testing.T) 
 	// Fresh port to dodge any TIME_WAIT lingering on the old one.
 	port2 := freePort(t)
 	cfg2 := writeConfig(t, port2)
-	s2, err := server.NewDoltServer(bin, rootDir, cfg2, logPath, 0)
+	s2, err := server.NewDoltServer(bin, rootDir, cfg2, logPath, "root", "", 0)
 	require.NoError(t, err)
 	require.NoError(t, s2.Start(ctx), "new instance at same rootDir must start")
 	t.Cleanup(func() { stopWithTimeout(t, s2) })
@@ -283,7 +300,7 @@ func TestDoltServer_LogFile_CapturesOutput(t *testing.T) {
 	cfgPath := writeConfig(t, port)
 	logPath := filepath.Join(t.TempDir(), "server.log")
 
-	s, err := server.NewDoltServer(bin, rootDir, cfgPath, logPath, 0)
+	s, err := server.NewDoltServer(bin, rootDir, cfgPath, logPath, "root", "", 0)
 	require.NoError(t, err)
 	ctx := context.Background()
 	require.NoError(t, s.Start(ctx))
@@ -333,7 +350,7 @@ func TestDoltServer_DoltInit_Idempotent(t *testing.T) {
 
 	port := freePort(t)
 	cfgPath := writeConfig(t, port)
-	s, err := server.NewDoltServer(bin, rootDir, cfgPath, "", 0)
+	s, err := server.NewDoltServer(bin, rootDir, cfgPath, "", "root", "", 0)
 	require.NoError(t, err)
 
 	ctx := context.Background()

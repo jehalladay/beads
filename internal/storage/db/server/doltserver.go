@@ -30,6 +30,8 @@ type DoltServer struct {
 	rootDir         string
 	configPath      string
 	config          servercfg.ServerConfig
+	user            string
+	password        string
 	keepAlivePeriod time.Duration
 
 	logFile *os.File
@@ -40,7 +42,7 @@ type DoltServer struct {
 
 var _ DatabaseServer = (*DoltServer)(nil)
 
-func NewDoltServer(doltBinExec, rootDir, configPath, logFilePath string, keepAlivePeriod time.Duration) (*DoltServer, error) {
+func NewDoltServer(doltBinExec, rootDir, configPath, logFilePath, user, password string, keepAlivePeriod time.Duration) (*DoltServer, error) {
 	if doltBinExec == "" {
 		return nil, errors.New("server: NewDoltServer: doltBinExec is required")
 	}
@@ -49,6 +51,9 @@ func NewDoltServer(doltBinExec, rootDir, configPath, logFilePath string, keepAli
 	}
 	if configPath == "" {
 		return nil, errors.New("server: NewDoltServer: configPath is required")
+	}
+	if user == "" {
+		return nil, errors.New("server: NewDoltServer: user is required")
 	}
 	absDoltBinExec, err := filepath.Abs(doltBinExec)
 	if err != nil {
@@ -87,6 +92,8 @@ func NewDoltServer(doltBinExec, rootDir, configPath, logFilePath string, keepAli
 		rootDir:         absRootDir,
 		configPath:      absConfigPath,
 		config:          cfg,
+		user:            user,
+		password:        password,
 		keepAlivePeriod: keepAlivePeriod,
 		logFile:         logFile,
 	}, nil
@@ -96,10 +103,10 @@ func (s *DoltServer) ID(_ context.Context) string {
 	return s.id
 }
 
-func (s *DoltServer) DSN(_ context.Context, database string) string {
+func (s *DoltServer) DSN(_ context.Context, database, user, password string) string {
 	dsn := util.DoltServerDSN{
-		User:        s.config.User(),
-		Password:    s.config.Password(),
+		User:        user,
+		Password:    password,
 		Database:    database,
 		TLSRequired: s.config.RequireSecureTransport(),
 		TLSCert:     s.config.TLSCert(),
@@ -179,7 +186,7 @@ func (s *DoltServer) Start(ctx context.Context) error {
 
 	args := []string{
 		"sql-server",
-		"-c", s.configPath,
+		"--config", s.configPath,
 	}
 
 	managedCtx, cancel := context.WithCancel(context.Background())
@@ -241,7 +248,7 @@ func (s *DoltServer) Running(_ context.Context) bool {
 }
 
 func (s *DoltServer) Ping(ctx context.Context) error {
-	db, err := sql.Open("mysql", s.DSN(ctx, ""))
+	db, err := sql.Open("mysql", s.DSN(ctx, "", s.user, s.password))
 	if err != nil {
 		return fmt.Errorf("server: DoltServer.Ping: open: %w", err)
 	}
