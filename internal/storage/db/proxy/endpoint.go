@@ -38,6 +38,12 @@ const (
 	openPollInterval      = 100 * time.Millisecond
 )
 
+// ResolveExecutable returns the path of the binary the proxy should fork as
+// the child. Defaults to os.Executable. Tests may swap it (e.g. to point at
+// a freshly-built `bd`) so the proxy forks a real `bd` rather than the go
+// test binary, which would not understand the `db-proxy-child` subcommand.
+var ResolveExecutable = os.Executable
+
 func PickFreePort() (int, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -154,7 +160,7 @@ func forkExecChild(rootDir, configFilePath, logFilePath, doltBinPath string, por
 		}
 	}()
 
-	self, err := os.Executable()
+	self, err := ResolveExecutable()
 	if err != nil {
 		return nil, nil, fmt.Errorf("locate bd executable: %w", err)
 	}

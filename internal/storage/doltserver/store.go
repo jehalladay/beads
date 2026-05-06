@@ -92,16 +92,6 @@ func newDoltServerStore(
 		return nil, fmt.Errorf("doltserver: creating server root directory: %w", err)
 	}
 
-	ep, err := getDatabaseProxyEndpoint(absServerRootDir, backend)
-	if err != nil {
-		return nil, fmt.Errorf("doltserver: get proxy endpoint: %w", err)
-	}
-
-	db, err := openDB(ctx, buildDSN(ep, database, rootUser, rootPassword))
-	if err != nil {
-		return nil, err
-	}
-
 	s := &DoltServerStore{
 		serverRootDir:          absServerRootDir,
 		beadsDir:               absBeadsDir,
@@ -115,8 +105,18 @@ func newDoltServerStore(
 		rootUser:               rootUser,
 		rootPassword:           rootPassword,
 		doltBinExec:            absDoltBinExec,
-		db:                     db,
 	}
+
+	ep, err := s.getDatabaseProxyEndpoint()
+	if err != nil {
+		return nil, fmt.Errorf("doltserver: get proxy endpoint: %w", err)
+	}
+
+	db, err := openDB(ctx, buildDSN(ep, database, rootUser, rootPassword))
+	if err != nil {
+		return nil, err
+	}
+	s.db = db
 
 	if err := s.initSchema(ctx); err != nil {
 		_ = db.Close()
@@ -126,9 +126,12 @@ func newDoltServerStore(
 	return s, nil
 }
 
-func getDatabaseProxyEndpoint(serverRootDir string, backend proxy.Backend) (proxy.Endpoint, error) {
-	return proxy.GetCreateDatabaseProxyServerEndpoint(serverRootDir, proxy.OpenOpts{
-		Backend: backend,
+func (s *DoltServerStore) getDatabaseProxyEndpoint() (proxy.Endpoint, error) {
+	return proxy.GetCreateDatabaseProxyServerEndpoint(s.serverRootDir, proxy.OpenOpts{
+		Backend:        s.backend,
+		ConfigFilePath: s.serverConfigFilePath,
+		LogFilePath:    s.serverLogFilePath,
+		DoltBinPath:    s.doltBinExec,
 	})
 }
 
