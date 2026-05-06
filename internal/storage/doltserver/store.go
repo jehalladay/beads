@@ -2,14 +2,18 @@ package doltserver
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
+
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/db/proxy"
+	"github.com/steveyegge/beads/internal/storage/db/util"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -26,6 +30,7 @@ type DoltServerStore struct {
 	user                   string
 	password               string
 	doltBinExec            string
+	db                     *sql.DB
 }
 
 var (
@@ -80,6 +85,15 @@ func newDoltServerStore(
 		return nil, fmt.Errorf("doltserver: creating server root directory: %w", err)
 	}
 
+	ep, err := getDatabaseProxyEndpoint(absServerRootDir, backend)
+	if err != nil {
+		return nil, fmt.Errorf("doltserver: get proxy endpoint: %w", err)
+	}
+	db, err := openDB(buildDSN(ep, database, user, password))
+	if err != nil {
+		return nil, err
+	}
+
 	s := &DoltServerStore{
 		serverRootDir:          absServerRootDir,
 		beadsDir:               absBeadsDir,
@@ -93,25 +107,59 @@ func newDoltServerStore(
 		user:                   user,
 		password:               password,
 		doltBinExec:            absDoltBinExec,
+		db:                     db,
+	}
+
+	if err := s.ensureSQLUserAndPermissions(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("doltserver: ensureSQLUserAndPermissions: %w", err)
 	}
 
 	if err := s.initSchema(ctx); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("doltserver: init schema: %w", err)
 	}
 
 	if err := s.ensureIgnoredTables(ctx); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("doltserver: ensure ignored tables: %w", err)
 	}
 
 	return s, nil
 }
 
-// initSchema creates the database (if needed) and runs all pending migrations.
+func getDatabaseProxyEndpoint(serverRootDir string, backend proxy.Backend) (proxy.Endpoint, error) {
+	return proxy.GetCreateDatabaseProxyServerEndpoint(serverRootDir, proxy.OpenOpts{
+		Backend: backend,
+	})
+}
+
+func buildDSN(ep proxy.Endpoint, database, user, password string) string {
+	return util.DoltServerDSN{
+		Host:     ep.Host,
+		Port:     ep.Port,
+		User:     user,
+		Password: password,
+		Database: database,
+	}.String()
+}
+
+func openDB(dsn string) (*sql.DB, error) {
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("doltserver: open db: %w", err)
+	}
+	return db, nil
+}
+
+func (s *DoltServerStore) ensureSQLUserAndPermissions(ctx context.Context) error {
+	panic("unimplemented")
+}
+
 func (s *DoltServerStore) initSchema(ctx context.Context) error {
 	panic("unimplemented")
 }
 
-// ensureIgnoredTables creates dolt_ignore'd wisp tables if they don't exist.
 func (s *DoltServerStore) ensureIgnoredTables(ctx context.Context) error {
 	panic("unimplemented")
 }
