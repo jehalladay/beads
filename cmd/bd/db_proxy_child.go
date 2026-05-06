@@ -80,17 +80,11 @@ not intended to be invoked directly by users.`,
 func newDatabaseServer(backend proxy.Backend, rootDir, configPath, logPath, doltBin string) (server.DatabaseServer, error) {
 	switch backend {
 	case proxy.BackendLocalServer:
-		return newLocalDoltServer(rootDir, configPath, logPath, doltBin)
+		return server.NewDoltServer(doltBin, rootDir, configPath, logPath, "root", "", 0)
 	case proxy.BackendExternal, proxy.BackendLocalSharedServer:
 		return nil, fmt.Errorf("backend %q: not yet implemented", backend)
 	}
 	return nil, fmt.Errorf("unknown backend %q", backend)
-}
-
-const localDoltDefaultUser = "root"
-
-func newLocalDoltServer(rootDir, configPath, logPath, doltBin string) (server.DatabaseServer, error) {
-	return server.NewDoltServer(doltBin, rootDir, configPath, logPath, localDoltDefaultUser, "", 0)
 }
 
 func init() {
