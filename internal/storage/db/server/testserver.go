@@ -17,7 +17,6 @@ type Counters struct {
 	DSNCalls      int64
 	StartCalls    int64
 	StopCalls     int64
-	RestartCalls  int64
 	RunningCalls  int64
 	PingCalls     int64
 	PingErrors    int64
@@ -85,7 +84,7 @@ func (s *TestDatabaseServerImpl) ID(_ context.Context) string {
 	return s.ID_
 }
 
-func (s *TestDatabaseServerImpl) DSN(_ context.Context) string {
+func (s *TestDatabaseServerImpl) DSN(_ context.Context, _, _, _ string) string {
 	s.mu.Lock()
 	s.counters.DSNCalls++
 	s.mu.Unlock()
@@ -115,16 +114,6 @@ func (s *TestDatabaseServerImpl) Stop(_ context.Context) error {
 		_ = c.Close()
 	}
 	return err
-}
-
-func (s *TestDatabaseServerImpl) Restart(ctx context.Context) error {
-	s.mu.Lock()
-	s.counters.RestartCalls++
-	s.mu.Unlock()
-	if err := s.Stop(ctx); err != nil {
-		return err
-	}
-	return s.Start(ctx)
 }
 
 func (s *TestDatabaseServerImpl) Running(_ context.Context) bool {
