@@ -118,8 +118,8 @@ create, update, show, or close operation).`,
 			resolvedIDs = append(resolvedIDs, r.ResolvedID)
 		}
 
-		// Track which routed stores we mutated so we can flush each in embedded mode.
-		// Deduped by pointer; the local store is added unconditionally below.
+		// Track which stores were mutated so routed closes can commit before
+		// cleanup closes the routed handle. Deduped by pointer.
 		mutatedStores := map[storage.DoltStorage]struct{}{}
 
 		// Direct mode
@@ -285,18 +285,29 @@ create, update, show, or close operation).`,
 			}
 		}
 
-		// Embedded mode: flush Dolt commit. DoltStore commits
-		// inline during CloseIssue so this is only needed for EmbeddedDoltStore.
-		// With contributor auto-routing, the close lands in the routed store, not
-		// the local one — flush every store we actually mutated.
-		if isEmbeddedMode() && closedCount > 0 {
+		if closedCount > 0 {
+			hasRoutedMutation := false
 			for s := range mutatedStores {
-				if s == nil {
-					continue
+				if s != nil && s != store {
+					hasRoutedMutation = true
+					break
 				}
-				if _, err := s.CommitPending(ctx, actor); err != nil {
-					FatalErrorRespectJSON("failed to commit: %v", err)
+			}
+			if hasRoutedMutation {
+				for s := range mutatedStores {
+					if s == nil {
+						continue
+					}
+					if err := maybeAutoCommitStore(ctx, s, doltAutoCommitParams{
+						Command:  cmd.Name(),
+						IssueIDs: resolvedIDs,
+					}); err != nil {
+						FatalErrorRespectJSON("dolt auto-commit failed: %v", err)
+					}
 				}
+				commandDidExplicitDoltCommit = true
+			} else {
+				commandDidWrite.Store(true)
 			}
 		}
 
@@ -479,14 +490,13 @@ func resolveReasonFile(cmd *cobra.Command, existingReason string) (string, bool,
 }
 
 // resolveCloseTargets resolves a batch of partial issue IDs for `bd close`,
-// preserving input order. For each ID it tries the local store first, then a
-// shared contributor-routed store, then explicit prefix routing via routes.jsonl.
+// preserving input order. For each ID it tries the local store first, then
+// explicit prefix routing via routes.jsonl, then a shared contributor-routed
+// store. This matches resolveAndGetIssueWithRouting's routing precedence.
 //
-// Why "shared": opening the routed embeddeddolt store more than once in the same
-// process deadlocks on its flock (same class as GH#3586 / beads-i4s). Per-id
-// routing in close.go would hit that for every multi-id close where the IDs all
-// route to the same target — i.e. the common case. We open at most one routed
-// handle and reuse it for every routed ID; the cleanup func releases it.
+// The contributor-routed handle is shared across the batch so bulk close does
+// not repeatedly open the same planning store and every result has a clear store
+// owner for subsequent close-time checks and writes.
 //
 // Each returned RoutedResult.Store points to whichever store actually owns the
 // issue. The caller invokes cleanup() once when done; per-result Close() is a
@@ -530,18 +540,17 @@ func resolveCloseTargets(ctx context.Context, localStore storage.DoltStorage, id
 			cleanup()
 			return nil, func() {}, fmt.Errorf("resolving ID %s: %w", id, err)
 		}
-		// Shared routed store (contributor auto-routing).
+		if r, err := resolveViaPrefixRouting(ctx, id); err == nil {
+			results = append(results, r)
+			continue
+		}
+		// Contributor auto-routing uses one shared store for the whole batch.
 		if rs, rerr := ensureShared(); rerr == nil {
 			if r, err := resolveAndGetFromStore(ctx, rs, id, true); err == nil {
 				// Per-id RoutedResult does not own the shared handle; cleanup() does.
 				results = append(results, r)
 				continue
 			}
-		}
-		// Last resort: prefix routing opens its own store; per-result Close() handles it.
-		if r, err := resolveViaPrefixRouting(ctx, id); err == nil {
-			results = append(results, r)
-			continue
 		}
 		cleanup()
 		return nil, func() {}, fmt.Errorf("resolving ID %s: no issue found matching %q", id, id)

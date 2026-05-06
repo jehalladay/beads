@@ -17,13 +17,12 @@ import (
 // while bd show / bd update succeeded for the same IDs because they routed via
 // resolveAndGetIssueWithRouting and close did not. The fix uses
 // resolveCloseTargets, which performs the same routing fallback and shares one
-// routed-store handle across IDs to avoid the GH#3586 flock-deadlock pattern
-// when multiple IDs route to the same target.
+// routed-store handle across IDs when multiple IDs route to the same target.
 //
 // The cases cover:
 //   - maintainer-mode local resolution (no routing involved)
 //   - contributor-mode batch where every ID lives in the planning store
-//     (must share one routed-store handle to avoid the deadlock)
+//     (must share one routed-store handle)
 //   - contributor-mode mixed batch with one local ID and one routed ID
 //     (validates the per-result store routing and the mutatedStores fan-out)
 func TestResolveCloseTargets(t *testing.T) {
@@ -99,8 +98,8 @@ func TestResolveCloseTargets(t *testing.T) {
 				for _, id := range tc.planningSeed {
 					seedIssue(t, ctx, planningStore, id)
 				}
-				// Release the planning store's flock so resolveCloseTargets'
-				// openRoutedReadStore call can acquire it.
+				// Release the planning store so resolveCloseTargets can open
+				// the routed store through the normal command path.
 				if err := planningStore.Close(); err != nil {
 					t.Fatalf("close planning store: %v", err)
 				}
@@ -125,9 +124,8 @@ func TestResolveCloseTargets(t *testing.T) {
 				t.Fatalf("got %d results, want %d", len(results), len(tc.inputIDs))
 			}
 
-			// Track the first routed-store handle we see so we can assert that
-			// every subsequent routed result reuses it (the dedupe that prevents
-			// the GH#3586 flock deadlock).
+			// Track the first routed-store handle we see so every subsequent
+			// routed result reuses the same batch handle.
 			var sharedRoutedStore storage.DoltStorage
 
 			for i, r := range results {
@@ -156,7 +154,7 @@ func TestResolveCloseTargets(t *testing.T) {
 					if sharedRoutedStore == nil {
 						sharedRoutedStore = r.Store
 					} else if r.Store != sharedRoutedStore {
-						t.Errorf("result[%d].Store: routed handles should be deduped to one shared handle (flock-deadlock guard)", i)
+						t.Errorf("result[%d].Store: routed handles should be deduped to one shared handle", i)
 					}
 				default:
 					t.Fatalf("unknown wantStoreOrigin[%d] = %q", i, tc.wantStoreOrigin[i])
