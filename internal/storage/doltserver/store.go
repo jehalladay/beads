@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -15,8 +17,13 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/db/proxy"
 	"github.com/steveyegge/beads/internal/storage/db/util"
+	"github.com/steveyegge/beads/internal/storage/dolt/migrations"
+	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// validIdentifier matches safe SQL identifiers (letters, digits, underscores).
+var validIdentifier = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 type DoltServerStore struct {
 	serverRootDir          string
@@ -117,11 +124,6 @@ func newDoltServerStore(
 		return nil, fmt.Errorf("doltserver: init schema: %w", err)
 	}
 
-	if err := s.ensureIgnoredTables(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("doltserver: ensure ignored tables: %w", err)
-	}
-
 	return s, nil
 }
 
@@ -176,11 +178,42 @@ func (s *DoltServerStore) withWriteTx(ctx context.Context, fn func(ctx context.C
 }
 
 func (s *DoltServerStore) initSchema(ctx context.Context) error {
-	panic("unimplemented")
-}
+	if !validIdentifier.MatchString(s.database) {
+		return fmt.Errorf("doltserver: invalid database name: %q", s.database)
+	}
+	dbIdent := "`" + s.database + "`"
 
-func (s *DoltServerStore) ensureIgnoredTables(ctx context.Context) error {
-	panic("unimplemented")
+	return s.withWriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS "+dbIdent); err != nil {
+			return fmt.Errorf("doltserver: creating database: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "USE "+dbIdent); err != nil {
+			return fmt.Errorf("doltserver: switching to database: %w", err)
+		}
+
+		if err := schema.EnsureIgnoredTables(ctx, tx); err != nil {
+			return fmt.Errorf("ensure ignored tables before migration: %w", err)
+		}
+
+		applied, err := schema.MigrateUp(ctx, tx)
+		if err != nil {
+			return err
+		}
+
+		if applied > 0 {
+			if _, err := tx.ExecContext(ctx, "CALL DOLT_ADD('-A')"); err != nil {
+				return fmt.Errorf("dolt add after migrations: %w", err)
+			}
+
+			if _, err := tx.ExecContext(ctx, "CALL DOLT_COMMIT('-m', 'schema: apply migrations')"); err != nil {
+				if !strings.Contains(err.Error(), "nothing to commit") {
+					return fmt.Errorf("dolt commit after migrations: %w", err)
+				}
+			}
+		}
+
+		return nil
+	})
 }
 
 // Storage — issue CRUD
