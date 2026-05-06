@@ -25,6 +25,9 @@ var (
 	dbProxyChildPort        int
 	dbProxyChildIdleTimeout time.Duration
 	dbProxyChildBackend     string
+	dbProxyChildConfig      string
+	dbProxyChildLogPath     string
+	dbProxyChildDoltBin     string
 )
 
 var dbProxyChildCmd = &cobra.Command{
@@ -59,7 +62,7 @@ not intended to be invoked directly by users.`,
 		}
 		defer lock.Unlock()
 
-		srv, err := newDatabaseServer(backend, dbProxyChildRoot)
+		srv, err := newDatabaseServer(backend, dbProxyChildRoot, dbProxyChildConfig, dbProxyChildLogPath, dbProxyChildDoltBin)
 		if err != nil {
 			return err
 		}
@@ -74,19 +77,20 @@ not intended to be invoked directly by users.`,
 	},
 }
 
-// rootDir is currently unused — every backend dispatch returns
-// "not yet implemented". Once a real implementation lands it will need
-// rootDir to locate per-workspace state, and the first return value will
-// no longer always be nil.
-//
-//nolint:unparam // first return is always nil while every backend is a stub
-func newDatabaseServer(backend proxy.Backend, _ string) (server.DatabaseServer, error) {
+func newDatabaseServer(backend proxy.Backend, rootDir, configPath, logPath, doltBin string) (server.DatabaseServer, error) {
 	switch backend {
-	case proxy.BackendExternal, proxy.BackendLocalServer, proxy.BackendLocalSharedServer:
+	case proxy.BackendLocalServer:
+		return newLocalDoltServer(rootDir, configPath, logPath, doltBin)
+	case proxy.BackendExternal, proxy.BackendLocalSharedServer:
 		return nil, fmt.Errorf("backend %q: not yet implemented", backend)
 	}
-	// Unreachable in normal flow: RunE validates before reaching here.
 	return nil, fmt.Errorf("unknown backend %q", backend)
+}
+
+const localDoltDefaultUser = "root"
+
+func newLocalDoltServer(rootDir, configPath, logPath, doltBin string) (server.DatabaseServer, error) {
+	return server.NewDoltServer(doltBin, rootDir, configPath, logPath, localDoltDefaultUser, "", 0)
 }
 
 func init() {
@@ -95,6 +99,9 @@ func init() {
 	dbProxyChildCmd.Flags().DurationVar(&dbProxyChildIdleTimeout, "idle-timeout", 5*time.Minute, "idle timeout before shutdown (0 disables)")
 	dbProxyChildCmd.Flags().StringVar(&dbProxyChildBackend, "backend", "",
 		"backend kind: "+strings.Join(proxy.KnownBackendNames(), " | "))
+	dbProxyChildCmd.Flags().StringVar(&dbProxyChildConfig, "config", "", "path to backend server config (e.g. dolt sql-server YAML)")
+	dbProxyChildCmd.Flags().StringVar(&dbProxyChildLogPath, "logpath", "", "path the backend server should write its stdout/stderr to")
+	dbProxyChildCmd.Flags().StringVar(&dbProxyChildDoltBin, "dolt-bin", "", "path to the dolt executable")
 	_ = dbProxyChildCmd.MarkFlagRequired("root")
 	_ = dbProxyChildCmd.MarkFlagRequired("port")
 	_ = dbProxyChildCmd.MarkFlagRequired("backend")
