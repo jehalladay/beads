@@ -86,7 +86,7 @@ func NewDoltServer(doltBinExec, rootDir, configPath, logFilePath, user, password
 	if keepAlivePeriod == 0 {
 		keepAlivePeriod = defaultKeepAlivePeriod
 	}
-	sum := sha256.Sum256([]byte(rootDir))
+	sum := sha256.Sum256([]byte(absRootDir))
 	return &DoltServer{
 		id:              hex.EncodeToString(sum[:]),
 		doltBinExec:     absDoltBinExec,
