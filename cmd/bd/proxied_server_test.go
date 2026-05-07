@@ -92,9 +92,11 @@ func TestCheckExistingBeadsDataAt_ProxiedServerNoData(t *testing.T) {
 	}
 }
 
-// TestCheckExistingBeadsDataAt_ProxiedServerWithExistingDB asserts that an
-// existing proxied database (proxieddb/<dbName>/.dolt is present) blocks
-// re-init with the standard "already initialized" error.
+// TestCheckExistingBeadsDataAt_ProxiedServerWithExistingDB asserts that the
+// mere existence of <beadsDir>/proxieddb/ blocks re-init in proxied-server
+// mode. We deliberately don't peek deeper than the directory itself — the
+// internal layout (wrapper db dir, per-db subdirs) is an implementation
+// detail of the daemon.
 func TestCheckExistingBeadsDataAt_ProxiedServerWithExistingDB(t *testing.T) {
 	beadsDir := filepath.Join(t.TempDir(), ".beads")
 	require.NoError(t, os.MkdirAll(beadsDir, 0o755))
@@ -109,13 +111,13 @@ func TestCheckExistingBeadsDataAt_ProxiedServerWithExistingDB(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o644))
 
-	// Materialize <beadsDir>/proxieddb/myproj/.dolt to look like a populated
-	// proxied database.
-	dbDoltDir := filepath.Join(beadsDir, "proxieddb", "myproj", ".dolt")
-	require.NoError(t, os.MkdirAll(dbDoltDir, 0o755))
+	// Materialize <beadsDir>/proxieddb/ — that alone should be enough to
+	// trip the guard, regardless of what's inside.
+	proxiedRoot := filepath.Join(beadsDir, "proxieddb")
+	require.NoError(t, os.MkdirAll(proxiedRoot, 0o755))
 
 	err = checkExistingBeadsDataAt(beadsDir, "myproj")
-	require.Error(t, err, "existing proxied database should block init")
+	require.Error(t, err, "existing proxieddb directory should block init")
 	assert.Contains(t, err.Error(), "already initialized")
-	assert.Contains(t, err.Error(), filepath.Join(beadsDir, "proxieddb", "myproj"))
+	assert.Contains(t, err.Error(), proxiedRoot)
 }

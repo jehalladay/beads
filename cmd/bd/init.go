@@ -799,9 +799,6 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			fmt.Fprintf(os.Stderr, "Error: failed to open Dolt store: %v\n", err)
 			os.Exit(1)
 		}
-		if initProxiedServer && !quiet {
-			fmt.Printf("  %s Proxied dolt sql-server at %s\n", ui.RenderPass("✓"), proxiedServerRoot(beadsDir))
-		}
 
 		// Initialize global database schema and config in shared-server mode.
 		// Opens a separate store connection to beads_global with CreateIfMissing
@@ -1561,20 +1558,11 @@ func checkExistingBeadsDataAt(beadsDir string, prefix string) error {
 		return nil // No .beads directory, safe to init
 	}
 
-	// Check for existing Dolt database
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
-		// Proxied-server mode stores its database under
-		// `.beads/proxieddb/<dbName>/`. Check that path first because
-		// IsDoltProxiedServerMode() and IsDoltServerMode() are mutually
-		// exclusive — we don't want to fall through into the embedded
-		// branch and miss an existing proxied database.
 		if cfg.IsDoltProxiedServerMode() {
-			dbName := cfg.GetDoltDatabase()
-			if dbName != "" {
-				dbDoltDir := filepath.Join(proxiedServerRoot(beadsDir), dbName, ".dolt")
-				if info, statErr := os.Stat(dbDoltDir); statErr == nil && info.IsDir() {
-					location := filepath.Join(proxiedServerRoot(beadsDir), dbName)
-					return fmt.Errorf(`
+			proxiedRoot := proxiedServerRoot(beadsDir)
+			if info, statErr := os.Stat(proxiedRoot); statErr == nil && info.IsDir() {
+				return fmt.Errorf(`
 %s Found existing Dolt database: %s
 
 This workspace is already initialized.
@@ -1582,12 +1570,7 @@ This workspace is already initialized.
 To use the existing database:
   Just run bd commands normally (e.g., %s)
 
-If the database is genuinely corrupt and unrecoverable:
-  bd export > backup.jsonl              # Back up first!
-  bd init --reinit-local --prefix %s    # Then reinitialize
-
-Aborting.`, ui.RenderWarn("⚠"), location, ui.RenderAccent("bd list"), prefix)
-				}
+Aborting.`, ui.RenderWarn("⚠"), proxiedRoot, ui.RenderAccent("bd list"), prefix)
 			}
 			return nil
 		}
