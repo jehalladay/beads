@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage/db/pidfile"
 	"github.com/steveyegge/beads/internal/storage/db/proxy"
 	"github.com/steveyegge/beads/internal/storage/db/server"
 	"github.com/stretchr/testify/assert"
@@ -85,16 +86,11 @@ func runProxy(t *testing.T, opts proxy.ProxyOpts) *proxyHandle {
 	return h
 }
 
-// waitListening polls for the pidfile, which proxyServer.Start writes
-// immediately after binding the listener (and before starting the backend or
-// the accept loop). We can't use a TCP probe here: the kernel queues the
-// connection until accept loop runs, and the proxy then accounts for it,
-// inflating the test's expected counters by one.
 func waitListening(t *testing.T, root string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		pf, err := proxy.ReadDatabaseProxyPidFile(root)
+		pf, err := pidfile.Read(root, proxy.PIDFileName)
 		if err == nil && pf != nil {
 			return
 		}
@@ -105,7 +101,7 @@ func waitListening(t *testing.T, root string, timeout time.Duration) {
 
 func assertNoPidFile(t *testing.T, root string) {
 	t.Helper()
-	pf, err := proxy.ReadDatabaseProxyPidFile(root)
+	pf, err := pidfile.Read(root, proxy.PIDFileName)
 	require.NoError(t, err)
 	assert.Nil(t, pf)
 }
@@ -117,8 +113,6 @@ func dialProxy(t *testing.T, port int) net.Conn {
 	require.NoError(t, c.SetDeadline(time.Now().Add(ioTimeout)))
 	return c
 }
-
-// ---------------------------------------------------------------------------
 
 func TestProxy_HappyPath_Echo(t *testing.T) {
 	t.Parallel()
@@ -144,8 +138,7 @@ func TestProxy_HappyPath_Echo(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "hello", string(buf))
 
-	// Pidfile is in place while proxy is running.
-	pf, err := proxy.ReadDatabaseProxyPidFile(root)
+	pf, err := pidfile.Read(root, proxy.PIDFileName)
 	require.NoError(t, err)
 	require.NotNil(t, pf)
 	assert.Equal(t, os.Getpid(), pf.Pid)
@@ -192,7 +185,7 @@ func TestProxy_PidFile_WrittenAndRemoved(t *testing.T) {
 	})
 	waitListening(t, root, listenWait)
 
-	pf, err := proxy.ReadDatabaseProxyPidFile(root)
+	pf, err := pidfile.Read(root, proxy.PIDFileName)
 	require.NoError(t, err)
 	require.NotNil(t, pf)
 	assert.Equal(t, os.Getpid(), pf.Pid)

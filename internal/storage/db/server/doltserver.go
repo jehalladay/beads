@@ -19,10 +19,13 @@ import (
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/steveyegge/beads/internal/storage/db/pidfile"
 	"github.com/steveyegge/beads/internal/storage/db/util"
 )
 
 const defaultKeepAlivePeriod = 30 * time.Second
+
+const PIDFileName = "proxy-child.pid"
 
 type DoltServer struct {
 	id              string
@@ -36,6 +39,7 @@ type DoltServer struct {
 	eg      *errgroup.Group
 	egCtx   context.Context
 	cancel  context.CancelFunc
+	pid     int
 }
 
 var _ DatabaseServer = (*DoltServer)(nil)
@@ -228,8 +232,27 @@ func (s *DoltServer) Start(ctx context.Context) error {
 
 	cmd.Env = os.Environ()
 
+	if err := cmd.Start(); err != nil {
+		s.eg, s.egCtx, s.cancel = nil, nil, nil
+		cancel()
+		return fmt.Errorf("server: DoltServer.Start: spawn dolt: %w", err)
+	}
+
+	s.pid = cmd.Process.Pid
+
+	if err := pidfile.Write(s.rootDir, PIDFileName, pidfile.PidFile{
+		Pid:  s.pid,
+		Port: s.config.Port(),
+	}); err != nil {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+		s.eg, s.egCtx, s.cancel, s.pid = nil, nil, nil, 0
+		cancel()
+		return fmt.Errorf("server: DoltServer.Start: write pidfile: %w", err)
+	}
+
 	eg.Go(func() error {
-		return cmd.Run()
+		return cmd.Wait()
 	})
 
 	// give server time to come up
@@ -254,11 +277,19 @@ func (s *DoltServer) Stop(_ context.Context) error {
 		closeErr = s.logFile.Close()
 		s.logFile = nil
 	}
+	var rmErr error
+	if s.pid != 0 {
+		rmErr = pidfile.Remove(s.rootDir, PIDFileName)
+		s.pid = 0
+	}
 	if waitErr != nil {
 		return fmt.Errorf("server: DoltServer.Stop: %w", waitErr)
 	}
 	if closeErr != nil {
 		return fmt.Errorf("server: DoltServer.Stop: close log: %w", closeErr)
+	}
+	if rmErr != nil {
+		return fmt.Errorf("server: DoltServer.Stop: remove pidfile: %w", rmErr)
 	}
 	return nil
 }

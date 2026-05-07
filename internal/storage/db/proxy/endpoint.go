@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/lockfile"
+	"github.com/steveyegge/beads/internal/storage/db/pidfile"
 	"github.com/steveyegge/beads/internal/storage/db/util"
 )
 
@@ -38,10 +39,6 @@ const (
 	openPollInterval      = 100 * time.Millisecond
 )
 
-// ResolveExecutable returns the path of the binary the proxy should fork as
-// the child. Defaults to os.Executable. Tests may swap it (e.g. to point at
-// a freshly-built `bd`) so the proxy forks a real `bd` rather than the go
-// test binary, which would not understand the `db-proxy-child` subcommand.
 var ResolveExecutable = os.Executable
 
 func PickFreePort() (int, error) {
@@ -115,7 +112,7 @@ func spawnAndHandoff(rootDir string, opts OpenOpts, deadline time.Time, lock *ut
 
 	// Stale pidfile from a previous (now-dead) proxy must not mislead racing
 	// readers into dialing a port that nobody is listening on.
-	_ = RemoveDatabaseProxyPidFile(rootDir)
+	_ = pidfile.Remove(rootDir, PIDFileName)
 
 	port, err := PickFreePort()
 	if err != nil {
@@ -216,7 +213,7 @@ func forkExecChild(rootDir, configFilePath, logFilePath, doltBinPath string, por
 }
 
 func readAndDial(rootDir string) (Endpoint, bool) {
-	pf, err := ReadDatabaseProxyPidFile(rootDir)
+	pf, err := pidfile.Read(rootDir, PIDFileName)
 	if err != nil || pf == nil {
 		return Endpoint{}, false
 	}

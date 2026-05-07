@@ -16,6 +16,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/steveyegge/beads/internal/storage/db/pidfile"
 	"github.com/steveyegge/beads/internal/storage/db/server"
 )
 
@@ -41,6 +42,8 @@ type proxyServer struct {
 	activeConns atomic.Int64
 	conns       errgroup.Group
 }
+
+const PIDFileName = "proxy.pid"
 
 const (
 	serverReadyTimeout     = 30 * time.Second
@@ -109,12 +112,12 @@ func (p *proxyServer) Start(parentCtx context.Context) error {
 		return fmt.Errorf("database server not ready: %w", err)
 	}
 
-	if err := WriteDatabaseProxyPidFile(p.rootDir, PidFile{Pid: os.Getpid(), Port: p.port}); err != nil {
+	if err := pidfile.Write(p.rootDir, PIDFileName, pidfile.PidFile{Pid: os.Getpid(), Port: p.port}); err != nil {
 		p.stats.IncBackendStop()
 		_ = stopBackendBounded(p.server)
 		return fmt.Errorf("write pid file: %w", err)
 	}
-	defer func() { _ = RemoveDatabaseProxyPidFile(p.rootDir) }()
+	defer func() { _ = pidfile.Remove(p.rootDir, PIDFileName) }()
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -137,11 +140,6 @@ func (p *proxyServer) Start(parentCtx context.Context) error {
 	return runErr
 }
 
-// stopBackendBounded calls server.Stop with a fresh, time-bounded context.
-// We use Background here (not the parent ctx) because by the time Stop
-// runs, the parent ctx is typically already canceled — a backend that
-// honors ctx would bail immediately and skip its cleanup. The bound
-// protects against backends that ignore ctx entirely.
 func stopBackendBounded(s server.DatabaseServer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), backendStopTimeout)
 	defer cancel()
