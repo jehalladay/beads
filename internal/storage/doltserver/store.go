@@ -88,6 +88,7 @@ func newDoltServerStore(
 	if err != nil {
 		return nil, fmt.Errorf("doltserver: resolving dolt bin exec: %w", err)
 	}
+
 	if err := os.MkdirAll(absServerRootDir, config.BeadsDirPerm); err != nil {
 		return nil, fmt.Errorf("doltserver: creating server root directory: %w", err)
 	}
@@ -112,16 +113,30 @@ func newDoltServerStore(
 		return nil, fmt.Errorf("doltserver: get proxy endpoint: %w", err)
 	}
 
+	// Open the initial connection with no default database — the target
+	// database does not yet exist, so a DSN-level USE would 1049. initSchema
+	// is responsible for CREATE DATABASE + migrations on this connection.
+	initDB, err := openDB(ctx, buildDSN(ep, "", rootUser, rootPassword))
+	if err != nil {
+		return nil, err
+	}
+	s.db = initDB
+
+	if err := s.initSchema(ctx); err != nil {
+		_ = initDB.Close()
+		return nil, fmt.Errorf("doltserver: init schema: %w", err)
+	}
+	if err := initDB.Close(); err != nil {
+		return nil, fmt.Errorf("doltserver: close init db: %w", err)
+	}
+	s.db = nil
+
+	// Reopen with the target database now that initSchema has created it.
 	db, err := openDB(ctx, buildDSN(ep, database, rootUser, rootPassword))
 	if err != nil {
 		return nil, err
 	}
 	s.db = db
-
-	if err := s.initSchema(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("doltserver: init schema: %w", err)
-	}
 
 	return s, nil
 }
