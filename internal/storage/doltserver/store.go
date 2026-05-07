@@ -113,14 +113,10 @@ func newDoltServerStore(
 		return nil, fmt.Errorf("doltserver: get proxy endpoint: %w", err)
 	}
 
-	// Open the initial connection with no default database — the target
-	// database does not yet exist, so a DSN-level USE would 1049. initSchema
-	// is responsible for CREATE DATABASE + migrations on this connection.
 	initDB, err := openDB(ctx, buildDSN(ep, "", rootUser, rootPassword))
 	if err != nil {
 		return nil, err
 	}
-	s.db = initDB
 
 	if err := s.initSchema(ctx); err != nil {
 		_ = initDB.Close()
@@ -129,15 +125,13 @@ func newDoltServerStore(
 	if err := initDB.Close(); err != nil {
 		return nil, fmt.Errorf("doltserver: close init db: %w", err)
 	}
-	s.db = nil
 
-	// Reopen with the target database now that initSchema has created it.
 	db, err := openDB(ctx, buildDSN(ep, database, rootUser, rootPassword))
 	if err != nil {
 		return nil, err
 	}
-	s.db = db
 
+	s.db = db
 	return s, nil
 }
 
