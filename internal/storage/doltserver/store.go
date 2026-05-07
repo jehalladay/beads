@@ -129,7 +129,7 @@ func NewDoltServerStore(
 		return nil, err
 	}
 
-	if err := s.initSchema(ctx); err != nil {
+	if err := s.initSchema(ctx, initDB); err != nil {
 		_ = initDB.Close()
 		return nil, fmt.Errorf("doltserver: init schema: %w", err)
 	}
@@ -176,8 +176,8 @@ func openDB(ctx context.Context, dsn string) (*sql.DB, error) {
 	return db, nil
 }
 
-func (s *DoltServerStore) withReadTx(ctx context.Context, fn func(ctx context.Context, tx *sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+func withReadTxOn(ctx context.Context, db *sql.DB, fn func(ctx context.Context, tx *sql.Tx) error) error {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("doltserver: begin read tx: %w", err)
 	}
@@ -185,8 +185,8 @@ func (s *DoltServerStore) withReadTx(ctx context.Context, fn func(ctx context.Co
 	return fn(ctx, tx)
 }
 
-func (s *DoltServerStore) withWriteTx(ctx context.Context, fn func(ctx context.Context, tx *sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+func withWriteTxOn(ctx context.Context, db *sql.DB, fn func(ctx context.Context, tx *sql.Tx) error) error {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("doltserver: begin write tx: %w", err)
 	}
@@ -199,13 +199,21 @@ func (s *DoltServerStore) withWriteTx(ctx context.Context, fn func(ctx context.C
 	return nil
 }
 
-func (s *DoltServerStore) initSchema(ctx context.Context) error {
+func (s *DoltServerStore) withReadTx(ctx context.Context, fn func(ctx context.Context, tx *sql.Tx) error) error {
+	return withReadTxOn(ctx, s.db, fn)
+}
+
+func (s *DoltServerStore) withWriteTx(ctx context.Context, fn func(ctx context.Context, tx *sql.Tx) error) error {
+	return withWriteTxOn(ctx, s.db, fn)
+}
+
+func (s *DoltServerStore) initSchema(ctx context.Context, db *sql.DB) error {
 	if !validIdentifier.MatchString(s.database) {
 		return fmt.Errorf("doltserver: invalid database name: %q", s.database)
 	}
 	dbIdent := "`" + s.database + "`"
 
-	return s.withWriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	return withWriteTxOn(ctx, db, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS "+dbIdent); err != nil {
 			return fmt.Errorf("doltserver: creating database: %w", err)
 		}
