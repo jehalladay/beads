@@ -1,13 +1,9 @@
 package server_test
 
-// doltserver_test.go covers the DoltServer lifecycle. Most tests start a real
-// `dolt sql-server` subprocess; those skip when `dolt` is not on PATH.
-// Validation tests (constructor argument checks, ID stability, DSN building)
-// run unconditionally.
-
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -20,6 +16,7 @@ import (
 	"time"
 
 	mysqldrv "github.com/go-sql-driver/mysql"
+	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/storage/db/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,9 +50,6 @@ func writeConfig(t *testing.T, port int) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	// dolt deprecated user/password in sql-server YAML (it now creates
-	// root@localhost as the superuser regardless). DoltServer takes
-	// credentials via NewDoltServer instead.
 	body := fmt.Sprintf(`log_level: debug
 listener:
   host: 127.0.0.1
@@ -405,12 +399,6 @@ func TestDoltServer_ConcurrentStart_SameRootDir_OneWins(t *testing.T) {
 	require.NoError(t, exec.Command(bin, "config", "--global", "--add", "user.email", "beads@test").Run())
 
 	rootDir := t.TempDir()
-	// Pre-init disabled — let the 10 concurrent Starts race through
-	// doltInit themselves.
-	// initCmd := exec.Command(bin, "init")
-	// initCmd.Dir = rootDir
-	// initOut, err := initCmd.CombinedOutput()
-	// require.NoError(t, err, "manual dolt init failed: %s", initOut)
 
 	const n = 10
 	servers := make([]*server.DoltServer, n)
@@ -431,10 +419,6 @@ func TestDoltServer_ConcurrentStart_SameRootDir_OneWins(t *testing.T) {
 		}
 	})
 
-	// Fire all Starts concurrently. Start currently returns nil even if
-	// the spawned sql-server later dies (the 200ms sleep returns before
-	// cmd.Run reports failure), so the test checks Running()/Ping() to
-	// determine the actual winner.
 	var wg sync.WaitGroup
 	startErrs := make([]error, n)
 	for i := 0; i < n; i++ {
@@ -445,42 +429,23 @@ func TestDoltServer_ConcurrentStart_SameRootDir_OneWins(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+
+	winner := -1
+	losers := 0
 	for i, err := range startErrs {
-		require.NoError(t, err, "server %d Start returned err", i)
-	}
-
-	// Wait for the losers' subprocesses to exit. A loser is a DoltServer
-	// whose dolt sql-server child failed to acquire the rootDir lock and
-	// exited non-zero — that cancels its egCtx and flips Running() to
-	// false. The fight can take a moment to settle, so poll.
-	tally := func() (winners, losers int) {
-		for _, s := range servers {
-			if s.Running(context.Background()) {
-				winners++
-			} else {
-				losers++
-			}
+		if err == nil {
+			require.Equal(t, -1, winner, "more than one Start succeeded (server %d and %d)", winner, i)
+			winner = i
+			continue
 		}
-		return winners, losers
+		require.True(t, errors.Is(err, lockfile.ErrLocked),
+			"server %d: expected proxy-child.lock contention, got %v", i, err)
+		losers++
 	}
-	require.Eventually(t, func() bool {
-		w, l := tally()
-		return w == 1 && l == n-1
-	}, 10*time.Second, 100*time.Millisecond, "expected 1 winner + %d losers after rootDir lock fight", n-1)
-
-	winners, losers := tally()
-	assert.Equal(t, 1, winners, "exactly 1 Start must win the rootDir lock")
+	require.GreaterOrEqual(t, winner, 0, "no Start succeeded")
 	assert.Equal(t, n-1, losers, "the other %d Starts must lose", n-1)
 
-	// The single survivor must be dial-able (i.e., its listener is up).
-	winner := -1
-	for i, s := range servers {
-		if s.Running(context.Background()) {
-			winner = i
-			break
-		}
-	}
-	require.GreaterOrEqual(t, winner, 0)
+	assert.True(t, servers[winner].Running(context.Background()), "winner must be running")
 	conn, err := servers[winner].Dial(context.Background())
 	require.NoError(t, err)
 	require.NoError(t, conn.Close())
@@ -495,6 +460,7 @@ func TestDoltServer_DoltInit_Idempotent(t *testing.T) {
 	// user.name/email in global config, so set those first.
 	require.NoError(t, exec.Command(bin, "config", "--global", "--add", "user.name", "beads-test").Run())
 	require.NoError(t, exec.Command(bin, "config", "--global", "--add", "user.email", "beads@test").Run())
+
 	cmd := exec.Command(bin, "init")
 	cmd.Dir = rootDir
 	out, err := cmd.CombinedOutput()
