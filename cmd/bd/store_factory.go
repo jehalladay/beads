@@ -17,32 +17,56 @@ import (
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 )
 
-// isEmbeddedMode returns true when the current session is using the embedded
-// Dolt engine (the default). Returns false in server mode (external dolt
-// sql-server). Safe to call before store initialization — defaults to true
-// (embedded) when the mode hasn't been set yet.
-func isEmbeddedMode() bool {
+// usesSQLServer returns true when the current session talks to a SQL server
+// of any flavor — either an externally-managed dolt sql-server (server mode)
+// or the per-workspace proxied dolt sql-server (proxied-server mode). Returns
+// false for the embedded Dolt engine (the default).
+//
+// Safe to call before store initialization — defaults to false (embedded)
+// when the mode hasn't been set yet.
+//
+// Use usesProxiedServer below to distinguish the proxied-server backend from
+// the externally-managed one.
+func usesSQLServer() bool {
 	if shouldUseGlobals() {
-		if serverMode {
-			return false
+		if serverMode || proxiedServerMode {
+			return true
 		}
-	} else if cmdCtx != nil && cmdCtx.ServerMode {
-		return false
+	} else if cmdCtx != nil && (cmdCtx.ServerMode || cmdCtx.ProxiedServer) {
+		return true
 	}
 	// Shared server mode is a form of server mode. This check covers
 	// commands that skip DB init (dolt status, dolt start, etc.) where
 	// serverMode hasn't been set from metadata.json yet (GH#2946).
 	if doltserver.IsSharedServerMode() {
-		return false
+		return true
 	}
-	return true // default: embedded
+	return false // default: embedded
+}
+
+// usesProxiedServer reports whether the current session is using the
+// per-workspace proxied dolt sql-server (dolt_mode=proxied-server). Used to
+// branch off behavior that only applies to externally-managed dolt servers
+// (host/port from cfg, hosted-Dolt remote auth, shared-server lifecycle).
+func usesProxiedServer() bool {
+	if shouldUseGlobals() {
+		return proxiedServerMode
+	}
+	return cmdCtx != nil && cmdCtx.ProxiedServer
 }
 
 // newDoltStore creates a storage backend from an explicit config.
-// When cfg.ServerMode is true, connects to an external dolt sql-server;
-// otherwise uses the embedded Dolt engine (default).
+// Dispatch order is mutually exclusive:
+//   - cfg.ProxiedServer: per-workspace proxied dolt sql-server
+//     (.beads/proxieddb/, the proxy + child dolt managed by bd itself).
+//   - cfg.ServerMode: externally-managed dolt sql-server (host/port from cfg).
+//   - otherwise: embedded Dolt engine (default).
+//
 // Used by bd init and PersistentPreRun.
 func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.DoltStorage, error) {
+	if cfg.ProxiedServer {
+		return newProxiedServerStore(ctx, cfg)
+	}
 	if cfg.ServerMode {
 		return dolt.New(ctx, cfg)
 	}
@@ -78,6 +102,13 @@ func acquireEmbeddedLock(beadsDir string, serverMode bool) (util.Unlocker, error
 // auto-sanitized to underscores and the fix is persisted to metadata.json.
 func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltStorage, error) {
 	cfg, err := configfile.Load(beadsDir)
+	if err == nil && cfg != nil && cfg.IsDoltProxiedServerMode() {
+		return newProxiedServerStore(ctx, &dolt.Config{
+			BeadsDir:      beadsDir,
+			Database:      cfg.GetDoltDatabase(),
+			ProxiedServer: true,
+		})
+	}
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfig(ctx, beadsDir)
 	}
@@ -142,6 +173,14 @@ func migrateHyphenatedDB(beadsDir string, cfg *configfile.Config, oldName, newNa
 // hydration from mutating foreign projects (GH#3231).
 func newReadOnlyStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltStorage, error) {
 	cfg, err := configfile.Load(beadsDir)
+	if err == nil && cfg != nil && cfg.IsDoltProxiedServerMode() {
+		return newProxiedServerStore(ctx, &dolt.Config{
+			BeadsDir:      beadsDir,
+			Database:      cfg.GetDoltDatabase(),
+			ProxiedServer: true,
+			ReadOnly:      true,
+		})
+	}
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{ReadOnly: true})
 	}

@@ -66,17 +66,18 @@ type envSnapshotValue struct {
 var changeDirEnvSnapshot map[string]envSnapshotValue
 
 var (
-	sandboxMode     bool
-	globalFlag      bool               // Use the global shared-server database (beads_global)
-	serverMode      bool               // True when using external dolt sql-server (dolt_mode=server)
-	readonlyMode    bool               // Read-only mode: block write operations (for worker sandboxes)
-	storeIsReadOnly bool               // Track if store was opened read-only (for staleness checks)
-	lockTimeout     = 30 * time.Second // Dolt open timeout (fixed default)
-	profileEnabled  bool
-	profileFile     *os.File
-	traceFile       *os.File
-	verboseFlag     bool // Enable verbose/debug output
-	quietFlag       bool // Suppress non-essential output
+	sandboxMode       bool
+	globalFlag        bool               // Use the global shared-server database (beads_global)
+	serverMode        bool               // True when using external dolt sql-server (dolt_mode=server)
+	proxiedServerMode bool               // True when using per-workspace proxied dolt sql-server (dolt_mode=proxied-server)
+	readonlyMode      bool               // Read-only mode: block write operations (for worker sandboxes)
+	storeIsReadOnly   bool               // Track if store was opened read-only (for staleness checks)
+	lockTimeout       = 30 * time.Second // Dolt open timeout (fixed default)
+	profileEnabled    bool
+	profileFile       *os.File
+	traceFile         *os.File
+	verboseFlag       bool // Enable verbose/debug output
+	quietFlag         bool // Suppress non-essential output
 
 	// Dolt auto-commit policy (flag/config). Values: off | on
 	doltAutoCommit string
@@ -207,6 +208,11 @@ func repairSharedServerEmbeddedMismatch(beadsDir string, cfg *configfile.Config)
 	if cfg == nil {
 		return
 	}
+	// This repair only applies when metadata.json explicitly says "embedded".
+	// Proxied-server (dolt_mode=proxied-server) and any other non-empty value
+	// fall through this guard untouched — we never rewrite a deliberately-set
+	// mode to "server" just because the shared-server env var happens to be
+	// active.
 	if strings.ToLower(strings.TrimSpace(cfg.DoltMode)) != configfile.DoltModeEmbedded {
 		return
 	}
@@ -223,9 +229,9 @@ func repairSharedServerEmbeddedMismatch(beadsDir string, cfg *configfile.Config)
 	}
 }
 
-// loadServerModeFromBeadsDir loads the storage mode (embedded vs server) from
-// the given beads directory's metadata.json so that isEmbeddedMode() returns
-// the correct value.
+// loadServerModeFromBeadsDir loads the storage mode (embedded vs server vs
+// proxied-server) from the given beads directory's metadata.json so that
+// usesSQLServer() and usesProxiedServer() return the correct values.
 func loadServerModeFromBeadsDir(beadsDir string) {
 	if beadsDir == "" {
 		return
@@ -235,20 +241,24 @@ func loadServerModeFromBeadsDir(beadsDir string) {
 		return
 	}
 	repairSharedServerEmbeddedMismatch(beadsDir, cfg)
+	psm := cfg.IsDoltProxiedServerMode()
 	sm := cfg.IsDoltServerMode()
 	// GH#2946: shared-server override for stale metadata.json (no-db commands)
-	if !sm && doltserver.IsSharedServerMode() {
+	if !sm && !psm && doltserver.IsSharedServerMode() {
 		sm = true
 	}
 	serverMode = sm
+	proxiedServerMode = psm
 	if cmdCtx != nil {
 		cmdCtx.ServerMode = sm
+		cmdCtx.ProxiedServer = psm
 	}
 }
 
-// loadServerModeFromConfig loads the storage mode (embedded vs server) from
-// metadata.json so that isEmbeddedMode() returns the correct value. Called
-// for commands that skip full DB init but still need to know the mode.
+// loadServerModeFromConfig loads the storage mode (embedded vs server vs
+// proxied-server) from metadata.json so that usesSQLServer() and
+// usesProxiedServer() return the correct values. Called for commands that
+// skip full DB init but still need to know the mode.
 func loadServerModeFromConfig() {
 	loadServerModeFromBeadsDir(beads.FindBeadsDir())
 }
@@ -917,11 +927,23 @@ var rootCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "warning: failed to load beads config from %s: %v\n", beadsDir, cfgErr)
 		}
 		if cfg != nil {
+			// Proxied-server is mutually exclusive with the externally-managed
+			// server backend, so resolve it first and let the server-mode
+			// block below stay false when proxied is active. The store-factory
+			// dispatch (newDoltStore) keys off cfg.ProxiedServer ahead of
+			// cfg.ServerMode for the same reason.
+			doltCfg.ProxiedServer = cfg.IsDoltProxiedServerMode()
+			proxiedServerMode = doltCfg.ProxiedServer
+			if cmdCtx != nil {
+				cmdCtx.ProxiedServer = doltCfg.ProxiedServer
+			}
+
 			doltCfg.ServerMode = cfg.IsDoltServerMode()
 			// Shared server mode (dolt.shared-server in config.yaml) is a
 			// form of server mode. Override metadata.json if it still says
-			// embedded — handles installs created before GH#2946 fix.
-			if !doltCfg.ServerMode && doltserver.IsSharedServerMode() {
+			// embedded — handles installs created before GH#2946 fix. Skip
+			// this for proxied-server: it's its own backend, not server.
+			if !doltCfg.ServerMode && !doltCfg.ProxiedServer && doltserver.IsSharedServerMode() {
 				doltCfg.ServerMode = true
 			}
 			serverMode = doltCfg.ServerMode
@@ -982,7 +1004,7 @@ var rootCmd = &cobra.Command{
 		// - Embedded mode: ON — each command writes to the working set and needs
 		//   a Dolt commit in PersistentPostRun to persist changes to history.
 		if strings.TrimSpace(doltAutoCommit) == "" {
-			if isEmbeddedMode() {
+			if !usesSQLServer() {
 				doltAutoCommit = string(doltAutoCommitOn)
 			} else {
 				doltAutoCommit = string(doltAutoCommitOff)

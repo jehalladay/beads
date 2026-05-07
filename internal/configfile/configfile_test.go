@@ -392,6 +392,112 @@ func TestIsDoltServerModeEnvVar(t *testing.T) {
 	})
 }
 
+// TestDoltProxiedServerMode covers the IsDoltProxiedServerMode predicate and
+// the GetCapabilities branch that treats proxied-server as multi-process-safe
+// (the proxy daemon serializes writers).
+func TestDoltProxiedServerMode(t *testing.T) {
+	t.Run("IsDoltProxiedServerMode", func(t *testing.T) {
+		tests := []struct {
+			name string
+			cfg  *Config
+			want bool
+		}{
+			{
+				name: "empty backend",
+				cfg:  &Config{Backend: ""},
+				want: false,
+			},
+			{
+				name: "embedded mode",
+				cfg:  &Config{Backend: BackendDolt, DoltMode: DoltModeEmbedded},
+				want: false,
+			},
+			{
+				name: "server mode",
+				cfg:  &Config{Backend: BackendDolt, DoltMode: DoltModeServer},
+				want: false,
+			},
+			{
+				name: "proxied-server mode",
+				cfg:  &Config{Backend: BackendDolt, DoltMode: DoltModeProxiedServer},
+				want: true,
+			},
+			{
+				name: "proxied-server, mixed case",
+				cfg:  &Config{Backend: BackendDolt, DoltMode: "Proxied-Server"},
+				want: true,
+			},
+			{
+				name: "default (no DoltMode)",
+				cfg:  &Config{Backend: BackendDolt},
+				want: false,
+			},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				if got := tc.cfg.IsDoltProxiedServerMode(); got != tc.want {
+					t.Errorf("IsDoltProxiedServerMode() = %v, want %v", got, tc.want)
+				}
+			})
+		}
+	})
+
+	t.Run("ServerAndProxiedAreMutuallyExclusive", func(t *testing.T) {
+		cfg := &Config{Backend: BackendDolt, DoltMode: DoltModeProxiedServer}
+		if cfg.IsDoltServerMode() {
+			t.Error("IsDoltServerMode() should be false for proxied-server mode")
+		}
+		if !cfg.IsDoltProxiedServerMode() {
+			t.Error("IsDoltProxiedServerMode() should be true for proxied-server mode")
+		}
+	})
+
+	t.Run("GetCapabilities_ProxiedServerNotSingleProcess", func(t *testing.T) {
+		cfg := &Config{Backend: BackendDolt, DoltMode: DoltModeProxiedServer}
+		caps := cfg.GetCapabilities()
+		if caps.SingleProcessOnly {
+			t.Error("proxied-server should report SingleProcessOnly=false (proxy multiplexes writers)")
+		}
+	})
+
+	t.Run("GetDoltModePreservesProxiedValue", func(t *testing.T) {
+		cfg := &Config{Backend: BackendDolt, DoltMode: DoltModeProxiedServer}
+		if got := cfg.GetDoltMode(); got != DoltModeProxiedServer {
+			t.Errorf("GetDoltMode() = %q, want %q", got, DoltModeProxiedServer)
+		}
+	})
+
+	t.Run("RoundtripPersistsProxiedMode", func(t *testing.T) {
+		dir := t.TempDir()
+		original := &Config{
+			Database:     "dolt",
+			Backend:      BackendDolt,
+			DoltMode:     DoltModeProxiedServer,
+			DoltDatabase: "myproj",
+			ProjectID:    "abc-123",
+		}
+		if err := original.Save(dir); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		loaded, err := Load(dir)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if loaded == nil {
+			t.Fatal("Load returned nil")
+		}
+		if loaded.DoltMode != DoltModeProxiedServer {
+			t.Errorf("DoltMode = %q, want %q", loaded.DoltMode, DoltModeProxiedServer)
+		}
+		if !loaded.IsDoltProxiedServerMode() {
+			t.Error("IsDoltProxiedServerMode() = false after roundtrip")
+		}
+		if loaded.IsDoltServerMode() {
+			t.Error("IsDoltServerMode() = true after roundtrip; should be false")
+		}
+	})
+}
+
 // TestGetBackendAlwaysDolt tests that GetBackend always returns "dolt".
 func TestGetBackendAlwaysDolt(t *testing.T) {
 	tests := []struct {

@@ -201,11 +201,12 @@ func CapabilitiesForBackend(_ string) BackendCapabilities {
 
 // GetCapabilities returns the backend capabilities for this config.
 // Unlike CapabilitiesForBackend(string), this considers Dolt server mode
-// which supports multi-process access.
+// (and proxied-server mode) which support multi-process access.
 func (c *Config) GetCapabilities() BackendCapabilities {
 	backend := c.GetBackend()
-	if backend == BackendDolt && c.IsDoltServerMode() {
-		// Server mode supports multi-writer, so NOT single-process-only
+	if backend == BackendDolt && (c.IsDoltServerMode() || c.IsDoltProxiedServerMode()) {
+		// Server-shaped backends multiplex writers through a sql-server, so
+		// NOT single-process-only.
 		return BackendCapabilities{SingleProcessOnly: false}
 	}
 	return CapabilitiesForBackend(backend)
@@ -218,8 +219,9 @@ func (c *Config) GetBackend() string {
 
 // Dolt mode constants
 const (
-	DoltModeEmbedded = "embedded"
-	DoltModeServer   = "server"
+	DoltModeEmbedded      = "embedded"
+	DoltModeServer        = "server"
+	DoltModeProxiedServer = "proxied-server"
 )
 
 // Default Dolt server settings
@@ -254,6 +256,20 @@ func (c *Config) IsDoltServerMode() bool {
 		return true
 	}
 	return strings.ToLower(c.DoltMode) == DoltModeServer
+}
+
+// IsDoltProxiedServerMode reports whether this workspace is configured to use
+// the per-workspace proxied dolt sql-server (a parent proxy + a child
+// dolt sql-server, both rooted at <beadsDir>/proxieddb). Proxied-server is a
+// distinct backend kind from "server": IsDoltServerMode() returns false for it
+// because the existing server-mode call sites assume user-supplied connection
+// details (host/port/socket/user, BEADS_DOLT_PASSWORD, TLS) that proxied-server
+// does not populate.
+func (c *Config) IsDoltProxiedServerMode() bool {
+	if c.GetBackend() != BackendDolt {
+		return false
+	}
+	return strings.ToLower(c.DoltMode) == DoltModeProxiedServer
 }
 
 // GetDoltMode returns the Dolt connection mode, defaulting to server.
