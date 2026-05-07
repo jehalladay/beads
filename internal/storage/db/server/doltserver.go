@@ -30,6 +30,12 @@ const (
 	LockFileName = "proxy-child.lock"
 )
 
+const (
+	startReadyTimeout      = 30 * time.Second
+	startReadyPollInterval = 50 * time.Millisecond
+	startReadyDialTimeout  = 250 * time.Millisecond
+)
+
 type DoltServer struct {
 	id              string
 	doltBinExec     string
@@ -268,9 +274,43 @@ func (s *DoltServer) Start(ctx context.Context) error {
 		return cmd.Wait()
 	})
 
-	// give server time to come up
-	time.Sleep(200 * time.Millisecond)
+	if err := s.waitReady(ctx); err != nil {
+		cancel()
+		_ = s.eg.Wait()
+		s.eg, s.egCtx, s.cancel, s.pid = nil, nil, nil, 0
+		_ = pidfile.Remove(s.rootDir, PIDFileName)
+		return fmt.Errorf("server: DoltServer.Start: %w", err)
+	}
 	return nil
+}
+
+func (s *DoltServer) waitReady(ctx context.Context) error {
+	deadline := time.Now().Add(startReadyTimeout)
+	for {
+		if s.egCtx.Err() != nil {
+			return errors.New("dolt sql-server exited before listener became ready")
+		}
+
+		dctx, dcancel := context.WithTimeout(ctx, startReadyDialTimeout)
+		conn, err := s.Dial(dctx)
+		dcancel()
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("listener not ready after %s: %w", startReadyTimeout, err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-s.egCtx.Done():
+			return errors.New("dolt sql-server exited before listener became ready")
+		case <-time.After(startReadyPollInterval):
+		}
+	}
 }
 
 func (s *DoltServer) Stop(_ context.Context) error {

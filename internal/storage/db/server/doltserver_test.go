@@ -22,11 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	pingPollInterval = 100 * time.Millisecond
-	pingPollTimeout  = 10 * time.Second
-	stopTimeout      = 15 * time.Second
-)
+const stopTimeout = 15 * time.Second
 
 func requireDolt(t *testing.T) string {
 	t.Helper()
@@ -77,20 +73,6 @@ func stopWithTimeout(t *testing.T, s *server.DoltServer) {
 	ctx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 	defer cancel()
 	require.NoError(t, s.Stop(ctx))
-}
-
-// waitReady polls Dial until the listener accepts. Proves the server's
-// socket is up but does not authenticate a SQL session.
-func waitReady(t *testing.T, s *server.DoltServer) {
-	t.Helper()
-	require.Eventually(t, func() bool {
-		conn, err := s.Dial(context.Background())
-		if err != nil {
-			return false
-		}
-		_ = conn.Close()
-		return true
-	}, pingPollTimeout, pingPollInterval, "server never became ready")
 }
 
 func TestNewDoltServer_Validation(t *testing.T) {
@@ -176,7 +158,6 @@ func TestDoltServer_StartStop_HappyPath(t *testing.T) {
 
 	require.NoError(t, s.Start(ctx))
 	t.Cleanup(func() { stopWithTimeout(t, s) })
-	waitReady(t, s)
 	assert.True(t, s.Running(ctx))
 
 	db, err := sql.Open("mysql", s.DSN(ctx, "", "root", ""))
@@ -230,7 +211,6 @@ listener:
 	ctx := context.Background()
 	require.NoError(t, s.Start(ctx))
 	t.Cleanup(func() { stopWithTimeout(t, s) })
-	waitReady(t, s)
 	assert.True(t, s.Running(ctx))
 
 	// DSN must select the unix transport when a socket is configured.
@@ -293,7 +273,6 @@ func TestDoltServer_StartStopStart_NewInstanceSameRootDirSucceeds(t *testing.T) 
 	s1, err := server.NewDoltServer(bin, rootDir, cfg1, logPath, 0)
 	require.NoError(t, err)
 	require.NoError(t, s1.Start(ctx))
-	waitReady(t, s1)
 	require.NoError(t, s1.Stop(ctx))
 
 	// Fresh port to dodge any TIME_WAIT lingering on the old one.
@@ -303,7 +282,6 @@ func TestDoltServer_StartStopStart_NewInstanceSameRootDirSucceeds(t *testing.T) 
 	require.NoError(t, err)
 	require.NoError(t, s2.Start(ctx), "new instance at same rootDir must start")
 	t.Cleanup(func() { stopWithTimeout(t, s2) })
-	waitReady(t, s2)
 	assert.True(t, s2.Running(ctx))
 
 	// ID is rootDir-derived and therefore stable across instances.
@@ -315,7 +293,6 @@ func TestDoltServer_Dial_AfterStart(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, s.Start(ctx))
 	t.Cleanup(func() { stopWithTimeout(t, s) })
-	waitReady(t, s)
 
 	conn, err := s.Dial(ctx)
 	require.NoError(t, err)
@@ -359,7 +336,6 @@ func TestDoltServer_LogFile_CapturesOutput(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, s.Start(ctx))
 	t.Cleanup(func() { stopWithTimeout(t, s) })
-	waitReady(t, s)
 	require.NoError(t, s.Stop(ctx))
 
 	info, err := os.Stat(logPath)
@@ -474,5 +450,4 @@ func TestDoltServer_DoltInit_Idempotent(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, s.Start(ctx), "Start against pre-initialized rootDir should succeed")
 	t.Cleanup(func() { stopWithTimeout(t, s) })
-	waitReady(t, s)
 }
