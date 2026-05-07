@@ -11,6 +11,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/storage/db/pidfile"
+	"github.com/steveyegge/beads/internal/storage/db/server"
 	"github.com/steveyegge/beads/internal/storage/db/util"
 )
 
@@ -113,6 +114,13 @@ func spawnAndHandoff(rootDir string, opts OpenOpts, deadline time.Time, lock *ut
 	// Stale pidfile from a previous (now-dead) proxy must not mislead racing
 	// readers into dialing a port that nobody is listening on.
 	_ = pidfile.Remove(rootDir, PIDFileName)
+
+	if pf, err := pidfile.Read(rootDir, server.PIDFileName); err == nil && pf != nil {
+		if proc, perr := os.FindProcess(pf.Pid); perr == nil {
+			_ = proc.Kill()
+		}
+		_ = pidfile.Remove(rootDir, server.PIDFileName)
+	}
 
 	port, err := PickFreePort()
 	if err != nil {
