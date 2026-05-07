@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sync"
+	"syscall"
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -17,6 +19,29 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// shutdownOnInterrupt installs a SIGINT/SIGTERM handler that runs
+// proxy.Shutdown(rootDir) and exits, so the proxy and child dolt sql-server
+// don't survive an early test abort (e.g. Ctrl+C). The handler is removed via
+// t.Cleanup on normal test completion.
+func shutdownOnInterrupt(t *testing.T, rootDir string) {
+	t.Helper()
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ch:
+			_ = proxy.Shutdown(rootDir)
+			os.Exit(1)
+		case <-done:
+		}
+	}()
+	t.Cleanup(func() {
+		signal.Stop(ch)
+		close(done)
+	})
+}
 
 func TestNewDoltServerStore_ValidationErrors(t *testing.T) {
 	cases := []struct {
@@ -63,6 +88,12 @@ func TestNewDoltServerStore_HappyPath(t *testing.T) {
 	port, err := proxy.PickFreePort()
 	require.NoError(t, err)
 	storeRootDir := t.TempDir()
+	shutdownOnInterrupt(t, storeRootDir)
+	t.Cleanup(func() {
+		if err := proxy.Shutdown(storeRootDir); err != nil {
+			t.Logf("proxy.Shutdown(%s): %v", storeRootDir, err)
+		}
+	})
 	cfgPath := writeServerConfig(t, port)
 	logPath := filepath.Join(t.TempDir(), "server.log")
 

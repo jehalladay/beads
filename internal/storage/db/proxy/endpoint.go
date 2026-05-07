@@ -115,11 +115,19 @@ func spawnAndHandoff(rootDir string, opts OpenOpts, deadline time.Time, lock *ut
 	// readers into dialing a port that nobody is listening on.
 	_ = pidfile.Remove(rootDir, PIDFileName)
 
-	if pf, err := pidfile.Read(rootDir, server.PIDFileName); err == nil && pf != nil {
-		if proc, perr := os.FindProcess(pf.Pid); perr == nil {
-			_ = proc.Kill()
+	// Probe the proxy-child flock: if held, a previous proxy-child is still
+	// alive and has an orphaned dolt sql-server we must kill before
+	// respawning. If we can acquire it, no proxy-child is running — release
+	// immediately so the child we are about to spawn can take it.
+	if l, err := util.TryLock(filepath.Join(rootDir, server.LockFileName)); err == nil {
+		l.Unlock()
+	} else if lockfile.IsLocked(err) {
+		if pf, perr := pidfile.Read(rootDir, server.PIDFileName); perr == nil && pf != nil {
+			if proc, ferr := os.FindProcess(pf.Pid); ferr == nil {
+				_ = proc.Kill()
+			}
+			_ = pidfile.Remove(rootDir, server.PIDFileName)
 		}
-		_ = pidfile.Remove(rootDir, server.PIDFileName)
 	}
 
 	port, err := PickFreePort()

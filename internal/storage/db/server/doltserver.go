@@ -25,7 +25,10 @@ import (
 
 const defaultKeepAlivePeriod = 30 * time.Second
 
-const PIDFileName = "proxy-child.pid"
+const (
+	PIDFileName  = "proxy-child.pid"
+	LockFileName = "proxy-child.lock"
+)
 
 type DoltServer struct {
 	id              string
@@ -203,11 +206,18 @@ func (s *DoltServer) Start(ctx context.Context) error {
 		return fmt.Errorf("server: DoltServer.Start: server already started")
 	}
 
+	lock, err := util.TryLock(filepath.Join(s.rootDir, LockFileName))
+	if err != nil {
+		return fmt.Errorf("server: DoltServer.Start: acquire %s: %w", LockFileName, err)
+	}
+
 	if err := s.doltConfigure(ctx); err != nil {
+		lock.Unlock()
 		return err
 	}
 
 	if err := s.doltInitWithRetries(ctx); err != nil {
+		lock.Unlock()
 		return err
 	}
 
@@ -235,6 +245,7 @@ func (s *DoltServer) Start(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		s.eg, s.egCtx, s.cancel = nil, nil, nil
 		cancel()
+		lock.Unlock()
 		return fmt.Errorf("server: DoltServer.Start: spawn dolt: %w", err)
 	}
 
@@ -248,10 +259,12 @@ func (s *DoltServer) Start(ctx context.Context) error {
 		_, _ = cmd.Process.Wait()
 		s.eg, s.egCtx, s.cancel, s.pid = nil, nil, nil, 0
 		cancel()
+		lock.Unlock()
 		return fmt.Errorf("server: DoltServer.Start: write pidfile: %w", err)
 	}
 
 	eg.Go(func() error {
+		defer lock.Unlock()
 		return cmd.Wait()
 	})
 
