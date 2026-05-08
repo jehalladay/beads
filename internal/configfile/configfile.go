@@ -40,6 +40,12 @@ type Config struct {
 	// beadsDir; absolute paths are machine-specific and are stripped on Save —
 	// use BEADS_PROXIED_SERVER_CONFIG for absolute-path overrides.
 	DoltProxiedServerConfig string `json:"dolt_proxied_server_config,omitempty"`
+	// DoltProxiedServerLog overrides the proxied dolt sql-server log path
+	// (proxied-server mode only). Empty means use the default location at
+	// <beadsDir>/proxieddb/server.log. Same relative/absolute semantics as
+	// DoltProxiedServerConfig — absolute paths are stripped on Save; use
+	// BEADS_PROXIED_SERVER_LOG for absolute-path overrides.
+	DoltProxiedServerLog string `json:"dolt_proxied_server_log,omitempty"`
 	// Note: Password should be set via BEADS_DOLT_PASSWORD env var for security
 
 	// Project identity — unique ID generated at bd init time.
@@ -126,12 +132,16 @@ func (c *Config) Save(beadsDir string) error {
 	// should set them via the corresponding env var:
 	//   - dolt_data_dir              → BEADS_DOLT_DATA_DIR
 	//   - dolt_proxied_server_config → BEADS_PROXIED_SERVER_CONFIG
+	//   - dolt_proxied_server_log    → BEADS_PROXIED_SERVER_LOG
 	saved := *c
 	if filepath.IsAbs(saved.DoltDataDir) {
 		saved.DoltDataDir = ""
 	}
 	if filepath.IsAbs(saved.DoltProxiedServerConfig) {
 		saved.DoltProxiedServerConfig = ""
+	}
+	if filepath.IsAbs(saved.DoltProxiedServerLog) {
+		saved.DoltProxiedServerLog = ""
 	}
 
 	data, err := json.MarshalIndent(&saved, "", "  ")
@@ -452,6 +462,29 @@ func (c *Config) GetDoltProxiedServerConfig(beadsDir string) string {
 		return c.DoltProxiedServerConfig
 	}
 	return filepath.Join(beadsDir, c.DoltProxiedServerConfig)
+}
+
+// GetDoltProxiedServerLog returns the resolved absolute path to the proxied
+// dolt sql-server log file when one has been configured, or "" to signal
+// "use the default location" (the cmd/bd resolver layers the default on top).
+//
+// Resolution chain mirrors GetDoltProxiedServerConfig:
+//  1. BEADS_PROXIED_SERVER_LOG env var (highest; absolute paths welcome).
+//  2. metadata.json's dolt_proxied_server_log field. Relative values resolve
+//     against beadsDir; absolute values pass through (Save strips them so
+//     they only appear here when set in a non-persisted/in-memory Config).
+//  3. Empty string — caller layers the default.
+func (c *Config) GetDoltProxiedServerLog(beadsDir string) string {
+	if p := os.Getenv("BEADS_PROXIED_SERVER_LOG"); p != "" {
+		return p
+	}
+	if c.DoltProxiedServerLog == "" {
+		return ""
+	}
+	if filepath.IsAbs(c.DoltProxiedServerLog) {
+		return c.DoltProxiedServerLog
+	}
+	return filepath.Join(beadsDir, c.DoltProxiedServerLog)
 }
 
 // GetDoltRemotesAPIPort returns the Dolt remotesapi port used for federation.

@@ -36,6 +36,13 @@ import (
 // or metadata.json's dolt_proxied_server_config (set by `bd init
 // --server-config <path>`). In that case bd validates the user-supplied
 // file but never auto-creates one; the user owns its lifecycle.
+//
+// server.log is the default destination for the daemon's stdout/stderr; the
+// proxy parent's O_CREATE|O_APPEND open creates it on first daemon spawn.
+// The path can be redirected via BEADS_PROXIED_SERVER_LOG or metadata.json's
+// dolt_proxied_server_log (set by `bd init --server-log-path <path>`). bd
+// validates the parent directory exists and that any pre-existing target is
+// a regular file, but never auto-creates user-supplied directories.
 const (
 	proxiedServerRootName   = "proxieddb"
 	proxiedServerConfigName = "server_config.yaml"
@@ -78,6 +85,28 @@ func resolveProxiedServerConfigPath(beadsDir string, cfg *configfile.Config) (pa
 		return custom, true
 	}
 	return proxiedServerConfigPath(beadsDir), false
+}
+
+// resolveProxiedServerLogPath returns the path the proxied dolt sql-server
+// should write stdout/stderr to, plus a flag indicating whether the path is
+// user-supplied (custom) or bd's default.
+//
+// Resolution chain mirrors resolveProxiedServerConfigPath:
+//  1. BEADS_PROXIED_SERVER_LOG env var (highest; absolute paths welcome).
+//  2. metadata.json's dolt_proxied_server_log field (relative to beadsDir).
+//  3. The default <beadsDir>/proxieddb/server.log.
+//
+// isCustom == true means callers should validate the user-supplied path
+// (parent dir exists, file-if-exists is regular) rather than trusting it
+// blindly — bd never auto-creates parent directories the user gave us.
+func resolveProxiedServerLogPath(beadsDir string, cfg *configfile.Config) (path string, isCustom bool) {
+	if cfg == nil {
+		cfg = &configfile.Config{}
+	}
+	if custom := cfg.GetDoltProxiedServerLog(beadsDir); custom != "" {
+		return custom, true
+	}
+	return proxiedServerLogPath(beadsDir), false
 }
 
 // ensureProxiedServerConfig resolves the proxied dolt sql-server YAML path
@@ -159,6 +188,35 @@ func validateProxiedServerConfig(path string) error {
 	return nil
 }
 
+// validateProxiedServerLogPath enforces the contract --server-log-path carries:
+// the parent directory must exist (bd never auto-creates arbitrary user
+// directories — the user gave us this path and they own its placement),
+// and IF the log file itself already exists it must be a regular file
+// (reject directories, named pipes, symlinks-to-dirs). The file is allowed
+// to NOT exist; the proxy parent's O_CREATE|O_APPEND open at
+// internal/storage/db/proxy/endpoint.go will create it on first daemon
+// spawn. We don't probe writability — the daemon's open will surface
+// permission errors crisply if anything is wrong.
+func validateProxiedServerLogPath(path string) error {
+	parent := filepath.Dir(path)
+	parentInfo, err := os.Stat(parent)
+	if err != nil {
+		return fmt.Errorf("--server-log-path %s: parent directory: %w", path, err)
+	}
+	if !parentInfo.IsDir() {
+		return fmt.Errorf("--server-log-path %s: parent %s is not a directory", path, parent)
+	}
+	switch info, err := os.Stat(path); {
+	case err == nil:
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("--server-log-path %s: not a regular file", path)
+		}
+	case !os.IsNotExist(err):
+		return fmt.Errorf("--server-log-path %s: %w", path, err)
+	}
+	return nil
+}
+
 func renderProxiedServerConfig(port int) ([]byte, error) {
 	host := proxiedServerListenerHost
 	logLevel := string(servercfg.LogLevel_Info)
@@ -201,6 +259,17 @@ func newProxiedServerStore(ctx context.Context, cfg *dolt.Config) (storage.DoltS
 		return nil, err
 	}
 
+	// Resolve the daemon's log path from the same configfile load. When
+	// custom (env or metadata.json), validate the path so a stale entry
+	// (parent dir removed, file replaced with a directory, etc.) fails
+	// loudly here instead of crashing the daemon downstream.
+	logPath, isCustomLog := resolveProxiedServerLogPath(cfg.BeadsDir, persisted)
+	if isCustomLog {
+		if err := validateProxiedServerLogPath(logPath); err != nil {
+			return nil, err
+		}
+	}
+
 	name, email := cfg.CommitterName, cfg.CommitterEmail
 	if name == "" || email == "" {
 		fallbackName, fallbackEmail := proxiedServerCommitter()
@@ -218,7 +287,7 @@ func newProxiedServerStore(ctx context.Context, cfg *dolt.Config) (storage.DoltS
 		cfg.BeadsDir,
 		cfg.Database,
 		name, email,
-		proxiedServerLogPath(cfg.BeadsDir),
+		logPath,
 		configPath,
 		proxy.BackendLocalServer,
 		false, // autoSyncToOriginRemote — wired in a future iteration

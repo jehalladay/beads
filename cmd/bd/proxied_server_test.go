@@ -206,6 +206,125 @@ func TestEnsureProxiedServerConfig_CustomPathIsDirectory(t *testing.T) {
 	assert.Contains(t, err.Error(), "not a regular file")
 }
 
+// TestInitCommandRegistersServerLogPathFlag verifies the --server-log-path
+// flag is wired into initCmd.
+func TestInitCommandRegistersServerLogPathFlag(t *testing.T) {
+	flag := initCmd.Flags().Lookup("server-log-path")
+	require.NotNil(t, flag, "init command does not register --server-log-path")
+	assert.Equal(t, "", flag.DefValue, "--server-log-path should default to empty")
+}
+
+// TestResolveProxiedServerLogPath mirrors TestResolveProxiedServerConfigPath
+// for the log-path resolver.
+func TestResolveProxiedServerLogPath(t *testing.T) {
+	t.Run("nil cfg, no env, returns default and !isCustom", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_LOG", "")
+		bd := t.TempDir()
+		path, isCustom := resolveProxiedServerLogPath(bd, nil)
+		assert.Equal(t, proxiedServerLogPath(bd), path)
+		assert.False(t, isCustom)
+	})
+
+	t.Run("empty cfg, no env, returns default and !isCustom", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_LOG", "")
+		bd := t.TempDir()
+		path, isCustom := resolveProxiedServerLogPath(bd, &configfile.Config{})
+		assert.Equal(t, proxiedServerLogPath(bd), path)
+		assert.False(t, isCustom)
+	})
+
+	t.Run("field relative joins beadsDir and isCustom", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_LOG", "")
+		bd := t.TempDir()
+		cfg := &configfile.Config{DoltProxiedServerLog: "logs/server.log"}
+		path, isCustom := resolveProxiedServerLogPath(bd, cfg)
+		assert.Equal(t, filepath.Join(bd, "logs/server.log"), path)
+		assert.True(t, isCustom)
+	})
+
+	t.Run("field absolute returned as-is and isCustom", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_LOG", "")
+		bd := t.TempDir()
+		cfg := &configfile.Config{DoltProxiedServerLog: "/var/log/beads/server.log"}
+		path, isCustom := resolveProxiedServerLogPath(bd, cfg)
+		assert.Equal(t, "/var/log/beads/server.log", path)
+		assert.True(t, isCustom)
+	})
+
+	t.Run("env beats field and isCustom", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_LOG", "/from/env.log")
+		bd := t.TempDir()
+		cfg := &configfile.Config{DoltProxiedServerLog: "logs/from-meta.log"}
+		path, isCustom := resolveProxiedServerLogPath(bd, cfg)
+		assert.Equal(t, "/from/env.log", path)
+		assert.True(t, isCustom)
+	})
+
+	t.Run("env with nil cfg still wins", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_LOG", "/from/env.log")
+		bd := t.TempDir()
+		path, isCustom := resolveProxiedServerLogPath(bd, nil)
+		assert.Equal(t, "/from/env.log", path)
+		assert.True(t, isCustom)
+	})
+}
+
+// TestValidateProxiedServerLogPath covers the early-bailout validator.
+// Contract: parent dir must exist; the file may not exist (the daemon's
+// O_CREATE|O_APPEND open handles that); if it exists it must be a regular
+// file.
+func TestValidateProxiedServerLogPath(t *testing.T) {
+	t.Run("parent dir missing rejected", func(t *testing.T) {
+		// /<tmp>/nope/server.log — parent /<tmp>/nope doesn't exist.
+		path := filepath.Join(t.TempDir(), "nope", "server.log")
+		err := validateProxiedServerLogPath(path)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "parent directory")
+	})
+
+	t.Run("path doesn't exist but parent does, accepted", func(t *testing.T) {
+		// Daemon will create the file via O_CREATE|O_APPEND.
+		path := filepath.Join(t.TempDir(), "server.log")
+		require.NoError(t, validateProxiedServerLogPath(path))
+	})
+
+	t.Run("existing regular file accepted", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "server.log")
+		require.NoError(t, os.WriteFile(path, []byte("preexisting log content\n"), 0o600))
+		require.NoError(t, validateProxiedServerLogPath(path))
+	})
+
+	t.Run("existing directory rejected", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "server.log")
+		require.NoError(t, os.Mkdir(dir, 0o755))
+		err := validateProxiedServerLogPath(dir)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not a regular file")
+	})
+
+	t.Run("symlink to directory rejected", func(t *testing.T) {
+		base := t.TempDir()
+		realDir := filepath.Join(base, "actual-dir")
+		require.NoError(t, os.Mkdir(realDir, 0o755))
+		link := filepath.Join(base, "server.log")
+		if err := os.Symlink(realDir, link); err != nil {
+			t.Skipf("symlink not supported on this platform: %v", err)
+		}
+		err := validateProxiedServerLogPath(link)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not a regular file")
+	})
+
+	t.Run("parent path is a regular file, not a dir, rejected", func(t *testing.T) {
+		base := t.TempDir()
+		fileAsParent := filepath.Join(base, "blocker")
+		require.NoError(t, os.WriteFile(fileAsParent, []byte("x"), 0o600))
+		// /<tmp>/blocker/server.log — "blocker" is a file, not a dir.
+		err := validateProxiedServerLogPath(filepath.Join(fileAsParent, "server.log"))
+		require.Error(t, err)
+	})
+}
+
 // TestValidateProxiedServerConfig covers the standalone validator that
 // init.go uses for early --server-config validation.
 func TestValidateProxiedServerConfig(t *testing.T) {
