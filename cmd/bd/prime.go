@@ -56,7 +56,7 @@ Automatically detects if MCP server is active and adapts output:
 - MCP mode: Brief workflow reminders (~50 tokens)
 - CLI mode: Full command reference (~1-2k tokens)
 
-Designed for Claude Code hooks (SessionStart, PreCompact) to prevent
+Designed for Claude Code and Codex hooks to prevent
 agents from forgetting bd workflow after context compaction.
 
 Config options:
@@ -488,7 +488,7 @@ git push                    # Push to remote
 	context := primeTruncationDirective + `# Beads Workflow Context
 
 > **Context Recovery**: Run ` + "`bd prime`" + ` after compaction, clear, or new session
-> Hooks auto-call this in Claude Code when a beads workspace is resolved
+> Hooks auto-call this in Claude Code and Codex when a beads workspace is resolved
 
 ` + redirectNotice
 	if memories != "" {
