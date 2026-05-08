@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -24,6 +25,7 @@ var (
 	primeStealthMode  bool
 	primeExportMode   bool
 	primeMemoriesOnly bool
+	primeHookJSONMode bool
 )
 
 // resolveGlobalPrimePath returns the path to ~/.config/beads/PRIME.md if it
@@ -56,7 +58,7 @@ Automatically detects if MCP server is active and adapts output:
 - MCP mode: Brief workflow reminders (~50 tokens)
 - CLI mode: Full command reference (~1-2k tokens)
 
-Designed for Claude Code and Codex hooks to prevent
+Designed for Claude Code, Gemini CLI, and Codex SessionStart hooks to prevent
 agents from forgetting bd workflow after context compaction.
 
 Config options:
@@ -69,12 +71,28 @@ Config options:
 	- Use --export to dump the default content for customization.
 	- Use --memories-only for hook contexts that should inject only persistent memories.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// emit writes content either as raw text (default behavior) or wrapped
+		// in the SessionStart hook JSON envelope when --hook-json is set.
+		emit := func(content string) {
+			if primeHookJSONMode {
+				_ = outputHookJSON(os.Stdout, content)
+			} else {
+				fmt.Print(content)
+			}
+		}
+
 		// Resolve the active beads workspace.
 		beadsDir := beads.FindBeadsDir()
 		if beadsDir == "" {
 			// Not in a beads project - silent exit with success
 			// CRITICAL: No stderr output, exit 0
-			// This enables cross-platform hook integration
+			// This enables cross-platform hook integration.
+			//
+			// Under --hook-json we still must emit a valid JSON envelope
+			// (with empty additionalContext) so the hook host receives valid JSON.
+			if primeHookJSONMode {
+				_ = outputHookJSON(os.Stdout, "")
+			}
 			os.Exit(0)
 		}
 
@@ -106,31 +124,39 @@ Config options:
 			// Try local first (user's clone-specific customization)
 			// #nosec G304 -- path is relative to cwd
 			if content, err := os.ReadFile(localPrimePath); err == nil {
-				fmt.Print(string(content))
+				emit(string(content))
 				return
 			}
 			// Fall back to redirected location (shared customization)
 			// #nosec G304 -- path is constructed from beadsDir which we control
 			if content, err := os.ReadFile(redirectedPrimePath); err == nil {
-				fmt.Print(string(content))
+				emit(string(content))
 				return
 			}
 			// Fall back to global config (~/.config/beads/PRIME.md)
 			// #nosec G304 -- path constructed from UserConfigDir which we control
 			if globalPath := resolveGlobalPrimePath(""); globalPath != "" {
 				if content, err := os.ReadFile(globalPath); err == nil {
-					fmt.Print(string(content))
+					emit(string(content))
 					return
 				}
 			}
 		}
 
-		// Output workflow context (adaptive based on MCP and stealth mode)
-		if err := outputPrimeContextWithOptions(os.Stdout, mcpMode, stealthMode, primeMemoriesOnly); err != nil {
-			// Suppress all errors - silent exit with success
-			// Never write to stderr (breaks Windows compatibility)
+		// Output workflow context (adaptive based on MCP and stealth mode).
+		// Buffer first so we can wrap in the hook JSON envelope as a single field.
+		var buf bytes.Buffer
+		if err := outputPrimeContextWithOptions(&buf, mcpMode, stealthMode, primeMemoriesOnly); err != nil {
+			// Suppress all errors - silent exit with success.
+			// Never write to stderr (breaks Windows compatibility).
+			// Under --hook-json still emit the empty envelope so stdout
+			// is valid JSON for the hook host.
+			if primeHookJSONMode {
+				_ = outputHookJSON(os.Stdout, "")
+			}
 			os.Exit(0)
 		}
+		emit(buf.String())
 	},
 }
 
@@ -140,7 +166,28 @@ func init() {
 	primeCmd.Flags().BoolVar(&primeStealthMode, "stealth", false, "Stealth mode (no git operations, flush only)")
 	primeCmd.Flags().BoolVar(&primeExportMode, "export", false, "Output default content (ignores PRIME.md override)")
 	primeCmd.Flags().BoolVar(&primeMemoriesOnly, "memories-only", false, "Output only persistent memories for compact hook contexts")
+	primeCmd.Flags().BoolVar(&primeHookJSONMode, "hook-json", false, "Wrap output in the SessionStart hook JSON envelope (Claude Code, Gemini CLI, Codex)")
 	rootCmd.AddCommand(primeCmd)
+}
+
+// outputHookJSON wraps content in the SessionStart hook JSON envelope shared
+// by Claude Code, Gemini CLI, and Codex. All three require stdout to be valid
+// JSON — no plain text may be emitted alongside it. See:
+// https://geminicli.com/docs/hooks/reference/
+func outputHookJSON(w io.Writer, content string) error {
+	type hookSpecificOutput struct {
+		HookEventName     string `json:"hookEventName"`
+		AdditionalContext string `json:"additionalContext"`
+	}
+	envelope := struct {
+		HookSpecificOutput hookSpecificOutput `json:"hookSpecificOutput"`
+	}{
+		HookSpecificOutput: hookSpecificOutput{
+			HookEventName:     "SessionStart",
+			AdditionalContext: content,
+		},
+	}
+	return json.NewEncoder(w).Encode(envelope)
 }
 
 // isMCPActive detects if MCP server is currently active
