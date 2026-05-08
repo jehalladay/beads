@@ -102,7 +102,7 @@ func (p *proxyServer) ListenAndServe(parentCtx context.Context) error {
 	defer lock.Unlock()
 
 	logPath := filepath.Join(p.rootDir, LogFileName)
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // G304: logPath is rootDir-derived (workspace path), not user-request input
 	if err != nil {
 		return fmt.Errorf("open proxy log %q: %w", logPath, err)
 	}
