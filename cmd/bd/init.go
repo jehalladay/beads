@@ -73,6 +73,18 @@ directories. The path is persisted to metadata.json's dolt_proxied_server_log,
 or override at runtime via BEADS_PROXIED_SERVER_LOG (required for absolute
 paths, same reason as above).
 
+Pass --server-root-path <path> alongside --proxied-server to relocate the
+entire proxied-server data directory (lockfiles, pidfiles, the child .dolt
+repository — default: .beads/proxieddb). The path may not exist yet; bd
+mkdir's it on first daemon spawn. Setting --server-root-path alone CASCADES
+the auto-generated server_config.yaml and server.log defaults under the new
+root, so a single flag relocates everything; --server-config and
+--server-log-path can still override individual files independently. The
+path is persisted to metadata.json's dolt_proxied_server_root_path, or
+override at runtime via BEADS_PROXIED_SERVER_ROOT_PATH (required for
+absolute paths). Editing the path post-init requires restarting the
+daemon — the running child dolt sql-server is bound to the previous root.
+
 Auto-export is enabled by default. After every write command, bd exports
 issues to .beads/issues.jsonl (throttled to once per 60s). This keeps
 viewers (bv) and git-based workflows up to date without extra steps.
@@ -125,6 +137,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		initProxiedServer, _ := cmd.Flags().GetBool("proxied-server")
 		serverConfigPath, _ := cmd.Flags().GetString("server-config")
 		serverLogPath, _ := cmd.Flags().GetString("server-log-path")
+		serverRootPath, _ := cmd.Flags().GetString("server-root-path")
 		// BEADS_DOLT_PROXIED_SERVER=1 mirrors BEADS_DOLT_SERVER_MODE=1 — lets
 		// orchestrators select the per-workspace proxied dolt sql-server
 		// without a CLI flag.
@@ -160,6 +173,14 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				FatalError("--server-log-path requires --proxied-server")
 			}
 			if err := validateProxiedServerLogPath(serverLogPath); err != nil {
+				FatalError("%v", err)
+			}
+		}
+		if serverRootPath != "" {
+			if !initProxiedServer {
+				FatalError("--server-root-path requires --proxied-server")
+			}
+			if err := validateProxiedServerRootPath(serverRootPath); err != nil {
 				FatalError("%v", err)
 			}
 		}
@@ -1044,6 +1065,15 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 								serverLogPath, serverLogPath)
 						}
 					}
+					if serverRootPath != "" {
+						cfg.DoltProxiedServerRootPath = serverRootPath
+						if filepath.IsAbs(serverRootPath) {
+							fmt.Fprintf(os.Stderr,
+								"Notice: --server-root-path %s is absolute; metadata.json drops absolute paths so it won't survive across clones.\n"+
+									"  For persistence across bd invocations on this machine, set BEADS_PROXIED_SERVER_ROOT_PATH=%s in .beads/.env (gitignored).\n",
+								serverRootPath, serverRootPath)
+						}
+					}
 				}
 			}
 
@@ -1555,6 +1585,7 @@ func init() {
 	initCmd.Flags().Bool("proxied-server", false, "Use a per-workspace proxied dolt sql-server (proxy + child dolt) rooted at .beads/proxieddb")
 	initCmd.Flags().String("server-config", "", "Path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one.")
 	initCmd.Flags().String("server-log-path", "", "Path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log.")
+	initCmd.Flags().String("server-root-path", "", "Directory holding the proxied dolt sql-server's lockfiles, pidfiles, and child .dolt repository (proxied-server mode only). Default: <beadsDir>/proxieddb. May not exist yet — bd will create it.")
 
 	rootCmd.AddCommand(initCmd)
 }
@@ -1629,7 +1660,11 @@ func checkExistingBeadsDataAt(beadsDir string, prefix string) error {
 
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
 		if cfg.IsDoltProxiedServerMode() {
-			proxiedRoot := proxiedServerRoot(beadsDir)
+			// Honor any --server-root-path override from metadata.json or env so
+			// re-init against a workspace pointed at a custom root still trips
+			// the safety check. Falls back to <beadsDir>/proxieddb when nothing
+			// is overridden.
+			proxiedRoot, _ := resolveProxiedServerRootPath(beadsDir, cfg)
 			if info, statErr := os.Stat(proxiedRoot); statErr == nil && info.IsDir() {
 				return fmt.Errorf(`
 %s Found existing Dolt database: %s

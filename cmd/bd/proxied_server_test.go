@@ -376,31 +376,293 @@ func TestCheckExistingBeadsDataAt_ProxiedServerNoData(t *testing.T) {
 }
 
 // TestCheckExistingBeadsDataAt_ProxiedServerWithExistingDB asserts that the
-// mere existence of <beadsDir>/proxieddb/ blocks re-init in proxied-server
-// mode. We deliberately don't peek deeper than the directory itself — the
-// internal layout (wrapper db dir, per-db subdirs) is an implementation
-// detail of the daemon.
+// mere existence of the resolved proxied-server root blocks re-init in
+// proxied-server mode. We deliberately don't peek deeper than the directory
+// itself — the internal layout (wrapper db dir, per-db subdirs) is an
+// implementation detail of the daemon. The custom-root sub-test additionally
+// asserts that a workspace pointed at a custom root via metadata.json's
+// dolt_proxied_server_root_path is also caught — otherwise re-init would
+// silently bypass the safety check.
 func TestCheckExistingBeadsDataAt_ProxiedServerWithExistingDB(t *testing.T) {
-	beadsDir := filepath.Join(t.TempDir(), ".beads")
-	require.NoError(t, os.MkdirAll(beadsDir, 0o755))
+	t.Run("default root", func(t *testing.T) {
+		beadsDir := filepath.Join(t.TempDir(), ".beads")
+		require.NoError(t, os.MkdirAll(beadsDir, 0o755))
 
-	metadata := map[string]interface{}{
-		"database":      "dolt",
-		"backend":       "dolt",
-		"dolt_mode":     "proxied-server",
-		"dolt_database": "myproj",
-	}
-	data, err := json.Marshal(metadata)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o644))
+		metadata := map[string]interface{}{
+			"database":      "dolt",
+			"backend":       "dolt",
+			"dolt_mode":     "proxied-server",
+			"dolt_database": "myproj",
+		}
+		data, err := json.Marshal(metadata)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o644))
 
-	// Materialize <beadsDir>/proxieddb/ — that alone should be enough to
-	// trip the guard, regardless of what's inside.
-	proxiedRoot := filepath.Join(beadsDir, "proxieddb")
-	require.NoError(t, os.MkdirAll(proxiedRoot, 0o755))
+		// Materialize <beadsDir>/proxieddb/ — that alone should be enough to
+		// trip the guard, regardless of what's inside.
+		proxiedRoot := filepath.Join(beadsDir, "proxieddb")
+		require.NoError(t, os.MkdirAll(proxiedRoot, 0o755))
 
-	err = checkExistingBeadsDataAt(beadsDir, "myproj")
-	require.Error(t, err, "existing proxieddb directory should block init")
-	assert.Contains(t, err.Error(), "already initialized")
-	assert.Contains(t, err.Error(), proxiedRoot)
+		err = checkExistingBeadsDataAt(beadsDir, "myproj")
+		require.Error(t, err, "existing proxieddb directory should block init")
+		assert.Contains(t, err.Error(), "already initialized")
+		assert.Contains(t, err.Error(), proxiedRoot)
+	})
+
+	t.Run("custom root via dolt_proxied_server_root_path", func(t *testing.T) {
+		// Ensure no env override leaks across tests — the resolver checks
+		// BEADS_PROXIED_SERVER_ROOT_PATH before metadata.json.
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
+
+		base := t.TempDir()
+		beadsDir := filepath.Join(base, ".beads")
+		require.NoError(t, os.MkdirAll(beadsDir, 0o755))
+
+		// Custom root well outside <beadsDir>/proxieddb so the test fails
+		// loudly if the safety check still hardcodes the default location.
+		customRoot := filepath.Join(base, "custom-root")
+		require.NoError(t, os.MkdirAll(customRoot, 0o755))
+
+		metadata := map[string]interface{}{
+			"database":                      "dolt",
+			"backend":                       "dolt",
+			"dolt_mode":                     "proxied-server",
+			"dolt_database":                 "myproj",
+			"dolt_proxied_server_root_path": customRoot,
+		}
+		data, err := json.Marshal(metadata)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o644))
+
+		// Sanity: the default location should NOT exist — proves the guard
+		// fired off the resolved root, not the default.
+		defaultRoot := filepath.Join(beadsDir, "proxieddb")
+		_, statErr := os.Stat(defaultRoot)
+		require.True(t, os.IsNotExist(statErr), "default <beadsDir>/proxieddb must not exist for this test to be meaningful")
+
+		err = checkExistingBeadsDataAt(beadsDir, "myproj")
+		require.Error(t, err, "existing custom root should block init")
+		assert.Contains(t, err.Error(), "already initialized")
+		assert.Contains(t, err.Error(), customRoot, "error must cite the custom root, not the default")
+		assert.NotContains(t, err.Error(), defaultRoot, "error must not cite a default location bd never used")
+	})
+}
+
+// TestInitCommandRegistersServerRootPathFlag verifies the --server-root-path
+// flag is wired into initCmd.
+func TestInitCommandRegistersServerRootPathFlag(t *testing.T) {
+	flag := initCmd.Flags().Lookup("server-root-path")
+	require.NotNil(t, flag, "init command does not register --server-root-path")
+	assert.Equal(t, "", flag.DefValue, "--server-root-path should default to empty")
+}
+
+// TestResolveProxiedServerRootPath mirrors TestResolveProxiedServerLogPath /
+// TestResolveProxiedServerConfigPath for the root-path resolver.
+func TestResolveProxiedServerRootPath(t *testing.T) {
+	t.Run("nil cfg, no env, returns default and !isCustom", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
+		bd := t.TempDir()
+		path, isCustom := resolveProxiedServerRootPath(bd, nil)
+		assert.Equal(t, proxiedServerRoot(bd), path)
+		assert.False(t, isCustom)
+	})
+
+	t.Run("empty cfg, no env, returns default and !isCustom", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
+		bd := t.TempDir()
+		path, isCustom := resolveProxiedServerRootPath(bd, &configfile.Config{})
+		assert.Equal(t, proxiedServerRoot(bd), path)
+		assert.False(t, isCustom)
+	})
+
+	t.Run("field relative joins beadsDir and isCustom", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
+		bd := t.TempDir()
+		cfg := &configfile.Config{DoltProxiedServerRootPath: "alt-proxieddb"}
+		path, isCustom := resolveProxiedServerRootPath(bd, cfg)
+		assert.Equal(t, filepath.Join(bd, "alt-proxieddb"), path)
+		assert.True(t, isCustom)
+	})
+
+	t.Run("field absolute returned as-is and isCustom", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
+		bd := t.TempDir()
+		cfg := &configfile.Config{DoltProxiedServerRootPath: "/var/lib/beads/proxieddb"}
+		path, isCustom := resolveProxiedServerRootPath(bd, cfg)
+		assert.Equal(t, "/var/lib/beads/proxieddb", path)
+		assert.True(t, isCustom)
+	})
+
+	t.Run("env beats field and isCustom", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "/from/env-root")
+		bd := t.TempDir()
+		cfg := &configfile.Config{DoltProxiedServerRootPath: "alt-from-meta"}
+		path, isCustom := resolveProxiedServerRootPath(bd, cfg)
+		assert.Equal(t, "/from/env-root", path)
+		assert.True(t, isCustom)
+	})
+
+	t.Run("env with nil cfg still wins", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "/from/env-root")
+		bd := t.TempDir()
+		path, isCustom := resolveProxiedServerRootPath(bd, nil)
+		assert.Equal(t, "/from/env-root", path)
+		assert.True(t, isCustom)
+	})
+}
+
+// TestValidateProxiedServerRootPath covers the early-bailout validator.
+// Contract: path is allowed to NOT exist (runtime mkdir creates); if it
+// exists, info.IsDir() must be true. os.Stat follows symlinks, so a
+// symlink-to-dir reports as a dir (accepted) and a symlink-to-file reports
+// as a regular file (rejected).
+func TestValidateProxiedServerRootPath(t *testing.T) {
+	t.Run("path doesn't exist accepted", func(t *testing.T) {
+		// Runtime os.MkdirAll in the dolt store will create it.
+		path := filepath.Join(t.TempDir(), "does-not-exist")
+		require.NoError(t, validateProxiedServerRootPath(path))
+	})
+
+	t.Run("nested missing path accepted", func(t *testing.T) {
+		// Even nested non-existent paths are fine — MkdirAll handles it.
+		path := filepath.Join(t.TempDir(), "a", "b", "c")
+		require.NoError(t, validateProxiedServerRootPath(path))
+	})
+
+	t.Run("existing directory accepted", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "existing-dir")
+		require.NoError(t, os.Mkdir(path, 0o755))
+		require.NoError(t, validateProxiedServerRootPath(path))
+	})
+
+	t.Run("existing regular file rejected", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "regular-file")
+		require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
+		err := validateProxiedServerRootPath(path)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not a directory")
+	})
+
+	t.Run("symlink to file rejected", func(t *testing.T) {
+		base := t.TempDir()
+		realFile := filepath.Join(base, "real-file")
+		require.NoError(t, os.WriteFile(realFile, []byte("x"), 0o600))
+		link := filepath.Join(base, "link-to-file")
+		if err := os.Symlink(realFile, link); err != nil {
+			t.Skipf("symlink not supported on this platform: %v", err)
+		}
+		err := validateProxiedServerRootPath(link)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not a directory")
+	})
+
+	t.Run("symlink to dir accepted", func(t *testing.T) {
+		base := t.TempDir()
+		realDir := filepath.Join(base, "real-dir")
+		require.NoError(t, os.Mkdir(realDir, 0o755))
+		link := filepath.Join(base, "link-to-dir")
+		if err := os.Symlink(realDir, link); err != nil {
+			t.Skipf("symlink not supported on this platform: %v", err)
+		}
+		// os.Stat follows symlinks → reports as dir → accepted.
+		require.NoError(t, validateProxiedServerRootPath(link))
+	})
+}
+
+// TestResolveProxiedServerConfigPath_FollowsCustomRoot locks down the
+// task #33 cascade: with no per-flag override, the config path's default
+// fallback must compute against the resolved root, so --server-root-path
+// alone moves server_config.yaml. The cascaded default is still NOT marked
+// isCustom — bd still owns the YAML's lifecycle, just under a custom root.
+// When the per-flag override IS set, it wins regardless of the root.
+func TestResolveProxiedServerConfigPath_FollowsCustomRoot(t *testing.T) {
+	t.Run("custom root cascades into default config path", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_CONFIG", "")
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
+		bd := t.TempDir()
+		customRoot := filepath.Join(bd, "alt-root")
+		cfg := &configfile.Config{DoltProxiedServerRootPath: customRoot}
+		path, isCustom := resolveProxiedServerConfigPath(bd, cfg)
+		assert.Equal(t, filepath.Join(customRoot, "server_config.yaml"), path)
+		assert.False(t, isCustom, "cascaded default is NOT user-owned")
+	})
+
+	t.Run("custom root via env cascades", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_CONFIG", "")
+		bd := t.TempDir()
+		envRoot := filepath.Join(bd, "env-root")
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", envRoot)
+		path, isCustom := resolveProxiedServerConfigPath(bd, &configfile.Config{})
+		assert.Equal(t, filepath.Join(envRoot, "server_config.yaml"), path)
+		assert.False(t, isCustom)
+	})
+
+	t.Run("per-flag config override wins over root cascade", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_CONFIG", "")
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
+		bd := t.TempDir()
+		cfg := &configfile.Config{
+			DoltProxiedServerRootPath: filepath.Join(bd, "alt-root"),
+			DoltProxiedServerConfig:   "/etc/dolt/explicit.yaml",
+		}
+		path, isCustom := resolveProxiedServerConfigPath(bd, cfg)
+		assert.Equal(t, "/etc/dolt/explicit.yaml", path)
+		assert.True(t, isCustom, "explicit override is user-owned")
+	})
+
+	t.Run("no overrides falls back to <beadsDir>/proxieddb (preserves pre-cascade default)", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_CONFIG", "")
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
+		bd := t.TempDir()
+		path, isCustom := resolveProxiedServerConfigPath(bd, &configfile.Config{})
+		assert.Equal(t, filepath.Join(bd, "proxieddb", "server_config.yaml"), path)
+		assert.False(t, isCustom)
+	})
+}
+
+// TestResolveProxiedServerLogPath_FollowsCustomRoot mirrors the config
+// cascade test for the log resolver.
+func TestResolveProxiedServerLogPath_FollowsCustomRoot(t *testing.T) {
+	t.Run("custom root cascades into default log path", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_LOG", "")
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
+		bd := t.TempDir()
+		customRoot := filepath.Join(bd, "alt-root")
+		cfg := &configfile.Config{DoltProxiedServerRootPath: customRoot}
+		path, isCustom := resolveProxiedServerLogPath(bd, cfg)
+		assert.Equal(t, filepath.Join(customRoot, "server.log"), path)
+		assert.False(t, isCustom, "cascaded default is NOT user-owned")
+	})
+
+	t.Run("custom root via env cascades", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_LOG", "")
+		bd := t.TempDir()
+		envRoot := filepath.Join(bd, "env-root")
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", envRoot)
+		path, isCustom := resolveProxiedServerLogPath(bd, &configfile.Config{})
+		assert.Equal(t, filepath.Join(envRoot, "server.log"), path)
+		assert.False(t, isCustom)
+	})
+
+	t.Run("per-flag log override wins over root cascade", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_LOG", "")
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
+		bd := t.TempDir()
+		cfg := &configfile.Config{
+			DoltProxiedServerRootPath: filepath.Join(bd, "alt-root"),
+			DoltProxiedServerLog:      "/var/log/explicit.log",
+		}
+		path, isCustom := resolveProxiedServerLogPath(bd, cfg)
+		assert.Equal(t, "/var/log/explicit.log", path)
+		assert.True(t, isCustom)
+	})
+
+	t.Run("no overrides falls back to <beadsDir>/proxieddb (preserves pre-cascade default)", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_LOG", "")
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
+		bd := t.TempDir()
+		path, isCustom := resolveProxiedServerLogPath(bd, &configfile.Config{})
+		assert.Equal(t, filepath.Join(bd, "proxieddb", "server.log"), path)
+		assert.False(t, isCustom)
+	})
 }
