@@ -15,8 +15,6 @@ import (
 	"github.com/steveyegge/beads/internal/storage/db/util"
 )
 
-const lockFileName = "proxy.lock"
-
 type Endpoint struct {
 	Host string
 	Port int
@@ -81,7 +79,7 @@ func GetCreateDatabaseProxyServerEndpoint(rootDir string, opts OpenOpts) (Endpoi
 		}
 
 		// unlocked prior to spawn of child process
-		lock, err := util.TryLock(filepath.Join(rootDir, lockFileName))
+		lock, err := util.TryLock(filepath.Join(rootDir, LockFileName))
 		switch {
 		case err == nil:
 			var ep Endpoint

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage/db/pidfile"
 	"github.com/steveyegge/beads/internal/storage/db/proxy"
 	"github.com/steveyegge/beads/internal/storage/db/server"
+	"github.com/steveyegge/beads/internal/storage/db/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -55,7 +57,7 @@ func (h *proxyHandle) waitErr(t *testing.T, timeout time.Duration) error {
 	case err := <-h.done:
 		return err
 	case <-timer.C:
-		t.Fatalf("proxy.Start did not return within %s", timeout)
+		t.Fatalf("proxy.ListenAndServe did not return within %s", timeout)
 		return nil
 	}
 }
@@ -71,7 +73,7 @@ func runProxy(t *testing.T, opts proxy.ProxyOpts) *proxyHandle {
 	p := proxy.NewProxyServer(opts)
 	go func() {
 		defer close(h.exited)
-		h.done <- p.Start(ctx)
+		h.done <- p.ListenAndServe(ctx)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -150,7 +152,7 @@ func TestProxy_HappyPath_Echo(t *testing.T) {
 	require.NoError(t, h.waitErr(t, shutdownWait))
 
 	s := stats.Snapshot()
-	assert.Equal(t, int64(1), s.StartCalls)
+	assert.Equal(t, int64(1), s.ListenAndServeCalls)
 	assert.Equal(t, int64(1), s.BackendStartCalls)
 	assert.Equal(t, int64(1), s.BackendStopCalls)
 	assert.Equal(t, int64(1), s.AcceptCalls)
@@ -217,7 +219,7 @@ func TestProxy_ListenError_PortInUse(t *testing.T) {
 	assert.Contains(t, err.Error(), "listen on")
 
 	s := stats.Snapshot()
-	assert.Equal(t, int64(0), s.StartCalls)
+	assert.Equal(t, int64(0), s.ListenAndServeCalls)
 	assert.Equal(t, int64(0), s.BackendStartCalls)
 	assert.Equal(t, int64(0), ts.Snapshot().StartCalls)
 
@@ -242,7 +244,7 @@ func TestProxy_BackendStartError(t *testing.T) {
 	assert.Contains(t, err.Error(), "boom")
 
 	s := stats.Snapshot()
-	assert.Equal(t, int64(1), s.StartCalls)
+	assert.Equal(t, int64(1), s.ListenAndServeCalls)
 	assert.Equal(t, int64(1), s.BackendStartCalls)
 	assert.Equal(t, int64(0), s.BackendStopCalls)
 
@@ -273,7 +275,7 @@ func TestProxy_BackendNotReady_CtxCancel(t *testing.T) {
 	assert.Contains(t, err.Error(), "database server not ready")
 
 	s := stats.Snapshot()
-	assert.Equal(t, int64(1), s.StartCalls)
+	assert.Equal(t, int64(1), s.ListenAndServeCalls)
 	assert.Equal(t, int64(1), s.BackendStartCalls)
 	assert.Equal(t, int64(1), s.BackendStopCalls)
 
@@ -537,18 +539,17 @@ func TestProxy_Cancel_DrainsInFlightConn(t *testing.T) {
 	assertNoPidFile(t, root)
 }
 
-// TestProxy_ConcurrentInstantiation_OnlyOneWinsListener launches N proxy
-// servers in parallel against the same rootdir + port. Exactly one wins the
-// `net.Listen` race, runs to completion, and accounts for a full Start /
-// BackendStart / BackendStop lifecycle. The losers fail at Listen, return
-// before incrementing any post-listen counters, and leave the rootdir clean.
+// TestProxy_ConcurrentInstantiation_OnlyOneWinsLock launches N proxy servers
+// in parallel against the same rootdir. Exactly one wins the proxy.lock
+// flock race, runs to completion, and accounts for a full ListenAndServe /
+// BackendStart / BackendStop lifecycle. The losers return ErrLockHeld before
+// reaching any side-effecting step.
 //
-// This documents the proxy package's contract: it does NOT serialize
-// instantiation by itself — that's the caller's job (e.g. proxy.lock in
-// endpoint.go). What the package DOES guarantee is that simultaneous
-// instantiations don't corrupt each other's state and that losers fail
-// cleanly.
-func TestProxy_ConcurrentInstantiation_OnlyOneWinsListener(t *testing.T) {
+// This documents the proxy package's contract: ListenAndServe serializes
+// instantiation per-rootDir via proxy.lock. Same-rootDir contention always
+// produces ErrLockHeld for losers — independent of whether they would have
+// raced on Listen, pidfile, or backend start.
+func TestProxy_ConcurrentInstantiation_OnlyOneWinsLock(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -576,9 +577,9 @@ func TestProxy_ConcurrentInstantiation_OnlyOneWinsListener(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan error, 1)
 			<-barrier
-			go func() { done <- p.Start(ctx) }()
+			go func() { done <- p.ListenAndServe(ctx) }()
 
-			// After settle: losers have already returned (Listen fails in
+			// After settle: losers have already returned (lock probe fails in
 			// microseconds); the winner is blocked in the accept loop. Cancel
 			// everyone uniformly and collect their final return value.
 			time.Sleep(settle)
@@ -589,29 +590,112 @@ func TestProxy_ConcurrentInstantiation_OnlyOneWinsListener(t *testing.T) {
 
 	close(barrier)
 
-	var listenErrs, winners int
+	var lockHeld, winners int
 	for i := 0; i < N; i++ {
 		r := <-results
 		if r.err != nil {
-			require.ErrorContains(t, r.err, "listen on")
-			listenErrs++
+			require.ErrorIs(t, r.err, proxy.ErrLockHeld)
+			lockHeld++
 			s := r.stats.Snapshot()
-			// Listen failed before IncStart was reached.
-			assert.Equal(t, int64(0), s.StartCalls)
+			// Lock acquisition fires before any IncListenAndServe / IncBackendStart.
+			assert.Equal(t, int64(0), s.ListenAndServeCalls)
 			assert.Equal(t, int64(0), s.BackendStartCalls)
 			assert.Equal(t, int64(0), s.BackendStopCalls)
 		} else {
 			winners++
 			s := r.stats.Snapshot()
-			assert.Equal(t, int64(1), s.StartCalls)
+			assert.Equal(t, int64(1), s.ListenAndServeCalls)
 			assert.Equal(t, int64(1), s.BackendStartCalls)
 			assert.Equal(t, int64(1), s.BackendStopCalls)
 		}
 	}
 
-	assert.Equal(t, 1, winners, "expected exactly 1 listener winner")
-	assert.Equal(t, N-1, listenErrs)
+	assert.Equal(t, 1, winners, "expected exactly 1 lock winner")
+	assert.Equal(t, N-1, lockHeld)
 
 	// Winner's pidfile was cleaned up by its deferred Remove.
 	assertNoPidFile(t, root)
+}
+
+func TestProxy_LockHeld_ReturnsSentinel(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	port := freeTCPPort(t)
+
+	held, err := util.TryLock(filepath.Join(root, proxy.LockFileName))
+	require.NoError(t, err)
+	defer held.Unlock()
+
+	ts := server.New()
+	stats := &proxy.Stats{}
+	p := proxy.NewProxyServer(proxy.ProxyOpts{
+		RootDir: root, Port: port,
+		Server: ts, Stats: stats,
+	})
+	err = p.ListenAndServe(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, proxy.ErrLockHeld)
+
+	s := stats.Snapshot()
+	assert.Equal(t, int64(0), s.ListenAndServeCalls)
+	assert.Equal(t, int64(0), s.BackendStartCalls)
+	assert.Equal(t, int64(0), s.BackendStopCalls)
+	assert.Equal(t, int64(0), ts.Snapshot().StartCalls)
+
+	assertNoPidFile(t, root)
+}
+
+func TestProxy_TraceLog_LifecycleEvents(t *testing.T) {
+	t.Parallel()
+
+	ts := server.New()
+	stats := &proxy.Stats{}
+	port := freeTCPPort(t)
+	root := t.TempDir()
+
+	const idle = 2 * time.Second
+	const tickSlack = 1200 * time.Millisecond
+	h := runProxy(t, proxy.ProxyOpts{
+		RootDir: root, Port: port,
+		IdleTimeout: idle,
+		Server:      ts, Stats: stats,
+	})
+	waitListening(t, root, listenWait)
+
+	time.Sleep(tickSlack)
+
+	conn := dialProxy(t, port)
+	_, err := conn.Write([]byte("ping"))
+	require.NoError(t, err)
+	buf := make([]byte, 4)
+	_, err = io.ReadFull(conn, buf)
+	require.NoError(t, err)
+	require.Equal(t, "ping", string(buf))
+
+	time.Sleep(tickSlack)
+
+	require.NoError(t, conn.Close())
+
+	require.NoError(t, h.waitErr(t, 3*idle))
+
+	body, err := os.ReadFile(filepath.Join(root, proxy.LogFileName))
+	require.NoError(t, err)
+	text := string(body)
+
+	for _, want := range []string{
+		"acceptLoop start",
+		"acceptLoop accepted",
+		"idleWatcher start",
+		"idleWatcher armed",
+		"idleWatcher cleared",
+		"idleWatcher expired",
+		"handleConn(",
+		"backend dial ok",
+		"client→backend done",
+		"backend→client done",
+		"acceptLoop exit",
+	} {
+		assert.Contains(t, text, want, "log missing %q", want)
+	}
 }

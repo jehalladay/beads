@@ -141,6 +141,7 @@ func (s *DoltServerStore) getDatabaseProxyEndpoint() (proxy.Endpoint, error) {
 		ConfigFilePath: s.serverConfigFilePath,
 		LogFilePath:    s.serverLogFilePath,
 		DoltBinPath:    s.doltBinExec,
+		IdleTimeout:    30 * time.Second,
 	})
 }
 
