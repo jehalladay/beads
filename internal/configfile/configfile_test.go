@@ -498,6 +498,92 @@ func TestDoltProxiedServerMode(t *testing.T) {
 	})
 }
 
+// TestDoltProxiedServerConfig_RoundtripStripsAbsolutePath asserts the
+// existing absolute-path-stripping invariant (previously enforced for
+// dolt_data_dir) is also enforced for dolt_proxied_server_config. Absolute
+// paths leak host filesystem layout and shouldn't ride into other clones
+// via metadata.json.
+func TestDoltProxiedServerConfig_RoundtripStripsAbsolutePath(t *testing.T) {
+	t.Run("absolute path is dropped on save", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg := &Config{
+			Backend:                 BackendDolt,
+			DoltMode:                DoltModeProxiedServer,
+			DoltDatabase:            "myproj",
+			DoltProxiedServerConfig: "/etc/dolt/server.yaml",
+		}
+		if err := cfg.Save(dir); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		loaded, err := Load(dir)
+		if err != nil || loaded == nil {
+			t.Fatalf("Load: %v cfg=%v", err, loaded)
+		}
+		if loaded.DoltProxiedServerConfig != "" {
+			t.Errorf("DoltProxiedServerConfig = %q, want empty (absolute paths must be stripped)", loaded.DoltProxiedServerConfig)
+		}
+	})
+
+	t.Run("relative path round-trips intact", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg := &Config{
+			Backend:                 BackendDolt,
+			DoltMode:                DoltModeProxiedServer,
+			DoltDatabase:            "myproj",
+			DoltProxiedServerConfig: "configs/server.yaml",
+		}
+		if err := cfg.Save(dir); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		loaded, err := Load(dir)
+		if err != nil || loaded == nil {
+			t.Fatalf("Load: %v cfg=%v", err, loaded)
+		}
+		if loaded.DoltProxiedServerConfig != "configs/server.yaml" {
+			t.Errorf("DoltProxiedServerConfig = %q, want %q (relative paths must survive)", loaded.DoltProxiedServerConfig, "configs/server.yaml")
+		}
+	})
+}
+
+// TestGetDoltProxiedServerConfig_ResolutionChain locks down the env > field
+// (relative to beadsDir) > field (absolute) > empty resolution order.
+func TestGetDoltProxiedServerConfig_ResolutionChain(t *testing.T) {
+	beadsDir := "/home/user/project/.beads"
+
+	t.Run("env beats field", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_CONFIG", "/etc/from-env.yaml")
+		cfg := &Config{DoltProxiedServerConfig: "configs/in-meta.yaml"}
+		if got := cfg.GetDoltProxiedServerConfig(beadsDir); got != "/etc/from-env.yaml" {
+			t.Errorf("got %q, want env value", got)
+		}
+	})
+
+	t.Run("field relative joins beadsDir", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_CONFIG", "")
+		cfg := &Config{DoltProxiedServerConfig: "configs/server.yaml"}
+		want := filepath.Join(beadsDir, "configs/server.yaml")
+		if got := cfg.GetDoltProxiedServerConfig(beadsDir); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("field absolute returns as-is", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_CONFIG", "")
+		cfg := &Config{DoltProxiedServerConfig: "/etc/dolt/server.yaml"}
+		if got := cfg.GetDoltProxiedServerConfig(beadsDir); got != "/etc/dolt/server.yaml" {
+			t.Errorf("got %q, want absolute as-is", got)
+		}
+	})
+
+	t.Run("empty returns empty", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_CONFIG", "")
+		cfg := &Config{}
+		if got := cfg.GetDoltProxiedServerConfig(beadsDir); got != "" {
+			t.Errorf("got %q, want empty (caller layers default)", got)
+		}
+	})
+}
+
 // TestGetBackendAlwaysDolt tests that GetBackend always returns "dolt".
 func TestGetBackendAlwaysDolt(t *testing.T) {
 	tests := []struct {

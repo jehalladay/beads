@@ -34,6 +34,12 @@ type Config struct {
 	DoltServerTLS      bool   `json:"dolt_server_tls,omitempty"`      // Enable TLS for server connections (required for Hosted Dolt)
 	DoltDataDir        string `json:"dolt_data_dir,omitempty"`        // Custom dolt data directory (absolute path; default: .beads/dolt)
 	DoltRemotesAPIPort int    `json:"dolt_remotesapi_port,omitempty"` // Dolt remotesapi port for federation (default: 8080)
+	// DoltProxiedServerConfig overrides the proxied dolt sql-server YAML config
+	// path (proxied-server mode only). Empty means use the default location at
+	// <beadsDir>/proxieddb/server_config.yaml. Relative paths resolve from
+	// beadsDir; absolute paths are machine-specific and are stripped on Save —
+	// use BEADS_PROXIED_SERVER_CONFIG for absolute-path overrides.
+	DoltProxiedServerConfig string `json:"dolt_proxied_server_config,omitempty"`
 	// Note: Password should be set via BEADS_DOLT_PASSWORD env var for security
 
 	// Project identity — unique ID generated at bd init time.
@@ -113,13 +119,19 @@ func Load(beadsDir string) (*Config, error) {
 func (c *Config) Save(beadsDir string) error {
 	configPath := ConfigPath(beadsDir)
 
-	// Strip absolute dolt_data_dir before saving — metadata.json is committed
-	// to git and propagates to other clones, but absolute paths are
-	// machine-specific and cause data-loss on other machines (GH#2251).
-	// Users should set absolute paths via BEADS_DOLT_DATA_DIR env var instead.
+	// Strip absolute machine-specific paths before saving — metadata.json is
+	// committed to git and propagates to other clones. Absolute paths leak
+	// host filesystem layout and (in the case of dolt_data_dir) can cause
+	// data loss on other machines (GH#2251). Users with absolute paths
+	// should set them via the corresponding env var:
+	//   - dolt_data_dir              → BEADS_DOLT_DATA_DIR
+	//   - dolt_proxied_server_config → BEADS_PROXIED_SERVER_CONFIG
 	saved := *c
 	if filepath.IsAbs(saved.DoltDataDir) {
 		saved.DoltDataDir = ""
+	}
+	if filepath.IsAbs(saved.DoltProxiedServerConfig) {
+		saved.DoltProxiedServerConfig = ""
 	}
 
 	data, err := json.MarshalIndent(&saved, "", "  ")
@@ -415,6 +427,31 @@ func (c *Config) GetDoltDataDir() string {
 		return d
 	}
 	return c.DoltDataDir
+}
+
+// GetDoltProxiedServerConfig returns the resolved absolute path to the
+// proxied dolt sql-server YAML config when one has been configured, or "" to
+// signal "use the default location" (which the cmd/bd resolver layers on top).
+//
+// Resolution chain:
+//  1. BEADS_PROXIED_SERVER_CONFIG env var (highest; supports absolute paths
+//     that are intentionally machine-specific and therefore not persisted).
+//  2. metadata.json's dolt_proxied_server_config field. Relative values are
+//     resolved against beadsDir; absolute values are returned as-is (the
+//     Save path strips absolute values, so they only land here when set in
+//     a non-persisted/in-memory Config).
+//  3. Empty string — caller layers the default.
+func (c *Config) GetDoltProxiedServerConfig(beadsDir string) string {
+	if p := os.Getenv("BEADS_PROXIED_SERVER_CONFIG"); p != "" {
+		return p
+	}
+	if c.DoltProxiedServerConfig == "" {
+		return ""
+	}
+	if filepath.IsAbs(c.DoltProxiedServerConfig) {
+		return c.DoltProxiedServerConfig
+	}
+	return filepath.Join(beadsDir, c.DoltProxiedServerConfig)
 }
 
 // GetDoltRemotesAPIPort returns the Dolt remotesapi port used for federation.

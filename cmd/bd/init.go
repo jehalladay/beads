@@ -57,6 +57,15 @@ spawns a parent proxy + child dolt sql-server rooted at .beads/proxieddb/
 and manages their lifecycle for you. No host/port flags apply — bd picks a
 free port and bakes it into .beads/proxieddb/server_config.yaml.
 
+Pass --server-config <path> alongside --proxied-server to point bd at an
+existing dolt sql-server YAML config you maintain yourself. When set, bd
+uses that file as-is (validated up front) and does NOT auto-generate one.
+The path is persisted to metadata.json's dolt_proxied_server_config (or
+override at runtime via BEADS_PROXIED_SERVER_CONFIG, which absolute paths
+must use because metadata.json drops them on save). Editing the path
+post-init requires restarting the daemon — the running child dolt
+sql-server is bound to the previous config's port.
+
 Auto-export is enabled by default. After every write command, bd exports
 issues to .beads/issues.jsonl (throttled to once per 60s). This keeps
 viewers (bv) and git-based workflows up to date without extra steps.
@@ -107,6 +116,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		sharedServer, _ := cmd.Flags().GetBool("shared-server")
 		externalServer, _ := cmd.Flags().GetBool("external")
 		initProxiedServer, _ := cmd.Flags().GetBool("proxied-server")
+		serverConfigPath, _ := cmd.Flags().GetString("server-config")
 		// BEADS_DOLT_PROXIED_SERVER=1 mirrors BEADS_DOLT_SERVER_MODE=1 — lets
 		// orchestrators select the per-workspace proxied dolt sql-server
 		// without a CLI flag.
@@ -122,6 +132,19 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			if initServerMode || sharedServer || externalServer ||
 				serverHost != "" || serverPort != 0 || serverSocket != "" || serverUser != "" {
 				FatalError("--proxied-server cannot be combined with --server, --shared-server, --external, or any --server-* flag")
+			}
+		}
+		// --server-config only makes sense alongside --proxied-server (it
+		// overrides the auto-generated YAML for that backend). Validate it
+		// up front — before any directory creation, store-open, or clone —
+		// so a bad path aborts cleanly rather than crashing the daemon
+		// downstream.
+		if serverConfigPath != "" {
+			if !initProxiedServer {
+				FatalError("--server-config requires --proxied-server")
+			}
+			if err := validateProxiedServerConfig(serverConfigPath); err != nil {
+				FatalError("%v", err)
 			}
 		}
 
@@ -978,6 +1001,23 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 						cfg.DoltServerUser = serverUser
 					}
 				}
+
+				// Persist the user-supplied --server-config so subsequent
+				// bd invocations re-resolve to the same YAML. cfg.Save
+				// strips absolute paths because metadata.json travels via
+				// git; for absolute paths, point users at the env-var
+				// escape hatch (and the gitignored .beads/.env file that
+				// auto-loads it) so the persistence survives across bd
+				// invocations on this machine.
+				if usesProxiedServer() && serverConfigPath != "" {
+					cfg.DoltProxiedServerConfig = serverConfigPath
+					if filepath.IsAbs(serverConfigPath) {
+						fmt.Fprintf(os.Stderr,
+							"Notice: --server-config %s is absolute; metadata.json drops absolute paths so it won't survive across clones.\n"+
+								"  For persistence across bd invocations on this machine, set BEADS_PROXIED_SERVER_CONFIG=%s in .beads/.env (gitignored).\n",
+							serverConfigPath, serverConfigPath)
+					}
+				}
 			}
 
 			if err := cfg.Save(beadsDir); err != nil {
@@ -1486,6 +1526,7 @@ func init() {
 	initCmd.Flags().Bool("shared-server", false, "Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)")
 	initCmd.Flags().Bool("external", false, "Server is externally managed (skip server startup); use with --shared-server or --server")
 	initCmd.Flags().Bool("proxied-server", false, "Use a per-workspace proxied dolt sql-server (proxy + child dolt) rooted at .beads/proxieddb")
+	initCmd.Flags().String("server-config", "", "Path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one.")
 
 	rootCmd.AddCommand(initCmd)
 }
@@ -1570,7 +1611,7 @@ This workspace is already initialized.
 To use the existing database:
   Just run bd commands normally (e.g., %s)
 
-Aborting.`, ui.RenderWarn("⚠"), proxiedRoot, ui.RenderAccent("bd list"), prefix)
+Aborting.`, ui.RenderWarn("⚠"), proxiedRoot, ui.RenderAccent("bd list"))
 			}
 			return nil
 		}
