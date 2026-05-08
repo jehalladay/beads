@@ -108,6 +108,9 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		if os.Getenv("BEADS_DOLT_PROXIED_SERVER") == "1" {
 			initProxiedServer = true
 		}
+		if initProxiedServer {
+			FatalError("--proxied-server is not yet implemented")
+		}
 		if initProxiedServer && initServerMode {
 			FatalError("--server and --proxied-server are mutually exclusive")
 		}
