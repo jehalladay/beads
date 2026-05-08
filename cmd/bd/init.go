@@ -756,9 +756,6 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			doltCfg.ServerUser = serverUser
 		}
 
-		// Proxied-server takes its own per-workspace lock under
-		// <beadsDir>/proxieddb/proxy-child.lock; the embedded flock at
-		// .beads/embeddeddolt/.lock is irrelevant in that mode.
 		initLock, err := acquireEmbeddedLock(beadsDir, initServerMode || initProxiedServer)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
