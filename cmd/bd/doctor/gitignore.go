@@ -12,8 +12,6 @@ import (
 const GitignoreTemplate = `# Dolt database (managed by Dolt, not git)
 dolt/
 embeddeddolt/
-# Per-workspace proxied dolt sql-server (server config + log + child .dolt repo,
-# all host-specific including the bound port baked into server_config.yaml).
 proxieddb/
 
 # Runtime files
@@ -90,9 +88,6 @@ var ProjectGitignorePatterns = []string{
 	".dolt/",
 	"*.db",
 	".beads-credential-key",
-	// Per-workspace proxied dolt sql-server. Belt-and-suspenders: .beads/.gitignore
-	// already ignores proxieddb/ in-tree, but pinning it at the project root
-	// keeps it ignored even if .beads/.gitignore is missing.
 	".beads/proxieddb/",
 }
 

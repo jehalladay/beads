@@ -69,12 +69,12 @@ func TestInitCommandRegistersProxiedServerFlag(t *testing.T) {
 	assert.Equal(t, "false", flag.DefValue, "--proxied-server should default to false")
 }
 
-// TestInitCommandRegistersServerConfigFlag verifies the --server-config flag
+// TestInitCommandRegistersServerConfigFlag verifies the --proxied-server-config flag
 // is wired into initCmd.
 func TestInitCommandRegistersServerConfigFlag(t *testing.T) {
-	flag := initCmd.Flags().Lookup("server-config")
-	require.NotNil(t, flag, "init command does not register --server-config")
-	assert.Equal(t, "", flag.DefValue, "--server-config should default to empty")
+	flag := initCmd.Flags().Lookup("proxied-server-config")
+	require.NotNil(t, flag, "init command does not register --proxied-server-config")
+	assert.Equal(t, "", flag.DefValue, "--proxied-server-config should default to empty")
 }
 
 // TestResolveProxiedServerConfigPath covers the env > field-relative >
@@ -206,12 +206,12 @@ func TestEnsureProxiedServerConfig_CustomPathIsDirectory(t *testing.T) {
 	assert.Contains(t, err.Error(), "not a regular file")
 }
 
-// TestInitCommandRegistersServerLogPathFlag verifies the --server-log-path
+// TestInitCommandRegistersServerLogPathFlag verifies the --proxied-server-log-path
 // flag is wired into initCmd.
 func TestInitCommandRegistersServerLogPathFlag(t *testing.T) {
-	flag := initCmd.Flags().Lookup("server-log-path")
-	require.NotNil(t, flag, "init command does not register --server-log-path")
-	assert.Equal(t, "", flag.DefValue, "--server-log-path should default to empty")
+	flag := initCmd.Flags().Lookup("proxied-server-log-path")
+	require.NotNil(t, flag, "init command does not register --proxied-server-log-path")
+	assert.Equal(t, "", flag.DefValue, "--proxied-server-log-path should default to empty")
 }
 
 // TestResolveProxiedServerLogPath mirrors TestResolveProxiedServerConfigPath
@@ -326,7 +326,7 @@ func TestValidateProxiedServerLogPath(t *testing.T) {
 }
 
 // TestValidateProxiedServerConfig covers the standalone validator that
-// init.go uses for early --server-config validation.
+// init.go uses for early --proxied-server-config validation.
 func TestValidateProxiedServerConfig(t *testing.T) {
 	t.Run("valid YAML passes", func(t *testing.T) {
 		path := writeValidServerYAML(t, filepath.Join(t.TempDir(), "ok.yaml"))
@@ -335,7 +335,7 @@ func TestValidateProxiedServerConfig(t *testing.T) {
 	t.Run("missing path errors", func(t *testing.T) {
 		err := validateProxiedServerConfig(filepath.Join(t.TempDir(), "nope.yaml"))
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "--server-config")
+		assert.Contains(t, err.Error(), "--proxied-server-config")
 	})
 	t.Run("directory rejected", func(t *testing.T) {
 		err := validateProxiedServerConfig(t.TempDir())
@@ -448,12 +448,12 @@ func TestCheckExistingBeadsDataAt_ProxiedServerWithExistingDB(t *testing.T) {
 	})
 }
 
-// TestInitCommandRegistersServerRootPathFlag verifies the --server-root-path
+// TestInitCommandRegistersServerRootPathFlag verifies the --proxied-server-root-path
 // flag is wired into initCmd.
 func TestInitCommandRegistersServerRootPathFlag(t *testing.T) {
-	flag := initCmd.Flags().Lookup("server-root-path")
-	require.NotNil(t, flag, "init command does not register --server-root-path")
-	assert.Equal(t, "", flag.DefValue, "--server-root-path should default to empty")
+	flag := initCmd.Flags().Lookup("proxied-server-root-path")
+	require.NotNil(t, flag, "init command does not register --proxied-server-root-path")
+	assert.Equal(t, "", flag.DefValue, "--proxied-server-root-path should default to empty")
 }
 
 // TestResolveProxiedServerRootPath mirrors TestResolveProxiedServerLogPath /
@@ -571,7 +571,7 @@ func TestValidateProxiedServerRootPath(t *testing.T) {
 
 // TestResolveProxiedServerConfigPath_FollowsCustomRoot locks down the
 // task #33 cascade: with no per-flag override, the config path's default
-// fallback must compute against the resolved root, so --server-root-path
+// fallback must compute against the resolved root, so --proxied-server-root-path
 // alone moves server_config.yaml. The cascaded default is still NOT marked
 // isCustom — bd still owns the YAML's lifecycle, just under a custom root.
 // When the per-flag override IS set, it wins regardless of the root.

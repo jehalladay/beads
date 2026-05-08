@@ -12,27 +12,17 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
-// usesSQLServer returns true in non-CGO builds since embedded Dolt requires
-// CGO — the only options are the externally-managed dolt sql-server
-// (ServerMode) and the per-workspace proxied dolt sql-server (ProxiedServer),
-// both of which are SQL-server-shaped.
 func usesSQLServer() bool {
 	return true
 }
 
-// usesProxiedServer reports whether the current session is using the
-// per-workspace proxied dolt sql-server (dolt_mode=proxied-server).
 func usesProxiedServer() bool {
 	if shouldUseGlobals() {
 		return proxiedServerMode
 	}
-	return cmdCtx != nil && cmdCtx.ProxiedServer
+	return cmdCtx != nil && cmdCtx.ProxiedServerMode
 }
 
-// newDoltStore creates a SQL-server-backed storage backend. Embedded Dolt is
-// not available without CGO; the two server-shaped backends both work fine.
-//   - cfg.ProxiedServer: per-workspace proxied dolt sql-server.
-//   - cfg.ServerMode: externally-managed dolt sql-server.
 func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.DoltStorage, error) {
 	if cfg.ProxiedServer {
 		return newProxiedServerStore(ctx, cfg)
@@ -81,10 +71,6 @@ func newReadOnlyStoreFromConfig(ctx context.Context, beadsDir string) (storage.D
 	return nil, fmt.Errorf("%s", nocgoEmbeddedErrMsg)
 }
 
-// nocgoEmbeddedErrMsg guides the user either to a SQL-server-shaped backend
-// (no rebuild needed) or to an embedded-capable install path. It intentionally
-// enumerates the canonical install paths so users don't have to hunt through
-// docs.
 const nocgoEmbeddedErrMsg = `embedded Dolt requires a CGO build, but this bd binary was built with CGO_ENABLED=0.
 
 Three options:

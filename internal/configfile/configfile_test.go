@@ -585,7 +585,7 @@ func TestGetDoltProxiedServerConfig_ResolutionChain(t *testing.T) {
 }
 
 // TestDoltProxiedServerLog_RoundtripStripsAbsolutePath mirrors the
-// --server-config strip test: absolute paths in dolt_proxied_server_log
+// --proxied-server-config strip test: absolute paths in dolt_proxied_server_log
 // must be dropped on Save (machine-specific, can't survive across clones)
 // while relative paths round-trip intact.
 func TestDoltProxiedServerLog_RoundtripStripsAbsolutePath(t *testing.T) {
@@ -630,7 +630,7 @@ func TestDoltProxiedServerLog_RoundtripStripsAbsolutePath(t *testing.T) {
 	})
 }
 
-// TestGetDoltProxiedServerLog_ResolutionChain mirrors the --server-config
+// TestGetDoltProxiedServerLog_ResolutionChain mirrors the --proxied-server-config
 // resolver tests: env > field-relative-resolved-against-beadsDir >
 // field-absolute > empty.
 func TestGetDoltProxiedServerLog_ResolutionChain(t *testing.T) {
@@ -671,7 +671,7 @@ func TestGetDoltProxiedServerLog_ResolutionChain(t *testing.T) {
 }
 
 // TestDoltProxiedServerRootPath_RoundtripStripsAbsolutePath mirrors the
-// --server-config / --server-log-path strip tests: absolute paths in
+// --proxied-server-config / --proxied-server-log-path strip tests: absolute paths in
 // dolt_proxied_server_root_path must be dropped on Save (machine-specific,
 // can't survive across clones) while relative paths round-trip intact.
 func TestDoltProxiedServerRootPath_RoundtripStripsAbsolutePath(t *testing.T) {
@@ -717,7 +717,7 @@ func TestDoltProxiedServerRootPath_RoundtripStripsAbsolutePath(t *testing.T) {
 }
 
 // TestGetDoltProxiedServerRootPath_ResolutionChain mirrors the
-// --server-config / --server-log-path resolver tests: env > field-relative-
+// --proxied-server-config / --proxied-server-log-path resolver tests: env > field-relative-
 // resolved-against-beadsDir > field-absolute > empty.
 func TestGetDoltProxiedServerRootPath_ResolutionChain(t *testing.T) {
 	beadsDir := "/home/user/project/.beads"

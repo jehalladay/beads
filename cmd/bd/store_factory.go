@@ -17,51 +17,28 @@ import (
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 )
 
-// usesSQLServer returns true when the current session talks to a SQL server
-// of any flavor — either an externally-managed dolt sql-server (server mode)
-// or the per-workspace proxied dolt sql-server (proxied-server mode). Returns
-// false for the embedded Dolt engine (the default).
-//
-// Safe to call before store initialization — defaults to false (embedded)
-// when the mode hasn't been set yet.
-//
-// Use usesProxiedServer below to distinguish the proxied-server backend from
-// the externally-managed one.
 func usesSQLServer() bool {
 	if shouldUseGlobals() {
 		if serverMode || proxiedServerMode {
 			return true
 		}
-	} else if cmdCtx != nil && (cmdCtx.ServerMode || cmdCtx.ProxiedServer) {
+	} else if cmdCtx != nil && (cmdCtx.ServerMode || cmdCtx.ProxiedServerMode) {
 		return true
 	}
-	// Shared server mode is a form of server mode. This check covers
-	// commands that skip DB init (dolt status, dolt start, etc.) where
-	// serverMode hasn't been set from metadata.json yet (GH#2946).
 	if doltserver.IsSharedServerMode() {
 		return true
 	}
 	return false // default: embedded
 }
 
-// usesProxiedServer reports whether the current session is using the
-// per-workspace proxied dolt sql-server (dolt_mode=proxied-server). Used to
-// branch off behavior that only applies to externally-managed dolt servers
-// (host/port from cfg, hosted-Dolt remote auth, shared-server lifecycle).
 func usesProxiedServer() bool {
 	if shouldUseGlobals() {
 		return proxiedServerMode
 	}
-	return cmdCtx != nil && cmdCtx.ProxiedServer
+	return cmdCtx != nil && cmdCtx.ProxiedServerMode
 }
 
 // newDoltStore creates a storage backend from an explicit config.
-// Dispatch order is mutually exclusive:
-//   - cfg.ProxiedServer: per-workspace proxied dolt sql-server
-//     (.beads/proxieddb/, the proxy + child dolt managed by bd itself).
-//   - cfg.ServerMode: externally-managed dolt sql-server (host/port from cfg).
-//   - otherwise: embedded Dolt engine (default).
-//
 // Used by bd init and PersistentPreRun.
 func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.DoltStorage, error) {
 	if cfg.ProxiedServer {

@@ -99,9 +99,6 @@ Examples:
 			info.ServerPort = dsCfg.Port
 		}
 		if cfg.IsDoltProxiedServerMode() {
-			// Report the resolved root so `bd context` reflects the user's
-			// actual data location when --server-root-path / env / metadata.json
-			// has overridden the default <beadsDir>/proxieddb.
 			info.ProxiedDir, _ = resolveProxiedServerRootPath(rc.BeadsDir, cfg)
 		}
 

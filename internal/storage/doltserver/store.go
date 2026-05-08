@@ -48,17 +48,6 @@ var (
 	_ storage.Compactor        = (*DoltServerStore)(nil)
 )
 
-// NewDoltServerStore constructs a *DoltServerStore against a per-workspace
-// proxied dolt sql-server rooted at serverRootDir. It ensures the proxy +
-// child dolt sql-server are running (spawning them if needed via
-// proxy.GetCreateDatabaseProxyServerEndpoint), opens a *sql.DB connection,
-// runs schema initialization, and returns a store implementing
-// storage.DoltStorage.
-//
-// The serverConfigFilePath must point at an already-written dolt sql-server
-// YAML config — callers are responsible for ensuring it exists before this
-// function is invoked. See the cmd/bd glue layer (newProxiedServerStore /
-// ensureProxiedServerConfig) for how this is wired up in bd.
 func NewDoltServerStore(
 	ctx context.Context,
 	serverRootDir string,

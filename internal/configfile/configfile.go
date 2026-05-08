@@ -25,34 +25,17 @@ type Config struct {
 	// Dolt connection mode configuration (bd-dolt.2.2)
 	// "embedded" (default for standalone) runs Dolt in-process.
 	// "server" connects to an external dolt sql-server (required for orchestrator / multi-writer).
-	DoltMode           string `json:"dolt_mode,omitempty"`            // "embedded" (default) or "server"
-	DoltServerHost     string `json:"dolt_server_host,omitempty"`     // Server host (default: 127.0.0.1)
-	DoltServerPort     int    `json:"dolt_server_port,omitempty"`     // Server port (default: 3307)
-	DoltServerSocket   string `json:"dolt_server_socket,omitempty"`   // Unix domain socket path (overrides host/port)
-	DoltServerUser     string `json:"dolt_server_user,omitempty"`     // MySQL user (default: root)
-	DoltDatabase       string `json:"dolt_database,omitempty"`        // SQL database name (default: beads)
-	DoltServerTLS      bool   `json:"dolt_server_tls,omitempty"`      // Enable TLS for server connections (required for Hosted Dolt)
-	DoltDataDir        string `json:"dolt_data_dir,omitempty"`        // Custom dolt data directory (absolute path; default: .beads/dolt)
-	DoltRemotesAPIPort int    `json:"dolt_remotesapi_port,omitempty"` // Dolt remotesapi port for federation (default: 8080)
-	// DoltProxiedServerConfig overrides the proxied dolt sql-server YAML config
-	// path (proxied-server mode only). Empty means use the default location at
-	// <beadsDir>/proxieddb/server_config.yaml. Relative paths resolve from
-	// beadsDir; absolute paths are machine-specific and are stripped on Save —
-	// use BEADS_PROXIED_SERVER_CONFIG for absolute-path overrides.
-	DoltProxiedServerConfig string `json:"dolt_proxied_server_config,omitempty"`
-	// DoltProxiedServerLog overrides the proxied dolt sql-server log path
-	// (proxied-server mode only). Empty means use the default location at
-	// <beadsDir>/proxieddb/server.log. Same relative/absolute semantics as
-	// DoltProxiedServerConfig — absolute paths are stripped on Save; use
-	// BEADS_PROXIED_SERVER_LOG for absolute-path overrides.
-	DoltProxiedServerLog string `json:"dolt_proxied_server_log,omitempty"`
-	// DoltProxiedServerRootPath overrides the per-workspace proxied-server root
-	// directory (proxied-server mode only). Empty means use the default location
-	// at <beadsDir>/proxieddb. Same relative/absolute semantics as
-	// DoltProxiedServerConfig — relative paths resolve from beadsDir, absolute
-	// paths are machine-specific and stripped on Save; use
-	// BEADS_PROXIED_SERVER_ROOT_PATH for absolute-path overrides. The default
-	// proxied-server config and log paths cascade off the resolved root.
+	DoltMode                  string `json:"dolt_mode,omitempty"`            // "embedded" (default) or "server"
+	DoltServerHost            string `json:"dolt_server_host,omitempty"`     // Server host (default: 127.0.0.1)
+	DoltServerPort            int    `json:"dolt_server_port,omitempty"`     // Server port (default: 3307)
+	DoltServerSocket          string `json:"dolt_server_socket,omitempty"`   // Unix domain socket path (overrides host/port)
+	DoltServerUser            string `json:"dolt_server_user,omitempty"`     // MySQL user (default: root)
+	DoltDatabase              string `json:"dolt_database,omitempty"`        // SQL database name (default: beads)
+	DoltServerTLS             bool   `json:"dolt_server_tls,omitempty"`      // Enable TLS for server connections (required for Hosted Dolt)
+	DoltDataDir               string `json:"dolt_data_dir,omitempty"`        // Custom dolt data directory (absolute path; default: .beads/dolt)
+	DoltRemotesAPIPort        int    `json:"dolt_remotesapi_port,omitempty"` // Dolt remotesapi port for federation (default: 8080)
+	DoltProxiedServerConfig   string `json:"dolt_proxied_server_config,omitempty"`
+	DoltProxiedServerLog      string `json:"dolt_proxied_server_log,omitempty"`
 	DoltProxiedServerRootPath string `json:"dolt_proxied_server_root_path,omitempty"`
 	// Note: Password should be set via BEADS_DOLT_PASSWORD env var for security
 
@@ -133,15 +116,6 @@ func Load(beadsDir string) (*Config, error) {
 func (c *Config) Save(beadsDir string) error {
 	configPath := ConfigPath(beadsDir)
 
-	// Strip absolute machine-specific paths before saving — metadata.json is
-	// committed to git and propagates to other clones. Absolute paths leak
-	// host filesystem layout and (in the case of dolt_data_dir) can cause
-	// data loss on other machines (GH#2251). Users with absolute paths
-	// should set them via the corresponding env var:
-	//   - dolt_data_dir                 → BEADS_DOLT_DATA_DIR
-	//   - dolt_proxied_server_config    → BEADS_PROXIED_SERVER_CONFIG
-	//   - dolt_proxied_server_log       → BEADS_PROXIED_SERVER_LOG
-	//   - dolt_proxied_server_root_path → BEADS_PROXIED_SERVER_ROOT_PATH
 	saved := *c
 	if filepath.IsAbs(saved.DoltDataDir) {
 		saved.DoltDataDir = ""
@@ -239,8 +213,6 @@ func CapabilitiesForBackend(_ string) BackendCapabilities {
 func (c *Config) GetCapabilities() BackendCapabilities {
 	backend := c.GetBackend()
 	if backend == BackendDolt && (c.IsDoltServerMode() || c.IsDoltProxiedServerMode()) {
-		// Server-shaped backends multiplex writers through a sql-server, so
-		// NOT single-process-only.
 		return BackendCapabilities{SingleProcessOnly: false}
 	}
 	return CapabilitiesForBackend(backend)
@@ -292,13 +264,6 @@ func (c *Config) IsDoltServerMode() bool {
 	return strings.ToLower(c.DoltMode) == DoltModeServer
 }
 
-// IsDoltProxiedServerMode reports whether this workspace is configured to use
-// the per-workspace proxied dolt sql-server (a parent proxy + a child
-// dolt sql-server, both rooted at <beadsDir>/proxieddb). Proxied-server is a
-// distinct backend kind from "server": IsDoltServerMode() returns false for it
-// because the existing server-mode call sites assume user-supplied connection
-// details (host/port/socket/user, BEADS_DOLT_PASSWORD, TLS) that proxied-server
-// does not populate.
 func (c *Config) IsDoltProxiedServerMode() bool {
 	if c.GetBackend() != BackendDolt {
 		return false
@@ -451,18 +416,6 @@ func (c *Config) GetDoltDataDir() string {
 	return c.DoltDataDir
 }
 
-// GetDoltProxiedServerConfig returns the resolved absolute path to the
-// proxied dolt sql-server YAML config when one has been configured, or "" to
-// signal "use the default location" (which the cmd/bd resolver layers on top).
-//
-// Resolution chain:
-//  1. BEADS_PROXIED_SERVER_CONFIG env var (highest; supports absolute paths
-//     that are intentionally machine-specific and therefore not persisted).
-//  2. metadata.json's dolt_proxied_server_config field. Relative values are
-//     resolved against beadsDir; absolute values are returned as-is (the
-//     Save path strips absolute values, so they only land here when set in
-//     a non-persisted/in-memory Config).
-//  3. Empty string — caller layers the default.
 func (c *Config) GetDoltProxiedServerConfig(beadsDir string) string {
 	if p := os.Getenv("BEADS_PROXIED_SERVER_CONFIG"); p != "" {
 		return p
@@ -476,16 +429,6 @@ func (c *Config) GetDoltProxiedServerConfig(beadsDir string) string {
 	return filepath.Join(beadsDir, c.DoltProxiedServerConfig)
 }
 
-// GetDoltProxiedServerLog returns the resolved absolute path to the proxied
-// dolt sql-server log file when one has been configured, or "" to signal
-// "use the default location" (the cmd/bd resolver layers the default on top).
-//
-// Resolution chain mirrors GetDoltProxiedServerConfig:
-//  1. BEADS_PROXIED_SERVER_LOG env var (highest; absolute paths welcome).
-//  2. metadata.json's dolt_proxied_server_log field. Relative values resolve
-//     against beadsDir; absolute values pass through (Save strips them so
-//     they only appear here when set in a non-persisted/in-memory Config).
-//  3. Empty string — caller layers the default.
 func (c *Config) GetDoltProxiedServerLog(beadsDir string) string {
 	if p := os.Getenv("BEADS_PROXIED_SERVER_LOG"); p != "" {
 		return p
@@ -499,18 +442,6 @@ func (c *Config) GetDoltProxiedServerLog(beadsDir string) string {
 	return filepath.Join(beadsDir, c.DoltProxiedServerLog)
 }
 
-// GetDoltProxiedServerRootPath returns the resolved absolute path to the
-// proxied-server root directory when one has been configured, or "" to signal
-// "use the default location" (which the cmd/bd resolver layers on top, namely
-// <beadsDir>/proxieddb). The default proxied-server config and log paths
-// cascade off this resolved root.
-//
-// Resolution chain mirrors GetDoltProxiedServerConfig / GetDoltProxiedServerLog:
-//  1. BEADS_PROXIED_SERVER_ROOT_PATH env var (highest; absolute paths welcome).
-//  2. metadata.json's dolt_proxied_server_root_path field. Relative values
-//     resolve against beadsDir; absolute values pass through (Save strips them
-//     so they only appear here when set in a non-persisted/in-memory Config).
-//  3. Empty string — caller layers the default.
 func (c *Config) GetDoltProxiedServerRootPath(beadsDir string) string {
 	if p := os.Getenv("BEADS_PROXIED_SERVER_ROOT_PATH"); p != "" {
 		return p

@@ -29,14 +29,8 @@ type CommandContext struct {
 	Verbose      bool
 	Quiet        bool
 
-	// Storage mode — true when connected to an external dolt sql-server.
-	ServerMode bool
-
-	// ProxiedServer — true when this workspace uses the per-workspace
-	// proxied dolt sql-server (a parent proxy + child dolt sql-server,
-	// both rooted at <beadsDir>/proxieddb). Mutually exclusive with
-	// embedded mode and ServerMode.
-	ProxiedServer bool
+	ServerMode        bool
+	ProxiedServerMode bool
 
 	// Runtime state
 	Store      storage.DoltStorage
@@ -371,7 +365,7 @@ func syncCommandContext() {
 
 	// Storage mode
 	cmdCtx.ServerMode = serverMode
-	cmdCtx.ProxiedServer = proxiedServerMode
+	cmdCtx.ProxiedServerMode = proxiedServerMode
 
 	// Runtime state
 	cmdCtx.Store = store

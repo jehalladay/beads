@@ -208,11 +208,6 @@ func repairSharedServerEmbeddedMismatch(beadsDir string, cfg *configfile.Config)
 	if cfg == nil {
 		return
 	}
-	// This repair only applies when metadata.json explicitly says "embedded".
-	// Proxied-server (dolt_mode=proxied-server) and any other non-empty value
-	// fall through this guard untouched — we never rewrite a deliberately-set
-	// mode to "server" just because the shared-server env var happens to be
-	// active.
 	if strings.ToLower(strings.TrimSpace(cfg.DoltMode)) != configfile.DoltModeEmbedded {
 		return
 	}
@@ -251,7 +246,7 @@ func loadServerModeFromBeadsDir(beadsDir string) {
 	proxiedServerMode = psm
 	if cmdCtx != nil {
 		cmdCtx.ServerMode = sm
-		cmdCtx.ProxiedServer = psm
+		cmdCtx.ProxiedServerMode = psm
 	}
 }
 
@@ -927,15 +922,10 @@ var rootCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "warning: failed to load beads config from %s: %v\n", beadsDir, cfgErr)
 		}
 		if cfg != nil {
-			// Proxied-server is mutually exclusive with the externally-managed
-			// server backend, so resolve it first and let the server-mode
-			// block below stay false when proxied is active. The store-factory
-			// dispatch (newDoltStore) keys off cfg.ProxiedServer ahead of
-			// cfg.ServerMode for the same reason.
 			doltCfg.ProxiedServer = cfg.IsDoltProxiedServerMode()
 			proxiedServerMode = doltCfg.ProxiedServer
 			if cmdCtx != nil {
-				cmdCtx.ProxiedServer = doltCfg.ProxiedServer
+				cmdCtx.ProxiedServerMode = doltCfg.ProxiedServer
 			}
 
 			doltCfg.ServerMode = cfg.IsDoltServerMode()

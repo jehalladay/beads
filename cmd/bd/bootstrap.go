@@ -668,9 +668,6 @@ func finalizeSyncedBootstrap(beadsDir, syncRemote string, cfg *configfile.Config
 	cfg.DoltDatabase = dbName
 	switch {
 	case cfg.IsDoltProxiedServerMode():
-		// Preserve — the upstream cfg already carried proxied-server intent
-		// (e.g. propagated from a parent workspace or set during the
-		// proxied-server clone path).
 		cfg.DoltMode = configfile.DoltModeProxiedServer
 	case cfg.IsDoltServerMode() || doltserver.IsSharedServerMode():
 		cfg.DoltMode = configfile.DoltModeServer
