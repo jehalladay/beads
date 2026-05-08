@@ -95,8 +95,8 @@ func TestInstallGemini_Global(t *testing.T) {
 		t.Fatal("expected hooks map")
 	}
 
-	// Check SessionStart hook is registered with the --gemini-hook variant.
-	// Gemini's hook contract requires JSON-on-stdout; --gemini-hook wraps
+	// Check SessionStart hook is registered with the --hook-json variant.
+	// Gemini's hook contract requires JSON-on-stdout; --hook-json wraps
 	// bd prime's markdown in the SessionStart envelope shape.
 	sessionStart, ok := hooks["SessionStart"].([]interface{})
 	if !ok || len(sessionStart) == 0 {
@@ -294,7 +294,7 @@ func TestInstallGemini_PreservesExistingSettings(t *testing.T) {
 
 // TestCheckGemini_LegacyInstall verifies that checkGemini returns
 // errGeminiHooksLegacy and emits an upgrade advisory when the settings file
-// contains a pre-fix "bd prime" registration (without --gemini-hook).
+// contains a pre-fix "bd prime" registration (without --hook-json).
 // Legacy hooks emit raw markdown that violates Gemini's JSON stdout contract,
 // so --check must distinguish them from a working current install.
 func TestCheckGemini_LegacyInstall(t *testing.T) {

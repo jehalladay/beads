@@ -277,7 +277,7 @@ cd your-project
 bd init --quiet
 
 # 3. Setup editor integration (choose one)
-bd setup claude   # Claude Code - installs SessionStart/PreCompact hooks
+bd setup claude   # Claude Code - installs SessionStart hooks
 bd setup cursor   # Cursor IDE - creates .cursor/rules/beads.mdc
 bd setup aider    # Aider - creates .aider.conf.yml
 bd setup codex    # Codex CLI - installs Beads skill, AGENTS.md guidance, and native hooks

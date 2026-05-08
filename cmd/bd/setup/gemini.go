@@ -197,12 +197,12 @@ func checkGemini(env geminiEnv) error {
 	case hasGeminiBeadsHooks(globalSettings):
 		_, _ = fmt.Fprintf(env.stdout, "⚠ Global hooks installed (legacy format): %s\n", globalSettings)
 		_, _ = fmt.Fprintln(env.stdout, "  Legacy 'bd prime' hooks emit raw markdown; Gemini requires JSON stdout.")
-		_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup gemini  (upgrades to 'bd prime --gemini-hook')")
+		_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup gemini  (upgrades to 'bd prime --hook-json')")
 		return errGeminiHooksLegacy
 	case hasGeminiBeadsHooks(projectSettings):
 		_, _ = fmt.Fprintf(env.stdout, "⚠ Project hooks installed (legacy format): %s\n", projectSettings)
 		_, _ = fmt.Fprintln(env.stdout, "  Legacy 'bd prime' hooks emit raw markdown; Gemini requires JSON stdout.")
-		_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup gemini --project  (upgrades to 'bd prime --gemini-hook')")
+		_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup gemini --project  (upgrades to 'bd prime --hook-json')")
 		return errGeminiHooksLegacy
 	default:
 		_, _ = fmt.Fprintln(env.stdout, "✗ No hooks installed")
@@ -332,9 +332,9 @@ func geminiSessionStartCommands(settingsPath string) []string {
 }
 
 // hasCurrentGeminiHooks reports whether a settings file has a current-format
-// bd prime --gemini-hook command on SessionStart. Returns false for legacy
-// "bd prime" (without --gemini-hook) installs, which emit raw markdown that
-// violates Gemini's strict stdout-must-be-JSON hook contract.
+// bd prime --hook-json command on SessionStart. Returns false for legacy
+// "bd prime" installs, which emit raw markdown that violates Gemini's strict
+// stdout-must-be-JSON hook contract.
 func hasCurrentGeminiHooks(settingsPath string) bool {
 	for _, cmd := range geminiSessionStartCommands(settingsPath) {
 		if cmd == "bd prime --hook-json" || cmd == "bd prime --stealth --hook-json" {

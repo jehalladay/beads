@@ -366,11 +366,11 @@ func TestPrime_RawMarkdown_NotJSON_WithoutFlag(t *testing.T) {
 		if len(preview) > 200 {
 			preview = preview[:200]
 		}
-		t.Fatalf("prime output without --gemini-hook should be raw markdown, got JSON-looking content: %q", preview)
+		t.Fatalf("prime output without --hook-json should be raw markdown, got JSON-looking content: %q", preview)
 	}
 	// Best-effort: confirm the raw markdown contract holds.
 	var envelope map[string]interface{}
 	if err := json.Unmarshal([]byte(output), &envelope); err == nil {
-		t.Fatal("prime output without --gemini-hook should not be valid JSON (regression guard)")
+		t.Fatal("prime output without --hook-json should not be valid JSON (regression guard)")
 	}
 }

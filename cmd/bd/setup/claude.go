@@ -143,9 +143,9 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 	}
 
 	// Migration sweep: remove bare "bd prime" variants registered by older
-	// installations. The documented SessionStart/PreCompact hook contract
-	// (Claude Code, Gemini CLI, Codex) uses the JSON envelope; re-running
-	// setup upgrades to the canonical --hook-json command.
+	// installations. Claude Code's current context-injection contract uses
+	// the SessionStart JSON envelope; SessionStart also fires after compaction
+	// with source=compact, so PreCompact no longer needs a bd prime hook.
 	legacyBareVariants := []string{"bd prime", "bd prime --stealth"}
 	for _, legacy := range legacyBareVariants {
 		if legacy == command {
@@ -154,19 +154,17 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 		removeHookCommand(hooks, "SessionStart", legacy)
 		removeHookCommand(hooks, "PreCompact", legacy)
 	}
+	removeHookCommand(hooks, "PreCompact", "bd prime --hook-json")
+	removeHookCommand(hooks, "PreCompact", "bd prime --stealth --hook-json")
 
-	// GH#3192: Skip writing hooks if the beads plugin is already providing them.
-	// The plugin declares identical SessionStart/PreCompact hooks in plugin.json,
-	// so project-level hooks would fire bd prime twice per session.
+	// GH#3192: Skip writing hooks if the beads plugin is already providing them,
+	// so project-level hooks don't fire bd prime twice per session.
 	pluginManaged := hasBeadsPlugin(env)
 	if pluginManaged {
 		_, _ = fmt.Fprintln(env.stdout, "✓ Beads plugin detected — hooks are plugin-managed, skipping")
 	} else {
 		if addHookCommand(hooks, "SessionStart", command) {
 			_, _ = fmt.Fprintln(env.stdout, "✓ Registered SessionStart hook")
-		}
-		if addHookCommand(hooks, "PreCompact", command) {
-			_, _ = fmt.Fprintln(env.stdout, "✓ Registered PreCompact hook")
 		}
 	}
 
@@ -508,8 +506,8 @@ func removeHookCommand(hooks map[string]interface{}, event, command string) {
 }
 
 // hasBeadsPlugin checks if the beads Claude Code plugin is enabled in any
-// settings file. The plugin declares its own SessionStart/PreCompact hooks
-// in plugin.json, so project-level hooks from bd setup claude would duplicate them.
+// settings file. The plugin declares its own SessionStart hooks in plugin.json,
+// so project-level hooks from bd setup claude would duplicate them.
 func hasBeadsPlugin(env claudeEnv) bool {
 	paths := []string{
 		projectSettingsPath(env.projectDir),

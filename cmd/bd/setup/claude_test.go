@@ -393,7 +393,7 @@ func TestInstallClaudeCleanupNullHooks(t *testing.T) {
 	if !ok {
 		t.Fatal("hooks section missing")
 	}
-	for _, event := range []string{"SessionStart", "PreCompact"} {
+	for _, event := range []string{"SessionStart"} {
 		eventHooks, ok := hooks[event].([]interface{})
 		if !ok {
 			t.Errorf("%s should be an array, not nil or missing", event)
@@ -420,7 +420,6 @@ func TestInstallClaudeUsesPrimeForClaudeHooks(t *testing.T) {
 	for _, want := range []string{
 		`"command": "bd prime --hook-json"`,
 		`"SessionStart"`,
-		`"PreCompact"`,
 	} {
 		if !strings.Contains(settingsJSON, want) {
 			t.Fatalf("settings missing %q:\n%s", want, settingsJSON)
@@ -504,7 +503,7 @@ func TestHasBeadsHooks(t *testing.T) {
 			name: "has bd prime in PreCompact",
 			settingsData: map[string]interface{}{
 				"hooks": map[string]interface{}{
-					"PreCompact": []interface{}{
+					"SessionStart": []interface{}{
 						map[string]interface{}{
 							"matcher": "",
 							"hooks": []interface{}{

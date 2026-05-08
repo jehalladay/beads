@@ -58,7 +58,7 @@ Automatically detects if MCP server is active and adapts output:
 - MCP mode: Brief workflow reminders (~50 tokens)
 - CLI mode: Full command reference (~1-2k tokens)
 
-Designed for Claude Code and Codex hooks to prevent
+Designed for Claude Code, Gemini CLI, and Codex SessionStart hooks to prevent
 agents from forgetting bd workflow after context compaction.
 
 Config options:
