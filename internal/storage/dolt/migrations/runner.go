@@ -18,12 +18,6 @@ type CompatMigration struct {
 // for databases that predate the embedded migration system. Each migration
 // must be idempotent — safe to run multiple times.
 var compatMigrationsList = []CompatMigration{
-	{"wisp_type_column", MigrateWispTypeColumn},
-	{"spec_id_column", MigrateSpecIDColumn},
-	{"orphan_detection", DetectOrphanedChildren},
-	{"wisps_table", MigrateWispsTable},
-	{"wisp_auxiliary_tables", MigrateWispAuxiliaryTables},
-	{"issue_counter_table", MigrateIssueCounterTable},
 	{"infra_to_wisps", MigrateInfraToWisps},
 	{"wisp_dep_type_index", MigrateWispDepTypeIndex},
 	{"cleanup_autopush_metadata", MigrateCleanupAutopushMetadata},

@@ -7,6 +7,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
+	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/testutil"
 )
 
@@ -38,38 +39,6 @@ func openTestDoltBranch(t *testing.T) *sql.DB {
 	})
 
 	return db
-}
-
-func TestMigrateWispTypeColumn(t *testing.T) {
-	db := openTestDoltBranch(t)
-
-	// Verify column doesn't exist yet
-	exists, err := columnExists(db, "issues", "wisp_type")
-	if err != nil {
-		t.Fatalf("failed to check column: %v", err)
-	}
-	if exists {
-		t.Fatal("wisp_type should not exist yet")
-	}
-
-	// Run migration
-	if err := MigrateWispTypeColumn(db); err != nil {
-		t.Fatalf("migration failed: %v", err)
-	}
-
-	// Verify column now exists
-	exists, err = columnExists(db, "issues", "wisp_type")
-	if err != nil {
-		t.Fatalf("failed to check column: %v", err)
-	}
-	if !exists {
-		t.Fatal("wisp_type should exist after migration")
-	}
-
-	// Run migration again (idempotent)
-	if err := MigrateWispTypeColumn(db); err != nil {
-		t.Fatalf("re-running migration should be idempotent: %v", err)
-	}
 }
 
 func TestColumnExists(t *testing.T) {
@@ -109,173 +78,6 @@ func TestTableExists(t *testing.T) {
 	}
 	if exists {
 		t.Fatal("nonexistent table should not exist")
-	}
-}
-
-func TestDetectOrphanedChildren(t *testing.T) {
-	db := openTestDoltBranch(t)
-
-	// No orphans in empty database
-	if err := DetectOrphanedChildren(db); err != nil {
-		t.Fatalf("orphan detection failed on empty db: %v", err)
-	}
-
-	// Insert a parent and its child — no orphans
-	_, err := db.Exec(`INSERT INTO issues (id, title, status) VALUES ('bd-parent1', 'Parent', 'open')`)
-	if err != nil {
-		t.Fatalf("failed to insert parent: %v", err)
-	}
-	_, err = db.Exec(`INSERT INTO issues (id, title, status) VALUES ('bd-parent1.1', 'Child 1', 'open')`)
-	if err != nil {
-		t.Fatalf("failed to insert child: %v", err)
-	}
-
-	if err := DetectOrphanedChildren(db); err != nil {
-		t.Fatalf("orphan detection failed with valid parent-child: %v", err)
-	}
-
-	// Insert an orphan (child whose parent doesn't exist)
-	_, err = db.Exec(`INSERT INTO issues (id, title, status) VALUES ('bd-missing.2', 'Orphan Child', 'open')`)
-	if err != nil {
-		t.Fatalf("failed to insert orphan: %v", err)
-	}
-
-	// Should succeed (logs orphans but doesn't error)
-	if err := DetectOrphanedChildren(db); err != nil {
-		t.Fatalf("orphan detection should not error on orphans: %v", err)
-	}
-
-	// Insert a deeply nested orphan (parent of intermediate level missing)
-	_, err = db.Exec(`INSERT INTO issues (id, title, status) VALUES ('bd-gone.1.3', 'Deep Orphan', 'closed')`)
-	if err != nil {
-		t.Fatalf("failed to insert deep orphan: %v", err)
-	}
-
-	if err := DetectOrphanedChildren(db); err != nil {
-		t.Fatalf("orphan detection should not error on deep orphans: %v", err)
-	}
-
-	// Idempotent — running again should be fine
-	if err := DetectOrphanedChildren(db); err != nil {
-		t.Fatalf("orphan detection should be idempotent: %v", err)
-	}
-}
-
-func TestMigrateWispsTable(t *testing.T) {
-	db := openTestDoltBranch(t)
-
-	// Verify wisps table doesn't exist yet
-	exists, err := TableExists(db, "wisps")
-	if err != nil {
-		t.Fatalf("failed to check table: %v", err)
-	}
-	if exists {
-		t.Fatal("wisps table should not exist yet")
-	}
-
-	// Run migration
-	if err := MigrateWispsTable(db); err != nil {
-		t.Fatalf("migration failed: %v", err)
-	}
-
-	// Verify wisps table now exists
-	exists, err = TableExists(db, "wisps")
-	if err != nil {
-		t.Fatalf("failed to check table after migration: %v", err)
-	}
-	if !exists {
-		t.Fatal("wisps table should exist after migration")
-	}
-
-	// Verify dolt_ignore has the patterns
-	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM dolt_ignore WHERE pattern IN ('wisps', 'wisp_%')").Scan(&count)
-	if err != nil {
-		t.Fatalf("failed to query dolt_ignore: %v", err)
-	}
-	if count != 2 {
-		t.Fatalf("expected 2 dolt_ignore patterns, got %d", count)
-	}
-
-	// Verify dolt_add('-A') does NOT stage the wisps table (dolt_ignore effect)
-	_, err = db.Exec("CALL DOLT_ADD('-A')")
-	if err != nil {
-		t.Fatalf("dolt_add failed: %v", err)
-	}
-
-	// After dolt_add('-A'), wisps should remain unstaged due to dolt_ignore.
-	var staged bool
-	err = db.QueryRow("SELECT staged FROM dolt_status WHERE table_name = 'wisps'").Scan(&staged)
-	if err == nil && staged {
-		t.Fatal("wisps table should NOT be staged after dolt_add('-A') (dolt_ignore should prevent staging)")
-	}
-
-	// Run migration again (idempotent)
-	if err := MigrateWispsTable(db); err != nil {
-		t.Fatalf("re-running migration should be idempotent: %v", err)
-	}
-
-	// Verify we can INSERT and query from wisps table
-	_, err = db.Exec(`INSERT INTO wisps (id, title, description, design, acceptance_criteria, notes)
-		VALUES ('wisp-test1', 'Test Wisp', 'desc', '', '', '')`)
-	if err != nil {
-		t.Fatalf("failed to insert into wisps: %v", err)
-	}
-
-	var title string
-	err = db.QueryRow("SELECT title FROM wisps WHERE id = 'wisp-test1'").Scan(&title)
-	if err != nil {
-		t.Fatalf("failed to query wisps: %v", err)
-	}
-	if title != "Test Wisp" {
-		t.Fatalf("expected title 'Test Wisp', got %q", title)
-	}
-}
-
-func TestMigrateIssueCounterTable(t *testing.T) {
-	db := openTestDoltBranch(t)
-
-	// Verify issue_counter table does not exist yet
-	exists, err := TableExists(db, "issue_counter")
-	if err != nil {
-		t.Fatalf("failed to check table: %v", err)
-	}
-	if exists {
-		t.Fatal("issue_counter should not exist yet")
-	}
-
-	// Run migration
-	if err := MigrateIssueCounterTable(db); err != nil {
-		t.Fatalf("migration failed: %v", err)
-	}
-
-	// Verify issue_counter table now exists
-	exists, err = TableExists(db, "issue_counter")
-	if err != nil {
-		t.Fatalf("failed to check table after migration: %v", err)
-	}
-	if !exists {
-		t.Fatal("issue_counter should exist after migration")
-	}
-
-	// Run migration again (idempotent)
-	if err := MigrateIssueCounterTable(db); err != nil {
-		t.Fatalf("re-running migration should be idempotent: %v", err)
-	}
-
-	// Verify we can INSERT and query from issue_counter
-	_, err = db.Exec("INSERT INTO issue_counter (prefix, last_id) VALUES ('bd', 5)")
-	if err != nil {
-		t.Fatalf("failed to insert into issue_counter: %v", err)
-	}
-
-	var lastID int
-	err = db.QueryRow("SELECT last_id FROM issue_counter WHERE prefix = 'bd'").Scan(&lastID)
-	if err != nil {
-		t.Fatalf("failed to query issue_counter: %v", err)
-	}
-	if lastID != 5 {
-		t.Errorf("expected last_id 5, got %d", lastID)
 	}
 }
 
@@ -411,12 +213,12 @@ func TestMigrateInfraToWisps_SchemaEvolution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 4. Run migration 004 to create wisps table and 005 for auxiliary tables
-	if err := MigrateWispsTable(db); err != nil {
-		t.Fatalf("Failed to run migration 004: %v", err)
+	// 4. Create the wisps and wisp auxiliary tables (schema migrations 0020 and 0021).
+	if _, err := db.Exec(schema.ReadMigrationSQL(20)); err != nil {
+		t.Fatalf("Failed to create wisps table: %v", err)
 	}
-	if err := MigrateWispAuxiliaryTables(db); err != nil {
-		t.Fatalf("Failed to run migration 005: %v", err)
+	if _, err := db.Exec(schema.ReadMigrationSQL(21)); err != nil {
+		t.Fatalf("Failed to create wisp auxiliary tables: %v", err)
 	}
 
 	// 5. Run migration 007 - it should gracefully map columns instead of crashing

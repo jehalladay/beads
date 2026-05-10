@@ -1,0 +1,1 @@
+ALTER TABLE issues ADD COLUMN wisp_type VARCHAR(32) DEFAULT '';
