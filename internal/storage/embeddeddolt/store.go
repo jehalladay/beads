@@ -15,7 +15,6 @@ import (
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/dolt/migrations"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
@@ -90,14 +89,6 @@ func newStore(ctx context.Context, beadsDir, database, branch string) (*Embedded
 
 	if err := s.initSchema(ctx); err != nil {
 		return nil, fmt.Errorf("embeddeddolt: init schema: %w", err)
-	}
-
-	// Ensure dolt_ignore'd wisp tables exist in the working set.
-	// After a clone or branch switch, these tables are absent because
-	// dolt_ignore prevents them from being committed. Server mode handles
-	// this in newServerMode(); embedded mode must do it here. (GH#3270)
-	if err := s.ensureIgnoredTables(ctx); err != nil {
-		return nil, fmt.Errorf("embeddeddolt: ensure ignored tables: %w", err)
 	}
 
 	return s, nil
@@ -222,17 +213,26 @@ func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {
 			}
 		}
 
-		// Ensure dolt_ignore'd tables exist before migrations — some migrations
-		// reference these tables (e.g. 0027 alters wisps, 0030 inserts into
-		// local_metadata). After a clone they don't exist yet.
-		if err := schema.EnsureIgnoredTables(ctx, tx); err != nil {
-			return fmt.Errorf("ensure ignored tables before migration: %w", err)
-		}
-
 		applied, err := schema.MigrateUp(ctx, tx)
 		if err != nil {
 			return err
 		}
+
+		// Recreate dolt_ignore'd tables after migrations. Migrations create
+		// them on first init; this rebuilds them when the working set was
+		// reset (clone, branch switch) and schema_migrations records make
+		// MigrateUp a no-op.
+		if err := schema.EnsureIgnoredTables(ctx, tx); err != nil {
+			return fmt.Errorf("ensure ignored tables after migration: %w", err)
+		}
+
+		// Backfill custom_statuses and custom_types from legacy config rows.
+		// Migration 0024 creates the tables; this populates them on legacy
+		// DBs that have status.custom / types.custom set via `bd config set`.
+		if err := schema.EnsureBackfilledCustomStatusesCustomTypes(ctx, tx); err != nil {
+			return fmt.Errorf("backfill custom tables: %w", err)
+		}
+
 		if applied > 0 {
 			if _, err := tx.ExecContext(ctx, "CALL DOLT_ADD('-A')"); err != nil {
 				return fmt.Errorf("dolt add after migrations: %w", err)
@@ -245,34 +245,13 @@ func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {
 				}
 			}
 		}
+
 		return nil
 	}); err != nil {
 		return err
 	}
 
-	// Run idempotent compat migrations on a fresh connection scoped to the
-	// newly-created database and branch. The embedded migration system only
-	// covers databases created from fresh init; pre-existing databases that
-	// predate specific SQL migrations need the defensive compat runner to
-	// repair missing columns and tables (GH#3412).
-	db, cleanup, err := OpenSQL(ctx, s.dataDir, s.database, s.branch)
-	if err != nil {
-		return fmt.Errorf("embeddeddolt: open for compat migrations: %w", err)
-	}
-	defer func() { _ = cleanup() }()
-
-	if err := migrations.RunCompatMigrations(db); err != nil {
-		return fmt.Errorf("embeddeddolt: compat migrations: %w", err)
-	}
 	return nil
-}
-
-// ensureIgnoredTables creates dolt_ignore'd wisp tables if they don't exist.
-// Uses withConn (not withRootConn) because the database is already created.
-func (s *EmbeddedDoltStore) ensureIgnoredTables(ctx context.Context) error {
-	return s.withConn(ctx, false, func(tx *sql.Tx) error {
-		return schema.EnsureIgnoredTables(ctx, tx)
-	})
 }
 
 // GetIssue is implemented in get_issue.go.

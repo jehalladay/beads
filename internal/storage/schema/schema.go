@@ -197,14 +197,9 @@ func runMigrations(ctx context.Context, db DBConn, minVersion int, tolerateExist
 			return 0, fmt.Errorf("reading migration %s: %w", mf.name, err)
 		}
 
-		// Execute statements individually. Multi-statement Exec can abort the
-		// batch on the first error, which under tolerateExisting silently skips
-		// subsequent DDL while still recording the version as applied (GH#3363).
-		for _, stmt := range splitStatements(string(data)) {
-			if _, err := db.ExecContext(ctx, stmt); err != nil {
-				if !tolerateExisting && !isConcurrentInitError(err) {
-					return 0, fmt.Errorf("migration %s: statement failed: %w", mf.name, err)
-				}
+		if _, err := db.ExecContext(ctx, string(data)); err != nil {
+			if !tolerateExisting && !isConcurrentInitError(err) {
+				return 0, fmt.Errorf("migration %s: %w", mf.name, err)
 			}
 		}
 

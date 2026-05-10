@@ -40,7 +40,6 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/dolt/migrations"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
 	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
@@ -1121,14 +1120,6 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	// CREATE DATABASE, information_schema queries may fail transiently
 	// even though Ping succeeded. This resolves within ~1s.
 	if !cfg.ReadOnly {
-		// Ensure dolt_ignore'd tables exist BEFORE running migrations.
-		// Migrations may reference these tables (e.g. 0027 alters wisps,
-		// 0030 inserts into local_metadata). After a clone or server restart
-		// these tables don't exist yet since they're not in committed data.
-		if err := versioncontrolops.EnsureIgnoredTables(ctx, db); err != nil {
-			return nil, fmt.Errorf("failed to ensure ignored tables: %w", err)
-		}
-
 		schemaBO := backoff.NewExponentialBackOff()
 		schemaBO.InitialInterval = 100 * time.Millisecond
 		schemaBO.MaxElapsedTime = 5 * time.Second
@@ -1139,6 +1130,13 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			}
 			if schemaErr != nil {
 				return backoff.Permanent(schemaErr)
+			}
+			// Recreate dolt_ignore'd tables after migrations. Migrations
+			// create them on first init; this rebuilds them when the
+			// working set was reset (clone, branch switch, server restart)
+			// and schema_migrations records make MigrateUp a no-op.
+			if err := versioncontrolops.EnsureIgnoredTables(ctx, db); err != nil {
+				return backoff.Permanent(err)
 			}
 			return nil
 		}, backoff.WithContext(schemaBO, ctx)); err != nil {
@@ -1498,11 +1496,11 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 		}
 	}
 
-	// Run backward-compat migrations for databases that predate the embedded
-	// migration system (e.g. ALTER TABLE ADD COLUMN, historical data
-	// transforms). These are idempotent.
-	if err := migrations.RunCompatMigrations(db); err != nil {
-		return fmt.Errorf("failed to run compat migrations: %w", err)
+	// Backfill custom_statuses and custom_types from legacy config rows.
+	// Migration 0024 creates the empty tables; this populates them on legacy
+	// DBs that have status.custom / types.custom set via `bd config set`.
+	if err := schema.EnsureBackfilledCustomStatusesCustomTypes(ctx, db); err != nil {
+		return fmt.Errorf("backfill custom tables: %w", err)
 	}
 
 	return nil
