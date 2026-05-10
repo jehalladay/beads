@@ -2,7 +2,7 @@ package domain
 
 import "context"
 
-type ConfigRepository interface {
+type ConfigSQLRepository interface {
 	GetMetadata(ctx context.Context, key string) (string, error)
 	SetMetadata(ctx context.Context, key, value string) error
 	SetLocalMetadata(ctx context.Context, key, value string) error

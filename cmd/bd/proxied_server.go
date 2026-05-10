@@ -34,14 +34,14 @@ func proxiedServerLogPath(beadsDir string) string {
 	return filepath.Join(proxiedServerRoot(beadsDir), proxiedServerLogName)
 }
 
-func resolveProxiedServerRootPath(beadsDir string, cfg *configfile.Config) (path string, isCustom bool) {
+func resolveProxiedServerRootPath(beadsDir string, cfg *configfile.Config) string {
 	if cfg == nil {
 		cfg = &configfile.Config{}
 	}
 	if custom := cfg.GetDoltProxiedServerRootPath(beadsDir); custom != "" {
-		return custom, true
+		return custom
 	}
-	return proxiedServerRoot(beadsDir), false
+	return proxiedServerRoot(beadsDir)
 }
 
 func resolveProxiedServerConfigPath(beadsDir string, cfg *configfile.Config) (path string, isCustom bool) {
@@ -51,7 +51,7 @@ func resolveProxiedServerConfigPath(beadsDir string, cfg *configfile.Config) (pa
 	if custom := cfg.GetDoltProxiedServerConfig(beadsDir); custom != "" {
 		return custom, true
 	}
-	root, _ := resolveProxiedServerRootPath(beadsDir, cfg)
+	root := resolveProxiedServerRootPath(beadsDir, cfg)
 	return filepath.Join(root, proxiedServerConfigName), false
 }
 
@@ -62,7 +62,7 @@ func resolveProxiedServerLogPath(beadsDir string, cfg *configfile.Config) (path 
 	if custom := cfg.GetDoltProxiedServerLog(beadsDir); custom != "" {
 		return custom, true
 	}
-	root, _ := resolveProxiedServerRootPath(beadsDir, cfg)
+	root := resolveProxiedServerRootPath(beadsDir, cfg)
 	return filepath.Join(root, proxiedServerLogName), false
 }
 

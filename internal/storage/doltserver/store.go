@@ -15,8 +15,8 @@ import (
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/db/proxy"
-	"github.com/steveyegge/beads/internal/storage/db/util"
+	"github.com/steveyegge/beads/internal/storage/dbproxy/proxy"
+	"github.com/steveyegge/beads/internal/storage/dbproxy/util"
 	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/types"
 )

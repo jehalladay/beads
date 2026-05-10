@@ -1589,7 +1589,7 @@ func checkExistingBeadsDataAt(beadsDir string, prefix string) error {
 
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
 		if cfg.IsDoltProxiedServerMode() {
-			proxiedRoot, _ := resolveProxiedServerRootPath(beadsDir, cfg)
+			proxiedRoot := resolveProxiedServerRootPath(beadsDir, cfg)
 			if info, statErr := os.Stat(proxiedRoot); statErr == nil && info.IsDir() {
 				return fmt.Errorf(`
 %s Found existing Dolt database: %s

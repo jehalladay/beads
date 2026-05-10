@@ -114,7 +114,7 @@ func (p *doltServerProvider) NewTx(ctx context.Context) (Tx, error) {
 	}
 	return &doltServerTx{
 		conn:         conn,
-		vc:           db.NewDoltVersionControlRepository(conn),
+		vc:           db.NewDoltVersionControlSQLRepository(conn),
 		targetBranch: p.defaultBranch,
 	}, nil
 }
@@ -166,7 +166,7 @@ func (p *doltServerProvider) initSchema(ctx context.Context, database string) er
 			}
 		}()
 
-		ddl := db.NewDDLRepository(tx)
+		ddl := db.NewDDLSQLRepository(tx)
 		if err := ddl.CreateDatabaseIfNotExists(ctx, database); err != nil {
 			return backoff.Permanent(fmt.Errorf("uow: creating database: %w", err))
 		}
@@ -183,7 +183,7 @@ func (p *doltServerProvider) initSchema(ctx context.Context, database string) er
 		}
 
 		if applied > 0 {
-			vc := db.NewDoltVersionControlRepository(tx)
+			vc := db.NewDoltVersionControlSQLRepository(tx)
 			if err := vc.Add(ctx, "-A"); err != nil {
 				return backoff.Permanent(fmt.Errorf("uow: dolt add after migrations: %w", err))
 			}

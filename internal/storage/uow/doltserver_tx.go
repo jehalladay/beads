@@ -14,7 +14,7 @@ import (
 
 type doltServerTx struct {
 	conn         *sql.Conn
-	vc           db.DoltVersionControlRepository
+	vc           db.DoltVersionControlSQLRepository
 	tx           *sql.Tx
 	branch       string
 	targetBranch string

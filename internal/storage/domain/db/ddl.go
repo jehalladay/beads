@@ -8,22 +8,22 @@ import (
 
 var validIdentifier = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
-type DDLRepository interface {
+type DDLSQLRepository interface {
 	CreateDatabaseIfNotExists(ctx context.Context, database string) error
 	UseDatabase(ctx context.Context, database string) error
 }
 
-func NewDDLRepository(runner Runner) DDLRepository {
-	return &ddlRepositoryImpl{runner: runner}
+func NewDDLSQLRepository(runner Runner) DDLSQLRepository {
+	return &ddlSQLRepository{runner: runner}
 }
 
-type ddlRepositoryImpl struct {
+type ddlSQLRepository struct {
 	runner Runner
 }
 
-var _ DDLRepository = (*ddlRepositoryImpl)(nil)
+var _ DDLSQLRepository = (*ddlSQLRepository)(nil)
 
-func (r *ddlRepositoryImpl) CreateDatabaseIfNotExists(ctx context.Context, database string) error {
+func (r *ddlSQLRepository) CreateDatabaseIfNotExists(ctx context.Context, database string) error {
 	ident, err := quoteIdentifier(database)
 	if err != nil {
 		return fmt.Errorf("db: CreateDatabaseIfNotExists: %w", err)
@@ -34,7 +34,7 @@ func (r *ddlRepositoryImpl) CreateDatabaseIfNotExists(ctx context.Context, datab
 	return nil
 }
 
-func (r *ddlRepositoryImpl) UseDatabase(ctx context.Context, database string) error {
+func (r *ddlSQLRepository) UseDatabase(ctx context.Context, database string) error {
 	ident, err := quoteIdentifier(database)
 	if err != nil {
 		return fmt.Errorf("db: UseDatabase: %w", err)

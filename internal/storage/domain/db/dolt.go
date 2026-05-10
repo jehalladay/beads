@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-type DoltVersionControlRepository interface {
+type DoltVersionControlSQLRepository interface {
 	Checkout(ctx context.Context, args ...string) error
 	Branch(ctx context.Context, args ...string) error
 	Add(ctx context.Context, args ...string) error
@@ -19,57 +19,57 @@ type DoltVersionControlRepository interface {
 	Clone(ctx context.Context, args ...string) error
 }
 
-func NewDoltVersionControlRepository(runner Runner) DoltVersionControlRepository {
-	return &doltVersionControlRepositoryImpl{runner: runner}
+func NewDoltVersionControlSQLRepository(runner Runner) DoltVersionControlSQLRepository {
+	return &doltVersionControlSQLRepository{runner: runner}
 }
 
-type doltVersionControlRepositoryImpl struct {
+type doltVersionControlSQLRepository struct {
 	runner Runner
 }
 
-var _ DoltVersionControlRepository = (*doltVersionControlRepositoryImpl)(nil)
+var _ DoltVersionControlSQLRepository = (*doltVersionControlSQLRepository)(nil)
 
-func (i *doltVersionControlRepositoryImpl) Checkout(ctx context.Context, args ...string) error {
+func (i *doltVersionControlSQLRepository) Checkout(ctx context.Context, args ...string) error {
 	return i.call(ctx, "DOLT_CHECKOUT", args...)
 }
 
-func (i *doltVersionControlRepositoryImpl) Branch(ctx context.Context, args ...string) error {
+func (i *doltVersionControlSQLRepository) Branch(ctx context.Context, args ...string) error {
 	return i.call(ctx, "DOLT_BRANCH", args...)
 }
 
-func (i *doltVersionControlRepositoryImpl) Add(ctx context.Context, args ...string) error {
+func (i *doltVersionControlSQLRepository) Add(ctx context.Context, args ...string) error {
 	return i.call(ctx, "DOLT_ADD", args...)
 }
 
-func (i *doltVersionControlRepositoryImpl) Commit(ctx context.Context, args ...string) error {
+func (i *doltVersionControlSQLRepository) Commit(ctx context.Context, args ...string) error {
 	return i.call(ctx, "DOLT_COMMIT", args...)
 }
 
-func (i *doltVersionControlRepositoryImpl) Merge(ctx context.Context, args ...string) error {
+func (i *doltVersionControlSQLRepository) Merge(ctx context.Context, args ...string) error {
 	return i.call(ctx, "DOLT_MERGE", args...)
 }
 
-func (i *doltVersionControlRepositoryImpl) Remote(ctx context.Context, args ...string) error {
+func (i *doltVersionControlSQLRepository) Remote(ctx context.Context, args ...string) error {
 	return i.call(ctx, "DOLT_REMOTE", args...)
 }
 
-func (i *doltVersionControlRepositoryImpl) Fetch(ctx context.Context, args ...string) error {
+func (i *doltVersionControlSQLRepository) Fetch(ctx context.Context, args ...string) error {
 	return i.call(ctx, "DOLT_FETCH", args...)
 }
 
-func (i *doltVersionControlRepositoryImpl) Push(ctx context.Context, args ...string) error {
+func (i *doltVersionControlSQLRepository) Push(ctx context.Context, args ...string) error {
 	return i.call(ctx, "DOLT_PUSH", args...)
 }
 
-func (i *doltVersionControlRepositoryImpl) Pull(ctx context.Context, args ...string) error {
+func (i *doltVersionControlSQLRepository) Pull(ctx context.Context, args ...string) error {
 	return i.call(ctx, "DOLT_PULL", args...)
 }
 
-func (i *doltVersionControlRepositoryImpl) Clone(ctx context.Context, args ...string) error {
+func (i *doltVersionControlSQLRepository) Clone(ctx context.Context, args ...string) error {
 	return i.call(ctx, "DOLT_CLONE", args...)
 }
 
-func (i *doltVersionControlRepositoryImpl) call(ctx context.Context, proc string, args ...string) error {
+func (i *doltVersionControlSQLRepository) call(ctx context.Context, proc string, args ...string) error {
 	placeholders := make([]string, len(args))
 	iargs := make([]any, len(args))
 	for j, a := range args {
