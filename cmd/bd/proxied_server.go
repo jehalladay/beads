@@ -15,9 +15,9 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/db/proxy"
+	"github.com/steveyegge/beads/internal/storage/dbproxy/proxy"
 	"github.com/steveyegge/beads/internal/storage/dolt"
-	proxieddolt "github.com/steveyegge/beads/internal/storage/doltserver"
+	"github.com/steveyegge/beads/internal/storage/doltserver"
 )
 
 const (
@@ -223,7 +223,7 @@ func newProxiedServerStore(ctx context.Context, cfg *dolt.Config) (storage.DoltS
 		}
 	}
 
-	return proxieddolt.NewDoltServerStore(
+	return doltserver.NewDoltServerStore(
 		ctx,
 		rootPath,
 		cfg.BeadsDir,

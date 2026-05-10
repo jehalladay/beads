@@ -19,8 +19,8 @@ import (
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/steveyegge/beads/internal/storage/db/pidfile"
-	"github.com/steveyegge/beads/internal/storage/db/util"
+	"github.com/steveyegge/beads/internal/storage/dbproxy/pidfile"
+	"github.com/steveyegge/beads/internal/storage/dbproxy/util"
 )
 
 const defaultKeepAlivePeriod = 30 * time.Second
