@@ -3,7 +3,7 @@ package proxy
 import "sync"
 
 type Counters struct {
-	StartCalls           int64
+	ListenAndServeCalls  int64
 	BackendStartCalls    int64
 	BackendStopCalls     int64
 	IdleTimeouts         int64
@@ -41,7 +41,7 @@ func (s *Stats) update(fn func(*Counters)) {
 	s.mu.Unlock()
 }
 
-func (s *Stats) IncStart()              { s.update(func(c *Counters) { c.StartCalls++ }) }
+func (s *Stats) IncListenAndServe()     { s.update(func(c *Counters) { c.ListenAndServeCalls++ }) }
 func (s *Stats) IncBackendStart()       { s.update(func(c *Counters) { c.BackendStartCalls++ }) }
 func (s *Stats) IncBackendStop()        { s.update(func(c *Counters) { c.BackendStopCalls++ }) }
 func (s *Stats) IncIdleTimeout()        { s.update(func(c *Counters) { c.IdleTimeouts++ }) }

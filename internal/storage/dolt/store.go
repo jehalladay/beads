@@ -243,6 +243,14 @@ type Config struct {
 	// on metadata.json dolt_mode or BEADS_DOLT_SERVER_MODE env var.
 	ServerMode bool
 
+	// ProxiedServer indicates this config targets a per-workspace proxied
+	// dolt sql-server (a parent proxy + a child dolt sql-server, both rooted
+	// at <BeadsDir>/proxieddb). Mutually exclusive with ServerMode: the
+	// proxied path owns its own connection details and does not consult
+	// ServerHost/Port/Socket/User. Set by the store factory based on
+	// metadata.json dolt_mode=proxied-server.
+	ProxiedServer bool
+
 	// AutoStart enables transparent server auto-start when connection fails.
 	// When true and the host is localhost, bd will start a dolt sql-server
 	// automatically if one isn't running. Disabled under orchestrator (GT_ROOT set).

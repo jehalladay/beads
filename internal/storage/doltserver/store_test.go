@@ -59,7 +59,7 @@ func TestNewDoltServerStore_ValidationErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s, err := newDoltServerStore(
+			s, err := NewDoltServerStore(
 				context.Background(),
 				t.TempDir(), t.TempDir(),
 				tc.database, "Test", "test@example.com",
@@ -97,7 +97,7 @@ func TestNewDoltServerStore_HappyPath(t *testing.T) {
 	cfgPath := writeServerConfig(t, port)
 	logPath := filepath.Join(t.TempDir(), "server.log")
 
-	store, err := newDoltServerStore(
+	store, err := NewDoltServerStore(
 		context.Background(),
 		storeRootDir,
 		t.TempDir(),

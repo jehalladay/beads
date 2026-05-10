@@ -29,7 +29,7 @@ func Shutdown(rootDir string) error {
 	if err := shutdownPair(rootDir, server.LockFileName, server.PIDFileName); err != nil {
 		return fmt.Errorf("proxy.Shutdown: dolt sql-server: %w", err)
 	}
-	if err := shutdownPair(rootDir, lockFileName, PIDFileName); err != nil {
+	if err := shutdownPair(rootDir, LockFileName, PIDFileName); err != nil {
 		return fmt.Errorf("proxy.Shutdown: proxy: %w", err)
 	}
 	return nil
