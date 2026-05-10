@@ -7,15 +7,6 @@ import (
 	"sync"
 )
 
-// ignoredMigrations lists the migration versions whose .up.sql contents define
-// or alter dolt-ignored tables, in the order they must be applied. The .up.sql
-// files are the single source of truth.
-//
-// Migrations 23 and 27 alter both `issues` and `wisps`; when replayed here
-// against an already-migrated DB, the issues ALTER errors with "duplicate
-// column" and is tolerated by isConcurrentInitError, while the wisps ALTER
-// still applies (Dolt processes multi-statement batches statement by statement
-// at the server, the driver just surfaces the first error).
 var ignoredMigrations = []int{
 	29, // CREATE TABLE local_metadata
 	11, // CREATE TABLE repo_mtimes
