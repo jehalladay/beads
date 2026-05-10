@@ -12,6 +12,11 @@ type DoltVersionControlRepository interface {
 	Add(ctx context.Context, args ...string) error
 	Commit(ctx context.Context, args ...string) error
 	Merge(ctx context.Context, args ...string) error
+	Remote(ctx context.Context, args ...string) error
+	Fetch(ctx context.Context, args ...string) error
+	Push(ctx context.Context, args ...string) error
+	Pull(ctx context.Context, args ...string) error
+	Clone(ctx context.Context, args ...string) error
 }
 
 func NewDoltVersionControlRepository(runner Runner) DoltVersionControlRepository {
@@ -42,6 +47,26 @@ func (i *doltVersionControlRepositoryImpl) Commit(ctx context.Context, args ...s
 
 func (i *doltVersionControlRepositoryImpl) Merge(ctx context.Context, args ...string) error {
 	return i.call(ctx, "DOLT_MERGE", args...)
+}
+
+func (i *doltVersionControlRepositoryImpl) Remote(ctx context.Context, args ...string) error {
+	return i.call(ctx, "DOLT_REMOTE", args...)
+}
+
+func (i *doltVersionControlRepositoryImpl) Fetch(ctx context.Context, args ...string) error {
+	return i.call(ctx, "DOLT_FETCH", args...)
+}
+
+func (i *doltVersionControlRepositoryImpl) Push(ctx context.Context, args ...string) error {
+	return i.call(ctx, "DOLT_PUSH", args...)
+}
+
+func (i *doltVersionControlRepositoryImpl) Pull(ctx context.Context, args ...string) error {
+	return i.call(ctx, "DOLT_PULL", args...)
+}
+
+func (i *doltVersionControlRepositoryImpl) Clone(ctx context.Context, args ...string) error {
+	return i.call(ctx, "DOLT_CLONE", args...)
 }
 
 func (i *doltVersionControlRepositoryImpl) call(ctx context.Context, proc string, args ...string) error {
