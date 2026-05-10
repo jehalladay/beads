@@ -1,4 +1,4 @@
-package doltserver
+package uow
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
-	"github.com/steveyegge/beads/internal/storage/db/proxy"
+	"github.com/steveyegge/beads/internal/storage/dbproxy/proxy"
 	"github.com/steveyegge/beads/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,7 +43,7 @@ func shutdownOnInterrupt(t *testing.T, rootDir string) {
 	})
 }
 
-func TestNewDoltServerStore_ValidationErrors(t *testing.T) {
+func TestNewDoltServerUOWProvider_ValidationErrors(t *testing.T) {
 	cases := []struct {
 		name     string
 		database string
@@ -59,21 +59,21 @@ func TestNewDoltServerStore_ValidationErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s, err := NewDoltServerStore(
+			p, err := NewDoltServerUOWProvider(
 				context.Background(),
-				t.TempDir(), t.TempDir(),
-				tc.database, "Test", "test@example.com",
-				"", "", tc.backend, false,
+				t.TempDir(),
+				tc.database,
+				"", "", tc.backend,
 				tc.rootUser, "", tc.doltBin,
 			)
-			assert.Nil(t, s)
+			assert.Nil(t, p)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
 		})
 	}
 }
 
-func TestNewDoltServerStore_HappyPath(t *testing.T) {
+func TestNewDoltServerUOWProvider_HappyPath(t *testing.T) {
 	testutil.RequireDoltBinary(t)
 	bin, err := exec.LookPath("dolt")
 	require.NoError(t, err)
@@ -97,25 +97,22 @@ func TestNewDoltServerStore_HappyPath(t *testing.T) {
 	cfgPath := writeServerConfig(t, port)
 	logPath := filepath.Join(t.TempDir(), "server.log")
 
-	store, err := NewDoltServerStore(
+	provider, err := NewDoltServerUOWProvider(
 		context.Background(),
 		storeRootDir,
-		t.TempDir(),
 		"beads",
-		"test_user",
-		"test@example.com",
 		logPath,
 		cfgPath,
 		proxy.BackendLocalServer,
-		false,
 		"root",
 		"",
 		bin,
 	)
 
 	require.NoError(t, err)
-	require.NotNil(t, store)
-	t.Cleanup(func() { _ = store.db.Close() })
+	require.NotNil(t, provider)
+	impl := provider.(*doltServerProvider)
+	t.Cleanup(func() { _ = impl.db.Close() })
 }
 
 var (
@@ -135,7 +132,7 @@ func buildBDBinary(t *testing.T) string {
 			bdBinary = prebuilt
 			return
 		}
-		tmpDir, err := os.MkdirTemp("", "bd-doltserver-test-*")
+		tmpDir, err := os.MkdirTemp("", "bd-uow-test-*")
 		if err != nil {
 			bdBinaryErr = fmt.Errorf("temp dir: %w", err)
 			return

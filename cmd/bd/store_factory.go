@@ -12,7 +12,7 @@ import (
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/db/util"
+	"github.com/steveyegge/beads/internal/storage/dbproxy/util"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 )
@@ -42,7 +42,9 @@ func usesProxiedServer() bool {
 // Used by bd init and PersistentPreRun.
 func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.DoltStorage, error) {
 	if cfg.ProxiedServer {
-		return newProxiedServerStore(ctx, cfg)
+		// TODO: this should not be a store
+		// it should be a uow provider
+		return nil, fmt.Errorf("proxy server store should be uow provider")
 	}
 	if cfg.ServerMode {
 		return dolt.New(ctx, cfg)
@@ -80,11 +82,13 @@ func acquireEmbeddedLock(beadsDir string, serverMode bool) (util.Unlocker, error
 func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltStorage, error) {
 	cfg, err := configfile.Load(beadsDir)
 	if err == nil && cfg != nil && cfg.IsDoltProxiedServerMode() {
-		return newProxiedServerStore(ctx, &dolt.Config{
-			BeadsDir:      beadsDir,
-			Database:      cfg.GetDoltDatabase(),
-			ProxiedServer: true,
-		})
+		// TODO: this needs to be uow provider
+		return nil, fmt.Errorf("proxy server store should be uow provider")
+		// 	return newProxiedServerStore(ctx, &dolt.Config{
+		// 		BeadsDir:      beadsDir,
+		// 		Database:      cfg.GetDoltDatabase(),
+		// 		ProxiedServer: true,
+		// 	})
 	}
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfig(ctx, beadsDir)
@@ -151,12 +155,14 @@ func migrateHyphenatedDB(beadsDir string, cfg *configfile.Config, oldName, newNa
 func newReadOnlyStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltStorage, error) {
 	cfg, err := configfile.Load(beadsDir)
 	if err == nil && cfg != nil && cfg.IsDoltProxiedServerMode() {
-		return newProxiedServerStore(ctx, &dolt.Config{
-			BeadsDir:      beadsDir,
-			Database:      cfg.GetDoltDatabase(),
-			ProxiedServer: true,
-			ReadOnly:      true,
-		})
+		// TODO: this needs to be uow provider
+		return nil, fmt.Errorf("proxy server store needs to be uow provider")
+		// return newProxiedServerStore(ctx, &dolt.Config{
+		// 	BeadsDir:      beadsDir,
+		// 	Database:      cfg.GetDoltDatabase(),
+		// 	ProxiedServer: true,
+		// 	ReadOnly:      true,
+		// })
 	}
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{ReadOnly: true})

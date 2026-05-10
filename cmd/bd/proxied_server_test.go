@@ -459,55 +459,43 @@ func TestInitCommandRegistersServerRootPathFlag(t *testing.T) {
 // TestResolveProxiedServerRootPath mirrors TestResolveProxiedServerLogPath /
 // TestResolveProxiedServerConfigPath for the root-path resolver.
 func TestResolveProxiedServerRootPath(t *testing.T) {
-	t.Run("nil cfg, no env, returns default and !isCustom", func(t *testing.T) {
+	t.Run("nil cfg, no env, returns default", func(t *testing.T) {
 		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
 		bd := t.TempDir()
-		path, isCustom := resolveProxiedServerRootPath(bd, nil)
-		assert.Equal(t, proxiedServerRoot(bd), path)
-		assert.False(t, isCustom)
+		assert.Equal(t, proxiedServerRoot(bd), resolveProxiedServerRootPath(bd, nil))
 	})
 
-	t.Run("empty cfg, no env, returns default and !isCustom", func(t *testing.T) {
+	t.Run("empty cfg, no env, returns default", func(t *testing.T) {
 		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
 		bd := t.TempDir()
-		path, isCustom := resolveProxiedServerRootPath(bd, &configfile.Config{})
-		assert.Equal(t, proxiedServerRoot(bd), path)
-		assert.False(t, isCustom)
+		assert.Equal(t, proxiedServerRoot(bd), resolveProxiedServerRootPath(bd, &configfile.Config{}))
 	})
 
-	t.Run("field relative joins beadsDir and isCustom", func(t *testing.T) {
+	t.Run("field relative joins beadsDir", func(t *testing.T) {
 		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
 		bd := t.TempDir()
 		cfg := &configfile.Config{DoltProxiedServerRootPath: "alt-proxieddb"}
-		path, isCustom := resolveProxiedServerRootPath(bd, cfg)
-		assert.Equal(t, filepath.Join(bd, "alt-proxieddb"), path)
-		assert.True(t, isCustom)
+		assert.Equal(t, filepath.Join(bd, "alt-proxieddb"), resolveProxiedServerRootPath(bd, cfg))
 	})
 
-	t.Run("field absolute returned as-is and isCustom", func(t *testing.T) {
+	t.Run("field absolute returned as-is", func(t *testing.T) {
 		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
 		bd := t.TempDir()
 		cfg := &configfile.Config{DoltProxiedServerRootPath: "/var/lib/beads/proxieddb"}
-		path, isCustom := resolveProxiedServerRootPath(bd, cfg)
-		assert.Equal(t, "/var/lib/beads/proxieddb", path)
-		assert.True(t, isCustom)
+		assert.Equal(t, "/var/lib/beads/proxieddb", resolveProxiedServerRootPath(bd, cfg))
 	})
 
-	t.Run("env beats field and isCustom", func(t *testing.T) {
+	t.Run("env beats field", func(t *testing.T) {
 		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "/from/env-root")
 		bd := t.TempDir()
 		cfg := &configfile.Config{DoltProxiedServerRootPath: "alt-from-meta"}
-		path, isCustom := resolveProxiedServerRootPath(bd, cfg)
-		assert.Equal(t, "/from/env-root", path)
-		assert.True(t, isCustom)
+		assert.Equal(t, "/from/env-root", resolveProxiedServerRootPath(bd, cfg))
 	})
 
 	t.Run("env with nil cfg still wins", func(t *testing.T) {
 		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "/from/env-root")
 		bd := t.TempDir()
-		path, isCustom := resolveProxiedServerRootPath(bd, nil)
-		assert.Equal(t, "/from/env-root", path)
-		assert.True(t, isCustom)
+		assert.Equal(t, "/from/env-root", resolveProxiedServerRootPath(bd, nil))
 	})
 }
 

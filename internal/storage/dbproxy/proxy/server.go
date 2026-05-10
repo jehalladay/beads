@@ -19,9 +19,9 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/steveyegge/beads/internal/lockfile"
-	"github.com/steveyegge/beads/internal/storage/db/pidfile"
-	"github.com/steveyegge/beads/internal/storage/db/server"
-	"github.com/steveyegge/beads/internal/storage/db/util"
+	"github.com/steveyegge/beads/internal/storage/dbproxy/pidfile"
+	"github.com/steveyegge/beads/internal/storage/dbproxy/server"
+	"github.com/steveyegge/beads/internal/storage/dbproxy/util"
 )
 
 type ProxyOpts struct {
@@ -102,7 +102,7 @@ func (p *proxyServer) ListenAndServe(parentCtx context.Context) error {
 	defer lock.Unlock()
 
 	logPath := filepath.Join(p.rootDir, LogFileName)
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // G304: logPath is rootDir-derived (workspace path), not user-request input
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304 -- logPath is derived from operator-supplied config, not untrusted request input
 	if err != nil {
 		return fmt.Errorf("open proxy log %q: %w", logPath, err)
 	}
