@@ -173,13 +173,14 @@ func (p *doltServerProvider) initSchema(ctx context.Context, database string) er
 		if err := ddl.UseDatabase(ctx, database); err != nil {
 			return backoff.Permanent(fmt.Errorf("uow: switching to database: %w", err))
 		}
-		if err := schema.EnsureIgnoredTables(ctx, tx); err != nil {
-			return backoff.Permanent(fmt.Errorf("uow: ensure ignored tables before migration: %w", err))
-		}
 
 		applied, err := schema.MigrateUp(ctx, tx)
 		if err != nil {
 			return backoff.Permanent(err)
+		}
+
+		if err := schema.EnsureIgnoredTables(ctx, tx); err != nil {
+			return backoff.Permanent(fmt.Errorf("uow: ensure ignored tables after migration: %w", err))
 		}
 
 		if applied > 0 {
