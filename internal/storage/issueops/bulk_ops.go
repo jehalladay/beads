@@ -217,23 +217,10 @@ func DeleteIssuesBySourceRepoInTx(ctx context.Context, tx *sql.Tx, sourceRepo st
 	return int(rowsAffected), nil
 }
 
-// UpdateIssueIDInTx renames an issue and updates all references across tables.
-//
-// Writes are split across two transactions:
-//   - regularTx: receives UPDATEs to issues and the regular auxiliary tables
-//     (dependencies, events, labels, comments, issue_snapshots,
-//     compaction_snapshots, child_counters), and the renamed-event INSERT.
-//   - ignoredTx: receives the initial wisp-status lookup and (for a regular
-//     rename) the cross-reference UPDATEs to wisp_dependencies, wisp_events,
-//     wisp_labels, wisp_comments. For a wisp rename, all writes go to
-//     ignoredTx.
-//
 //nolint:gosec // G201: table names are hardcoded
 func UpdateIssueIDInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, oldID, newID string, issue *types.Issue, actor string) error {
 	isWisp := IsActiveWispInTx(ctx, ignoredTx, oldID)
 
-	// FK_CHECKS is session-scoped. Disable on whichever tx(s) will receive
-	// UPDATEs in this rename.
 	if isWisp {
 		if _, err := ignoredTx.ExecContext(ctx, `SET FOREIGN_KEY_CHECKS = 0`); err != nil {
 			return fmt.Errorf("disable FK checks: %w", err)
@@ -255,9 +242,6 @@ func UpdateIssueIDInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, oldID,
 	return updateIssueIDInTx(ctx, regularTx, ignoredTx, oldID, newID, issue, actor)
 }
 
-// updateIssueIDInTx renames a regular (non-wisp) issue. Regular-table UPDATEs
-// go to regularTx; cross-reference UPDATEs on wisp_* tables (which may refer
-// to this issue's ID) go to ignoredTx.
 func updateIssueIDInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, oldID, newID string, issue *types.Issue, actor string) error {
 	now := time.Now().UTC()
 	result, err := regularTx.ExecContext(ctx, `

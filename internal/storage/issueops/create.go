@@ -46,15 +46,6 @@ func NewBatchContext(ctx context.Context, tx *sql.Tx, opts storage.BatchCreateOp
 	}, nil
 }
 
-// CreateIssueInTx handles a single issue:
-// prepare, resolve prefix, generate ID, validate prefix, check orphans,
-// insert, record event, persist labels/comments.
-//
-// Writes route per-issue: wisp issues go to ignoredTx, non-wisp issues to
-// regularTx. The BatchContext caller is responsible for having read config
-// from the regular side.
-//
-// Returns nil if the issue was skipped (e.g., orphan skip mode).
 func CreateIssueInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, bc *BatchContext, issue *types.Issue, actor string) error {
 	if err := PrepareIssueForInsert(issue, bc.CustomStatuses, bc.CustomTypes); err != nil {
 		return err
@@ -66,7 +57,6 @@ func CreateIssueInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, bc *Batc
 		tx = ignoredTx
 	}
 
-	// Resolve prefix and generate ID if needed.
 	if issue.ID == "" {
 		prefix := bc.ConfigPrefix
 		if issue.PrefixOverride != "" {
@@ -110,12 +100,6 @@ func CreateIssueInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, bc *Batc
 	return PersistComments(ctx, regularTx, ignoredTx, issue)
 }
 
-// CreateIssuesInTx creates multiple issues. Per-issue writes route per
-// IsWisp(issue) — wisp issues go to ignoredTx, regular issues to regularTx.
-// Config and batch-context reads use regularTx.
-//
-// Handles the first pass (insert each issue), second pass (dependencies),
-// and child counter reconciliation. Does NOT handle dolt versioning.
 func CreateIssuesInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, issues []*types.Issue, actor string, opts storage.BatchCreateOptions) error {
 	bc, err := NewBatchContext(ctx, regularTx, opts)
 	if err != nil {
@@ -264,8 +248,6 @@ func InsertIssueIfNew(ctx context.Context, tx *sql.Tx, issueTable string, issue 
 	return existingCount == 0, nil
 }
 
-// PersistLabels writes issue.Labels into the appropriate labels table.
-// Routes per-issue: wisp_labels → ignoredTx, labels → regularTx.
 func PersistLabels(ctx context.Context, regularTx, ignoredTx *sql.Tx, issue *types.Issue) error {
 	if len(issue.Labels) == 0 {
 		return nil
@@ -290,13 +272,6 @@ func PersistLabels(ctx context.Context, regularTx, ignoredTx *sql.Tx, issue *typ
 	return nil
 }
 
-// PersistComments writes issue.Comments into the appropriate comments table.
-// Routes per-issue: wisp_comments → ignoredTx, comments → regularTx.
-//
-// The comments table uses a UUID PK (DEFAULT UUID()), so ON DUPLICATE KEY UPDATE
-// would never match. Instead, we check for an existing identical comment
-// (same issue_id, author, and created_at) before inserting to prevent
-// duplicates on re-import.
 func PersistComments(ctx context.Context, regularTx, ignoredTx *sql.Tx, issue *types.Issue) error {
 	if len(issue.Comments) == 0 {
 		return nil
@@ -338,9 +313,6 @@ func PersistComments(ctx context.Context, regularTx, ignoredTx *sql.Tx, issue *t
 	return nil
 }
 
-// PersistDependencies inserts dependencies for all issues (second pass).
-// Routes per-issue: wisp_dependencies + wisps lookup → ignoredTx,
-// dependencies + issues lookup → regularTx.
 func PersistDependencies(ctx context.Context, regularTx, ignoredTx *sql.Tx, issues []*types.Issue, actor string) error {
 	for _, issue := range issues {
 		if len(issue.Dependencies) == 0 {
@@ -384,10 +356,6 @@ func PersistDependencies(ctx context.Context, regularTx, ignoredTx *sql.Tx, issu
 	return nil
 }
 
-// ReconcileChildCounters updates child_counters so that subsequent
-// bd create --parent doesn't collide with imported hierarchical IDs.
-// child_counters is a regular table and the parent lookup is in issues,
-// so all I/O uses regularTx. ignoredTx is accepted for signature uniformity.
 func ReconcileChildCounters(ctx context.Context, regularTx, ignoredTx *sql.Tx, issues []*types.Issue) error {
 	_ = ignoredTx // unused: child_counters is regular-only
 	childMaxMap := make(map[string]int)

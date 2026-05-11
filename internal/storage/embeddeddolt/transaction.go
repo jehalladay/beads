@@ -36,9 +36,6 @@ func (s *EmbeddedDoltStore) RunInTransaction(ctx context.Context, commitMsg stri
 	return nil
 }
 
-// embeddedTransaction implements storage.Transaction for EmbeddedDoltStore.
-// Holds separate transactions for regular (replicated) and dolt-ignored
-// (clone-local) tables; each method routes its writes to the matching tx.
 type embeddedTransaction struct {
 	regularTx *sql.Tx
 	ignoredTx *sql.Tx
@@ -67,9 +64,6 @@ func (t *embeddedTransaction) CreateIssues(ctx context.Context, issues []*types.
 func (t *embeddedTransaction) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
 	t.dirty.MarkDirty("issues")
 	t.dirty.MarkDirty("events")
-	// UpdateIssueInTx routes per-id (regular or wisp). Until it's refactored
-	// to two-tx, pass regularTx; wisp UPDATEs will run on regularTx and
-	// remain in the working set (Dolt strips them from history via dolt_ignore).
 	_, err := issueops.UpdateIssueInTx(ctx, t.regularTx, id, updates, actor)
 	return err
 }
@@ -77,7 +71,6 @@ func (t *embeddedTransaction) UpdateIssue(ctx context.Context, id string, update
 func (t *embeddedTransaction) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	t.dirty.MarkDirty("issues")
 	t.dirty.MarkDirty("events")
-	// CloseIssueInTx routes per-id; pass regularTx (see UpdateIssue note).
 	_, err := issueops.CloseIssueInTx(ctx, t.regularTx, id, reason, actor, session)
 	return err
 }
@@ -92,8 +85,6 @@ func (t *embeddedTransaction) DeleteIssue(ctx context.Context, id string) error 
 }
 
 func (t *embeddedTransaction) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
-	// GetIssueInTx may read from either issues or wisps based on the id;
-	// regularTx can see both tables since wisp_* are normal MySQL tables.
 	return issueops.GetIssueInTx(ctx, t.regularTx, id)
 }
 
@@ -107,7 +98,6 @@ func (t *embeddedTransaction) AddDependency(ctx context.Context, dep *types.Depe
 
 func (t *embeddedTransaction) AddDependencyWithOptions(ctx context.Context, dep *types.Dependency, actor string, addOpts storage.DependencyAddOptions) error {
 	t.dirty.MarkDirty("dependencies")
-	// AddDependencyInTx routes per-id; pass regularTx (see UpdateIssue note).
 	return issueops.AddDependencyInTx(ctx, t.regularTx, dep, actor, issueops.AddDependencyOpts{
 		IsCrossPrefix:  types.ExtractPrefix(dep.IssueID) != types.ExtractPrefix(dep.DependsOnID),
 		SkipCycleCheck: addOpts.SkipCycleCheck,

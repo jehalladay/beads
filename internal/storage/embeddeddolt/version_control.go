@@ -40,9 +40,6 @@ func (s *EmbeddedDoltStore) withDBConn(ctx context.Context, fn func(db versionco
 }
 
 func (s *EmbeddedDoltStore) Commit(ctx context.Context, message string) error {
-	// Run CALL DOLT_ADD/COMMIT on regularTx. DOLT_ADD('-A') stages all
-	// non-ignored tables from the working set; ignored tables are filtered
-	// by Dolt regardless of which session runs the call.
 	return s.withConn(ctx, true, func(regularTx, ignoredTx *sql.Tx) error {
 		if _, err := regularTx.ExecContext(ctx, "CALL DOLT_ADD('-A')"); err != nil {
 			return fmt.Errorf("dolt add: %w", err)

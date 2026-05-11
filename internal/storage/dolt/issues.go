@@ -339,7 +339,7 @@ func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
 		if err := issueops.DeleteIssueInTx(ctx, regularTx, ignoredTx, id); err != nil {
 			return err
 		}
-		// GH#2455: Stage only the tables we modified, then commit without -A.
+
 		for _, table := range []string{"issues", "dependencies", "labels", "comments", "events", "child_counters", "issue_snapshots", "compaction_snapshots"} {
 			_, _ = regularTx.ExecContext(ctx, "CALL DOLT_ADD(?)", table)
 		}
@@ -417,8 +417,7 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 		if dryRun {
 			return nil
 		}
-		// GH#2455: Stage only the tables this operation modified, then commit
-		// without -A.
+
 		for _, table := range []string{"issues", "dependencies", "labels", "comments", "events", "child_counters", "issue_snapshots", "compaction_snapshots"} {
 			_, _ = regularTx.ExecContext(ctx, "CALL DOLT_ADD(?)", table)
 		}

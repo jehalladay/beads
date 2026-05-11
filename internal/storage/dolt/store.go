@@ -618,17 +618,6 @@ func (s *DoltStore) withReadTx(ctx context.Context, fn func(tx *sql.Tx) error) e
 	return fn(tx)
 }
 
-// withRetryTxs wraps withWriteTxs with retry logic for serialization failures
-// (MySQL 1213 deadlock, 1205 lock wait timeout). These errors guarantee the
-// transaction was rolled back, so retrying is always safe.
-//
-// In shared-server mode the retry window is extended to 15s (from 5s) because
-// multiple worktrees sharing one server produce higher contention (GH#3140).
-//
-// Connection-level errors (broken pipe, bad connection) are NOT retried here
-// because they can occur after a successful commit, making retry unsafe for
-// non-idempotent operations. Callers that need connection-level retry should
-// use withRetry at a higher layer.
 func (s *DoltStore) withRetryTxs(ctx context.Context, fn func(regularTx, ignoredTx *sql.Tx) error) error {
 	bo := backoff.NewExponentialBackOff()
 	bo.InitialInterval = 25 * time.Millisecond
@@ -649,8 +638,6 @@ func (s *DoltStore) withRetryTxs(ctx context.Context, fn func(regularTx, ignored
 	}, backoff.WithContext(bo, ctx))
 }
 
-// withWriteTxs runs fn inside a transaction, committing on success.
-// Used for write operations that delegate SQL work to issueops functions.
 func (s *DoltStore) withWriteTxs(ctx context.Context, fn func(regularTx, ignoredTx *sql.Tx) error) error {
 	if s.closed.Load() {
 		return ErrStoreClosed
