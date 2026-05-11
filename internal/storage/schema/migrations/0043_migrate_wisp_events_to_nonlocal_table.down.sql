@@ -1,0 +1,1 @@
+-- Migration 0043 down: revert wisp_events from nonlocal back to dolt-ignored.

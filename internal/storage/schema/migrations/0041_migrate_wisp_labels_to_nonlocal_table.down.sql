@@ -1,0 +1,1 @@
+-- Migration 0041 down: revert wisp_labels from nonlocal back to dolt-ignored.

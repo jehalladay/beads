@@ -1,0 +1,1 @@
+-- Migration 0046 down: revert local_metadata from nonlocal back to dolt-ignored.
