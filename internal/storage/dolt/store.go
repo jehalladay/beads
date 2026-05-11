@@ -613,18 +613,7 @@ func (s *DoltStore) withReadTx(ctx context.Context, fn func(tx *sql.Tx) error) e
 	return fn(tx)
 }
 
-// withRetryTx wraps withWriteTx with retry logic for serialization failures
-// (MySQL 1213 deadlock, 1205 lock wait timeout). These errors guarantee the
-// transaction was rolled back, so retrying is always safe.
-//
-// In shared-server mode the retry window is extended to 15s (from 5s) because
-// multiple worktrees sharing one server produce higher contention (GH#3140).
-//
-// Connection-level errors (broken pipe, bad connection) are NOT retried here
-// because they can occur after a successful commit, making retry unsafe for
-// non-idempotent operations. Callers that need connection-level retry should
-// use withRetry at a higher layer.
-func (s *DoltStore) withRetryTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+func (s *DoltStore) withRetryTxs(ctx context.Context, fn func(regularTx, ignoredTx *sql.Tx) error) error {
 	bo := backoff.NewExponentialBackOff()
 	bo.InitialInterval = 25 * time.Millisecond
 	bo.MaxElapsedTime = 5 * time.Second
@@ -632,7 +621,7 @@ func (s *DoltStore) withRetryTx(ctx context.Context, fn func(tx *sql.Tx) error) 
 		bo.MaxElapsedTime = 15 * time.Second
 	}
 	return backoff.Retry(func() error {
-		err := s.withWriteTx(ctx, fn)
+		err := s.withWriteTxs(ctx, fn)
 		if err != nil && isSerializationError(err) {
 			doltMetrics.serializationErrors.Add(ctx, 1)
 			return err // retryable
@@ -644,22 +633,34 @@ func (s *DoltStore) withRetryTx(ctx context.Context, fn func(tx *sql.Tx) error) 
 	}, backoff.WithContext(bo, ctx))
 }
 
-// withWriteTx runs fn inside a transaction, committing on success.
-// Used for write operations that delegate SQL work to issueops functions.
-// The caller's fn should NOT call tx.Commit — withWriteTx handles that.
-func (s *DoltStore) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+func (s *DoltStore) withWriteTxs(ctx context.Context, fn func(regularTx, ignoredTx *sql.Tx) error) error {
 	if s.closed.Load() {
 		return ErrStoreClosed
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	regularTx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin write tx: %w", err)
+		return fmt.Errorf("begin regular write tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
-	if err := fn(tx); err != nil {
-		return err
+	ignoredTx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.Join(
+			fmt.Errorf("begin ignored write tx: %w", err),
+			regularTx.Rollback(),
+		)
 	}
-	return tx.Commit()
+	if err := fn(regularTx, ignoredTx); err != nil {
+		return errors.Join(err, regularTx.Rollback(), ignoredTx.Rollback())
+	}
+	if err := regularTx.Commit(); err != nil {
+		return errors.Join(
+			fmt.Errorf("commit regular write tx: %w", err),
+			ignoredTx.Rollback(),
+		)
+	}
+	if err := ignoredTx.Commit(); err != nil {
+		return fmt.Errorf("commit ignored write tx (regular already committed): %w", err)
+	}
+	return nil
 }
 
 // uncommitted implicit transaction that Dolt rolls back on connection close,
