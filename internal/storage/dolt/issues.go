@@ -336,9 +336,6 @@ func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
 	}
 
 	if err := s.withWriteTxs(ctx, func(regularTx, ignoredTx *sql.Tx) error {
-		// Wisps were routed to deleteWisp above, so DeleteIssueInTx will only
-		// touch regular tables here; ignoredTx is passed for signature
-		// compliance and stays empty.
 		if err := issueops.DeleteIssueInTx(ctx, regularTx, ignoredTx, id); err != nil {
 			return err
 		}
@@ -411,9 +408,6 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 
 	var result *types.DeleteIssuesResult
 	if err := s.withWriteTxs(ctx, func(regularTx, ignoredTx *sql.Tx) error {
-		// Wisps were partitioned out above; this path operates on regular
-		// issues only. ignoredTx is passed for signature compliance and
-		// stays empty.
 		r, err := issueops.DeleteIssuesInTx(ctx, regularTx, ignoredTx, ids, cascade, force, dryRun)
 		if err != nil {
 			result = r

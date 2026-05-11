@@ -16,10 +16,7 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// doltTransaction implements storage.Transaction for Dolt.
-// Holds two SQL transactions to separate Dolt-replicated writes from clone-local
-// (dolt-ignored) writes: regularTx owns issues/dependencies/labels/comments/events/
-// config/metadata/etc.; ignoredTx owns wisps/wisp_*/local_metadata/repo_mtimes.
+// doltTransaction implements storage.Transaction for Dolt
 type doltTransaction struct {
 	regularTx *sql.Tx
 	ignoredTx *sql.Tx
@@ -27,9 +24,6 @@ type doltTransaction struct {
 	dirty     versioncontrolops.DirtyTableTracker
 }
 
-// txFor returns the transaction that owns the given table.
-// Dolt-ignored tables (wisps/wisp_*/local_metadata/repo_mtimes) use ignoredTx;
-// everything else uses regularTx.
 func (t *doltTransaction) txFor(table string) *sql.Tx {
 	if table == "wisps" || strings.HasPrefix(table, "wisp_") ||
 		table == "local_metadata" || table == "repo_mtimes" {
@@ -39,9 +33,8 @@ func (t *doltTransaction) txFor(table string) *sql.Tx {
 }
 
 // isActiveWisp checks if an ID exists in the wisps table within the transaction.
-// Queries ignoredTx because wisps writes happen on ignoredTx, so read-your-own-
-// writes within a RunInTransaction closure requires checking that tx.
-// Handles both -wisp- pattern and explicit-ID ephemerals (GH#2053).
+// Unlike the store-level isActiveWisp, this queries within the transaction so it
+// sees uncommitted wisps. Handles both -wisp- pattern and explicit-ID ephemerals (GH#2053).
 func (t *doltTransaction) isActiveWisp(ctx context.Context, id string) bool {
 	var exists int
 	err := t.ignoredTx.QueryRowContext(ctx, "SELECT 1 FROM wisps WHERE id = ? LIMIT 1", id).Scan(&exists)
@@ -95,10 +88,6 @@ func (s *DoltStore) runDoltTransaction(ctx context.Context, commitMsg string, fn
 	}
 	defer conn.Close()
 
-	// regularTx pins to the conn we hold so DOLT_COMMIT runs on the same Dolt
-	// session that did the regular-table writes (GH#2455). ignoredTx uses a
-	// separate pool connection because its writes (wisps/wisp_*/local_metadata)
-	// are dolt-ignored and do not participate in DOLT_ADD/DOLT_COMMIT.
 	regularTx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin regular tx: %w", err)
@@ -114,38 +103,28 @@ func (s *DoltStore) runDoltTransaction(ctx context.Context, commitMsg string, fn
 
 	defer func() {
 		if r := recover(); r != nil {
-			_ = regularTx.Rollback() // Best effort rollback on error path
+			_ = regularTx.Rollback()
 			_ = ignoredTx.Rollback()
 			panic(r)
 		}
 	}()
 
 	if err := fn(tx); err != nil {
-		_ = regularTx.Rollback() // Best effort rollback on error path
+		_ = regularTx.Rollback()
 		_ = ignoredTx.Rollback()
 		return err
 	}
 
-	// Commit the regular SQL transaction first to persist working set changes
-	// to versioned tables. Without this, DOLT_COMMIT below would not see the
-	// writes (the Go sql.Tx isolation hides them from other sessions). (hq-3paz0m)
 	if err := regularTx.Commit(); err != nil {
 		_ = ignoredTx.Rollback()
 		return fmt.Errorf("sql commit (regular): %w", err)
 	}
 
-	// Create a Dolt version commit from the working set on the SAME connection
-	// used by regularTx. StageAndCommit stages only the tables this transaction
-	// modified (dirty filter excludes wisp/wisp_*), then DOLT_COMMIT('-m').
-	// (GH#2455)
 	if err := versioncontrolops.StageAndCommit(ctx, conn, tx.dirty.DirtyTables(), commitMsg, s.commitAuthorString()); err != nil {
 		_ = ignoredTx.Rollback()
 		return err
 	}
 
-	// Commit ignoredTx last. If it fails the regular side is already in Dolt
-	// history; the failure surfaces to the caller so they know clone-local
-	// state didn't persist.
 	if err := ignoredTx.Commit(); err != nil {
 		return fmt.Errorf("sql commit (ignored, regular already committed): %w", err)
 	}
@@ -179,7 +158,6 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 
 	// Generate ID if not provided
 	if issue.ID == "" {
-		// config is a regular table — read from regularTx.
 		var configPrefix string
 		err := t.regularTx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
 		if err == sql.ErrNoRows || configPrefix == "" {
@@ -203,8 +181,6 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 			}
 		}
 
-		// Collision check + counter (for issues only) target the destination
-		// table; for wisps the helper short-circuits the counter path.
 		generatedID, err := generateIssueIDInTable(ctx, t.txFor(table), table, prefix, issue, actor)
 		if err != nil {
 			return fmt.Errorf("failed to generate issue ID: %w", err)
@@ -695,9 +671,6 @@ func (t *doltTransaction) AddDependencyWithOptions(ctx context.Context, dep *typ
 		IsCrossPrefix:  isCrossPrefix,
 		SkipCycleCheck: addOpts.SkipCycleCheck,
 	}
-	// Dependency writes go to the tx that owns `table`. Cycle detection inside
-	// AddDependencyInTx UNIONs both dep tables; on the writer's tx it sees a
-	// committed snapshot of the other class (not uncommitted within this RIT).
 	if err := issueops.AddDependencyInTx(ctx, t.txFor(table), dep, actor, opts); err != nil {
 		return err
 	}

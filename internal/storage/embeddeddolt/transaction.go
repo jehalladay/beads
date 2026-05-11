@@ -15,7 +15,7 @@ import (
 )
 
 // RunInTransaction executes a function within a database transaction.
-// After the SQL transactions commit, dirty tables are selectively staged
+// After the SQL transaction commits, dirty tables are selectively staged
 // and a Dolt version commit is created with the given message.
 func (s *EmbeddedDoltStore) RunInTransaction(ctx context.Context, commitMsg string, fn func(tx storage.Transaction) error) error {
 	var tracker versioncontrolops.DirtyTableTracker

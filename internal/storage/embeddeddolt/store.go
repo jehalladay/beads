@@ -95,17 +95,11 @@ func newStore(ctx context.Context, beadsDir, database, branch string) (*Embedded
 }
 
 // withConn opens a short-lived database connection configured for the store's
-// database and branch, begins two explicit SQL transactions — one for regular
-// (committed) tables and one for dolt-ignored tables — and passes both to fn.
+// database and branch, begins an explicit SQL transaction, and passes it to
+// fn. If commit is true and fn returns nil, the transaction is committed;
+// otherwise it is rolled back. The connection is closed before withConn
+// returns regardless of outcome.
 //
-// If commit is true and fn returns nil, regularTx is committed first, then
-// ignoredTx. If regularTx commit fails, ignoredTx is rolled back. If regularTx
-// commits successfully but ignoredTx fails, regularTx is already in the
-// working set and the ignoredTx error is returned.
-// If commit is false (read-only callers) or fn returns an error, both txs are
-// rolled back.
-//
-// The connection is closed before withConn returns regardless of outcome.
 // The database must already exist (created during initSchema).
 func (s *EmbeddedDoltStore) withConn(ctx context.Context, commit bool, fn func(regularTx, ignoredTx *sql.Tx) error) (err error) {
 	if s.closed.Load() {
@@ -149,9 +143,6 @@ func (s *EmbeddedDoltStore) withConn(ctx context.Context, commit bool, fn func(r
 		return
 	}
 
-	// Commit ordering: regular first (the replicated side). If it fails,
-	// roll back the ignored side. If regular succeeds but ignored fails,
-	// regular is already committed and we report the ignored error.
 	if cErr := regularTx.Commit(); cErr != nil {
 		err = errors.Join(
 			fmt.Errorf("embeddeddolt: commit regular tx: %w", cErr),
@@ -444,7 +435,7 @@ func (s *EmbeddedDoltStore) ImportJSONLData(
 			}
 		}
 
-		// Create all issues in the same transaction.
+		// Create all issues in the same transaction
 		if err := issueops.CreateIssuesInTx(ctx, regularTx, ignoredTx, issues, actor, storage.BatchCreateOptions{
 			OrphanHandling:       storage.OrphanAllow,
 			SkipPrefixValidation: true,
