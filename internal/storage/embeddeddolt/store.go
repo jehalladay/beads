@@ -94,47 +94,6 @@ func newStore(ctx context.Context, beadsDir, database, branch string) (*Embedded
 	return s, nil
 }
 
-// withRootConn opens a short-lived database connection without selecting any
-// database or branch, begins an explicit SQL transaction, and passes it to fn.
-// This is used during initialization when the database may not yet exist.
-func (s *EmbeddedDoltStore) withRootConn(ctx context.Context, commit bool, fn func(tx *sql.Tx) error) (err error) {
-	if s.closed.Load() {
-		err = errClosed
-		return
-	}
-
-	var db *sql.DB
-	var cleanup func() error
-	db, cleanup, err = OpenSQL(ctx, s.dataDir, "", "")
-	if err != nil {
-		return
-	}
-
-	defer func() {
-		err = errors.Join(err, cleanup())
-	}()
-
-	var tx *sql.Tx
-	tx, err = db.BeginTx(ctx, nil)
-	if err != nil {
-		err = fmt.Errorf("embeddeddolt: begin tx: %w", err)
-		return
-	}
-
-	err = fn(tx)
-	if err != nil {
-		err = errors.Join(err, tx.Rollback())
-		return
-	}
-
-	if !commit {
-		return tx.Rollback()
-	}
-
-	err = tx.Commit()
-	return
-}
-
 // withConn opens a short-lived database connection configured for the store's
 // database and branch, begins an explicit SQL transaction, and passes it to
 // fn. If commit is true and fn returns nil, the transaction is committed;
@@ -180,75 +139,64 @@ func (s *EmbeddedDoltStore) withConn(ctx context.Context, commit bool, fn func(t
 	return
 }
 
-// initSchema creates the database (if needed) and runs all pending migrations,
-// committing them to Dolt history. Uses withRootConn so the database can be
-// created before USE; this avoids running CREATE DATABASE inside withConn,
-// which is not safe for concurrent use in the embedded Dolt engine.
-//
-// After the schema-migration transaction commits, a fresh *sql.DB is opened
-// and used to drive the idempotent compat-migration runner. Mirrors the
-// server-mode open path in dolt/store.go:initSchemaOnDB and repairs
-// pre-existing embedded databases that predate the embedded migration
-// system's full coverage (GH#3412).
+// initSchema creates the database (if needed) and runs all pending migrations
+// on a generated branch that's merged into the default branch. A pinned
+// *sql.Conn is required because DOLT_CHECKOUT/DOLT_BRANCH/DOLT_MERGE inside
+// schema.MigrateOnBranch are session-scoped; the embedded driver hands out
+// connections from a pool, so we acquire one and reuse it for the whole flow.
 func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {
-	if err := s.withRootConn(ctx, true, func(tx *sql.Tx) error {
-		if s.database != "" {
-			if !validIdentifier.MatchString(s.database) {
-				msg := fmt.Sprintf("embeddeddolt: invalid database name: %q", s.database)
-				if strings.ContainsRune(s.database, '-') {
-					msg += "; hyphens are not allowed in embedded mode — replace with underscores in .beads/metadata.json dolt_database field, or run 'bd doctor'"
-				}
-				return errors.New(msg)
+	db, cleanup, err := OpenSQL(ctx, s.dataDir, "", "")
+	if err != nil {
+		return fmt.Errorf("embeddeddolt: open db: %w", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("embeddeddolt: pin connection: %w", err)
+	}
+	defer conn.Close()
+
+	if s.database != "" {
+		if !validIdentifier.MatchString(s.database) {
+			msg := fmt.Sprintf("embeddeddolt: invalid database name: %q", s.database)
+			if strings.ContainsRune(s.database, '-') {
+				msg += "; hyphens are not allowed in embedded mode — replace with underscores in .beads/metadata.json dolt_database field, or run 'bd doctor'"
 			}
-			if _, err := tx.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS `"+s.database+"`"); err != nil {
-				return fmt.Errorf("embeddeddolt: creating database: %w", err)
-			}
-			if _, err := tx.ExecContext(ctx, "USE `"+s.database+"`"); err != nil {
-				return fmt.Errorf("embeddeddolt: switching to database: %w", err)
-			}
-			if s.branch != "" {
-				if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET @@%s_head_ref = %s", s.database, sqlStringLiteral(s.branch))); err != nil {
-					return fmt.Errorf("embeddeddolt: setting branch: %w", err)
-				}
+			return errors.New(msg)
+		}
+		if _, err := conn.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS `"+s.database+"`"); err != nil {
+			return fmt.Errorf("embeddeddolt: creating database: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, "USE `"+s.database+"`"); err != nil {
+			return fmt.Errorf("embeddeddolt: switching to database: %w", err)
+		}
+		if s.branch != "" {
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET @@%s_head_ref = %s", s.database, sqlStringLiteral(s.branch))); err != nil {
+				return fmt.Errorf("embeddeddolt: setting branch: %w", err)
 			}
 		}
+	}
 
-		applied, err := schema.MigrateUp(ctx, tx)
-		if err != nil {
-			return err
-		}
+	defaultBranch := s.branch
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+	if _, err := schema.MigrateOnBranch(ctx, conn, defaultBranch); err != nil {
+		return fmt.Errorf("embeddeddolt: migrate: %w", err)
+	}
 
-		// Recreate dolt_ignore'd tables after migrations. Migrations create
-		// them on first init; this rebuilds them when the working set was
-		// reset (clone, branch switch) and schema_migrations records make
-		// MigrateUp a no-op.
-		if err := schema.EnsureIgnoredTables(ctx, tx); err != nil {
-			return fmt.Errorf("ensure ignored tables after migration: %w", err)
-		}
+	// Recreate dolt_ignore'd tables on the default branch after migrations
+	// have been merged in. Required when the working set was reset (clone,
+	// branch switch) and schema_migrations records make the migrate path a
+	// no-op.
+	if err := schema.EnsureIgnoredTables(ctx, conn); err != nil {
+		return fmt.Errorf("embeddeddolt: ensure ignored tables: %w", err)
+	}
 
-		// Backfill custom_statuses and custom_types from legacy config rows.
-		// Migration 0024 creates the tables; this populates them on legacy
-		// DBs that have status.custom / types.custom set via `bd config set`.
-		if err := schema.EnsureBackfilledCustomStatusesCustomTypes(ctx, tx); err != nil {
-			return fmt.Errorf("backfill custom tables: %w", err)
-		}
-
-		if applied > 0 {
-			if _, err := tx.ExecContext(ctx, "CALL DOLT_ADD('-A')"); err != nil {
-				return fmt.Errorf("dolt add after migrations: %w", err)
-			}
-			if _, err := tx.ExecContext(ctx, "CALL DOLT_COMMIT('-m', 'schema: apply migrations')"); err != nil {
-				// Backfill migrations may only create dolt_ignore'd tables (e.g. wisps),
-				// leaving nothing staged for commit. This is expected.
-				if !strings.Contains(err.Error(), "nothing to commit") {
-					return fmt.Errorf("dolt commit after migrations: %w", err)
-				}
-			}
-		}
-
-		return nil
-	}); err != nil {
-		return err
+	// Backfill custom_statuses and custom_types from legacy config rows.
+	if err := schema.EnsureBackfilledCustomStatusesCustomTypes(ctx, conn); err != nil {
+		return fmt.Errorf("embeddeddolt: backfill custom tables: %w", err)
 	}
 
 	return nil

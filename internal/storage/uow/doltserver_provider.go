@@ -155,18 +155,16 @@ func (p *doltServerProvider) initSchema(ctx context.Context, database string) er
 	bo.InitialInterval = 25 * time.Millisecond
 	bo.MaxElapsedTime = 5 * time.Second
 	return backoff.Retry(func() error {
-		tx, err := p.db.BeginTx(ctx, nil)
+		conn, err := p.db.Conn(ctx)
 		if err != nil {
-			return backoff.Permanent(fmt.Errorf("uow: begin schema tx: %w", err))
-		}
-		committed := false
-		defer func() {
-			if !committed {
-				_ = tx.Rollback()
+			if isSerializationError(err) {
+				return fmt.Errorf("uow: pin connection: %w", err)
 			}
-		}()
+			return backoff.Permanent(fmt.Errorf("uow: pin connection: %w", err))
+		}
+		defer conn.Close()
 
-		ddl := db.NewDDLSQLRepository(tx)
+		ddl := db.NewDDLSQLRepository(conn)
 		if err := ddl.CreateDatabaseIfNotExists(ctx, database); err != nil {
 			return backoff.Permanent(fmt.Errorf("uow: creating database: %w", err))
 		}
@@ -174,32 +172,16 @@ func (p *doltServerProvider) initSchema(ctx context.Context, database string) er
 			return backoff.Permanent(fmt.Errorf("uow: switching to database: %w", err))
 		}
 
-		applied, err := schema.MigrateUp(ctx, tx)
-		if err != nil {
-			return backoff.Permanent(err)
+		if _, err := schema.MigrateOnBranch(ctx, conn, p.defaultBranch); err != nil {
+			if isSerializationError(err) {
+				return fmt.Errorf("uow: migrate: %w", err)
+			}
+			return backoff.Permanent(fmt.Errorf("uow: migrate: %w", err))
 		}
 
-		if err := schema.EnsureIgnoredTables(ctx, tx); err != nil {
+		if err := schema.EnsureIgnoredTables(ctx, conn); err != nil {
 			return backoff.Permanent(fmt.Errorf("uow: ensure ignored tables after migration: %w", err))
 		}
-
-		if applied > 0 {
-			vc := db.NewDoltVersionControlSQLRepository(tx)
-			if err := vc.Add(ctx, "-A"); err != nil {
-				return backoff.Permanent(fmt.Errorf("uow: dolt add after migrations: %w", err))
-			}
-			if err := vc.Commit(ctx, "-m", "schema: apply migrations"); err != nil && !isNothingToCommit(err) {
-				return backoff.Permanent(fmt.Errorf("uow: dolt commit after migrations: %w", err))
-			}
-		}
-
-		if err := tx.Commit(); err != nil {
-			if isSerializationError(err) {
-				return fmt.Errorf("uow: commit schema tx: %w", err)
-			}
-			return backoff.Permanent(fmt.Errorf("uow: commit schema tx: %w", err))
-		}
-		committed = true
 		return nil
 	}, backoff.WithContext(bo, ctx))
 }

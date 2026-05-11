@@ -1465,41 +1465,24 @@ func databaseExistsOnServer(ctx context.Context, db *sql.DB, name string) (bool,
 	return false, rows.Err()
 }
 
-// initSchemaOnDB applies pending schema migrations and DoltStore-specific
-// backward-compat transforms. Uses the shared schema.MigrateUp runner which
-// tracks applied versions in the schema_migrations table.
+// initSchemaOnDB applies pending schema migrations on a generated branch,
+// merges them into main, and then backfills legacy config-driven tables.
+// schema.MigrateOnBranch tracks applied versions in schema_migrations.
 func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
-	applied, err := schema.MigrateUp(ctx, db)
+	conn, err := db.Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("schema migration: %w", err)
+		return fmt.Errorf("schema: pin connection: %w", err)
 	}
+	defer conn.Close()
 
-	if applied > 0 {
-		// Stage only schema tables — avoid DOLT_ADD('-A') which can sweep up
-		// unrelated dirty tables like config from concurrent operations (GH#2455).
-		schemaTables := []string{
-			"issues", "dependencies", "labels", "comments", "events",
-			"config", "metadata", "child_counters",
-			"issue_snapshots", "compaction_snapshots",
-			"routes", "issue_counter",
-			"interactions", "federation_peers",
-			"custom_statuses", "custom_types",
-			"dolt_ignore", "schema_migrations",
-		}
-		for _, table := range schemaTables {
-			_, _ = db.ExecContext(ctx, "CALL DOLT_ADD(?)", table)
-		}
-		if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-m', 'schema: apply migrations')"); err != nil {
-			if !strings.Contains(strings.ToLower(err.Error()), "nothing to commit") {
-				return fmt.Errorf("failed to commit schema migrations: %w", err)
-			}
-		}
+	if _, err := schema.MigrateOnBranch(ctx, conn, "main"); err != nil {
+		return fmt.Errorf("schema migration: %w", err)
 	}
 
 	// Backfill custom_statuses and custom_types from legacy config rows.
 	// Migration 0024 creates the empty tables; this populates them on legacy
 	// DBs that have status.custom / types.custom set via `bd config set`.
-	if err := schema.EnsureBackfilledCustomStatusesCustomTypes(ctx, db); err != nil {
+	if err := schema.EnsureBackfilledCustomStatusesCustomTypes(ctx, conn); err != nil {
 		return fmt.Errorf("backfill custom tables: %w", err)
 	}
 
