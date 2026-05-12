@@ -13,3 +13,5 @@ CALL DOLT_COMMIT('-Am', 'create nonlocal table wisp_comments');
 INSERT INTO wisp_comments SELECT * FROM __temp_wisp_comments;
 DROP TABLE __temp_wisp_comments;
 DELETE FROM dolt_ignore WHERE pattern = '__temp_wisp_comments';
+DELETE FROM dolt_ignore WHERE pattern = 'wisps_%';
+DELETE FROM dolt_ignore WHERE pattern = 'wisp_%';

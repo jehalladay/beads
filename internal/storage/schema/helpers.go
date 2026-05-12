@@ -5,15 +5,7 @@ import (
 	"fmt"
 )
 
-var ignoredTableNames = []string{
-	"local_metadata",
-	"repo_mtimes",
-	"wisps",
-	"wisp_labels",
-	"wisp_dependencies",
-	"wisp_events",
-	"wisp_comments",
-}
+var ignoredTableNames = []string{}
 
 func EnsureIgnoredTables(ctx context.Context, db DBConn) error {
 	for _, table := range ignoredTableNames {

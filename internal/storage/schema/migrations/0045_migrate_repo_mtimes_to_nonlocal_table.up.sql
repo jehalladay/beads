@@ -9,7 +9,6 @@ CREATE TABLE repo_mtimes (
     INDEX idx_repo_mtimes_checked (last_checked)
 );
 INSERT INTO dolt_nonlocal_tables (table_name, target_ref, options) VALUES ('repo_mtimes', 'main', 'immediate');
-REPLACE INTO dolt_ignore VALUES ('temp_repo_mtimes', true);
 CALL DOLT_COMMIT('-Am', 'create nonlocal table repo_mtimes');
 INSERT INTO repo_mtimes SELECT * FROM __temp_repo_mtimes;
 DROP TABLE __temp_repo_mtimes;
