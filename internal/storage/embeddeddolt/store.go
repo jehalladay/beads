@@ -204,14 +204,6 @@ func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {
 		return fmt.Errorf("embeddeddolt: migrate: %w", err)
 	}
 
-	// Recreate dolt_ignore'd tables on the default branch after migrations
-	// have been merged in. Required when the working set was reset (clone,
-	// branch switch) and schema_migrations records make the migrate path a
-	// no-op.
-	if err := schema.EnsureIgnoredTables(ctx, conn); err != nil {
-		return fmt.Errorf("embeddeddolt: ensure ignored tables: %w", err)
-	}
-
 	// Backfill custom_statuses and custom_types from legacy config rows.
 	if err := schema.EnsureBackfilledCustomStatusesCustomTypes(ctx, conn); err != nil {
 		return fmt.Errorf("embeddeddolt: backfill custom tables: %w", err)

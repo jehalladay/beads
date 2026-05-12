@@ -1126,13 +1126,6 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			if schemaErr != nil {
 				return backoff.Permanent(schemaErr)
 			}
-			// Recreate dolt_ignore'd tables after migrations. Migrations
-			// create them on first init; this rebuilds them when the
-			// working set was reset (clone, branch switch, server restart)
-			// and schema_migrations records make MigrateUp a no-op.
-			if err := versioncontrolops.EnsureIgnoredTables(ctx, db); err != nil {
-				return backoff.Permanent(err)
-			}
 			return nil
 		}, backoff.WithContext(schemaBO, ctx)); err != nil {
 			return nil, fmt.Errorf("failed to initialize schema: %w", err)
@@ -2311,20 +2304,12 @@ func (s *DoltStore) Branch(ctx context.Context, name string) (retErr error) {
 		)...),
 	)
 	defer func() { endSpan(span, retErr) }()
-	// Pin a single connection so DOLT_BRANCH and EnsureIgnoredTables run on
-	// the same session. Using s.db (pool) could dispatch them to different
-	// connections where the branch context differs.
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire connection for branch: %w", err)
 	}
 	defer conn.Close()
-	if err := versioncontrolops.CreateBranch(ctx, conn, name); err != nil {
-		return err
-	}
-	// dolt_ignore'd tables (wisps, wisp_*) don't carry over to new branches —
-	// ensure they exist on the newly created branch.
-	return schema.EnsureIgnoredTables(ctx, conn)
+	return versioncontrolops.CreateBranch(ctx, conn, name)
 }
 
 // Checkout switches to the specified branch
@@ -2336,9 +2321,6 @@ func (s *DoltStore) Checkout(ctx context.Context, branch string) (retErr error) 
 		)...),
 	)
 	defer func() { endSpan(span, retErr) }()
-	// Pin a single connection so DOLT_CHECKOUT and EnsureIgnoredTables run on
-	// the same session. DOLT_CHECKOUT is session-scoped — using s.db (pool)
-	// could dispatch EnsureIgnoredTables to a connection still on the old branch.
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire connection for checkout: %w", err)
@@ -2348,9 +2330,7 @@ func (s *DoltStore) Checkout(ctx context.Context, branch string) (retErr error) 
 		return err
 	}
 	s.branch = branch
-	// dolt_ignore'd tables (wisps, wisp_*) may not exist on the target branch —
-	// ensure they exist after checkout.
-	return schema.EnsureIgnoredTables(ctx, conn)
+	return nil
 }
 
 // Merge merges the specified branch into the current branch.

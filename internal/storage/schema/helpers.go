@@ -5,30 +5,6 @@ import (
 	"fmt"
 )
 
-var ignoredTableNames = []string{}
-
-func EnsureIgnoredTables(ctx context.Context, db DBConn) error {
-	for _, table := range ignoredTableNames {
-		ok, err := TableExists(ctx, db, table)
-		if err != nil {
-			return fmt.Errorf("check %s table: %w", table, err)
-		}
-		if !ok {
-			return CreateIgnoredTables(ctx, db)
-		}
-	}
-	return nil
-}
-
-func CreateIgnoredTables(ctx context.Context, db DBConn) error {
-	for _, ddl := range IgnoredTableDDL() {
-		if _, err := db.ExecContext(ctx, ddl); err != nil {
-			return fmt.Errorf("create ignored table: %w", err)
-		}
-	}
-	return nil
-}
-
 func TableExists(ctx context.Context, db DBConn, table string) (bool, error) {
 	rows, err := db.QueryContext(ctx, "SHOW TABLES LIKE '"+table+"'") //nolint:gosec // G202: table name is an internal constant
 	if err != nil {

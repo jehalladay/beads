@@ -57,23 +57,6 @@ func MigrateOnBranch(ctx context.Context, conn *sql.Conn, defaultBranch string) 
 		return 0, fmt.Errorf("checkout %q: %w", generated, err)
 	}
 
-	// Re-materialize ignored tables on the generated branch before applying
-	// migrations — but only when upgrading (current > 0). Dolt-ignored tables
-	// (wisps, local_metadata, repo_mtimes, …) live only in the working set and
-	// don't transfer when branching, so later migrations that reference them
-	// (e.g. 0035's INSERT INTO wisps SELECT … FROM issues) would otherwise
-	// fail with "table not found".
-	//
-	// On a fresh init (current == 0) we skip this: the generated branch has no
-	// tables at all, and the ignored-table DDL set includes ALTERs against
-	// `issues` (migrations 23, 27) that would fail. MigrateUp will run every
-	// migration from 1 onward and create the ignored tables in order.
-	if current > 0 {
-		if err := EnsureIgnoredTables(ctx, conn); err != nil {
-			return 0, fmt.Errorf("ensure ignored tables on %q: %w", generated, err)
-		}
-	}
-
 	applied, err := MigrateUp(ctx, conn)
 	if err != nil {
 		return 0, fmt.Errorf("migrate: %w", err)
@@ -95,13 +78,6 @@ func MigrateOnBranch(ctx context.Context, conn *sql.Conn, defaultBranch string) 
 	}
 	if _, err := conn.ExecContext(ctx, "CALL DOLT_MERGE(?)", generated); err != nil {
 		return 0, fmt.Errorf("merge %q into %q: %w", generated, defaultBranch, err)
-	}
-
-	// Re-materialize ignored tables on the default branch after the merge.
-	// The merge brings over committed state only, so the working-set-only
-	// ignored tables would otherwise be missing for the caller.
-	if err := EnsureIgnoredTables(ctx, conn); err != nil {
-		return 0, fmt.Errorf("ensure ignored tables on %q: %w", defaultBranch, err)
 	}
 
 	return applied, nil
