@@ -1,5 +1,12 @@
 REPLACE INTO dolt_ignore VALUES ('__temp_wisp_dependencies', true);
-ALTER TABLE wisp_dependencies RENAME TO __temp_wisp_dependencies;
+-- Rename only when the legacy wisp_dependencies table is present (see migration 0040).
+SET @sql = IF(
+    (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wisp_dependencies') > 0,
+    'ALTER TABLE wisp_dependencies RENAME TO __temp_wisp_dependencies',
+    'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 CREATE TABLE wisp_dependencies (
     issue_id VARCHAR(255) NOT NULL,
     depends_on_id VARCHAR(255) NOT NULL,
@@ -15,6 +22,12 @@ CREATE TABLE wisp_dependencies (
 );
 INSERT INTO dolt_nonlocal_tables (table_name, target_ref, options) VALUES ('wisp_dependencies', 'main', 'immediate');
 CALL DOLT_COMMIT('-Am', 'create nonlocal table wisp_dependencies');
-INSERT INTO wisp_dependencies SELECT * FROM __temp_wisp_dependencies;
-DROP TABLE __temp_wisp_dependencies;
+SET @sql = IF(
+    (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '__temp_wisp_dependencies') > 0,
+    'INSERT INTO wisp_dependencies SELECT * FROM __temp_wisp_dependencies',
+    'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+DROP TABLE IF EXISTS __temp_wisp_dependencies;
 DELETE FROM dolt_ignore WHERE pattern = '__temp_wisp_dependencies';

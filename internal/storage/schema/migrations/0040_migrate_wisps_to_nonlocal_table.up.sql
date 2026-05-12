@@ -1,5 +1,14 @@
 REPLACE INTO dolt_ignore VALUES ('__temp_wisps', true);
-ALTER TABLE wisps RENAME TO __temp_wisps;
+-- Rename only when the legacy wisps table is present. Legacy clones may not
+-- have it in the working set since wisps used to be dolt-ignored and didn't
+-- transfer via DOLT_CLONE.
+SET @sql = IF(
+    (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wisps') > 0,
+    'ALTER TABLE wisps RENAME TO __temp_wisps',
+    'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 DELETE FROM dolt_ignore WHERE pattern = 'wisps';
 CREATE TABLE wisps (
     id VARCHAR(255) PRIMARY KEY,
@@ -66,7 +75,14 @@ CREATE TABLE wisps (
 INSERT INTO dolt_nonlocal_tables (table_name, target_ref, options) VALUES ('wisps', 'main', 'immediate');
 INSERT INTO dolt_nonlocal_tables (table_name, target_ref, options) VALUES ('wisps_*', 'main', 'immediate');
 CALL DOLT_COMMIT('-Am', 'create nonlocal table wisps');
-INSERT INTO wisps SELECT * FROM __temp_wisps;
-DROP TABLE __temp_wisps;
+-- Copy data only if the temp table was actually created above.
+SET @sql = IF(
+    (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '__temp_wisps') > 0,
+    'INSERT INTO wisps SELECT * FROM __temp_wisps',
+    'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+DROP TABLE IF EXISTS __temp_wisps;
 DELETE FROM dolt_ignore WHERE pattern = '__temp_wisps';
 
