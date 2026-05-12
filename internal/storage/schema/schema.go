@@ -12,8 +12,6 @@ import (
 	"sync"
 )
 
-// DBConn is the minimal interface satisfied by *sql.DB, *sql.Tx, and *sql.Conn.
-// It provides query and exec methods needed by the migration runner.
 type DBConn interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -33,8 +31,6 @@ const schemaMigrationsBootstrapSQL = `CREATE TABLE IF NOT EXISTS schema_migratio
 	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 )`
 
-// LatestVersion returns the highest version number among the embedded .up.sql files.
-// Computed once and cached.
 func LatestVersion() int {
 	latestOnce.Do(func() {
 		entries, err := fs.ReadDir(upMigrations, "migrations")
@@ -57,9 +53,6 @@ func LatestVersion() int {
 	return latestVer
 }
 
-// AllMigrationsSQL returns the schema_migrations bootstrap plus all .up.sql
-// migration contents concatenated in order. Used by integration tests that need
-// to initialize a schema via dolt sql CLI.
 func AllMigrationsSQL() string {
 	entries, err := fs.ReadDir(upMigrations, "migrations")
 	if err != nil {
@@ -97,7 +90,6 @@ func AllMigrationsSQL() string {
 	return b.String()
 }
 
-// parseVersion extracts the leading integer from a migration filename like "0001_create_issues.up.sql".
 func parseVersion(name string) (int, error) {
 	parts := strings.SplitN(name, "_", 2)
 	if len(parts) == 0 {
@@ -106,15 +98,11 @@ func parseVersion(name string) (int, error) {
 	return strconv.Atoi(parts[0])
 }
 
-// MigrateUp applies all embedded .up.sql migrations that haven't been applied yet.
-// Returns the number of migrations applied. Safe for use with both *sql.Tx and
-// *sql.DB — the caller controls transaction boundaries.
 func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 	if _, err := db.ExecContext(ctx, schemaMigrationsBootstrapSQL); err != nil {
 		return 0, fmt.Errorf("creating schema_migrations table: %w", err)
 	}
 
-	// Find the current version.
 	var current int
 	err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&current)
 	if err == sql.ErrNoRows {

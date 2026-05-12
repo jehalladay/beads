@@ -10,12 +10,6 @@ import (
 )
 
 func MigrateOnBranch(ctx context.Context, conn *sql.Conn, defaultBranch string) (int, error) {
-	// Bootstrap schema_migrations on the default branch and commit it before
-	// any further work. Otherwise a failure later in this function leaks the
-	// table as untracked working-set state — the deferred cleanup deletes the
-	// generated branch (where the real migrations would have lived), and the
-	// next init sees an untracked schema_migrations on the default branch with
-	// no committed schema behind it.
 	if _, err := conn.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", defaultBranch); err != nil {
 		return 0, fmt.Errorf("checkout %q: %w", defaultBranch, err)
 	}

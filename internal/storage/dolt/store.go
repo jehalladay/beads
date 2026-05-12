@@ -2409,15 +2409,3 @@ type DoltStatus = storage.Status
 
 // StatusEntry is an alias for storage.StatusEntry.
 type StatusEntry = storage.StatusEntry
-
-// RebuildStatusViews regenerates the ready_issues and blocked_issues views.
-// Views are now table-backed (static SQL), so no custom status parameter needed.
-func (s *DoltStore) RebuildStatusViews(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, BuildReadyIssuesView()); err != nil {
-		return fmt.Errorf("failed to rebuild ready_issues view: %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, BuildBlockedIssuesView()); err != nil {
-		return fmt.Errorf("failed to rebuild blocked_issues view: %w", err)
-	}
-	return nil
-}

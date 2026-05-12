@@ -88,9 +88,6 @@ func backfillCustomStatuses(ctx context.Context, db DBConn) error {
 	return nil
 }
 
-// parseTypesValue interprets types.custom as a JSON array first, falling back
-// to a comma-separated list. Matches the behavior of the former compat
-// migration helper of the same name.
 func parseTypesValue(value string) []string {
 	value = strings.TrimSpace(value)
 	if value == "" {
