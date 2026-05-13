@@ -1139,12 +1139,14 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		}
 	}
 
-	// Project identity verification: detect cross-project data leakage (GH#2372).
-	// If the local metadata.json has a project_id and the database has one too,
-	// they must match. A mismatch means this client is connected to the wrong
-	// project's Dolt server — refuse to proceed.
 	if !cfg.CreateIfMissing {
-		if verifyErr := store.verifyProjectIdentity(ctx, cfg.BeadsDir); verifyErr != nil {
+		var verifyErr error
+		if cfg.Database == doltserver.GlobalDatabaseName {
+			verifyErr = store.verifyGlobalProjectIdentity(ctx, cfg.BeadsDir)
+		} else {
+			verifyErr = store.verifyProjectIdentity(ctx, cfg.BeadsDir)
+		}
+		if verifyErr != nil {
 			_ = db.Close()
 			return nil, verifyErr
 		}
@@ -1212,6 +1214,35 @@ func (s *DoltStore) verifyProjectIdentity(ctx context.Context, beadsDir string) 
 				"To diagnose: bd dolt status\n"+
 				"Do NOT run 'bd init' — your data likely exists, just on a different server.",
 			localID, dbID)
+	}
+	return nil
+}
+
+func (s *DoltStore) verifyGlobalProjectIdentity(ctx context.Context, beadsDir string) error {
+	if beadsDir == "" {
+		return nil
+	}
+
+	metaCfg, err := configfile.Load(beadsDir)
+	if err != nil || metaCfg == nil {
+		return nil
+	}
+	expectedID := metaCfg.GlobalProjectID
+	if expectedID == "" {
+		return nil
+	}
+
+	dbID, err := s.GetMetadata(ctx, "_project_id")
+	if err != nil || dbID == "" {
+		return nil
+	}
+
+	if expectedID != dbID {
+		return fmt.Errorf(
+			"GLOBAL PROJECT IDENTITY MISMATCH — refusing to connect\n\n"+
+				"  Expected global project ID (metadata.json): %s\n"+
+				"  Database project ID:                        %s\n\n"+
+				expectedID, dbID)
 	}
 	return nil
 }
