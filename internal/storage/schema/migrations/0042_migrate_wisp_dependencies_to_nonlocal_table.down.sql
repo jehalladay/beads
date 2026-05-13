@@ -1,1 +1,0 @@
--- Migration 0042 down: revert wisp_dependencies from nonlocal back to dolt-ignored.

@@ -1,1 +1,0 @@
--- Migration 0044 down: revert wisp_comments from nonlocal back to dolt-ignored.
