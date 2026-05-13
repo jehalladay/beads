@@ -1,6 +1,3 @@
--- Only create the indexes if wisp_dependencies is present. Legacy clones may
--- not have it in the working set since wisp_dependencies used to be
--- dolt-ignored and didn't transfer via DOLT_CLONE.
 SET @sql = IF(
     (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wisp_dependencies') > 0,

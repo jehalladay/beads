@@ -157,10 +157,6 @@ func (s *EmbeddedDoltStore) withConn(ctx context.Context, commit bool, fn func(r
 	return
 }
 
-// initSchema creates the database (if needed) and runs all pending migrations.
-// A pinned *sql.Conn is required because the head_ref / USE state is
-// session-scoped; the embedded driver hands out connections from a pool, so we
-// acquire one and reuse it for the whole flow.
 func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {
 	db, cleanup, err := OpenSQL(ctx, s.dataDir, "", "")
 	if err != nil {

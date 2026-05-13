@@ -1,9 +1,3 @@
--- Each INSERT/UPDATE/DELETE is guarded by wisp-table existence. Legacy clones
--- may not have the wisp tables in the working set since they used to be
--- dolt-ignored and didn't transfer via DOLT_CLONE. Each DELETE only fires when
--- its corresponding wisp_X table exists (i.e. the row was actually copied),
--- otherwise the originals are left in place to avoid data loss.
-
 SET @sql = IF(
     (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wisps') > 0,
@@ -52,9 +46,6 @@ SET @sql = IF(
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
--- Delete originals, children first (FK-safe order). Each DELETE is gated by
--- the corresponding wisp_X table — skipped on legacy clones where the copy
--- above was a no-op.
 SET @sql = IF(
     (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wisp_comments') > 0,
