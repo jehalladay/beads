@@ -111,11 +111,33 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 		return 0, fmt.Errorf("reading current migration version: %w", err)
 	}
 
-	if current >= LatestVersion() {
-		return 0, nil
+	var applied int
+	if current < LatestVersion() {
+		applied, err = runMigrations(ctx, db, current)
+		if err != nil {
+			return applied, err
+		}
 	}
 
-	return runMigrations(ctx, db, current)
+	backfilled, err := ensureBackfilledCustomStatusesCustomTypes(ctx, db)
+	if err != nil {
+		return applied, fmt.Errorf("backfill custom tables: %w", err)
+	}
+
+	if applied == 0 && !backfilled {
+		return applied, nil
+	}
+
+	if _, err := db.ExecContext(ctx, "CALL DOLT_ADD('-A')"); err != nil {
+		return applied, fmt.Errorf("staging migrations: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-m', 'schema: apply migrations')"); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "nothing to commit") {
+			return applied, fmt.Errorf("committing migrations: %w", err)
+		}
+	}
+
+	return applied, nil
 }
 
 type migrationFile struct {

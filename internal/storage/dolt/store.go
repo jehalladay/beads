@@ -1453,9 +1453,9 @@ func databaseExistsOnServer(ctx context.Context, db *sql.DB, name string) (bool,
 	return false, rows.Err()
 }
 
-// initSchemaOnDB applies pending schema migrations directly on main and then
-// backfills legacy config-driven tables.
-// schema.MigrateOnDefaultBranch tracks applied versions in schema_migrations.
+// initSchemaOnDB applies pending schema migrations. schema.MigrateUp tracks
+// applied versions in schema_migrations and backfills legacy config-driven
+// tables.
 func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -1463,15 +1463,8 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 	}
 	defer conn.Close()
 
-	if _, err := schema.MigrateOnDefaultBranch(ctx, conn, "main"); err != nil {
+	if _, err := schema.MigrateUp(ctx, conn); err != nil {
 		return fmt.Errorf("schema migration: %w", err)
-	}
-
-	// Backfill custom_statuses and custom_types from legacy config rows.
-	// Migration 0024 creates the empty tables; this populates them on legacy
-	// DBs that have status.custom / types.custom set via `bd config set`.
-	if err := schema.EnsureBackfilledCustomStatusesCustomTypes(ctx, conn); err != nil {
-		return fmt.Errorf("backfill custom tables: %w", err)
 	}
 
 	return nil
