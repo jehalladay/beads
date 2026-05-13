@@ -956,10 +956,9 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 					cfg.DoltDatabase = strings.ReplaceAll(prefix, "-", "_")
 				}
 
-				// Set global database name for shared-server mode projects.
-				// This gives each project the connection info to reach beads_global.
 				if sharedServer || doltserver.IsSharedServerMode() {
 					cfg.GlobalDoltDatabase = doltserver.GlobalDatabaseName
+					cfg.GlobalProjectID = doltserver.GlobalProjectID
 				}
 
 				// Persist the connection mode matching this build.
