@@ -1453,9 +1453,9 @@ func databaseExistsOnServer(ctx context.Context, db *sql.DB, name string) (bool,
 	return false, rows.Err()
 }
 
-// initSchemaOnDB applies pending schema migrations on a generated branch,
-// merges them into main, and then backfills legacy config-driven tables.
-// schema.MigrateOnBranch tracks applied versions in schema_migrations.
+// initSchemaOnDB applies pending schema migrations directly on main and then
+// backfills legacy config-driven tables.
+// schema.MigrateOnDefaultBranch tracks applied versions in schema_migrations.
 func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -1463,7 +1463,7 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 	}
 	defer conn.Close()
 
-	if _, err := schema.MigrateOnBranch(ctx, conn, "main"); err != nil {
+	if _, err := schema.MigrateOnDefaultBranch(ctx, conn, "main"); err != nil {
 		return fmt.Errorf("schema migration: %w", err)
 	}
 

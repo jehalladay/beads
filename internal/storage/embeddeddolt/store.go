@@ -158,10 +158,10 @@ func (s *EmbeddedDoltStore) withConn(ctx context.Context, commit bool, fn func(r
 }
 
 // initSchema creates the database (if needed) and runs all pending migrations
-// on a generated branch that's merged into the default branch. A pinned
-// *sql.Conn is required because DOLT_CHECKOUT/DOLT_BRANCH/DOLT_MERGE inside
-// schema.MigrateOnBranch are session-scoped; the embedded driver hands out
-// connections from a pool, so we acquire one and reuse it for the whole flow.
+// directly on the default branch. A pinned *sql.Conn is required because
+// DOLT_CHECKOUT inside schema.MigrateOnDefaultBranch is session-scoped; the
+// embedded driver hands out connections from a pool, so we acquire one and
+// reuse it for the whole flow.
 func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {
 	db, cleanup, err := OpenSQL(ctx, s.dataDir, "", "")
 	if err != nil {
@@ -200,7 +200,7 @@ func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {
 	if defaultBranch == "" {
 		defaultBranch = "main"
 	}
-	if _, err := schema.MigrateOnBranch(ctx, conn, defaultBranch); err != nil {
+	if _, err := schema.MigrateOnDefaultBranch(ctx, conn, defaultBranch); err != nil {
 		return fmt.Errorf("embeddeddolt: migrate: %w", err)
 	}
 

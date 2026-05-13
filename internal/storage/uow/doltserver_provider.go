@@ -172,7 +172,7 @@ func (p *doltServerProvider) initSchema(ctx context.Context, database string) er
 			return backoff.Permanent(fmt.Errorf("uow: switching to database: %w", err))
 		}
 
-		if _, err := schema.MigrateOnBranch(ctx, conn, p.defaultBranch); err != nil {
+		if _, err := schema.MigrateOnDefaultBranch(ctx, conn, p.defaultBranch); err != nil {
 			if isSerializationError(err) {
 				return fmt.Errorf("uow: migrate: %w", err)
 			}
