@@ -360,11 +360,10 @@ func ReconcileChildCounters(ctx context.Context, regularTx, ignoredTx *sql.Tx, i
 	type bucket struct {
 		maxChild int
 		isWisp   bool
-		known    bool // true if isWisp was set from an in-batch issue rather than probed
+		known    bool
 	}
 	parents := make(map[string]*bucket)
 
-	// Promote known-wisp parents from in-batch issues to avoid an extra probe.
 	for _, issue := range issues {
 		if IsWisp(issue) {
 			if b, ok := parents[issue.ID]; ok {
@@ -392,7 +391,7 @@ func ReconcileChildCounters(ctx context.Context, regularTx, ignoredTx *sql.Tx, i
 
 	for parentID, b := range parents {
 		if b.maxChild == 0 {
-			continue // parent appeared in batch but has no hierarchical children to record
+			continue
 		}
 		if !b.known {
 			b.isWisp = IsActiveWispInTx(ctx, ignoredTx, parentID)

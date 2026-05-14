@@ -6,13 +6,6 @@ import (
 	"fmt"
 )
 
-// GetNextChildIDTx atomically generates the next child ID for a parent issue.
-// The parent's home table (issues vs wisps) determines which counter table
-// (child_counters vs wisp_child_counters) and which transaction is used.
-// Reconciles the counter against existing children in the parent's home table
-// to handle imports that bypass the counter.
-//
-// Returns the full child ID string (e.g., "parent-id.3").
 func GetNextChildIDTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, parentID string) (string, error) {
 	tx, counterTable, issueTable := regularTx, "child_counters", "issues"
 	if IsActiveWispInTx(ctx, ignoredTx, parentID) {
@@ -30,12 +23,6 @@ func GetNextChildIDTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, parentI
 		return "", fmt.Errorf("get next child ID: read counter: %w", err)
 	}
 
-	// Check existing children to prevent overwrites after JSONL import (GH#2166).
-	// The counter may be stale if issues were imported without reconciling counters.
-	//
-	// We fetch direct child IDs and parse the numeric suffix in Go rather than
-	// using SQL CAST(SUBSTRING_INDEX(...) AS UNSIGNED), which silently returns 0
-	// for non-numeric ID suffixes (see GH#2721).
 	//nolint:gosec // G201: issueTable is one of two hardcoded constants.
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 		SELECT id FROM %s

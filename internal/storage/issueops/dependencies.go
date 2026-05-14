@@ -10,8 +10,6 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// DepTargetKind identifies which typed target column on the dependencies /
-// wisp_dependencies tables a dependency edge populates.
 type DepTargetKind int
 
 const (
@@ -20,7 +18,6 @@ const (
 	DepTargetExternal
 )
 
-// Column returns the typed target column name for this kind.
 func (k DepTargetKind) Column() string {
 	switch k {
 	case DepTargetWisp:
@@ -32,9 +29,6 @@ func (k DepTargetKind) Column() string {
 	}
 }
 
-// ClassifyDepTarget classifies a dependency's target. external: prefixes and
-// cross-prefix refs land in DepTargetExternal (they don't resolve in this DB);
-// otherwise an in-tx wisps lookup distinguishes wisp from regular-issue targets.
 func ClassifyDepTarget(ctx context.Context, tx *sql.Tx, dep *types.Dependency, isCrossPrefix bool) DepTargetKind {
 	if isCrossPrefix || strings.HasPrefix(dep.DependsOnID, "external:") {
 		return DepTargetExternal
@@ -69,10 +63,7 @@ type AddDependencyOpts struct {
 	// SkipCycleCheck skips the recursive pre-insert cycle check for callers
 	// that intentionally trade validation cost for bulk graph wiring speed.
 	SkipCycleCheck bool
-	// TargetKind, when non-nil, skips in-tx target classification. Used by
-	// callers that pre-computed kind to avoid a connection-pool round-trip
-	// inside the tx.
-	TargetKind *DepTargetKind
+	TargetKind     *DepTargetKind
 }
 
 // AddDependencyInTx validates and inserts a dependency within an existing
