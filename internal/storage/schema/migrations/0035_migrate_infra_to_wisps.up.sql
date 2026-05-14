@@ -1,6 +1,3 @@
--- Build the column list as the intersection of issues and wisps columns
--- (in wisps's declared order) so the cross-table copy does not depend on
--- the two tables having matching column count and order, as `SELECT *` did.
 SET @shared_cols = (
     SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY ORDINAL_POSITION SEPARATOR ', ')
     FROM INFORMATION_SCHEMA.COLUMNS
