@@ -1,8 +1,20 @@
-SET @sql = IF(
-    (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wisps') > 0,
-    'INSERT IGNORE INTO wisps SELECT * FROM issues WHERE issue_type IN (''agent'', ''rig'', ''role'', ''message'')',
-    'SELECT 1'
+-- Build the column list as the intersection of issues and wisps columns
+-- (in wisps's declared order) so the cross-table copy does not depend on
+-- the two tables having matching column count and order, as `SELECT *` did.
+SET @shared_cols = (
+    SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY ORDINAL_POSITION SEPARATOR ', ')
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'wisps'
+      AND COLUMN_NAME IN (
+          SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'issues'
+      )
+);
+SET @sql = IF(@shared_cols IS NULL OR @shared_cols = '',
+    'SELECT 1',
+    CONCAT('INSERT IGNORE INTO wisps (', @shared_cols, ') SELECT ', @shared_cols,
+           ' FROM issues WHERE issue_type IN (''agent'', ''rig'', ''role'', ''message'')')
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
