@@ -39,6 +39,12 @@ func DeleteIssueInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, id strin
 		return fmt.Errorf("issue not found: %s", id)
 	}
 
+	if isWisp {
+		if err := DeleteWispFromDependenciesInTx(ctx, regularTx, id); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

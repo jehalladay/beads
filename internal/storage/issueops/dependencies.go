@@ -220,6 +220,36 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	return nil
 }
 
+// DeleteWispFromDependenciesInTx removes any rows in the regular dependencies
+// table that reference the given wisp via depends_on_wisp_id. Because wisps
+// live in dolt-ignored tables, the dependencies table cannot carry an FK to
+// wisps and so cannot rely on ON DELETE CASCADE — wisp deletion must call this
+// explicitly to keep dependencies consistent.
+func DeleteWispFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispID string) error {
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM dependencies WHERE depends_on_wisp_id = ?", wispID); err != nil {
+		return fmt.Errorf("delete wisp %s from dependencies: %w", wispID, err)
+	}
+	return nil
+}
+
+// DeleteWispsFromDependenciesInTx is the batch variant of
+// DeleteWispFromDependenciesInTx.
+//
+//nolint:gosec // G201: inClause contains only ? placeholders
+func DeleteWispsFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispIDs []string) error {
+	if len(wispIDs) == 0 {
+		return nil
+	}
+	inClause, args := buildSQLInClause(wispIDs)
+	if _, err := tx.ExecContext(ctx,
+		fmt.Sprintf("DELETE FROM dependencies WHERE depends_on_wisp_id IN (%s)", inClause),
+		args...); err != nil {
+		return fmt.Errorf("delete wisps from dependencies: %w", err)
+	}
+	return nil
+}
+
 // RemoveDependencyInTx removes a dependency between two issues within an
 // existing transaction. Automatically routes to wisp_dependencies if the
 // source issue is an active wisp.

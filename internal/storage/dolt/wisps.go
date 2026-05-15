@@ -237,6 +237,10 @@ func (s *DoltStore) deleteWisp(ctx context.Context, id string) error {
 		return fmt.Errorf("wisp not found: %s", id)
 	}
 
+	if err := issueops.DeleteWispFromDependenciesInTx(ctx, tx, id); err != nil {
+		return err
+	}
+
 	return wrapTransactionError("commit delete wisp", tx.Commit())
 }
 
@@ -294,6 +298,10 @@ func (s *DoltStore) deleteWispBatchTx(ctx context.Context, ids []string) (int, e
 		return 0, fmt.Errorf("failed to batch delete wisps: %w", err)
 	}
 	rowsAffected, _ := result.RowsAffected()
+
+	if err := issueops.DeleteWispsFromDependenciesInTx(ctx, tx, ids); err != nil {
+		return 0, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("failed to commit batch wisp delete: %w", err)

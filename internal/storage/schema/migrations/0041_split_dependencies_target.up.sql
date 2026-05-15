@@ -1,7 +1,6 @@
-SET FOREIGN_KEY_CHECKS = 0;
-
 DELETE FROM dolt_nonlocal_tables;
 CALL DOLT_COMMIT('-Am', 'disable nonlocal tables for fk migrations');
+SET FOREIGN_KEY_CHECKS = 0;
 
 SET @needs_drop_old_fk = (
     SELECT IF(COUNT(*) > 0, 1, 0)
@@ -105,11 +104,6 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(@needs_migrate = 1,
     'ALTER TABLE dependencies ADD INDEX idx_dep_type_target (type, depends_on_id)',
-    'SELECT 1');
-PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-
-SET @sql = IF(@needs_migrate = 1,
-    'ALTER TABLE dependencies ADD CONSTRAINT fk_dep_wisp_target FOREIGN KEY (depends_on_wisp_id) REFERENCES wisps(id) ON DELETE CASCADE ON UPDATE CASCADE',
     'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
