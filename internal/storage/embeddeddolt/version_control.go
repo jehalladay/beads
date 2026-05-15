@@ -41,10 +41,7 @@ func (s *EmbeddedDoltStore) withDBConn(ctx context.Context, fn func(db versionco
 
 func (s *EmbeddedDoltStore) Commit(ctx context.Context, message string) error {
 	return s.withConn(ctx, true, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "CALL DOLT_ADD('-A')"); err != nil {
-			return fmt.Errorf("dolt add: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, "CALL DOLT_COMMIT('-m', ?)", message); err != nil {
+		if _, err := tx.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?)", message); err != nil {
 			return fmt.Errorf("dolt commit: %w", err)
 		}
 		return nil
@@ -52,7 +49,7 @@ func (s *EmbeddedDoltStore) Commit(ctx context.Context, message string) error {
 }
 
 // CommitWithConfig commits all working set changes including config.
-// EmbeddedDoltStore.Commit already includes config via DOLT_ADD('-A'),
+// EmbeddedDoltStore.Commit already includes config via DOLT_COMMIT('-Am', ...),
 // so this is just an alias to satisfy the VersionControl interface (GH#3216).
 func (s *EmbeddedDoltStore) CommitWithConfig(ctx context.Context, message string) error {
 	return s.Commit(ctx, message)
