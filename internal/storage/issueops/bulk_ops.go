@@ -205,16 +205,16 @@ func DeleteIssuesBySourceRepoInTx(ctx context.Context, tx *sql.Tx, sourceRepo st
 }
 
 //nolint:gosec // G201: table names are hardcoded
-func UpdateIssueIDInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, oldID, newID string, issue *types.Issue, actor string) error {
-	if IsActiveWispInTx(ctx, ignoredTx, oldID) {
-		return updateWispIDInTx(ctx, ignoredTx, oldID, newID, issue, actor)
+func UpdateIssueIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, issue *types.Issue, actor string) error {
+	if IsActiveWispInTx(ctx, tx, oldID) {
+		return updateWispIDInTx(ctx, tx, oldID, newID, issue, actor)
 	}
-	return updateIssueIDInTx(ctx, regularTx, ignoredTx, oldID, newID, issue, actor)
+	return updateIssueIDInTx(ctx, tx, oldID, newID, issue, actor)
 }
 
-func updateIssueIDInTx(ctx context.Context, regularTx, _ *sql.Tx, oldID, newID string, issue *types.Issue, actor string) error {
+func updateIssueIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, issue *types.Issue, actor string) error {
 	now := time.Now().UTC()
-	result, err := regularTx.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		UPDATE issues
 		SET id = ?, title = ?, description = ?, design = ?, acceptance_criteria = ?, notes = ?, updated_at = ?
 		WHERE id = ?
@@ -226,7 +226,7 @@ func updateIssueIDInTx(ctx context.Context, regularTx, _ *sql.Tx, oldID, newID s
 		return fmt.Errorf("issue not found: %s", oldID)
 	}
 
-	_, err = regularTx.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO events (issue_id, event_type, actor, old_value, new_value)
 		VALUES (?, 'renamed', ?, ?, ?)
 	`, newID, actor, oldID, newID)
@@ -247,11 +247,14 @@ func updateWispIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, issu
 		return fmt.Errorf("wisp not found: %s", oldID)
 	}
 
-	_, err = tx.ExecContext(ctx, `
+	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO wisp_events (issue_id, event_type, actor, old_value, new_value)
 		VALUES (?, 'renamed', ?, ?, ?)
-	`, newID, actor, oldID, newID)
-	return err
+	`, newID, actor, oldID, newID); err != nil {
+		return err
+	}
+
+	return UpdateWispIDInDependenciesInTx(ctx, tx, oldID, newID)
 }
 
 // FindWispDependentsRecursiveInTx walks wisp_dependencies to find all transitive

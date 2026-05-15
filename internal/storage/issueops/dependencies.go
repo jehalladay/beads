@@ -250,6 +250,19 @@ func DeleteWispsFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispIDs []
 	return nil
 }
 
+// UpdateWispIDInDependenciesInTx rewrites depends_on_wisp_id in the regular
+// dependencies table when a wisp is renamed. The wisp-side aux tables use FK
+// ON UPDATE CASCADE; the regular dependencies table cannot carry an FK to the
+// dolt-ignored wisps table, so callers must invoke this explicitly.
+func UpdateWispIDInDependenciesInTx(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE dependencies SET depends_on_wisp_id = ? WHERE depends_on_wisp_id = ?",
+		newID, oldID); err != nil {
+		return fmt.Errorf("update wisp %s -> %s in dependencies: %w", oldID, newID, err)
+	}
+	return nil
+}
+
 // RemoveDependencyInTx removes a dependency between two issues within an
 // existing transaction. Automatically routes to wisp_dependencies if the
 // source issue is an active wisp.

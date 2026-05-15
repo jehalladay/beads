@@ -10,7 +10,7 @@ import (
 
 // UpdateIssueID updates an issue ID and all its references.
 func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
-	return s.withRetryTxs(ctx, func(regularTx, ignoredTx *sql.Tx) error {
-		return issueops.UpdateIssueIDInTx(ctx, regularTx, ignoredTx, oldID, newID, issue, actor)
+	return s.withRetryTx(ctx, func(tx *sql.Tx) error {
+		return issueops.UpdateIssueIDInTx(ctx, tx, oldID, newID, issue, actor)
 	})
 }

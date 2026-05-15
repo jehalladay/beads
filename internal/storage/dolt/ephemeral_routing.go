@@ -261,19 +261,19 @@ func (s *DoltStore) DemoteToWisp(ctx context.Context, id string, updates map[str
 	// Apply in-memory updates so the wisps row reflects all requested changes.
 	applyUpdatesToIssueStruct(issue, updates)
 
-	return s.withWriteTxs(ctx, func(regularTx, ignoredTx *sql.Tx) error {
-		if err := insertIssueTxIntoTable(ctx, ignoredTx, "wisps", issue); err != nil {
+	return s.withWriteTx(ctx, func(tx *sql.Tx) error {
+		if err := insertIssueTxIntoTable(ctx, tx, "wisps", issue); err != nil {
 			return fmt.Errorf("failed to insert issue into wisps: %w", err)
 		}
 
-		if _, err := ignoredTx.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, `
 			INSERT IGNORE INTO wisp_labels (issue_id, label)
 			SELECT issue_id, label FROM labels WHERE issue_id = ?
 		`, id); err != nil {
 			log.Printf("demote %s: failed to copy labels (data may be lost): %v", id, err)
 		}
 
-		if _, err := ignoredTx.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, `
 			INSERT IGNORE INTO wisp_dependencies (issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id)
 			SELECT issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id
 			FROM dependencies WHERE issue_id = ?
@@ -281,7 +281,7 @@ func (s *DoltStore) DemoteToWisp(ctx context.Context, id string, updates map[str
 			log.Printf("demote %s: failed to copy dependencies (data may be lost): %v", id, err)
 		}
 
-		if _, err := ignoredTx.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, `
 			INSERT IGNORE INTO wisp_events (issue_id, event_type, actor, old_value, new_value, comment, created_at)
 			SELECT issue_id, event_type, actor, old_value, new_value, comment, created_at
 			FROM events WHERE issue_id = ?
@@ -289,7 +289,7 @@ func (s *DoltStore) DemoteToWisp(ctx context.Context, id string, updates map[str
 			log.Printf("demote %s: failed to copy events (data may be lost): %v", id, err)
 		}
 
-		if _, err := ignoredTx.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, `
 			INSERT IGNORE INTO wisp_comments (issue_id, author, text, created_at)
 			SELECT issue_id, author, text, created_at
 			FROM comments WHERE issue_id = ?
@@ -297,22 +297,22 @@ func (s *DoltStore) DemoteToWisp(ctx context.Context, id string, updates map[str
 			log.Printf("demote %s: failed to copy comments (data may be lost): %v", id, err)
 		}
 
-		if _, err := ignoredTx.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO wisp_events (issue_id, event_type, actor, old_value, new_value)
 			VALUES (?, ?, ?, ?, ?)
 		`, id, types.EventUpdated, actor, "", "demoted to wisp"); err != nil {
 			log.Printf("demote %s: failed to record demotion event: %v", id, err)
 		}
 
-		if _, err := regularTx.ExecContext(ctx, "DELETE FROM issues WHERE id = ?", id); err != nil {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM issues WHERE id = ?", id); err != nil {
 			return fmt.Errorf("failed to delete issue from issues: %w", err)
 		}
 
 		for _, table := range []string{"issues", "labels", "dependencies", "events", "comments"} {
-			_, _ = regularTx.ExecContext(ctx, "CALL DOLT_ADD(?)", table)
+			_, _ = tx.ExecContext(ctx, "CALL DOLT_ADD(?)", table)
 		}
 		commitMsg := fmt.Sprintf("bd: demote %s to wisp", id)
-		if _, err := regularTx.ExecContext(ctx, "CALL DOLT_COMMIT('-m', ?, '--author', ?)",
+		if _, err := tx.ExecContext(ctx, "CALL DOLT_COMMIT('-m', ?, '--author', ?)",
 			commitMsg, s.commitAuthorString()); err != nil && !isDoltNothingToCommit(err) {
 			return fmt.Errorf("dolt commit after demotion: %w", err)
 		}

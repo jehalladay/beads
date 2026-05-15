@@ -17,14 +17,9 @@ const deleteBatchSize = 50
 const maxRecursiveResults = 10000
 
 //nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
-func DeleteIssueInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, id string) error {
-	isWisp := IsActiveWispInTx(ctx, ignoredTx, id)
+func DeleteIssueInTx(ctx context.Context, tx *sql.Tx, id string) error {
+	isWisp := IsActiveWispInTx(ctx, tx, id)
 	issueTable, _, _, _ := WispTableRouting(isWisp)
-
-	tx := regularTx
-	if isWisp {
-		tx = ignoredTx
-	}
 
 	result, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = ?", issueTable), id)
 	if err != nil {
@@ -40,7 +35,7 @@ func DeleteIssueInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, id strin
 	}
 
 	if isWisp {
-		if err := DeleteWispFromDependenciesInTx(ctx, regularTx, id); err != nil {
+		if err := DeleteWispFromDependenciesInTx(ctx, tx, id); err != nil {
 			return err
 		}
 	}
@@ -49,12 +44,12 @@ func DeleteIssueInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, id strin
 }
 
 //nolint:gosec // G201: inClause contains only ? placeholders
-func DeleteIssuesInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, ids []string, cascade bool, force bool, dryRun bool) (*types.DeleteIssuesResult, error) {
+func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade bool, force bool, dryRun bool) (*types.DeleteIssuesResult, error) {
 	if len(ids) == 0 {
 		return &types.DeleteIssuesResult{}, nil
 	}
 
-	wispIDs, regularIDs, err := PartitionWispIDsInTx(ctx, ignoredTx, ids)
+	wispIDs, regularIDs, err := PartitionWispIDsInTx(ctx, tx, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +57,7 @@ func DeleteIssuesInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, ids []s
 	wispDeleteCount := 0
 	if len(wispIDs) > 0 && !dryRun {
 		for _, id := range wispIDs {
-			if err := DeleteIssueInTx(ctx, regularTx, ignoredTx, id); err != nil {
+			if err := DeleteIssueInTx(ctx, tx, id); err != nil {
 				return nil, fmt.Errorf("delete wisp %s: %w", id, err)
 			}
 			wispDeleteCount++
@@ -85,7 +80,7 @@ func DeleteIssuesInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, ids []s
 
 	expandedIDs := ids
 	if cascade {
-		allToDelete, err := findAllDependentsRecursiveInTx(ctx, regularTx, ids)
+		allToDelete, err := findAllDependentsRecursiveInTx(ctx, tx, ids)
 		if err != nil {
 			return nil, fmt.Errorf("find dependents: %w", err)
 		}
@@ -102,7 +97,7 @@ func DeleteIssuesInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, ids []s
 			batch := ids[i:end]
 			inClause, args := buildSQLInClause(batch)
 
-			rows, err := regularTx.QueryContext(ctx,
+			rows, err := tx.QueryContext(ctx,
 				fmt.Sprintf(`SELECT depends_on_id, issue_id FROM dependencies WHERE depends_on_id IN (%s)`, inClause),
 				args...)
 			if err != nil {
@@ -133,7 +128,7 @@ func DeleteIssuesInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, ids []s
 			}
 		}
 	} else {
-		orphans, err := findExternalDependentsBatchedInTx(ctx, regularTx, ids, idSet)
+		orphans, err := findExternalDependentsBatchedInTx(ctx, tx, ids, idSet)
 		if err != nil {
 			return nil, fmt.Errorf("get dependents: %w", err)
 		}
@@ -155,7 +150,7 @@ func DeleteIssuesInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, ids []s
 		batchInClause, batchArgs := buildSQLInClause(batch)
 
 		var batchDeps int
-		if err := regularTx.QueryRowContext(ctx,
+		if err := tx.QueryRowContext(ctx,
 			fmt.Sprintf(`SELECT COUNT(*) FROM dependencies WHERE issue_id IN (%s)`, batchInClause),
 			batchArgs...).Scan(&batchDeps); err != nil {
 			return nil, fmt.Errorf("count dependencies: %w", err)
@@ -163,7 +158,7 @@ func DeleteIssuesInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, ids []s
 		depsCount += batchDeps
 
 		var batchLabels int
-		if err := regularTx.QueryRowContext(ctx,
+		if err := tx.QueryRowContext(ctx,
 			fmt.Sprintf(`SELECT COUNT(*) FROM labels WHERE issue_id IN (%s)`, batchInClause),
 			batchArgs...).Scan(&batchLabels); err != nil {
 			return nil, fmt.Errorf("count labels: %w", err)
@@ -171,7 +166,7 @@ func DeleteIssuesInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, ids []s
 		labelsCount += batchLabels
 
 		var batchEvents int
-		if err := regularTx.QueryRowContext(ctx,
+		if err := tx.QueryRowContext(ctx,
 			fmt.Sprintf(`SELECT COUNT(*) FROM events WHERE issue_id IN (%s)`, batchInClause),
 			batchArgs...).Scan(&batchEvents); err != nil {
 			return nil, fmt.Errorf("count events: %w", err)
@@ -188,7 +183,7 @@ func DeleteIssuesInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, ids []s
 		batch := expandedIDs[i:end]
 		batchInClause, batchArgs := buildSQLInClause(batch)
 
-		rows, err := regularTx.QueryContext(ctx,
+		rows, err := tx.QueryContext(ctx,
 			fmt.Sprintf(`SELECT issue_id FROM dependencies WHERE depends_on_id IN (%s)`, batchInClause),
 			batchArgs...)
 		if err != nil {
@@ -228,7 +223,7 @@ func DeleteIssuesInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, ids []s
 		batch := expandedIDs[i:end]
 		batchInClause, batchArgs := buildSQLInClause(batch)
 
-		deleteResult, err := regularTx.ExecContext(ctx,
+		deleteResult, err := tx.ExecContext(ctx,
 			fmt.Sprintf(`DELETE FROM issues WHERE id IN (%s)`, batchInClause),
 			batchArgs...)
 		if err != nil {
