@@ -10,3 +10,8 @@ import (
 func LatestVersion() int {
 	return schema.LatestVersion()
 }
+
+// LatestIgnoredVersion delegates to the shared schema package.
+func LatestIgnoredVersion() int {
+	return schema.LatestIgnoredVersion()
+}
