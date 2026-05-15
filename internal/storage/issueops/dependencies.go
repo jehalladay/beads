@@ -220,11 +220,6 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	return nil
 }
 
-// DeleteWispFromDependenciesInTx removes any rows in the regular dependencies
-// table that reference the given wisp via depends_on_wisp_id. Because wisps
-// live in dolt-ignored tables, the dependencies table cannot carry an FK to
-// wisps and so cannot rely on ON DELETE CASCADE — wisp deletion must call this
-// explicitly to keep dependencies consistent.
 func DeleteWispFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispID string) error {
 	if _, err := tx.ExecContext(ctx,
 		"DELETE FROM dependencies WHERE depends_on_wisp_id = ?", wispID); err != nil {
@@ -233,9 +228,6 @@ func DeleteWispFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispID stri
 	return nil
 }
 
-// DeleteWispsFromDependenciesInTx is the batch variant of
-// DeleteWispFromDependenciesInTx.
-//
 //nolint:gosec // G201: inClause contains only ? placeholders
 func DeleteWispsFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispIDs []string) error {
 	if len(wispIDs) == 0 {
@@ -250,10 +242,6 @@ func DeleteWispsFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispIDs []
 	return nil
 }
 
-// UpdateWispIDInDependenciesInTx rewrites depends_on_wisp_id in the regular
-// dependencies table when a wisp is renamed. The wisp-side aux tables use FK
-// ON UPDATE CASCADE; the regular dependencies table cannot carry an FK to the
-// dolt-ignored wisps table, so callers must invoke this explicitly.
 func UpdateWispIDInDependenciesInTx(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
 	if _, err := tx.ExecContext(ctx,
 		"UPDATE dependencies SET depends_on_wisp_id = ? WHERE depends_on_wisp_id = ?",

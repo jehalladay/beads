@@ -323,8 +323,6 @@ func PersistDependencies(ctx context.Context, tx *sql.Tx, issues []*types.Issue,
 
 			kind := ClassifyDepTarget(ctx, tx, dep, false)
 
-			// For issue/wisp targets, skip if the target row doesn't exist.
-			// External targets bypass validation.
 			if kind != DepTargetExternal {
 				lookupTable := "issues"
 				if kind == DepTargetWisp {

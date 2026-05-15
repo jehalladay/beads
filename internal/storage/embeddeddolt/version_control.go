@@ -49,7 +49,6 @@ func (s *EmbeddedDoltStore) Commit(ctx context.Context, message string) error {
 }
 
 // CommitWithConfig commits all working set changes including config.
-// EmbeddedDoltStore.Commit already includes config via DOLT_COMMIT('-Am', ...),
 // so this is just an alias to satisfy the VersionControl interface (GH#3216).
 func (s *EmbeddedDoltStore) CommitWithConfig(ctx context.Context, message string) error {
 	return s.Commit(ctx, message)
