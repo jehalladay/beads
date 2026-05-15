@@ -1,4 +1,4 @@
-SET FOREIGN_KEY_CHECKS = 0;
+-- SET FOREIGN_KEY_CHECKS = 0;
 
 SET @needs_add = (
     SELECT IF(COUNT(*) = 0, 1, 0)
@@ -48,4 +48,13 @@ SET @sql = IF(@needs_add = 1,
     'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-SET FOREIGN_KEY_CHECKS = 1;
+-- SET FOREIGN_KEY_CHECKS = 1;
+INSERT INTO dolt_nonlocal_tables (table_name, target_ref, options) VALUES ('wisps', 'main', 'immediate');
+CALL DOLT_COMMIT('-Am', 'create nonlocal table wisps after fk migrations');
+INSERT INTO dolt_nonlocal_tables (table_name, target_ref, options) VALUES ('wisp_*', 'main', 'immediate');
+CALL DOLT_COMMIT('-Am', 'create nonlocal table wisp_* after fk migrations');
+INSERT INTO dolt_nonlocal_tables (table_name, target_ref, options) VALUES ('repo_mtimes', 'main', 'immediate');
+CALL DOLT_COMMIT('-Am', 'create nonlocal table repo_mtimes after fk migrations');
+INSERT INTO dolt_nonlocal_tables (table_name, target_ref, options) VALUES ('local_metadata', 'main', 'immediate');
+CALL DOLT_COMMIT('-Am', 'create nonlocal table local_metadata after fk migrations');
+

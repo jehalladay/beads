@@ -24,7 +24,7 @@ SET @sql = IF(@both_exist = 1,
     'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-SET FOREIGN_KEY_CHECKS = 0;
+-- SET FOREIGN_KEY_CHECKS = 0;
 
 SET @needs_add = (
     SELECT IF(COUNT(*) = 0, 1, 0)
@@ -38,4 +38,4 @@ SET @sql = IF(@needs_add = 1,
     'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-SET FOREIGN_KEY_CHECKS = 1;
+-- SET FOREIGN_KEY_CHECKS = 1;

@@ -1,4 +1,7 @@
-SET FOREIGN_KEY_CHECKS = 0;
+-- SET FOREIGN_KEY_CHECKS = 0;
+
+DELETE FROM dolt_nonlocal_tables;
+CALL DOLT_COMMIT('-Am', 'disable nonlocal tables for fk migrations');
 
 SET @needs_drop_old_fk = (
     SELECT IF(COUNT(*) > 0, 1, 0)
@@ -120,4 +123,4 @@ SET @sql = IF(@needs_migrate = 1,
     'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-SET FOREIGN_KEY_CHECKS = 1;
+-- SET FOREIGN_KEY_CHECKS = 1;
