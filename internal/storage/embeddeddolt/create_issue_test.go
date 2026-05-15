@@ -27,8 +27,7 @@ type testEnv struct {
 func newTestEnv(t *testing.T, prefix string) *testEnv {
 	t.Helper()
 	ctx := t.Context()
-	// beadsDir := filepath.Join(t.TempDir(), ".beads")
-	beadsDir := filepath.Join("/home/dustin/cursor_src/beads/test", ".beads")
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
 	store, err := embeddeddolt.Open(ctx, beadsDir, prefix, "main")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
