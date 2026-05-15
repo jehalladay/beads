@@ -42,7 +42,13 @@ SET @sql = IF(@needs_migrate = 1,
     'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-SET @sql = IF(@needs_migrate = 1,
+SET @wisps_exists = (
+    SELECT IF(COUNT(*) > 0, 1, 0)
+    FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'wisps'
+);
+SET @sql = IF(@needs_migrate = 1 AND @wisps_exists = 1,
     'UPDATE dependencies d JOIN wisps w ON w.id = d.depends_on_id SET d.depends_on_wisp_id = d.depends_on_id WHERE d.depends_on_external IS NULL',
     'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
