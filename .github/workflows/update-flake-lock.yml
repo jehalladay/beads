@@ -20,6 +20,8 @@ jobs:
       - name: Update flake.lock
         uses: DeterminateSystems/update-flake-lock@3d82c7e1a46ddcc239881a2ac62b0d9d970dc96b # main
         with:
+          token: ${{ secrets.GH_TOKEN_FOR_UPDATES }}
+          push-to-fork: julianknutsen/beads
           pr-title: "chore(nix): update flake.lock"
           pr-labels: |
             dependencies
