@@ -13,7 +13,7 @@ import (
 func TestGetReadyWork_MetadataSuite(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
-	store := newTestStoreIsolatedDB(t, tmpDir, "test")
+	store := newTestStore(t, tmpDir)
 	ctx := context.Background()
 
 	// Create all test data up front with unique metadata keys per subtest.
@@ -94,8 +94,9 @@ func TestGetReadyWork_MetadataSuite(t *testing.T) {
 }
 
 func TestGetReadyWork_IncludeEphemeralAssigneeIsSuperset(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
-	store := newTestStoreIsolatedDB(t, tmpDir, "test")
+	store := newTestStore(t, tmpDir)
 	ctx := context.Background()
 	worker := "control-dispatcher"
 
@@ -149,7 +150,7 @@ func TestGetReadyWork_IncludeEphemeralAssigneeIsSuperset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReadyWork default: %v", err)
 	}
-	if got := readyIssueIDs(defaultResults); !sameStringSet(got, []string{"mr-assignee-persistent", "mr-assignee-no-history"}) {
+	if got := issueIDs(defaultResults); !sameStringSet(got, []string{"mr-assignee-persistent", "mr-assignee-no-history"}) {
 		t.Fatalf("default ready IDs = %v, want persistent and no-history only", got)
 	}
 
@@ -157,22 +158,13 @@ func TestGetReadyWork_IncludeEphemeralAssigneeIsSuperset(t *testing.T) {
 		Status:           types.StatusOpen,
 		Assignee:         &worker,
 		IncludeEphemeral: true,
-		Limit:            10,
 	})
 	if err != nil {
 		t.Fatalf("GetReadyWork include ephemeral: %v", err)
 	}
-	if got := readyIssueIDs(allResults); !sameStringSet(got, []string{"mr-assignee-persistent", "mr-assignee-no-history", "mr-assignee-ephemeral"}) {
+	if got := issueIDs(allResults); !sameStringSet(got, []string{"mr-assignee-persistent", "mr-assignee-no-history", "mr-assignee-ephemeral"}) {
 		t.Fatalf("include-ephemeral ready IDs = %v, want persistent, no-history, and ephemeral for assignee", got)
 	}
-}
-
-func readyIssueIDs(issues []*types.Issue) []string {
-	ids := make([]string, 0, len(issues))
-	for _, issue := range issues {
-		ids = append(ids, issue.ID)
-	}
-	return ids
 }
 
 func sameStringSet(got, want []string) bool {
