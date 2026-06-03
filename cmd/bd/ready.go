@@ -208,7 +208,10 @@ This is useful for agents executing molecules to see which steps can run next.`,
 				}
 				return
 			}
-			if err := commitPendingIfEmbedded(ctx, activeStore, actor); err != nil {
+			if err := commitPendingIfEmbedded(ctx, activeStore, actor, doltAutoCommitParams{
+				Command:  "ready",
+				IssueIDs: []string{claimed.ID},
+			}); err != nil {
 				FatalErrorRespectJSON("failed to commit: %v", err)
 			}
 			SetLastTouchedID(claimed.ID)

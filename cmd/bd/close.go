@@ -90,7 +90,7 @@ the flags appear in the command line.`,
 
 		// Track which stores were mutated so routed closes can commit before
 		// cleanup closes the routed handle. Deduped by pointer.
-		mutatedStores := map[storage.DoltStorage]struct{}{}
+		mutatedStores := map[storage.DoltStorage][]string{}
 
 		// Direct mode
 		closedIssues := []*types.Issue{}
@@ -142,7 +142,7 @@ the flags appear in the command line.`,
 				fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
 				continue
 			}
-			mutatedStores[activeStore] = struct{}{}
+			mutatedStores[activeStore] = append(mutatedStores[activeStore], id)
 
 			// Audit log the close (survives Dolt GC flatten)
 			oldStatus := "open"
@@ -230,7 +230,7 @@ the flags appear in the command line.`,
 				err := postCloseStore.ClaimIssue(ctx, nextIssue.ID, actor)
 				if err == nil {
 					claimedNextIssue = nextIssue
-					mutatedStores[postCloseStore] = struct{}{}
+					mutatedStores[postCloseStore] = append(mutatedStores[postCloseStore], nextIssue.ID)
 					if jsonOutput {
 						// JSON handled below
 					} else {
@@ -257,11 +257,14 @@ the flags appear in the command line.`,
 		}
 
 		if closedCount > 0 {
-			for s := range mutatedStores {
+			for s, ids := range mutatedStores {
 				if s == nil {
 					continue
 				}
-				if err := commitPendingIfEmbedded(ctx, s, actor); err != nil {
+				if err := commitPendingIfEmbedded(ctx, s, actor, doltAutoCommitParams{
+					Command:  "close",
+					IssueIDs: ids,
+				}); err != nil {
 					FatalErrorRespectJSON("failed to commit: %v", err)
 				}
 			}
