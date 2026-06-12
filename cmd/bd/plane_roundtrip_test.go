@@ -6,6 +6,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/plane"
 	"github.com/steveyegge/beads/internal/plane/planetest"
@@ -57,6 +58,7 @@ func newPlaneEngine(t *testing.T, st *dolt.DoltStore) (*tracker.Engine, *plane.T
 	engine := tracker.NewEngine(pt, st, "roundtrip-test")
 	engine.OnMessage = func(string) {}
 	engine.OnWarning = func(msg string) { t.Logf("engine warning: %s", msg) }
+	engine.PullHooks = plane.NewPullHooks() // production wiring (assignee preservation)
 	return engine, pt
 }
 
@@ -388,5 +390,64 @@ func TestPlaneRoundTripIdempotentPush(t *testing.T) {
 	}
 	if local.ExternalRef == nil || !plane.IsPlaneExternalRef(*local.ExternalRef) {
 		t.Errorf("external_ref not restored after 409 recovery: %v", local.ExternalRef)
+	}
+}
+
+// TestPlaneRoundTripPreservesLocalAssignee pins the assignee contract:
+// Plane work items carry assignee user UUIDs the adapter cannot map, so a
+// pull update must leave the local beads assignee untouched rather than
+// blanking it.
+func TestPlaneRoundTripPreservesLocalAssignee(t *testing.T) {
+	ctx := context.Background()
+	srv, projectID, st := planeTestSetup(t, "bd")
+	_ = projectID
+
+	issue := &types.Issue{
+		Title:       "Assigned work",
+		Description: "Keep my assignee",
+		Priority:    2,
+		Status:      types.StatusOpen,
+		IssueType:   types.TypeTask,
+		Assignee:    "julian",
+	}
+	if err := st.CreateIssue(ctx, issue, "roundtrip-test"); err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+
+	engine, _ := newPlaneEngine(t, st)
+	if _, err := engine.Sync(ctx, tracker.SyncOptions{
+		Push: true, State: "all", ConflictResolution: tracker.ConflictTimestamp,
+	}); err != nil {
+		t.Fatalf("push sync: %v", err)
+	}
+
+	// Touch the work item remotely so the next pull sees it as updated.
+	// last_sync is stored at second granularity; wait out the remainder of
+	// the current second so the edit is unambiguously after it.
+	time.Sleep(1200 * time.Millisecond)
+	client := plane.NewClient(srv.URL(), planeTestAPIKey, "acme", projectID)
+	remote, err := client.GetIssueByExternalID(ctx, issue.ID, plane.ExternalSource)
+	if err != nil || remote == nil {
+		t.Fatalf("GetIssueByExternalID: %v (issue %v)", err, remote)
+	}
+	if _, err := client.UpdateIssue(ctx, remote.ID, &plane.IssuePayload{Name: "Assigned work (edited remotely)"}); err != nil {
+		t.Fatalf("remote edit: %v", err)
+	}
+
+	if _, err := engine.Sync(ctx, tracker.SyncOptions{
+		Pull: true, State: "all", ConflictResolution: tracker.ConflictExternal,
+	}); err != nil {
+		t.Fatalf("pull sync: %v", err)
+	}
+
+	got, err := st.GetIssue(ctx, issue.ID)
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if got.Title != "Assigned work (edited remotely)" {
+		t.Errorf("title = %q, want the remote edit applied", got.Title)
+	}
+	if got.Assignee != "julian" {
+		t.Errorf("assignee = %q, want %q preserved across pull", got.Assignee, "julian")
 	}
 }

@@ -59,6 +59,11 @@ Modes:
   --push         Export issues from beads to Plane
   (no flags)     Bidirectional sync: pull then push, with conflict resolution
 
+Filtering:
+  --state open|closed|all   Restrict sync to open or closed issues
+  --include-ephemeral       Include ephemeral issues (wisps, etc.) when
+                            pushing; default is to keep them local
+
 Conflict Resolution:
   By default, newer timestamp wins. Override with:
   --prefer-local   Always prefer local beads version
@@ -91,6 +96,7 @@ func init() {
 	planeSyncCmd.Flags().Bool("prefer-plane", false, "Prefer Plane version on conflicts")
 	planeSyncCmd.Flags().Bool("create-only", false, "Only create new issues, don't update existing")
 	planeSyncCmd.Flags().String("state", "all", "Issue state to sync: open, closed, all")
+	planeSyncCmd.Flags().Bool("include-ephemeral", false, "Include ephemeral issues (wisps, etc.) when pushing to Plane")
 	registerSelectiveSyncFlags(planeSyncCmd)
 
 	planeCmd.AddCommand(planeSyncCmd)
@@ -106,6 +112,7 @@ func runPlaneSync(cmd *cobra.Command, args []string) {
 	preferPlane, _ := cmd.Flags().GetBool("prefer-plane")
 	createOnly, _ := cmd.Flags().GetBool("create-only")
 	state, _ := cmd.Flags().GetString("state")
+	includeEphemeral, _ := cmd.Flags().GetBool("include-ephemeral")
 
 	if !dryRun {
 		CheckReadonly("plane sync")
@@ -133,6 +140,9 @@ func runPlaneSync(cmd *cobra.Command, args []string) {
 	engine := tracker.NewEngine(pt, store, actor)
 	engine.OnMessage = func(msg string) { fmt.Println("  " + msg) }
 	engine.OnWarning = func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
+	// Plane cannot represent beads assignees; without these hooks a pull
+	// update would wipe the local assignee field.
+	engine.PullHooks = plane.NewPullHooks()
 
 	opts := tracker.SyncOptions{
 		Pull:       pull,
@@ -140,6 +150,9 @@ func runPlaneSync(cmd *cobra.Command, args []string) {
 		DryRun:     dryRun,
 		CreateOnly: createOnly,
 		State:      state,
+		// Wisps and other ephemeral beads stay local by default: pushing
+		// them would pollute the Plane project with permanent work items.
+		ExcludeEphemeral: !includeEphemeral,
 	}
 
 	if err := applySelectiveSyncFlags(cmd, &opts, push); err != nil {
