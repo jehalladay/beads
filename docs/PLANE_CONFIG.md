@@ -106,13 +106,31 @@ label. All `beads:*` labels are stripped from the imported label set.
 ### Description Mapping
 
 Beads stores Markdown; Plane stores HTML (`description_html`). The adapter
-converts Markdown → HTML on push (goldmark, no raw HTML passthrough) and
-HTML → Markdown on pull (bluemonday sanitization, then html-to-markdown).
-Plane additionally sanitizes incoming HTML server-side (nh3); disallowed
-tags are silently removed.
+converts Markdown → HTML on push (goldmark with GFM extensions, no raw HTML
+passthrough) and HTML → Markdown on pull (bluemonday sanitization, then
+html-to-markdown). GitHub-Flavored Markdown round-trips: tables,
+strikethrough, and task-list checkboxes are preserved through push and
+pull. Plane additionally sanitizes incoming HTML server-side (nh3);
+disallowed tags are silently removed.
+
+Clearing a description in beads clears it in Plane too: the adapter pushes
+Plane's canonical empty document rather than omitting the field, so a
+deleted description cannot resurrect on the next pull.
 
 Only the `Description` field syncs. `Design`, `AcceptanceCriteria`, and
 `Notes` stay local to beads.
+
+## Sync Filtering
+
+- **Ephemeral issues (wisps) stay local by default.** A push skips beads
+  marked ephemeral, so heartbeats, patrols, and other wisps do not become
+  permanent Plane work items. Pass `--include-ephemeral` to push them
+  anyway.
+- **`--state` filters both directions.** `--state open` syncs only open
+  work — on pull it imports only work items whose state group is not
+  `completed`/`cancelled`, and on push it skips closed beads.
+  `--state closed` pulls only `completed`/`cancelled` work items. The
+  default `all` syncs everything.
 
 ## Conflict Resolution
 
@@ -131,16 +149,28 @@ Plane server time.
 
 Self-hosted Plane CE throttles personal API tokens at 60 requests/minute
 by default (`API_KEY_RATE_LIMIT` env on the Plane API container). The
-client honors `Retry-After` on 429 responses with capped exponential
-backoff. Large projects on the default limit will sync slowly on first
-backfill; subsequent syncs are incremental (`plane.last_sync` watermark).
+client honors `Retry-After` on 429 responses (capped at 2 minutes per
+attempt), falling back to capped exponential backoff. If a 429 persists
+after retries are exhausted, the push aborts cleanly: already-pushed
+issues keep their links, and the remaining queue is picked up by the next
+sync.
+
+5xx responses are retried only for idempotent requests (GET/PATCH/DELETE).
+Creates are never blindly retried — if a create's response is lost, the
+`external_id` 409 dedup recovers the existing work item on the next sync
+instead of duplicating it.
+
+Large projects on the default limit will sync slowly on first backfill;
+subsequent syncs are incremental (`plane.last_sync` watermark).
 
 ## Known Limitations
 
 - **One project per beads database** (`plane.project_id` is singular).
   Multi-project sync like Linear/Jira is not yet implemented.
 - **Assignees do not sync.** Plane assignees are workspace-member UUIDs;
-  mapping to beads assignee strings is not yet implemented.
+  mapping to beads assignee strings is not yet implemented. A pull never
+  touches the local beads assignee, so locally assigned beads stay
+  assigned.
 - **Sub-issue hierarchy syncs pull-only**: a Plane parent/sub-item link
   becomes a `parent-child` dependency in beads on pull, but beads
   parent-child dependencies are not yet pushed to Plane.
