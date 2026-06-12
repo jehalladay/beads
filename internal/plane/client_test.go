@@ -231,7 +231,7 @@ func TestListIssuesPaginates(t *testing.T) {
 				pages.Add(1)
 				writeJSON(w, http.StatusOK, paginated(
 					[]any{sampleIssueJSON("00000000-0000-0000-0000-000000000002", "two")},
-					"", false))
+					"100:2:0", false))
 			default:
 				t.Errorf("unexpected cursor %q", r.URL.Query().Get("cursor"))
 				writeJSON(w, http.StatusBadRequest, map[string]string{"detail": "Invalid cursor parameter."})
@@ -261,7 +261,7 @@ func TestListIssuesSendsUpdatedAtOrdering(t *testing.T) {
 			if got := r.URL.Query().Get("order_by"); got != "-updated_at" {
 				t.Errorf("order_by = %q, want -updated_at", got)
 			}
-			writeJSON(w, http.StatusOK, paginated(nil, "", false))
+			writeJSON(w, http.StatusOK, paginated(nil, "100:1:0", false))
 		})
 	c, _ := newTestClient(t, mux)
 
@@ -368,7 +368,7 @@ func TestListStates(t *testing.T) {
 				map[string]any{"id": "s2", "name": "Todo", "group": "unstarted", "default": true},
 				map[string]any{"id": "s3", "name": "In Progress", "group": "started", "default": false},
 				map[string]any{"id": "s4", "name": "Done", "group": "completed", "default": false},
-			}, "", false))
+			}, "100:1:0", false))
 		})
 	c, _ := newTestClient(t, mux)
 
@@ -391,7 +391,7 @@ func TestListLabels(t *testing.T) {
 			writeJSON(w, http.StatusOK, paginated([]any{
 				map[string]any{"id": "l1", "name": "backend"},
 				map[string]any{"id": "l2", "name": "urgent-fix"},
-			}, "", false))
+			}, "100:1:0", false))
 		})
 	c, _ := newTestClient(t, mux)
 
@@ -452,7 +452,7 @@ func TestListProjects(t *testing.T) {
 		func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, paginated([]any{
 				map[string]any{"id": testProjectID, "name": "Gas City", "identifier": "GC"},
-			}, "", false))
+			}, "100:1:0", false))
 		})
 	c, _ := newTestClient(t, mux)
 
@@ -609,7 +609,7 @@ func TestPerPageClamped(t *testing.T) {
 			if got := r.URL.Query().Get("per_page"); got != "1000" {
 				t.Errorf("per_page = %q, want clamped to 1000", got)
 			}
-			writeJSON(w, http.StatusOK, paginated(nil, "", false))
+			writeJSON(w, http.StatusOK, paginated(nil, "100:1:0", false))
 		})
 	c, _ := newTestClient(t, mux)
 	c = c.WithPerPage(5000)
@@ -630,7 +630,7 @@ func TestListComments(t *testing.T) {
 		func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, paginated([]any{
 				map[string]any{"id": "c1", "comment_html": "<p>first</p>", "created_at": "2026-06-01T10:00:00.000000Z"},
-			}, "", false))
+			}, "100:1:0", false))
 		})
 	c, _ := newTestClient(t, mux)
 
@@ -667,5 +667,308 @@ func TestCreateComment(t *testing.T) {
 	}
 	if comment.ID != "c9" {
 		t.Errorf("comment = %+v", comment)
+	}
+}
+
+func TestRateLimitExhaustionReturnsRateLimitedError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"error_code": 5900, "error_message": "RATE_LIMIT_EXCEEDED",
+		})
+	})
+	c, _ := newTestClient(t, mux)
+	c = c.WithMaxRetries(0)
+
+	_, err := c.GetIssue(context.Background(), testIssueID)
+	if err == nil {
+		t.Fatal("expected error after rate limit exhaustion")
+	}
+	var rl *RateLimitError
+	if !errorsAs(err, &rl) {
+		t.Fatalf("error = %v (%T), want *RateLimitError", err, err)
+	}
+	if got := rl.RateLimitRetryAfter(); got != 7*time.Second {
+		t.Errorf("RateLimitRetryAfter = %v, want 7s", got)
+	}
+	if !strings.Contains(err.Error(), "429") {
+		t.Errorf("error %q should mention 429", err)
+	}
+}
+
+func TestRetryDelayCapsAndClamps(t *testing.T) {
+	resp := func(retryAfter string) *http.Response {
+		h := http.Header{}
+		if retryAfter != "" {
+			h.Set("Retry-After", retryAfter)
+		}
+		return &http.Response{Header: h}
+	}
+	tests := []struct {
+		name    string
+		resp    *http.Response
+		attempt int
+		want    time.Duration
+	}{
+		{"plain exponential", resp(""), 2, 4 * time.Second},
+		{"exponential capped at maxBackoff", resp(""), 10, maxBackoff},
+		{"shift overflow clamped", resp(""), 200, maxBackoff},
+		{"retry-after honored", resp("3"), 0, 3 * time.Second},
+		{"huge retry-after capped", resp("9999"), 0, retryAfterCap},
+		{"http-date retry-after capped", resp(time.Now().Add(time.Hour).UTC().Format(http.TimeFormat)), 0, retryAfterCap},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := retryDelay(tt.resp, tt.attempt)
+			if tt.name == "http-date retry-after capped" {
+				// time.Until introduces sub-second jitter; the cap is the point.
+				if got > retryAfterCap || got < retryAfterCap-5*time.Second {
+					t.Errorf("retryDelay = %v, want ~%v (capped)", got, retryAfterCap)
+				}
+				return
+			}
+			if got != tt.want {
+				t.Errorf("retryDelay = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestServerErrorRetriesGET(t *testing.T) {
+	var calls atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "boom"})
+			return
+		}
+		writeJSON(w, http.StatusOK, sampleIssueJSON(testIssueID, "after retry"))
+	})
+	c, _ := newTestClient(t, mux)
+
+	issue, err := c.GetIssue(context.Background(), testIssueID)
+	if err != nil {
+		t.Fatalf("GetIssue error after 5xx retry: %v", err)
+	}
+	if issue == nil || issue.Name != "after retry" {
+		t.Errorf("issue = %+v", issue)
+	}
+	if calls.Load() != 2 {
+		t.Errorf("calls = %d, want 2 (one retry)", calls.Load())
+	}
+}
+
+func TestPostServerErrorNotRetried(t *testing.T) {
+	// POSTs are not retried on 5xx: the server may have processed the
+	// request before failing, and a blind retry can duplicate the entity
+	// (comments have no dedup key). Work item creation recovers through
+	// the external_id 409 on the next sync instead.
+	var calls atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "boom"})
+	})
+	c, _ := newTestClient(t, mux)
+
+	_, err := c.CreateComment(context.Background(), testIssueID, "<p>x</p>")
+	if err == nil {
+		t.Fatal("expected error from POST 5xx")
+	}
+	if calls.Load() != 1 {
+		t.Errorf("calls = %d, want 1 (no retry of non-idempotent POST)", calls.Load())
+	}
+}
+
+func TestPostRateLimit429IsRetried(t *testing.T) {
+	// 429 means the request was rejected before processing, so retrying a
+	// POST is safe.
+	var calls atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Retry-After", "0")
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{"error_message": "RATE_LIMIT_EXCEEDED"})
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"id": "c9", "comment_html": "<p>x</p>", "created_at": "2026-06-12T00:00:00.000000Z",
+		})
+	})
+	c, _ := newTestClient(t, mux)
+
+	comment, err := c.CreateComment(context.Background(), testIssueID, "<p>x</p>")
+	if err != nil {
+		t.Fatalf("CreateComment error after 429 retry: %v", err)
+	}
+	if comment.ID != "c9" {
+		t.Errorf("comment = %+v", comment)
+	}
+	if calls.Load() != 2 {
+		t.Errorf("calls = %d, want 2", calls.Load())
+	}
+}
+
+func TestSuccessDecodeErrorSurfaces(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("{not json"))
+	})
+	c, _ := newTestClient(t, mux)
+
+	_, err := c.GetIssue(context.Background(), testIssueID)
+	if err == nil {
+		t.Fatal("expected decode error")
+	}
+	if !strings.Contains(err.Error(), "decoding response") {
+		t.Errorf("error %q should mention decoding response", err)
+	}
+}
+
+func TestNetworkErrorSurfaces(t *testing.T) {
+	srv := httptest.NewServer(http.NewServeMux())
+	c := NewClient(srv.URL, testAPIKey, testWorkspace, testProjectID)
+	srv.Close() // connection refused from here on
+
+	_, err := c.GetIssue(context.Background(), testIssueID)
+	if err == nil {
+		t.Fatal("expected network error")
+	}
+	if !strings.Contains(err.Error(), "plane API GET") {
+		t.Errorf("error %q should carry method/path context", err)
+	}
+}
+
+func TestGetIssueByIdentifierNotFoundReturnsNilNil(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"detail": "Not found."})
+	})
+	c, _ := newTestClient(t, mux)
+
+	issue, err := c.GetIssueByIdentifier(context.Background(), "GC-404")
+	if err != nil {
+		t.Fatalf("GetIssueByIdentifier error: %v", err)
+	}
+	if issue != nil {
+		t.Errorf("issue = %+v, want nil for 404", issue)
+	}
+}
+
+func TestListPagesTerminatesOnLastPageWithNonEmptyCursor(t *testing.T) {
+	// Real Plane (and the fake) emit a non-empty next_cursor on the final
+	// page; next_page_results=false is the only end-of-collection signal.
+	var calls atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/work-items/",
+		func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			writeJSON(w, http.StatusOK, paginated(
+				[]any{sampleIssueJSON("00000000-0000-0000-0000-000000000001", "only")},
+				"100:1:0", false))
+		})
+	c, _ := newTestClient(t, mux)
+
+	issues, err := c.ListIssues(context.Background(), ListIssuesOptions{})
+	if err != nil {
+		t.Fatalf("ListIssues error: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("got %d issues, want 1", len(issues))
+	}
+	if calls.Load() != 1 {
+		t.Errorf("calls = %d, want 1 (must not follow cursor past the last page)", calls.Load())
+	}
+}
+
+func TestListPagesMidPaginationErrorSurfaces(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/work-items/",
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("cursor") == "" {
+				writeJSON(w, http.StatusOK, paginated(
+					[]any{sampleIssueJSON("00000000-0000-0000-0000-000000000001", "one")},
+					"100:1:0", true))
+				return
+			}
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "upstream died"})
+		})
+	c, _ := newTestClient(t, mux)
+	c = c.WithMaxRetries(0)
+
+	_, err := c.ListIssues(context.Background(), ListIssuesOptions{})
+	if err == nil {
+		t.Fatal("expected mid-pagination error to surface")
+	}
+	if !strings.Contains(err.Error(), "502") {
+		t.Errorf("error %q should mention the 502", err)
+	}
+}
+
+func TestListPagesRunawayPaginationAborts(t *testing.T) {
+	// A server that never flips next_page_results=false must not hang the
+	// client forever.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/work-items/",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, paginated(
+				[]any{sampleIssueJSON("00000000-0000-0000-0000-000000000001", "loop")},
+				"100:1:0", true))
+		})
+	c, _ := newTestClient(t, mux)
+
+	_, err := c.ListIssues(context.Background(), ListIssuesOptions{})
+	if err == nil {
+		t.Fatal("expected runaway pagination to abort with an error")
+	}
+	if !strings.Contains(err.Error(), "pages") {
+		t.Errorf("error %q should mention the page ceiling", err)
+	}
+}
+
+func TestPathComponentsAreEscaped(t *testing.T) {
+	var gotPath atomic.Value
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		gotPath.Store(r.URL.EscapedPath())
+		writeJSON(w, http.StatusOK, sampleIssueJSON(testIssueID, "x"))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	c := NewClient(srv.URL, testAPIKey, "a b", "p/q")
+	if _, err := c.GetIssue(context.Background(), "i d"); err != nil {
+		t.Fatalf("GetIssue error: %v", err)
+	}
+	want := "/api/v1/workspaces/a%20b/projects/p%2Fq/work-items/i%20d/"
+	if gotPath.Load() != want {
+		t.Errorf("escaped path = %v, want %q", gotPath.Load(), want)
+	}
+
+	c2 := NewClient(srv.URL, testAPIKey, "a b", testProjectID)
+	if _, err := c2.GetIssueByIdentifier(context.Background(), "GC 7/x"); err != nil {
+		t.Fatalf("GetIssueByIdentifier error: %v", err)
+	}
+	want2 := "/api/v1/workspaces/a%20b/work-items/GC%207%2Fx/"
+	if gotPath.Load() != want2 {
+		t.Errorf("escaped path = %v, want %q", gotPath.Load(), want2)
+	}
+}
+
+func TestWithBuildersDoNotMutateReceiver(t *testing.T) {
+	c1 := NewClient("https://plane.example.com", testAPIKey, testWorkspace, testProjectID)
+	c2 := c1.WithPerPage(7)
+	c3 := c1.WithMaxRetries(9)
+	if c1.perPage != defaultPerPage {
+		t.Errorf("WithPerPage mutated the receiver: perPage = %d", c1.perPage)
+	}
+	if c1.maxRetries != defaultMaxRetries {
+		t.Errorf("WithMaxRetries mutated the receiver: maxRetries = %d", c1.maxRetries)
+	}
+	if c2.perPage != 7 || c3.maxRetries != 9 {
+		t.Errorf("builders did not apply: perPage = %d, maxRetries = %d", c2.perPage, c3.maxRetries)
 	}
 }

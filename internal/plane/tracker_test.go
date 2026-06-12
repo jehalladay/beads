@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -438,5 +439,302 @@ func TestUpdateIssuePushesMappedFields(t *testing.T) {
 	}
 	if _, hasExt := patched["external_id"]; hasExt {
 		t.Error("PATCH must not resend external_id (409 risk when it differs)")
+	}
+}
+
+// emptyLabelsHandler registers the empty labels fixture ensureCaches needs.
+func emptyLabelsHandler(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/labels/",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, paginated(nil, "100:1:0", false))
+		})
+}
+
+// stateFilterIssues returns one issue in each of three groups: backlog,
+// started, completed.
+func stateFilterIssues() []any {
+	mk := func(id, name, stateID string) map[string]any {
+		m := sampleIssueJSON(id, name)
+		m["state"] = stateID
+		return m
+	}
+	return []any{
+		mk("00000000-0000-0000-0000-000000000001", "in backlog", stateBacklogID),
+		mk("00000000-0000-0000-0000-000000000002", "in progress", stateStartedID),
+		mk("00000000-0000-0000-0000-000000000003", "shipped", stateCompletedID),
+	}
+}
+
+func TestFetchIssuesStateFilter(t *testing.T) {
+	tests := []struct {
+		state string
+		want  []string
+	}{
+		{"all", []string{"in backlog", "in progress", "shipped"}},
+		{"", []string{"in backlog", "in progress", "shipped"}},
+		{"open", []string{"in backlog", "in progress"}},
+		{"closed", []string{"shipped"}},
+	}
+	for _, tt := range tests {
+		t.Run("state="+tt.state, func(t *testing.T) {
+			mux := trackerMux(t)
+			emptyLabelsHandler(mux)
+			mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/work-items/",
+				func(w http.ResponseWriter, r *http.Request) {
+					writeJSON(w, http.StatusOK, paginated(stateFilterIssues(), "100:1:0", false))
+				})
+			tr := newInitializedTracker(t, mux)
+
+			issues, err := tr.FetchIssues(context.Background(), tracker.FetchOptions{State: tt.state})
+			if err != nil {
+				t.Fatalf("FetchIssues error: %v", err)
+			}
+			var got []string
+			for _, ti := range issues {
+				got = append(got, ti.Title)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Errorf("got %v, want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestFetchIssuesLimit(t *testing.T) {
+	mux := trackerMux(t)
+	emptyLabelsHandler(mux)
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/work-items/",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, paginated(stateFilterIssues(), "100:1:0", false))
+		})
+	tr := newInitializedTracker(t, mux)
+
+	issues, err := tr.FetchIssues(context.Background(), tracker.FetchOptions{Limit: 2})
+	if err != nil {
+		t.Fatalf("FetchIssues error: %v", err)
+	}
+	if len(issues) != 2 {
+		t.Errorf("got %d issues, want 2 (Limit honored)", len(issues))
+	}
+}
+
+func TestCreateIssueDedupRejectsNonUUIDExistingID(t *testing.T) {
+	mux := trackerMux(t)
+	emptyLabelsHandler(mux)
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/work-items/",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "already exists",
+				"id":    "../../../west-workspace/secrets",
+			})
+		})
+	tr := newInitializedTracker(t, mux)
+
+	_, err := tr.CreateIssue(context.Background(), &types.Issue{ID: "bd-42", Title: "x", Status: types.StatusOpen})
+	if err == nil {
+		t.Fatal("expected error for non-UUID conflict id")
+	}
+	if !strings.Contains(err.Error(), "not a work item UUID") {
+		t.Errorf("error = %v, want mention of invalid conflict id", err)
+	}
+}
+
+func TestCreateIssueDuplicateWithoutIDSurfaces(t *testing.T) {
+	mux := trackerMux(t)
+	emptyLabelsHandler(mux)
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/work-items/",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "conflict, no id field"})
+		})
+	tr := newInitializedTracker(t, mux)
+
+	_, err := tr.CreateIssue(context.Background(), &types.Issue{ID: "bd-42", Title: "x", Status: types.StatusOpen})
+	if err == nil {
+		t.Fatal("expected error for 409 without id")
+	}
+	var dup *DuplicateError
+	if !errorsAs(err, &dup) {
+		t.Errorf("error = %v (%T), want wrapped *DuplicateError", err, err)
+	}
+}
+
+func TestCreateIssueDedupAppliesCurrentPayload(t *testing.T) {
+	// Recovery from a 409 must push the bead's current fields onto the
+	// pre-existing work item, not silently return its stale state.
+	mux := trackerMux(t)
+	emptyLabelsHandler(mux)
+	var patched map[string]any
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/work-items/",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "already exists", "id": testIssueID})
+		})
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/work-items/"+testIssueID+"/",
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPatch {
+				t.Errorf("method = %s, want PATCH applying the current payload", r.Method)
+			}
+			_ = json.NewDecoder(r.Body).Decode(&patched)
+			writeJSON(w, http.StatusOK, sampleIssueJSON(testIssueID, "current title"))
+		})
+	tr := newInitializedTracker(t, mux)
+
+	created, err := tr.CreateIssue(context.Background(), &types.Issue{ID: "bd-42", Title: "current title", Status: types.StatusOpen})
+	if err != nil {
+		t.Fatalf("CreateIssue should recover from 409: %v", err)
+	}
+	if created == nil || created.Title != "current title" {
+		t.Errorf("created = %+v, want the freshly-patched issue", created)
+	}
+	if patched["name"] != "current title" {
+		t.Errorf("patched name = %v, want the bead's current title", patched["name"])
+	}
+	if _, hasExt := patched["external_id"]; hasExt {
+		t.Error("dedup PATCH must not resend external_id")
+	}
+	if _, hasCreated := patched["created_at"]; hasCreated {
+		t.Error("dedup PATCH must not resend created_at")
+	}
+}
+
+func TestPushEmptyDescriptionSendsEmptyDocument(t *testing.T) {
+	// A cleared beads description must clear the Plane description: an
+	// omitted description_html key would leave the old remote text in
+	// place, resurrecting it on the next pull.
+	mux := trackerMux(t)
+	emptyLabelsHandler(mux)
+	var patched map[string]any
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/work-items/"+testIssueID+"/",
+		func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&patched)
+			writeJSON(w, http.StatusOK, sampleIssueJSON(testIssueID, "x"))
+		})
+	tr := newInitializedTracker(t, mux)
+
+	_, err := tr.UpdateIssue(context.Background(), testIssueID, &types.Issue{ID: "bd-42", Title: "x", Status: types.StatusOpen})
+	if err != nil {
+		t.Fatalf("UpdateIssue error: %v", err)
+	}
+	if patched["description_html"] != "<p></p>" {
+		t.Errorf("description_html = %v, want %q (Plane's canonical empty document)", patched["description_html"], "<p></p>")
+	}
+}
+
+func TestStateForStatusMissingGroupErrors(t *testing.T) {
+	// A project whose workflow lacks a state in the needed group must
+	// surface a descriptive error, not push a bogus state.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]any{"id": testProjectID, "name": "Gas City", "identifier": "GC"})
+		})
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/states/",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, paginated([]any{
+				map[string]any{"id": stateBacklogID, "name": "Backlog", "group": "backlog", "default": true},
+			}, "100:1:0", false))
+		})
+	emptyLabelsHandler(mux)
+	tr := newInitializedTracker(t, mux)
+
+	_, err := tr.CreateIssue(context.Background(), &types.Issue{ID: "bd-42", Title: "x", Status: types.StatusClosed})
+	if err == nil {
+		t.Fatal("expected error for missing state group")
+	}
+	if !strings.Contains(err.Error(), `no state in group "completed"`) {
+		t.Errorf("error = %v, want mention of the missing group", err)
+	}
+}
+
+func TestEnsureCachesStatesErrorWraps(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]any{"id": testProjectID, "name": "Gas City", "identifier": "GC"})
+		})
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/states/",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "upstream"})
+		})
+	tr := newInitializedTracker(t, mux)
+	tr.client = tr.client.WithMaxRetries(0)
+
+	_, err := tr.FetchIssues(context.Background(), tracker.FetchOptions{})
+	if err == nil {
+		t.Fatal("expected error when state fetch fails")
+	}
+	if !strings.Contains(err.Error(), "fetching Plane states") {
+		t.Errorf("error = %v, want wrapped state-fetch context", err)
+	}
+}
+
+func TestEnsureLabelsCreateErrorWraps(t *testing.T) {
+	mux := trackerMux(t)
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/labels/",
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "boom"})
+				return
+			}
+			writeJSON(w, http.StatusOK, paginated(nil, "100:1:0", false))
+		})
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/work-items/",
+		func(w http.ResponseWriter, r *http.Request) {
+			t.Error("work item creation must not be reached when label creation fails")
+		})
+	tr := newInitializedTracker(t, mux)
+
+	_, err := tr.CreateIssue(context.Background(), &types.Issue{
+		ID: "bd-42", Title: "x", Status: types.StatusOpen, Labels: []string{"backend"},
+	})
+	if err == nil {
+		t.Fatal("expected error when label creation fails")
+	}
+	if !strings.Contains(err.Error(), `creating Plane label "backend"`) {
+		t.Errorf("error = %v, want wrapped label-create context", err)
+	}
+}
+
+// deepBlockquoteHTML builds HTML nested beyond x/net's 512-node parse depth,
+// which makes the HTML->Markdown converter fail.
+func deepBlockquoteHTML() string {
+	depth := 600
+	var b strings.Builder
+	for i := 0; i < depth; i++ {
+		b.WriteString("<blockquote>")
+	}
+	b.WriteString("deep content")
+	for i := 0; i < depth; i++ {
+		b.WriteString("</blockquote>")
+	}
+	return b.String()
+}
+
+func TestFetchIssuesDescriptionConversionFallback(t *testing.T) {
+	// A description whose HTML->Markdown conversion fails must fall back
+	// to the sanitized HTML, never silently blank the content.
+	mux := trackerMux(t)
+	emptyLabelsHandler(mux)
+	issue := sampleIssueJSON("00000000-0000-0000-0000-000000000001", "pathological")
+	issue["description_html"] = deepBlockquoteHTML()
+	mux.HandleFunc("/api/v1/workspaces/acme/projects/"+testProjectID+"/work-items/",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, paginated([]any{issue}, "100:1:0", false))
+		})
+	tr := newInitializedTracker(t, mux)
+
+	issues, err := tr.FetchIssues(context.Background(), tracker.FetchOptions{})
+	if err != nil {
+		t.Fatalf("FetchIssues error: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("got %d issues, want 1", len(issues))
+	}
+	if !strings.Contains(issues[0].Description, "deep content") {
+		t.Errorf("description lost its content on conversion failure; got %d bytes", len(issues[0].Description))
 	}
 }

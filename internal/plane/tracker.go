@@ -121,13 +121,33 @@ func (t *Tracker) FetchIssues(ctx context.Context, opts tracker.FetchOptions) ([
 		if opts.Since != nil && native.UpdatedAt.Before(*opts.Since) {
 			continue
 		}
-		ti := t.toTrackerIssue(&native)
+		if !t.matchesStateFilter(&native, opts.State) {
+			continue
+		}
 		if opts.Limit > 0 && len(result) >= opts.Limit {
 			break
 		}
-		result = append(result, ti)
+		result = append(result, t.toTrackerIssue(&native))
 	}
 	return result, nil
+}
+
+// matchesStateFilter reports whether the issue passes the open/closed pull
+// filter. Closed means the issue's state group is completed or cancelled;
+// an issue whose state is missing from the cache counts as open (matching
+// StatusToBeads, which imports unknown states as open).
+func (t *Tracker) matchesStateFilter(native *Issue, stateFilter string) bool {
+	if stateFilter == "" || stateFilter == "all" {
+		return true
+	}
+	t.mu.Lock()
+	state := t.stateByID[native.StateID]
+	t.mu.Unlock()
+	closed := state != nil && (state.Group == GroupCompleted || state.Group == GroupCancelled)
+	if stateFilter == "closed" {
+		return closed
+	}
+	return !closed
 }
 
 // FetchIssue retrieves one work item by UUID or human-readable identifier
@@ -173,21 +193,27 @@ func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker
 	if err != nil {
 		return nil, err
 	}
-	payload.ExternalID = issue.ID
-	payload.ExternalSource = ExternalSource
+	createPayload := *payload
+	createPayload.ExternalID = issue.ID
+	createPayload.ExternalSource = ExternalSource
 	if !issue.CreatedAt.IsZero() {
-		payload.CreatedAt = issue.CreatedAt.UTC().Format("2006-01-02T15:04:05.000000Z")
+		createPayload.CreatedAt = issue.CreatedAt.UTC().Format("2006-01-02T15:04:05.000000Z")
 	}
 
-	created, err := t.client.CreateIssue(ctx, payload)
+	created, err := t.client.CreateIssue(ctx, &createPayload)
 	var dup *DuplicateError
 	if errors.As(err, &dup) && dup.ExistingID != "" {
-		existing, fetchErr := t.client.GetIssue(ctx, dup.ExistingID)
-		if fetchErr != nil {
-			return nil, fmt.Errorf("recovering duplicate Plane work item %s: %w", dup.ExistingID, fetchErr)
+		if !uuidRe.MatchString(dup.ExistingID) {
+			return nil, fmt.Errorf("creating Plane work item for %s: conflict reported existing id %q, which is not a work item UUID", issue.ID, dup.ExistingID)
 		}
-		if existing == nil {
-			return nil, fmt.Errorf("Plane reported duplicate %s but it cannot be fetched", dup.ExistingID)
+		// Apply the bead's current fields onto the pre-existing work item
+		// so dedup recovery doesn't hand back (and report as pushed) its
+		// stale state. The PATCH payload deliberately excludes
+		// external_id/external_source/created_at: the linkage already
+		// exists and resending it risks another 409.
+		existing, patchErr := t.client.UpdateIssue(ctx, dup.ExistingID, payload)
+		if patchErr != nil {
+			return nil, fmt.Errorf("recovering duplicate Plane work item %s: %w", dup.ExistingID, patchErr)
 		}
 		fmt.Fprintf(os.Stderr, "plane: dedup — reusing existing work item %s for bead %s\n", existing.ID, issue.ID)
 		ti := t.toTrackerIssue(existing)
@@ -256,6 +282,12 @@ func (t *Tracker) buildPayload(ctx context.Context, issue *types.Issue) (*IssueP
 	html, err := MarkdownToHTML(issue.Description)
 	if err != nil {
 		return nil, fmt.Errorf("converting description for %s: %w", issue.ID, err)
+	}
+	if html == "" {
+		// An omitted description_html key would leave the previous remote
+		// description in place (PATCH is partial), resurrecting it on the
+		// next pull; send Plane's canonical empty document instead.
+		html = emptyDescriptionHTML
 	}
 
 	stateID, err := t.stateForStatus(issue.Status)
@@ -387,7 +419,7 @@ func (t *Tracker) toTrackerIssue(native *Issue) tracker.TrackerIssue {
 	}
 	t.mu.Unlock()
 
-	desc, _ := HTMLToMarkdown(native.DescriptionHTML)
+	desc := descriptionMarkdown(native.DescriptionHTML)
 
 	ti := tracker.TrackerIssue{
 		ID:          native.ID,

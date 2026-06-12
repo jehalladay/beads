@@ -19,7 +19,17 @@ const (
 	maxPerPage        = 1000
 	defaultMaxRetries = 3
 	maxBackoff        = 30 * time.Second
-	errBodyLimit      = 300
+	// retryAfterCap bounds how long a server-sent Retry-After header can
+	// make the client sleep per attempt; Plane's default rate window is
+	// one minute, so anything larger is treated as misbehavior.
+	retryAfterCap = 2 * time.Minute
+	errBodyLimit  = 300
+	// maxResponseSize bounds response body reads (matches the 50MB cap
+	// used by the github/jira/gitlab adapters).
+	maxResponseSize = 50 * 1024 * 1024
+	// maxListPages bounds pagination follows so a server that never
+	// reports the last page cannot hang a sync forever.
+	maxListPages = 10000
 )
 
 // errNotFound is an internal sentinel for 404 responses; public lookup
@@ -54,14 +64,17 @@ func NewClient(baseURL, apiKey, workspace, projectID string) *Client {
 	}
 }
 
-// WithHTTPClient returns the client configured with a custom *http.Client.
+// WithHTTPClient returns a copy of the client configured with a custom
+// *http.Client. The receiver is not modified.
 func (c *Client) WithHTTPClient(h *http.Client) *Client {
-	c.httpClient = h
-	return c
+	c2 := *c
+	c2.httpClient = h
+	return &c2
 }
 
-// WithPerPage returns the client configured with a page size for list
-// requests, clamped to Plane's runtime maximum (1000).
+// WithPerPage returns a copy of the client configured with a page size for
+// list requests, clamped to Plane's runtime maximum (1000). The receiver is
+// not modified.
 func (c *Client) WithPerPage(n int) *Client {
 	if n < 1 {
 		n = 1
@@ -69,18 +82,21 @@ func (c *Client) WithPerPage(n int) *Client {
 	if n > maxPerPage {
 		n = maxPerPage
 	}
-	c.perPage = n
-	return c
+	c2 := *c
+	c2.perPage = n
+	return &c2
 }
 
-// WithMaxRetries returns the client configured with the maximum number of
-// retries for rate-limited (429) and transient server-error responses.
+// WithMaxRetries returns a copy of the client configured with the maximum
+// number of retries for rate-limited (429) and transient server-error
+// responses. The receiver is not modified.
 func (c *Client) WithMaxRetries(n int) *Client {
 	if n < 0 {
 		n = 0
 	}
-	c.maxRetries = n
-	return c
+	c2 := *c
+	c2.maxRetries = n
+	return &c2
 }
 
 // BaseURL returns the normalized instance root URL.
@@ -95,9 +111,12 @@ func (c *Client) Workspace() string { return c.workspace }
 // ProjectID returns the configured project UUID.
 func (c *Client) ProjectID() string { return c.projectID }
 
-// projectPath builds an API path under the configured project.
+// projectPath builds an API path under the configured project. The
+// workspace and project components are path-escaped; suffix segments are
+// escaped by the callers that interpolate identifiers into them.
 func (c *Client) projectPath(suffix string) string {
-	return fmt.Sprintf("/workspaces/%s/projects/%s/%s", c.workspace, c.projectID, suffix)
+	return fmt.Sprintf("/workspaces/%s/projects/%s/%s",
+		url.PathEscape(c.workspace), url.PathEscape(c.projectID), suffix)
 }
 
 // doJSON performs one API call with retry handling and decodes the JSON
@@ -136,7 +155,13 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 			return fmt.Errorf("plane API %s %s: %w", method, path, err)
 		}
 
-		retryable := resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
+		// 429 means the request was rejected before processing, so any
+		// method is safe to retry. 5xx may have been processed before
+		// failing, so only idempotent methods are retried: a replayed
+		// POST can duplicate entities that lack a dedup key (comments).
+		idempotent := method == http.MethodGet || method == http.MethodPatch || method == http.MethodDelete
+		retryable := resp.StatusCode == http.StatusTooManyRequests ||
+			(resp.StatusCode >= 500 && idempotent)
 		if retryable && attempt < c.maxRetries {
 			wait := retryDelay(resp, attempt)
 			_, _ = io.Copy(io.Discard, resp.Body)
@@ -154,13 +179,19 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 }
 
 // retryDelay computes how long to wait before retrying, honoring the
-// Retry-After header when present and falling back to capped exponential
-// backoff.
+// Retry-After header (capped at retryAfterCap) when present and falling
+// back to capped exponential backoff.
 func retryDelay(resp *http.Response, attempt int) time.Duration {
-	if ra := resp.Header.Get("Retry-After"); ra != "" {
-		if secs, err := strconv.Atoi(strings.TrimSpace(ra)); err == nil && secs >= 0 {
-			return time.Duration(secs) * time.Second
+	if ra := parseRetryAfter(resp.Header.Get("Retry-After")); ra > 0 {
+		if ra > retryAfterCap {
+			return retryAfterCap
 		}
+		return ra
+	}
+	// Clamp the shift before computing: a large attempt count would
+	// overflow time.Second << attempt into a negative duration.
+	if attempt > 5 {
+		return maxBackoff
 	}
 	delay := time.Second << attempt
 	if delay > maxBackoff {
@@ -169,11 +200,30 @@ func retryDelay(resp *http.Response, attempt int) time.Duration {
 	return delay
 }
 
+// parseRetryAfter parses a Retry-After header value, which is either an
+// integer number of seconds or an HTTP-date (RFC 9110 §10.2.3). Returns
+// zero when absent or unparseable.
+func parseRetryAfter(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(value); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(value); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
 // handleResponse maps a terminal HTTP response to a decoded value or a
 // typed error.
 func (c *Client) handleResponse(method, path string, resp *http.Response, out any) error {
 	defer func() { _ = resp.Body.Close() }()
-	raw, readErr := io.ReadAll(resp.Body)
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if readErr != nil {
 		return fmt.Errorf("plane API %s %s: reading response: %w", method, path, readErr)
 	}
@@ -207,6 +257,16 @@ func (c *Client) handleResponse(method, path string, resp *http.Response, out an
 		// denials use the same status. Both halt sync, so treat any 403 as
 		// an auth-layer failure with the server's detail preserved.
 		return &AuthError{StatusCode: resp.StatusCode, Detail: errorDetail(raw)}
+
+	case resp.StatusCode == http.StatusTooManyRequests:
+		// Only reached after retry exhaustion (doJSON retries 429s). The
+		// typed error implements tracker.RateLimitedError so the engine
+		// aborts the push cleanly instead of failing issue by issue.
+		return &RateLimitError{
+			Method:     method,
+			Path:       path,
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
 
 	default:
 		return &APIError{
@@ -246,7 +306,10 @@ func truncate(s string, n int) string {
 func listPages[T any](ctx context.Context, c *Client, path string, extraQuery url.Values) ([]T, error) {
 	var all []T
 	cursor := ""
-	for {
+	for pages := 0; ; pages++ {
+		if pages >= maxListPages {
+			return all, fmt.Errorf("plane API GET %s: pagination exceeded %d pages without reaching the last page", path, maxListPages)
+		}
 		query := url.Values{}
 		for k, vs := range extraQuery {
 			for _, v := range vs {
@@ -275,7 +338,7 @@ func listPages[T any](ctx context.Context, c *Client, path string, extraQuery ur
 // exist.
 func (c *Client) GetIssue(ctx context.Context, issueID string) (*Issue, error) {
 	var issue Issue
-	err := c.doJSON(ctx, http.MethodGet, c.projectPath("work-items/"+issueID+"/"), nil, nil, &issue)
+	err := c.doJSON(ctx, http.MethodGet, c.projectPath("work-items/"+url.PathEscape(issueID)+"/"), nil, nil, &issue)
 	if errors.Is(err, errNotFound) {
 		return nil, nil
 	}
@@ -309,7 +372,7 @@ func (c *Client) GetIssueByExternalID(ctx context.Context, externalID, externalS
 // (e.g. "PROJ-7") via the workspace-level endpoint. Returns (nil, nil) if it
 // does not exist.
 func (c *Client) GetIssueByIdentifier(ctx context.Context, identifier string) (*Issue, error) {
-	path := fmt.Sprintf("/workspaces/%s/work-items/%s/", c.workspace, identifier)
+	path := fmt.Sprintf("/workspaces/%s/work-items/%s/", url.PathEscape(c.workspace), url.PathEscape(identifier))
 	var issue Issue
 	err := c.doJSON(ctx, http.MethodGet, path, nil, nil, &issue)
 	if errors.Is(err, errNotFound) {
@@ -373,14 +436,14 @@ func (c *Client) CreateLabel(ctx context.Context, name string) (*Label, error) {
 
 // ListComments fetches all comments on a work item, following pagination.
 func (c *Client) ListComments(ctx context.Context, issueID string) ([]Comment, error) {
-	return listPages[Comment](ctx, c, c.projectPath("work-items/"+issueID+"/comments/"), nil)
+	return listPages[Comment](ctx, c, c.projectPath("work-items/"+url.PathEscape(issueID)+"/comments/"), nil)
 }
 
 // CreateComment posts an HTML comment on a work item.
 func (c *Client) CreateComment(ctx context.Context, issueID, commentHTML string) (*Comment, error) {
 	var comment Comment
 	body := map[string]string{"comment_html": commentHTML}
-	if err := c.doJSON(ctx, http.MethodPost, c.projectPath("work-items/"+issueID+"/comments/"), nil, body, &comment); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, c.projectPath("work-items/"+url.PathEscape(issueID)+"/comments/"), nil, body, &comment); err != nil {
 		return nil, err
 	}
 	return &comment, nil
@@ -389,13 +452,13 @@ func (c *Client) CreateComment(ctx context.Context, issueID, commentHTML string)
 // ListProjects fetches all projects in the workspace. Plane has no
 // identifier/name filter on this endpoint, so discovery is client-side.
 func (c *Client) ListProjects(ctx context.Context) ([]Project, error) {
-	path := fmt.Sprintf("/workspaces/%s/projects/", c.workspace)
+	path := fmt.Sprintf("/workspaces/%s/projects/", url.PathEscape(c.workspace))
 	return listPages[Project](ctx, c, path, nil)
 }
 
 // GetProject fetches the configured project.
 func (c *Client) GetProject(ctx context.Context) (*Project, error) {
-	path := fmt.Sprintf("/workspaces/%s/projects/%s/", c.workspace, c.projectID)
+	path := fmt.Sprintf("/workspaces/%s/projects/%s/", url.PathEscape(c.workspace), url.PathEscape(c.projectID))
 	var p Project
 	if err := c.doJSON(ctx, http.MethodGet, path, nil, nil, &p); err != nil {
 		return nil, err
