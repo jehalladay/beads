@@ -321,3 +321,35 @@ func TestPushLabelsFor(t *testing.T) {
 func contains(s, sub string) bool {
 	return strings.Contains(s, sub)
 }
+
+func TestIssueToBeadsDescriptionConversionFallback(t *testing.T) {
+	// Conversion failure must preserve content (as sanitized HTML), never
+	// blank the local description on pull.
+	depth := 600
+	var b strings.Builder
+	for i := 0; i < depth; i++ {
+		b.WriteString("<blockquote>")
+	}
+	b.WriteString("deep content")
+	for i := 0; i < depth; i++ {
+		b.WriteString("</blockquote>")
+	}
+
+	m := newFieldMapper(refContext{baseURL: "https://p.example.com", workspace: "acme", projectID: "p1"})
+	native := &Issue{ID: "u1", Name: "x", DescriptionHTML: b.String()}
+	conv := m.IssueToBeads(&tracker.TrackerIssue{Raw: native})
+	if conv == nil || conv.Issue == nil {
+		t.Fatal("conversion returned nil")
+	}
+	if !strings.Contains(conv.Issue.Description, "deep content") {
+		t.Errorf("description lost content on conversion failure; got %d bytes", len(conv.Issue.Description))
+	}
+}
+
+func TestIssueToTrackerEmptyDescriptionSendsEmptyDocument(t *testing.T) {
+	m := newFieldMapper(refContext{})
+	fields := m.IssueToTracker(&types.Issue{Title: "x", Description: ""})
+	if fields["description_html"] != emptyDescriptionHTML {
+		t.Errorf("description_html = %v, want %q", fields["description_html"], emptyDescriptionHTML)
+	}
+}

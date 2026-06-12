@@ -5,6 +5,27 @@ import (
 	"time"
 )
 
+// RateLimitError is a 429 response that survived retry exhaustion.
+// It satisfies the engine's tracker.RateLimitedError interface
+// (RateLimitRetryAfter), letting the push loop abort cleanly and keep the
+// remaining queue for the next sync instead of failing issue by issue.
+type RateLimitError struct {
+	Method     string
+	Path       string
+	RetryAfter time.Duration
+}
+
+func (e *RateLimitError) Error() string {
+	if e.RetryAfter > 0 {
+		return fmt.Sprintf("plane API %s %s: status 429: rate limited (retry after %s)", e.Method, e.Path, e.RetryAfter)
+	}
+	return fmt.Sprintf("plane API %s %s: status 429: rate limited", e.Method, e.Path)
+}
+
+// RateLimitRetryAfter returns the server-suggested wait before retrying;
+// zero means the server didn't say.
+func (e *RateLimitError) RateLimitRetryAfter() time.Duration { return e.RetryAfter }
+
 // Issue is a Plane work item as returned by the /api/v1 REST API (v1.3.0).
 // Field names follow the IssueSerializer response shape; labels and
 // assignees are UUID strings (the API returns IDs unless expand is used).

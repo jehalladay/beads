@@ -145,6 +145,117 @@ func TestHTMLToMarkdown(t *testing.T) {
 	}
 }
 
+func TestMarkdownToHTMLGFM(t *testing.T) {
+	tests := []struct {
+		name     string
+		md       string
+		contains []string
+	}{
+		{
+			name:     "table renders as HTML table",
+			md:       "| a | b |\n|---|---|\n| 1 | 2 |",
+			contains: []string{"<table>", "<th>a</th>", "<td>2</td>"},
+		},
+		{
+			name:     "strikethrough renders as del",
+			md:       "~~gone~~",
+			contains: []string{"<del>gone</del>"},
+		},
+		{
+			name:     "task list renders checkboxes",
+			md:       "- [ ] todo\n- [x] done",
+			contains: []string{`type="checkbox"`, `checked=`},
+		},
+		{
+			name:     "autolink renders as anchor",
+			md:       "see https://example.com/x for details",
+			contains: []string{`<a href="https://example.com/x"`},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := MarkdownToHTML(tt.md)
+			if err != nil {
+				t.Fatalf("MarkdownToHTML(%q) error: %v", tt.md, err)
+			}
+			for _, want := range tt.contains {
+				if !strings.Contains(got, want) {
+					t.Errorf("MarkdownToHTML(%q) = %q, missing %q", tt.md, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestRichTextRoundTripGFM(t *testing.T) {
+	// GFM constructs must survive push (markdown -> HTML) followed by pull
+	// (HTML -> markdown): a lossy round-trip would let a pull write a
+	// degraded description back over the local original.
+	tests := []struct {
+		name string
+		md   string
+		want []string
+	}{
+		{
+			name: "table",
+			md:   "| a | b |\n|---|---|\n| 1 | 2 |",
+			want: []string{"| a | b |", "| 1 | 2 |", "|---"},
+		},
+		{
+			name: "strikethrough",
+			md:   "~~gone~~ kept",
+			want: []string{"~~gone~~", "kept"},
+		},
+		{
+			name: "task list",
+			md:   "- [ ] todo\n- [x] done",
+			want: []string{"- [ ] todo", "- [x] done"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			html, err := MarkdownToHTML(tt.md)
+			if err != nil {
+				t.Fatalf("MarkdownToHTML error: %v", err)
+			}
+			back, err := HTMLToMarkdown(html)
+			if err != nil {
+				t.Fatalf("HTMLToMarkdown error: %v", err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(back, want) {
+					t.Errorf("round trip lost %q; got:\n%s", want, back)
+				}
+			}
+		})
+	}
+}
+
+func TestRichTextRoundTripGFMStable(t *testing.T) {
+	// A second push/pull cycle must be a fixed point: converting the pulled
+	// markdown again yields the same markdown, so sync never oscillates.
+	md := "| a | b |\n|---|---|\n| 1 | 2 |\n\n~~gone~~\n\n- [ ] todo\n- [x] done"
+	html1, err := MarkdownToHTML(md)
+	if err != nil {
+		t.Fatalf("MarkdownToHTML error: %v", err)
+	}
+	back1, err := HTMLToMarkdown(html1)
+	if err != nil {
+		t.Fatalf("HTMLToMarkdown error: %v", err)
+	}
+	html2, err := MarkdownToHTML(back1)
+	if err != nil {
+		t.Fatalf("second MarkdownToHTML error: %v", err)
+	}
+	back2, err := HTMLToMarkdown(html2)
+	if err != nil {
+		t.Fatalf("second HTMLToMarkdown error: %v", err)
+	}
+	if back1 != back2 {
+		t.Errorf("round trip is not a fixed point:\nfirst:  %q\nsecond: %q", back1, back2)
+	}
+}
+
 func TestRichTextRoundTrip(t *testing.T) {
 	// Markdown -> HTML -> Markdown must preserve the document structure
 	// (not necessarily byte-identical, but structurally equivalent).

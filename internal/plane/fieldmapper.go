@@ -18,6 +18,11 @@ const (
 	typeLabelPrefix  = "beads:type:"
 )
 
+// emptyDescriptionHTML is Plane's canonical empty document. Pushing it (in
+// place of an omitted description_html key) is what makes clearing a beads
+// description actually clear the Plane description.
+const emptyDescriptionHTML = "<p></p>"
+
 // refContext carries the instance coordinates needed to build external refs.
 type refContext struct {
 	baseURL   string
@@ -102,7 +107,7 @@ func (m *planeFieldMapper) IssueToBeads(ti *tracker.TrackerIssue) *tracker.Issue
 		return nil
 	}
 
-	desc, _ := HTMLToMarkdown(native.DescriptionHTML)
+	desc := descriptionMarkdown(native.DescriptionHTML)
 
 	status := m.StatusToBeads(ti.State)
 	issueType := types.TypeTask
@@ -169,14 +174,22 @@ func (m *planeFieldMapper) IssueToBeads(ti *tracker.TrackerIssue) *tracker.Issue
 
 // IssueToTracker builds the Plane update fields for a beads issue, keyed by
 // API field names. State and labels need per-project entity resolution and
-// are handled by the Tracker, not here.
+// are handled by the Tracker, not here. When the description fails to
+// convert, the description_html key is omitted (leaving the remote value
+// unchanged) rather than overwriting it with an empty document.
 func (m *planeFieldMapper) IssueToTracker(issue *types.Issue) map[string]interface{} {
-	html, _ := MarkdownToHTML(issue.Description)
-	return map[string]interface{}{
-		"name":             issue.Title,
-		"description_html": html,
-		"priority":         PriorityToPlane(issue.Priority),
+	fields := map[string]interface{}{
+		"name":     issue.Title,
+		"priority": PriorityToPlane(issue.Priority),
 	}
+	html, err := MarkdownToHTML(issue.Description)
+	if err == nil {
+		if html == "" {
+			html = emptyDescriptionHTML
+		}
+		fields["description_html"] = html
+	}
+	return fields
 }
 
 // pushLabelsFor computes the full label set to push to Plane for a beads
