@@ -86,6 +86,9 @@ func (c *Client) WithMaxRetries(n int) *Client {
 // BaseURL returns the normalized instance root URL.
 func (c *Client) BaseURL() string { return c.baseURL }
 
+// APIKey returns the configured API key.
+func (c *Client) APIKey() string { return c.apiKey }
+
 // Workspace returns the configured workspace slug.
 func (c *Client) Workspace() string { return c.workspace }
 
