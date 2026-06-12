@@ -26,12 +26,28 @@ package planetest
 //     total_results, extra_stats, results}) with "value:offset:is_prev"
 //     cursors and offset paging (offset = cursor.offset * per_page).
 //     Runtime default and max per_page are 1000; per_page > 1000 -> 400
-//     {"detail": "Invalid per_page value. Cannot exceed 1000."}.
+//     {"detail": "Invalid per_page value. Cannot exceed 1000."}. Malformed
+//     cursors -> 400 {"detail": "Invalid cursor parameter."}; well-formed
+//     cursors with a negative offset (including the page-0 prev_cursor the
+//     server itself emits) -> 400 {"detail": "Error in parsing"}, matching
+//     paginate()'s BadPaginationError translation; huge offsets page past
+//     the end into an empty final page.
 //   - PUT on the work-items routes returns 405 {"detail": "Method \"PUT\"
 //     not allowed."}: the upsert view exists at v1.3.0 but is never routed.
+//   - The workspace identifier lookup matches the (uppercase-stored)
+//     project identifier case-sensitively; a non-numeric sequence component
+//     is a 500 {"error": "Something went wrong please try again later"}
+//     because v1.3.0 feeds it into an IntegerField lookup and the
+//     ValueError escapes to the base view's catch-all handler.
 //   - Issue create honors raw-body created_at/created_by overrides
-//     (importer spoofing); PATCH does not. completed_at is recomputed from
-//     the state group on every save.
+//     (importer spoofing); PATCH does not. The 201 create response carries
+//     the pre-override (server-assigned) created_at/created_by — v1.3.0
+//     snapshots serializer.data before applying the override — so only
+//     subsequent GETs show the spoofed values. completed_at is recomputed
+//     from the state group on every save.
+//   - Draft work items (is_draft) are excluded from the list, detail, and
+//     identifier-lookup endpoints (the issue_objects manager) but stay
+//     reachable via the external-id short-circuit (Issue.objects).
 //
 // Known simplifications relative to a real v1.3.0 deployment:
 //   - description_html is stored verbatim: no lxml roundtrip, no nh3
@@ -40,12 +56,15 @@ package planetest
 //     no member registry; real v1.3.0 silently filters them to project
 //     members with role >= 15.
 //   - No rate limiting; the X-RateLimit-* headers are static placeholders.
-//   - The search, members, relations, attachments, activities, and archive
-//     endpoints are not implemented (404); project PATCH/DELETE return 405.
+//   - The search, members, relations, links, attachments, activities, and
+//     archive endpoints are not implemented (404); project PATCH/DELETE
+//     return 405.
 //   - order_by supports created_at/updated_at/sequence_id/name (with "-"
 //     prefixes); other values fall back to the -created_at default instead
 //     of arbitrary Django column ordering.
 //   - per_page < 1 returns 400 (real Plane would divide by zero into a 500).
+//   - Cursor offsets beyond Go's int range clamp to the nearest int bound,
+//     keeping their sign (Python ints are unbounded).
 //   - Project identifier validation enforces only length and uppercasing,
 //     not the forbidden-characters pattern.
 //   - Deleting a parent issue clears children's parent instead of
@@ -53,8 +72,10 @@ package planetest
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -552,7 +573,10 @@ func (s *Server) routeIssues(w http.ResponseWriter, r *http.Request, p *fakeProj
 			return
 		}
 		is, ok := p.issues[rest[0]]
-		if !ok {
+		if !ok || is.isDraft {
+			// Drafts are invisible to the detail endpoints, mirroring
+			// v1.3.0's Issue.issue_objects manager; the external-id
+			// short-circuit is the only draft-visible lookup.
 			writeNotFound(w)
 			return
 		}
@@ -718,16 +742,29 @@ func (s *Server) handleIdentifierLookup(w http.ResponseWriter, r *http.Request, 
 	projIdent := ident[:i]
 	seq, err := strconv.Atoi(ident[i+1:])
 	if err != nil {
-		writeNotFound(w)
+		if errors.Is(err, strconv.ErrRange) {
+			// Python parses arbitrarily large sequence ids; they simply
+			// match nothing.
+			writeNotFound(w)
+			return
+		}
+		// v1.3.0 feeds the raw sequence component into an IntegerField
+		// lookup; the resulting ValueError is unhandled by the base view's
+		// specific handlers, so the catch-all converts it to a 500.
+		writeJSON(w, http.StatusInternalServerError,
+			errorBody{Error: "Something went wrong please try again later"})
 		return
 	}
 	for _, pid := range s.projectOrder {
 		p := s.projects[pid]
-		if !strings.EqualFold(p.identifier, projIdent) {
+		if p.identifier != projIdent {
+			// Exact match only: v1.3.0 compares the uppercase-stored
+			// identifier case-sensitively in Postgres.
 			continue
 		}
 		for _, isID := range p.issueOrder {
-			if is := p.issues[isID]; is.sequenceID == seq {
+			// issue_objects excludes drafts from the identifier lookup.
+			if is := p.issues[isID]; is.sequenceID == seq && !is.isDraft {
 				writeJSON(w, http.StatusOK, s.renderIssue(p, is))
 				return
 			}
@@ -757,6 +794,10 @@ func (s *Server) listOrLookupIssues(w http.ResponseWriter, r *http.Request, p *f
 	sorted := p.sortedIssues(q.Get("order_by"))
 	items := make([]any, 0, len(sorted))
 	for _, is := range sorted {
+		if is.isDraft {
+			// issue_objects excludes drafts from list responses.
+			continue
+		}
 		items = append(items, s.renderIssue(p, is))
 	}
 	paginateJSON(w, r, items)
@@ -891,7 +932,14 @@ func (s *Server) createIssue(w http.ResponseWriter, r *http.Request, p *fakeProj
 	p.issues[is.id] = is
 	p.issueOrder = append(p.issueOrder, is.id)
 
-	writeJSON(w, http.StatusCreated, s.renderIssue(p, is))
+	// v1.3.0 serializes the response BEFORE applying the created_at /
+	// created_by overrides (the view caches serializer.data when it reads
+	// serializer.data["id"]), so the 201 body always carries the
+	// server-assigned values; only subsequent GETs show the spoofed ones.
+	wire := s.renderIssue(p, is)
+	wire.CreatedAt = now
+	wire.CreatedBy = s.userID
+	writeJSON(w, http.StatusCreated, wire)
 }
 
 func (s *Server) patchIssue(w http.ResponseWriter, r *http.Request, p *fakeProject, is *fakeIssue) {
@@ -909,6 +957,9 @@ func (s *Server) patchIssue(w http.ResponseWriter, r *http.Request, p *fakeProje
 			src = v
 		}
 		if other := p.findIssueByExternal(newExt, src); other != nil && other.id != is.id {
+			// v1.3.0 quirk: the PATCH 409 body carries the PATCHED issue's
+			// own id (the view returns str(issue.id)), unlike the POST 409
+			// which returns the conflicting issue's id.
 			writeJSON(w, http.StatusConflict, conflictBody{Error: msgIssueDuplicate, ID: is.id})
 			return
 		}
@@ -1834,9 +1885,22 @@ func paginateJSON(w http.ResponseWriter, r *http.Request, items []any) {
 			return
 		}
 	}
+	if page < 0 {
+		// Real v1.3.0 parses negative offsets as well-formed cursors (its
+		// own page-0 prev_cursor is one) and only rejects them inside
+		// get_result: BadPaginationError -> ParseError "Error in parsing".
+		writeJSON(w, http.StatusBadRequest, detailBody{Detail: "Error in parsing"})
+		return
+	}
 
 	total := len(items)
-	offset := page * perPage
+	// Guard the offset multiplication: a huge page number must page past the
+	// end (an empty final page, like a huge Postgres OFFSET), not overflow
+	// into a slice-bounds panic.
+	offset := total
+	if page <= math.MaxInt/perPage {
+		offset = page * perPage
+	}
 	if offset > total {
 		offset = total
 	}
@@ -1863,7 +1927,11 @@ func paginateJSON(w http.ResponseWriter, r *http.Request, items []any) {
 }
 
 // parseCursorPage parses a "value:offset:is_prev" cursor and returns the
-// page number (the offset component).
+// page number (the offset component). Negative pages parse successfully —
+// real v1.3.0 treats them as well-formed and rejects them later inside
+// get_result — and offsets beyond Go's int range clamp to the nearest bound,
+// keeping their sign (Python ints are unbounded, so such cursors are still
+// well-formed there; documented fake simplification).
 func parseCursorPage(raw string) (int, bool) {
 	parts := strings.Split(raw, ":")
 	if len(parts) != 3 {
@@ -1872,13 +1940,14 @@ func parseCursorPage(raw string) (int, bool) {
 	if _, err := strconv.ParseFloat(parts[0], 64); err != nil {
 		return 0, false
 	}
-	page, err := strconv.Atoi(parts[1])
-	if err != nil || page < 0 {
-		return 0, false
-	}
 	if _, err := strconv.Atoi(parts[2]); err != nil {
 		return 0, false
 	}
+	page, err := strconv.Atoi(parts[1])
+	if err != nil && !errors.Is(err, strconv.ErrRange) {
+		return 0, false
+	}
+	// On ErrRange, Atoi already returned the clamped math.MinInt/MaxInt.
 	return page, true
 }
 
