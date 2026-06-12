@@ -212,6 +212,9 @@ Reference for bd Latest. Generated from `bd help --all`.
   - [bd linear status](#bd-linear-status) — Show Linear sync status
   - [bd linear sync](#bd-linear-sync) — Synchronize issues with Linear
   - [bd linear teams](#bd-linear-teams) — List available Linear teams
+- [bd plane](#bd-plane) — Plane integration commands
+  - [bd plane status](#bd-plane-status) — Show Plane sync status
+  - [bd plane sync](#bd-plane-sync) — Synchronize issues with Plane
 - [bd repo](#bd-repo) — Manage multiple repository configuration
   - [bd repo add](#bd-repo-add) — Add an additional repository to sync
   - [bd repo list](#bd-repo-list) — List all configured repositories
@@ -1780,7 +1783,7 @@ bd dep [issue-id] [flags]
 
 ```
   -b, --blocks string    Issue ID that this issue blocks (shorthand for: bd dep add <blocked> <blocker>)
-      --no-cycle-check   Skip cycle detection after adding (use for bulk wiring — run 'bd dep cycles' to verify afterwards)
+      --no-cycle-check   Skip per-edge cycle checks for speed (bulk wiring); bulk --file adds still run one final whole-graph check before commit
 ```
 
 #### bd dep add
@@ -1825,7 +1828,7 @@ bd dep add [issue-id] [depends-on-id] [flags]
       --blocked-by string   Issue ID that blocks the first issue (alternative to positional arg)
       --depends-on string   Issue ID that the first issue depends on (alias for --blocked-by)
       --file string         Read dependency edges from JSONL file, or '-' for stdin
-      --no-cycle-check      Skip cycle detection after adding (use for bulk wiring — run 'bd dep cycles' to verify afterwards)
+      --no-cycle-check      Skip per-edge cycle checks for speed (bulk wiring); bulk --file adds still run one final whole-graph check before commit
   -t, --type string         Dependency type (blocks|tracks|related|parent-child|discovered-from|until|caused-by|validates|relates-to|supersedes) (default "blocks")
 ```
 
@@ -2427,6 +2430,20 @@ Timestamps (created_at, updated_at, started_at, closed_at) are preserved
 when present in the JSONL and otherwise filled in by the importer. The
 legacy "wisp" boolean is accepted as an alias for "ephemeral".
 
+By default a row only rewrites an existing local issue when its
+updated_at is strictly newer. Older rows are skipped (reported as
+stale_skipped_ids) and rows with the same updated_at keep every local
+column — updated_at has second granularity, so a timestamp tie can be
+two distinct same-second updates, and the local row wins the tie
+(reported as tie_kept_local_ids; the row's labels/comments/dependencies
+still merge). The guard is also enforced inside the upsert itself, so a
+local update that lands while the import is running is preserved rather
+than overwritten. Existing issues that the import did rewrite are listed
+with a field-level summary (updated_issues), so local state changed by
+an import is visible. To deliberately restore an older snapshot, pass
+--allow-stale, which imports every row even when it overwrites newer
+local state.
+
 EXAMPLES:
   bd import                        # Import from configured import.path
   bd import backup.jsonl           # Import from a specific file
@@ -2435,6 +2452,7 @@ EXAMPLES:
   cat issues.jsonl | bd import -   # Pipe JSONL from another tool
   bd import --dry-run              # Show what would be imported
   bd import --dedup                # Skip issues with duplicate titles
+  bd import --allow-stale old.jsonl # Restore an older snapshot (overwrites newer local rows)
   bd import --json                 # Structured output with created and skipped IDs
 
 ```
@@ -2444,6 +2462,7 @@ bd import [file|-] [flags]
 **Flags:**
 
 ```
+      --allow-stale    Import rows even when older than the local issue (required to restore an older snapshot)
       --dedup          Skip lines whose title matches an existing open issue
       --dry-run        Show what would be imported without importing
   -i, --input string   Read JSONL from a specific file
@@ -4997,6 +5016,101 @@ Example:
 
 ```
 bd linear teams
+```
+
+### bd plane
+
+Synchronize issues between beads and Plane (https://github.com/makeplane/plane).
+
+Targets self-hosted Plane Community Edition via the /api/v1 REST API.
+Work items are linked by Plane's native external_id/external_source fields
+(external_id = bead ID), making creation idempotent and duplicate-safe.
+
+Configuration:
+  bd config set plane.api_key "YOUR_API_KEY"   # personal token from Plane profile settings
+  bd config set plane.base_url "https://plane.example.com"
+  bd config set plane.workspace "myworkspace"  # workspace slug
+  bd config set plane.project_id "UUID"        # target project UUID
+
+Environment variables (alternative to config):
+  PLANE_API_KEY     - Plane personal API token
+  PLANE_BASE_URL    - Instance root URL
+  PLANE_WORKSPACE   - Workspace slug
+  PLANE_PROJECT_ID  - Project UUID
+
+Field mapping notes:
+  - Plane CE has no work item types and no blocked state: beads issue
+    types and blocked status round-trip via beads:type:* and
+    beads:blocked labels on the Plane side.
+  - Status maps through Plane state groups (backlog/unstarted/started/
+    completed/cancelled), not state names, so custom project states work.
+  - Descriptions convert between Markdown (beads) and HTML (Plane).
+
+Examples:
+  bd plane sync --pull         # Import issues from Plane
+  bd plane sync --push         # Export issues to Plane
+  bd plane sync                # Bidirectional sync (pull then push)
+  bd plane sync --dry-run      # Preview sync without changes
+  bd plane status              # Show sync status
+
+```
+bd plane
+```
+
+#### bd plane status
+
+Show the current Plane sync status, including:
+  - Last sync timestamp
+  - Configuration status
+  - Number of issues with Plane links
+  - Issues pending push (no external_ref)
+
+```
+bd plane status
+```
+
+#### bd plane sync
+
+Synchronize issues between beads and Plane.
+
+Modes:
+  --pull         Import issues from Plane into beads
+  --push         Export issues from beads to Plane
+  (no flags)     Bidirectional sync: pull then push, with conflict resolution
+
+Filtering:
+  --state open|closed|all   Restrict sync to open or closed issues
+  --include-ephemeral       Include ephemeral issues (wisps, etc.) when
+                            pushing; default is to keep them local
+
+Conflict Resolution:
+  By default, newer timestamp wins. Override with:
+  --prefer-local   Always prefer local beads version
+  --prefer-plane   Always prefer Plane version
+
+Examples:
+  bd plane sync --pull                # Import from Plane
+  bd plane sync --push --create-only  # Push new issues only
+  bd plane sync --dry-run             # Preview without changes
+  bd plane sync --prefer-local        # Bidirectional, local wins
+
+```
+bd plane sync [flags]
+```
+
+**Flags:**
+
+```
+      --create-only         Only create new issues, don't update existing
+      --dry-run             Preview sync without making changes
+      --include-ephemeral   Include ephemeral issues (wisps, etc.) when pushing to Plane
+      --issues string       Comma-separated bead IDs to sync selectively (e.g., bd-abc,bd-def). Mutually exclusive with --parent.
+      --parent string       Limit push to this bead and its descendants (push only). Mutually exclusive with --issues.
+      --prefer-local        Prefer local version on conflicts
+      --prefer-plane        Prefer Plane version on conflicts
+      --pull                Pull issues from Plane
+      --push                Push issues to Plane
+      --state string        Issue state to sync: open, closed, all (default "all")
 ```
 
 ### bd repo
