@@ -37,8 +37,8 @@ Field mapping notes:
   - Plane CE has no work item types and no blocked state: beads issue
     types and blocked status round-trip via beads:type:* and
     beads:blocked labels on the Plane side.
-  - Status maps through Plane state groups (backlog/unstarted/started/
-    completed/cancelled), not state names, so custom project states work.
+  - Status maps through Plane state groups rather than state names, so
+    custom project workflow states work out of the box.
   - Descriptions convert between Markdown (beads) and HTML (Plane).
 
 Examples:

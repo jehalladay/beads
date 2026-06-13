@@ -74,8 +74,8 @@ type IssuePayload struct {
 }
 
 // State is a per-project workflow state. Group is one of the stable group
-// constants (backlog/unstarted/started/completed/cancelled/triage); names
-// and IDs are project-specific.
+// values (the Group* constants in mapping.go, plus "triage"); names and IDs
+// are project-specific.
 type State struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`

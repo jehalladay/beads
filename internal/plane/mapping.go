@@ -35,7 +35,7 @@ const (
 	GroupUnstarted = "unstarted"
 	GroupStarted   = "started"
 	GroupCompleted = "completed"
-	GroupCancelled = "cancelled"
+	GroupCancelled = "cancelled" //nolint:misspell // Plane API wire value uses the British spelling
 )
 
 // PriorityToBeads converts a Plane priority string to a beads priority (0-4).

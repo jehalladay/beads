@@ -154,7 +154,7 @@ func conformStates(t *testing.T, c *plane.Client) {
 		groups[s.Group] = true
 	}
 	// Every new Plane project carries default states covering these groups.
-	for _, g := range []string{"backlog", "unstarted", "started", "completed", "cancelled"} {
+	for _, g := range []string{"backlog", "unstarted", "started", "completed", "cancelled"} { //nolint:misspell // Plane API wire value uses the British spelling
 		if !groups[g] {
 			t.Errorf("no state with group %q (states: %+v)", g, states)
 		}

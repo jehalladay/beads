@@ -133,7 +133,7 @@ func (t *Tracker) FetchIssues(ctx context.Context, opts tracker.FetchOptions) ([
 }
 
 // matchesStateFilter reports whether the issue passes the open/closed pull
-// filter. Closed means the issue's state group is completed or cancelled;
+// filter. Closed means the issue's state group is GroupCompleted or GroupCancelled;
 // an issue whose state is missing from the cache counts as open (matching
 // StatusToBeads, which imports unknown states as open).
 func (t *Tracker) matchesStateFilter(native *Issue, stateFilter string) bool {

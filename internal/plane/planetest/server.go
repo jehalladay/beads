@@ -106,7 +106,7 @@ var priorityChoices = map[string]bool{
 // but creating triage states is rejected by the view).
 var stateGroupChoices = map[string]bool{
 	"backlog": true, "unstarted": true, "started": true,
-	"completed": true, "cancelled": true, "triage": true,
+	"completed": true, "cancelled": true, "triage": true, //nolint:misspell // Plane API wire value uses the British spelling
 }
 
 // ServerConfig configures the fake Plane server.
@@ -150,11 +150,11 @@ func (s *Server) URL() string { return s.hs.URL }
 func (s *Server) Close() { s.hs.Close() }
 
 // AddProject registers a project in the fake workspace and returns its new
-// UUID. The project is seeded with Plane's five default workflow states, one
-// per state group (Backlog/backlog, Todo/unstarted, In Progress/started,
-// Done/completed, Cancelled/cancelled), with Todo as the project default —
-// matching what Plane creates on project bootstrap. The identifier is stored
-// uppercased, as Plane does.
+// UUID. The project is seeded with Plane's five default workflow states,
+// one per non-triage state group (see stateGroupChoices for the group
+// vocabulary), with Todo (unstarted) as the project default — matching what
+// Plane creates on project bootstrap. The identifier is stored uppercased,
+// as Plane does.
 func (s *Server) AddProject(name, identifier string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -181,7 +181,7 @@ func (s *Server) addProjectLocked(name, identifier string) *fakeProject {
 		{"Todo", "unstarted", "#3A3A3A", true},
 		{"In Progress", "started", "#F59E0B", false},
 		{"Done", "completed", "#16A34A", false},
-		{"Cancelled", "cancelled", "#EF4444", false},
+		{"Cancelled", "cancelled", "#EF4444", false}, //nolint:misspell // Plane API wire values use the British spelling
 	}
 	sequence := 15000.0
 	for _, d := range defaults {
