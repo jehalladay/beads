@@ -16,9 +16,25 @@ import (
 // wisps count is merged in (GH#4387).
 func CountIssuesInTx(ctx context.Context, tx *sql.Tx, query string, filter types.IssueFilter) (int, error) {
 	if filter.Ephemeral != nil && *filter.Ephemeral {
-		count, err := countTableInTx(ctx, tx, query, filter, WispsFilterTables)
+		wispCount, err := countTableInTx(ctx, tx, query, filter, WispsFilterTables)
 		if err != nil && !isTableNotExistError(err) {
 			return 0, fmt.Errorf("count wisps (ephemeral filter): %w", err)
+		}
+		if wispCount > 0 {
+			return wispCount, nil
+		}
+		// Fall through: the wisps table is missing or has no matching rows.
+		// SearchIssuesInTx does the same — it searches the durable issues table
+		// in this case (search.go "Fall through: wisps table doesn't exist or
+		// returned no results"). Mirroring it keeps the GH#4387 count/list parity
+		// contract for an infra-type filter that matches only a durable
+		// issues-table row flagged ephemeral=1 — a defensive parity state that
+		// normal creation never produces (ephemeral/infra beads route to the
+		// wisps table on insert), but which would otherwise be reported as 0 by
+		// count while list returns it.
+		count, err := countTableInTx(ctx, tx, query, filter, IssuesFilterTables)
+		if err != nil {
+			return 0, fmt.Errorf("count issues (ephemeral fall-through): %w", err)
 		}
 		return count, nil
 	}
@@ -34,7 +50,9 @@ func CountIssuesInTx(ctx context.Context, tx *sql.Tx, query string, filter types
 
 	// Merge wisps count when caller hasn't opted out (same semantics as SearchIssuesInTx).
 	// Issues and wisps are always in separate tables (PromoteFromEphemeral deletes the
-	// wisps row), so the two counts don't double-count.
+	// wisps row), so the two counts don't double-count. count trusts that disjoint-table
+	// invariant; SearchIssuesInTx is the corruption detector — it errors loudly if an ID
+	// appears in both tables ("id %q exists in both issues and wisps").
 	wispCount, wispErr := countTableInTx(ctx, tx, query, filter, WispsFilterTables)
 	if wispErr != nil && !isTableNotExistError(wispErr) {
 		return 0, fmt.Errorf("count wisps (merge): %w", wispErr)
@@ -51,12 +69,27 @@ func CountIssuesInTx(ctx context.Context, tx *sql.Tx, query string, filter types
 // only, and otherwise the wisps tier is merged into each group (GH#4387).
 func CountIssuesByGroupInTx(ctx context.Context, tx *sql.Tx, filter types.IssueFilter, groupBy string) (map[string]int, error) {
 	if filter.Ephemeral != nil && *filter.Ephemeral {
-		counts, err := countGroupForTablesInTx(ctx, tx, filter, groupBy, WispsFilterTables)
+		wispCounts, err := countGroupForTablesInTx(ctx, tx, filter, groupBy, WispsFilterTables)
 		if err != nil && !isTableNotExistError(err) {
 			return nil, fmt.Errorf("count wisps by %s (ephemeral filter): %w", groupBy, err)
 		}
-		if counts == nil {
-			counts = make(map[string]int)
+		total := 0
+		for _, v := range wispCounts {
+			total += v
+		}
+		if total > 0 {
+			return wispCounts, nil
+		}
+		// Fall through: the wisps table is missing or matched no rows. Mirror
+		// CountIssuesInTx's scalar ephemeral fall-through (and SearchIssuesInTx)
+		// so grouped counts also report a durable issues-table row flagged
+		// ephemeral=1. Without this the scalar Total (which falls through) would
+		// disagree with the sum of the grouped buckets (wisps-only), breaking
+		// the GH#4387 count/list cardinality parity for `bd count
+		// --include-infra --by-*`.
+		counts, err := countGroupForTablesInTx(ctx, tx, filter, groupBy, IssuesFilterTables)
+		if err != nil {
+			return nil, fmt.Errorf("count issues by %s (ephemeral fall-through): %w", groupBy, err)
 		}
 		return counts, nil
 	}

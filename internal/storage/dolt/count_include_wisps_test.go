@@ -111,6 +111,62 @@ func TestCountIssuesMergedMatchesSearch(t *testing.T) {
 	}
 }
 
+// TestCountIssuesEphemeralFallsThroughToDurable pins the GH#4387 count/list
+// parity fix for the ephemeral (infra-type) branch. SearchIssuesInTx, when an
+// Ephemeral=true filter matches no wisps, falls through and searches the
+// durable issues table (search.go "Fall through: wisps table doesn't exist or
+// returned no results"). Before the fix CountIssuesInTx returned the wisps-only
+// count and so reported 0 where list returned the durable row, breaking the
+// "count == len(list) for any filter" contract. This reproduces the exact
+// empty-wisps-but-durable-match state: a durable issues row carrying
+// ephemeral=1 (what an infra bead that landed durable looks like), which normal
+// creation never produces because it routes ephemeral/infra beads to the wisps
+// table, so the row is inserted directly.
+func TestCountIssuesEphemeralFallsThroughToDurable(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// A durable, non-ephemeral task that the Ephemeral=true filter must exclude,
+	// so the test proves the filter is applied rather than counting everything.
+	if err := store.CreateIssue(ctx, &types.Issue{
+		ID:        "ed-task-1",
+		Title:     "durable task",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}, "tester"); err != nil {
+		t.Fatalf("create durable task: %v", err)
+	}
+
+	// A durable issues-table row flagged ephemeral=1 with no matching wisp.
+	if _, err := store.db.ExecContext(ctx,
+		"INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, ephemeral) "+
+			"VALUES ('ed-infra-1', 'durable ephemeral', '', '', '', '', 'open', 2, 'agent', 1)"); err != nil {
+		t.Fatalf("seed durable ephemeral issue: %v", err)
+	}
+
+	ephemeral := true
+	filter := types.IssueFilter{Ephemeral: &ephemeral}
+
+	results, err := store.SearchIssues(ctx, "", filter)
+	if err != nil {
+		t.Fatalf("SearchIssues: %v", err)
+	}
+	count, err := store.CountIssues(ctx, "", filter)
+	if err != nil {
+		t.Fatalf("CountIssues: %v", err)
+	}
+	if count != int64(len(results)) {
+		t.Errorf("CountIssues = %d but SearchIssues returned %d rows; ephemeral fall-through parity broken (GH#4387)", count, len(results))
+	}
+	if count != 1 {
+		t.Errorf("CountIssues = %d, want 1 (durable ephemeral row must be counted via fall-through to the issues table)", count)
+	}
+}
+
 // TestCountIssuesByGroupIncludesWisps verifies the grouped-count paths honor
 // SkipWisps the same way CountIssues does, so `bd count --include-infra
 // --by-*` reports the merged issues+wisps numbers instead of silently-wrong
@@ -199,4 +255,114 @@ func TestCountIssuesByGroupIncludesWisps(t *testing.T) {
 			t.Errorf("ephemeral bug count = %d, want 0", counts["bug"])
 		}
 	})
+}
+
+// seedDurableEphemeralRow inserts the exact GH#4387 fall-through trap: a durable
+// issues-table row carrying ephemeral=1 with no matching wisp. Normal creation
+// never produces this because ephemeral/infra beads route to the wisps table on
+// insert, so the row is written directly. Returns the durable ephemeral row id.
+func seedDurableEphemeralRow(t *testing.T, ctx context.Context, store *DoltStore, p string) string {
+	t.Helper()
+	// A durable, non-ephemeral task that the Ephemeral=true filter must exclude,
+	// so the test proves the filter is applied rather than counting everything.
+	if err := store.CreateIssue(ctx, &types.Issue{
+		ID:        p + "-task-1",
+		Title:     "durable task",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}, "tester"); err != nil {
+		t.Fatalf("create durable task: %v", err)
+	}
+	infraID := p + "-infra-1"
+	if _, err := store.db.ExecContext(ctx,
+		"INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, ephemeral) "+
+			"VALUES ('"+infraID+"', 'durable ephemeral', '', '', '', '', 'open', 2, 'agent', 1)"); err != nil {
+		t.Fatalf("seed durable ephemeral issue: %v", err)
+	}
+	return infraID
+}
+
+// TestCountIssuesByGroupEphemeralFallsThroughToDurable is the grouped-count
+// sibling of TestCountIssuesEphemeralFallsThroughToDurable. Before the fix,
+// CountIssuesByGroupInTx returned the wisps-only grouped counts for an
+// Ephemeral=true filter, so `bd count --include-infra --by-type` reported empty
+// buckets (sum 0) while the scalar Total fell through to the durable issues
+// table and reported 1 — sum(groups) != Total, breaking GH#4387 cardinality
+// parity. This pins that the grouped path falls through to the durable issues
+// table the same way the scalar path does.
+func TestCountIssuesByGroupEphemeralFallsThroughToDurable(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	infraID := seedDurableEphemeralRow(t, ctx, store, "eg")
+
+	ephemeral := true
+	filter := types.IssueFilter{Ephemeral: &ephemeral}
+
+	groups, err := store.CountIssuesByGroup(ctx, filter, "type")
+	if err != nil {
+		t.Fatalf("CountIssuesByGroup: %v", err)
+	}
+	count, err := store.CountIssues(ctx, "", filter)
+	if err != nil {
+		t.Fatalf("CountIssues: %v", err)
+	}
+
+	sum := 0
+	for _, v := range groups {
+		sum += v
+	}
+	if int64(sum) != count {
+		t.Errorf("sum(CountIssuesByGroup)=%d but CountIssues=%d; grouped ephemeral fall-through parity broken (GH#4387)", sum, count)
+	}
+	// The durable ephemeral row has issue_type='agent'; the non-ephemeral
+	// durable task must be excluded by the Ephemeral=true filter.
+	if groups["agent"] != 1 {
+		t.Errorf("grouped agent count = %d, want 1 (durable ephemeral row %q must fall through to the issues table)", groups["agent"], infraID)
+	}
+	if len(groups) != 1 {
+		t.Errorf("grouped counts had %d buckets, want 1 (only the durable ephemeral agent row); groups=%v", len(groups), groups)
+	}
+}
+
+// TestSearchIssuesWithCountsEphemeralFallsThroughToDurable is the
+// counts-projection sibling of the same GH#4387 fix. Before the fix,
+// SearchIssuesWithCountsInTx returned nil for an Ephemeral=true filter whenever
+// no matching wisp existed, so `bd search --counts --include-infra` dropped a
+// durable issues-table row flagged ephemeral=1 that plain SearchIssues (and
+// CountIssues) still surface. This pins parity between the counts-projection
+// search and the plain search for that durable-ephemeral state.
+func TestSearchIssuesWithCountsEphemeralFallsThroughToDurable(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	infraID := seedDurableEphemeralRow(t, ctx, store, "es")
+
+	ephemeral := true
+	filter := types.IssueFilter{Ephemeral: &ephemeral}
+
+	withCounts, err := store.SearchIssuesWithCounts(ctx, "", filter)
+	if err != nil {
+		t.Fatalf("SearchIssuesWithCounts: %v", err)
+	}
+	plain, err := store.SearchIssues(ctx, "", filter)
+	if err != nil {
+		t.Fatalf("SearchIssues: %v", err)
+	}
+	if len(withCounts) != len(plain) {
+		t.Errorf("SearchIssuesWithCounts returned %d rows but SearchIssues returned %d; counts-projection ephemeral fall-through parity broken (GH#4387)", len(withCounts), len(plain))
+	}
+	if len(withCounts) != 1 {
+		t.Fatalf("SearchIssuesWithCounts returned %d rows, want 1 (durable ephemeral row must fall through to the issues table)", len(withCounts))
+	}
+	if withCounts[0] == nil || withCounts[0].Issue == nil || withCounts[0].Issue.ID != infraID {
+		t.Errorf("SearchIssuesWithCounts returned unexpected row %+v, want %q", withCounts[0], infraID)
+	}
 }
