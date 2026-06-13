@@ -740,6 +740,25 @@ func (s *Server) handleIdentifierLookup(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	projIdent := ident[:i]
+	var proj *fakeProject
+	for _, pid := range s.projectOrder {
+		if p := s.projects[pid]; p.identifier == projIdent {
+			// Exact match only: v1.3.0 compares the uppercase-stored
+			// identifier case-sensitively in Postgres.
+			proj = p
+			break
+		}
+	}
+	if proj == nil {
+		// v1.3.0 resolves the project for its permission check before it
+		// parses the sequence: an unknown (or case-mismatched) project
+		// identifier is a 403 PermissionDenied, not a 404 — even when the
+		// sequence component is garbage. Verified live 2026-06-13 against
+		// Plane CE v1.3.0 ("bdconf-51" and "zzznosuch-notanumber" both 403).
+		writeJSON(w, http.StatusForbidden,
+			map[string]string{"detail": "You do not have permission to perform this action."})
+		return
+	}
 	seq, err := strconv.Atoi(ident[i+1:])
 	if err != nil {
 		if errors.Is(err, strconv.ErrRange) {
@@ -755,19 +774,11 @@ func (s *Server) handleIdentifierLookup(w http.ResponseWriter, r *http.Request, 
 			errorBody{Error: "Something went wrong please try again later"})
 		return
 	}
-	for _, pid := range s.projectOrder {
-		p := s.projects[pid]
-		if p.identifier != projIdent {
-			// Exact match only: v1.3.0 compares the uppercase-stored
-			// identifier case-sensitively in Postgres.
-			continue
-		}
-		for _, isID := range p.issueOrder {
-			// issue_objects excludes drafts from the identifier lookup.
-			if is := p.issues[isID]; is.sequenceID == seq && !is.isDraft {
-				writeJSON(w, http.StatusOK, s.renderIssue(p, is))
-				return
-			}
+	for _, isID := range proj.issueOrder {
+		// issue_objects excludes drafts from the identifier lookup.
+		if is := proj.issues[isID]; is.sequenceID == seq && !is.isDraft {
+			writeJSON(w, http.StatusOK, s.renderIssue(proj, is))
+			return
 		}
 	}
 	writeNotFound(w)

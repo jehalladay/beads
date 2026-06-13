@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -75,32 +76,51 @@ func RunConformance(t *testing.T, target ConformanceTarget) {
 // status code and raw response body.
 func rawRequest(t *testing.T, target ConformanceTarget, method, path string, body any) (int, []byte) {
 	t.Helper()
-	var reader io.Reader
+	var payload []byte
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
 			t.Fatalf("encoding %s %s body: %v", method, path, err)
 		}
-		reader = bytes.NewReader(data)
+		payload = data
 	}
-	req, err := http.NewRequest(method, target.BaseURL+"/api/v1"+path, reader)
-	if err != nil {
-		t.Fatalf("building %s %s: %v", method, path, err)
+	// Live Plane throttles per API key (API_KEY_RATE_LIMIT, default
+	// 60/minute) regardless of the token's allowed_rate_limit, so raw
+	// wire-level checks must wait out 429s like the production client does.
+	// The fake never throttles, so this loop runs once against it.
+	for attempt := 0; ; attempt++ {
+		var reader io.Reader
+		if payload != nil {
+			reader = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequest(method, target.BaseURL+"/api/v1"+path, reader)
+		if err != nil {
+			t.Fatalf("building %s %s: %v", method, path, err)
+		}
+		req.Header.Set("X-Api-Key", target.APIKey)
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		data, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatalf("reading %s %s response: %v", method, path, err)
+		}
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < 5 {
+			wait := 5 * time.Second
+			if secs, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After"))); err == nil && secs > 0 && secs <= 70 {
+				wait = time.Duration(secs) * time.Second
+			}
+			t.Logf("%s %s throttled (429), retrying in %s", method, path, wait)
+			time.Sleep(wait)
+			continue
+		}
+		return resp.StatusCode, data
 	}
-	req.Header.Set("X-Api-Key", target.APIKey)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("%s %s: %v", method, path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("reading %s %s response: %v", method, path, err)
-	}
-	return resp.StatusCode, data
 }
 
 // rawProjectPath builds a project-scoped API path for rawRequest.
@@ -994,16 +1014,24 @@ func conformIdentifierLookup(t *testing.T, target ConformanceTarget, c *plane.Cl
 		t.Errorf("GetIssueByIdentifier(%s) = %+v, want id %s", identifier, found, created.ID)
 	}
 
-	// The project-identifier match is case-sensitive: identifiers are stored
-	// uppercased, so a lowercased identifier finds nothing (v1.3.0 does an
-	// exact Postgres match).
+	// The project-identifier match is case-sensitive and v1.3.0 resolves the
+	// project for its permission check before parsing the sequence, so a
+	// lowercased (or otherwise unknown) project identifier is a 403
+	// PermissionDenied, not a 404 (verified live 2026-06-13). The client
+	// surfaces that as *AuthError; the adapter deliberately does NOT fold it
+	// into a clean miss so a genuine permission problem can never read as
+	// absence.
 	if lower := strings.ToLower(identifier); lower != identifier {
-		miss, err := c.GetIssueByIdentifier(ctx, lower)
-		if err != nil {
-			t.Fatalf("GetIssueByIdentifier(%s): %v", lower, err)
+		_, err := c.GetIssueByIdentifier(ctx, lower)
+		var authErr *plane.AuthError
+		if !errors.As(err, &authErr) {
+			t.Fatalf("GetIssueByIdentifier(%s) error = %v (%T), want *AuthError from the case-sensitive project resolution", lower, err, err)
 		}
-		if miss != nil {
-			t.Errorf("GetIssueByIdentifier(%s) = %+v, want nil (case-sensitive identifier match)", lower, miss)
+		if authErr.StatusCode != http.StatusForbidden {
+			t.Errorf("GetIssueByIdentifier(%s) status = %d, want 403", lower, authErr.StatusCode)
+		}
+		if !strings.Contains(authErr.Detail, "You do not have permission") {
+			t.Errorf("GetIssueByIdentifier(%s) detail = %q, want the DRF PermissionDenied detail", lower, authErr.Detail)
 		}
 	}
 
