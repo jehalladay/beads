@@ -26,6 +26,7 @@ import (
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/hooks"
+	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/molecules"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
@@ -575,13 +576,13 @@ func resolveChangeDirBeadsDir(path string) (string, error) {
 	return beadsDir, nil
 }
 
-func applyChangeDirSelection() {
+func applyChangeDirSelection() error {
 	if strings.TrimSpace(changeDir) == "" {
-		return
+		return nil
 	}
 	beadsDir, err := resolveChangeDirBeadsDir(changeDir)
 	if err != nil {
-		FatalError("%v", err)
+		return HandleError("%v", err)
 	}
 	changeDirEnvSnapshot = make(map[string]envSnapshotValue, 3)
 	for _, key := range []string{"BEADS_DIR", "BEADS_DB", "BD_DB"} {
@@ -589,6 +590,7 @@ func applyChangeDirSelection() {
 		changeDirEnvSnapshot[key] = envSnapshotValue{value: value, ok: ok}
 	}
 	_ = os.Setenv("BEADS_DIR", beadsDir)
+	return nil
 }
 
 func restoreChangeDirSelection() {
@@ -618,7 +620,7 @@ var rootCmd = &cobra.Command{
 		// No subcommand - show help
 		_ = cmd.Help() // Help() always returns nil for cobra commands
 	},
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Initialize CommandContext to hold runtime state (replaces scattered globals)
 		initCommandContext()
 
@@ -640,6 +642,20 @@ var rootCmd = &cobra.Command{
 			debug.Logf("warning: telemetry init failed: %v", err)
 		}
 
+		if cmd.Name() != metrics.SendMetricsSubcommand {
+			if err := metrics.EnsureUserConfigDefaults(); err != nil {
+				debug.Logf("warning: ensure user config defaults failed: %v", err)
+			}
+		}
+
+		if _, err := metrics.Init(Version, resolveMetricsEnabled(), resolveMetricsEndpoint()); err != nil {
+			debug.Logf("warning: metrics init failed: %v", err)
+		}
+
+		if cmd.Name() == metrics.SendMetricsSubcommand {
+			return nil
+		}
+
 		// Start root span for this command. rootCtx now carries the span, so
 		// all downstream DB and AI calls become child spans automatically.
 		rootCtx, commandSpan = telemetry.Tracer("bd").Start(rootCtx, "bd.command."+cmd.Name(),
@@ -654,11 +670,13 @@ var rootCmd = &cobra.Command{
 		debug.SetVerbose(verboseFlag)
 		debug.SetQuiet(quietFlag)
 
-		applyChangeDirSelection()
+		if err := applyChangeDirSelection(); err != nil {
+			return err
+		}
 
 		// Block dangerous env var overrides that could cause data fragmentation (bd-hevyw).
 		if err := checkBlockedEnvVars(); err != nil {
-			FatalError("%v", err)
+			return HandleError("%v", err)
 		}
 
 		loadSelectionEnvironment()
@@ -762,6 +780,7 @@ var rootCmd = &cobra.Command{
 			"powershell",
 			"prime",
 			"quickstart",
+			metrics.SendMetricsSubcommand,
 			"setup",
 			"version",
 			"where",
@@ -820,7 +839,7 @@ var rootCmd = &cobra.Command{
 				loadServerModeFromConfig()
 			}
 			if _, err := getDoltAutoCommitMode(); err != nil {
-				FatalError("%v", err)
+				return HandleError("%v", err)
 			}
 		}
 
@@ -829,7 +848,7 @@ var rootCmd = &cobra.Command{
 		maybeWarnLinearStaleness(cmd)
 
 		if skipsStoreInit {
-			return
+			return nil
 		}
 
 		// Performance profiling setup
@@ -888,7 +907,7 @@ var rootCmd = &cobra.Command{
 							prepareSelectedCommandContext(beadsDir, false)
 						}
 					}
-					return
+					return nil
 				}
 
 				if cmd.Name() != "import" && cmd.Name() != "setup" {
@@ -918,7 +937,7 @@ var rootCmd = &cobra.Command{
 		prepareSelectedCommandContext(beadsDir, true)
 		refreshBoundCommandConfig(cmd)
 		if _, err := getDoltAutoCommitMode(); err != nil {
-			FatalError("%v", err)
+			return HandleError("%v", err)
 		}
 
 		// Set actor for audit trail
@@ -1022,7 +1041,7 @@ var rootCmd = &cobra.Command{
 		// Must be in shared-server mode; errors otherwise.
 		if globalFlag {
 			if !doltserver.IsSharedServerMode() {
-				FatalError("--global requires shared-server mode (set BEADS_DOLT_SHARED_SERVER=1 or dolt.shared-server: true in config.yaml)")
+				return HandleError("--global requires shared-server mode (set BEADS_DOLT_SHARED_SERVER=1 or dolt.shared-server: true in config.yaml)")
 			}
 			doltCfg.Database = doltserver.GlobalDatabaseName
 		}
@@ -1034,12 +1053,12 @@ var rootCmd = &cobra.Command{
 		if proxiedServerMode {
 			p, err := newProxiedServerUOWProvider(rootCtx, beadsDir)
 			if err != nil {
-				FatalError("failed to open uow provider: %v", err)
+				return HandleError("failed to open uow provider: %v", err)
 			}
 			uowProvider = p
 
 			syncCommandContext()
-			return
+			return nil
 		}
 
 		// Default auto-commit based on mode when the user hasn't set a value:
@@ -1083,7 +1102,7 @@ var rootCmd = &cobra.Command{
 				}
 				os.Exit(1)
 			}
-			FatalError("failed to open database: %v", err)
+			return HandleError("failed to open database: %v", err)
 		}
 
 		// Mark store as active for flush goroutine safety
@@ -1147,8 +1166,9 @@ var rootCmd = &cobra.Command{
 
 		// Tips (including sync conflict proactive checks) are shown via maybeShowTip()
 		// after successful command execution, not in PreRun
+		return nil
 	},
-	PersistentPostRun: func(cmd *cobra.Command, args []string) {
+	PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
 		defer restoreChangeDirSelection()
 
 		if proxiedServerMode {
@@ -1161,7 +1181,7 @@ var rootCmd = &cobra.Command{
 			// create a Dolt commit so changes don't remain only in the working set.
 			if commandDidWrite.Load() && !commandDidExplicitDoltCommit {
 				if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: cmd.Name()}); err != nil {
-					FatalError("dolt auto-commit failed: %v", err)
+					return HandleError("dolt auto-commit failed: %v", err)
 				}
 			}
 
@@ -1170,14 +1190,14 @@ var rootCmd = &cobra.Command{
 			if commandDidWriteTipMetadata && len(commandTipIDsShown) > 0 {
 				// Only applies when dolt auto-commit is enabled and backend is versioned (Dolt).
 				if mode, err := getDoltAutoCommitMode(); err != nil {
-					FatalError("dolt tip auto-commit failed: %v", err)
+					return HandleError("dolt tip auto-commit failed: %v", err)
 				} else if mode == doltAutoCommitOn {
 					// Apply tip metadata writes now (deferred in recordTipShown for Dolt).
 					for tipID := range commandTipIDsShown {
 						key := fmt.Sprintf("tip_%s_last_shown", tipID)
 						value := time.Now().Format(time.RFC3339)
 						if err := store.SetLocalMetadata(rootCtx, key, value); err != nil {
-							FatalError("dolt tip auto-commit failed: %v", err)
+							return HandleError("dolt tip auto-commit failed: %v", err)
 						}
 					}
 
@@ -1187,7 +1207,7 @@ var rootCmd = &cobra.Command{
 					}
 					msg := formatDoltAutoCommitMessage("tip", getActor(), ids)
 					if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: "tip", MessageOverride: msg}); err != nil {
-						FatalError("dolt tip auto-commit failed: %v", err)
+						return HandleError("dolt tip auto-commit failed: %v", err)
 					}
 				}
 			}
@@ -1200,7 +1220,7 @@ var rootCmd = &cobra.Command{
 			// sync guidance after machine-readable output.
 			if shouldRunPostCommandAutoExport(cmd) {
 				if err := maybeAutoExport(rootCtx, serverMode, commandAllowsEmptyAutoExport(cmd)); err != nil {
-					FatalError("%v", err)
+					return HandleError("%v", err)
 				}
 			}
 
@@ -1243,6 +1263,7 @@ var rootCmd = &cobra.Command{
 		if rootCancel != nil {
 			rootCancel()
 		}
+		return nil
 	},
 }
 
@@ -1404,7 +1425,47 @@ func main() {
 	rootCmd.InitDefaultHelpCmd()
 	registerHelpAllFlag()
 
-	if err := rootCmd.Execute(); err != nil {
+	executedCmd, err := rootCmd.ExecuteC()
+
+	metricsCloseCtx, metricsCloseCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	if c := metrics.Global(); c != nil {
+		_ = c.Close(metricsCloseCtx)
+	}
+	metricsCloseCancel()
+	metrics.MaybeSpawnFlusher()
+
+	if err != nil {
+		if code, ok := exitCodeFromError(err); ok {
+			os.Exit(code)
+		}
+		if executedCmd != nil && executedCmd.SilenceErrors {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
+		}
 		os.Exit(1)
 	}
+}
+
+func resolveMetricsEnabled() bool {
+	if v, ok := os.LookupEnv(metrics.EnvDisableMetrics); ok {
+		return !envTruthyValue(v)
+	}
+	return !config.GetBool("metrics.disabled")
+}
+
+func resolveMetricsEndpoint() string {
+	if v := os.Getenv(metrics.EnvEndpoint); v != "" {
+		return v
+	}
+	return config.GetString("metrics.endpoint")
+}
+
+func envTruthyValue(v string) bool {
+	if v == "" {
+		return false
+	}
+	switch strings.ToLower(v) {
+	case "0", "false":
+		return false
+	}
+	return true
 }
