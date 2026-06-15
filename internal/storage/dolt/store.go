@@ -1711,7 +1711,33 @@ func (s *DoltStore) commitAuthorString() string {
 //
 // Callers that intentionally modify config (e.g., CommitPending after
 // 'bd config set') must call CommitWithConfig instead.
-func (s *DoltStore) Commit(ctx context.Context, message string) (retErr error) {
+func (s *DoltStore) Commit(ctx context.Context, message string) error {
+	return s.commitWorkingSet(ctx, message, false)
+}
+
+// commitBeforePull commits the working set ahead of a pull's merge, INCLUDING
+// config. The pre-pull auto-commit (GH#2474) must include config because
+// persistent memories live there as kv.memory.* rows and Commit() deliberately
+// skips config (GH#2455): without this they sit permanently uncommitted, so the
+// "clean the working set before merging" step leaves config dirty and
+// DOLT_MERGE refuses to start ("cannot merge with uncommitted changes").
+//
+// Config is staged explicitly (via DOLT_ADD in commitWorkingSet) rather than
+// through CommitWithConfig's DOLT_COMMIT('-Am'), which was observed not to stage
+// config reliably under the server-mode stored-procedure path. Committing this
+// clone's own config as the merge basis is the same explicit, user-initiated
+// action CommitPending ('bd dolt commit') already performs, so it does not
+// widen the concurrent-writer race GH#2455 guards against.
+func (s *DoltStore) commitBeforePull(ctx context.Context, message string) error {
+	return s.commitWorkingSet(ctx, message, true)
+}
+
+// commitWorkingSet stages the dirty tables reported by dolt_status and commits
+// them with '-m'. config is staged only when includeConfig is true: Commit
+// excludes it (GH#2455) so a concurrent writer's half-applied issue_prefix
+// change is never swept into an unrelated commit, while the pre-pull path opts
+// in because it must establish a clean working set and memories live in config.
+func (s *DoltStore) commitWorkingSet(ctx context.Context, message string, includeConfig bool) (retErr error) {
 	ctx, span := doltTracer.Start(ctx, "dolt.commit",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(s.doltSpanAttrs()...),
@@ -1725,9 +1751,9 @@ func (s *DoltStore) Commit(ctx context.Context, message string) (retErr error) {
 	}
 	defer conn.Close()
 
-	// GH#2455: Stage all dirty tables EXCEPT config. Query dolt_status for
-	// dirty tables and stage each one individually, skipping config to avoid
-	// sweeping up stale issue_prefix changes from concurrent operations.
+	// GH#2455: stage each dirty table individually, skipping config unless
+	// includeConfig is set (the pre-pull path), to avoid sweeping up stale
+	// issue_prefix changes from concurrent operations. Query dolt_status first.
 	rows, err := conn.QueryContext(ctx, "SELECT table_name FROM dolt_status")
 	if err != nil {
 		// If dolt_status fails, fall back to nothing (rare edge case).
@@ -1740,7 +1766,7 @@ func (s *DoltStore) Commit(ctx context.Context, message string) (retErr error) {
 			_ = rows.Close()
 			return fmt.Errorf("failed to scan dolt_status: %w", err)
 		}
-		if table != "config" {
+		if includeConfig || table != "config" {
 			tables = append(tables, table)
 		}
 	}
@@ -2308,7 +2334,7 @@ func (s *DoltStore) pullFromRemote(ctx context.Context, remote string) (retErr e
 	// (schema init, molecule loading, metadata writes) can dirty the working
 	// set before the user's pull command runs.
 	if !s.readOnly {
-		if err := s.Commit(ctx, "auto-commit before pull"); err != nil {
+		if err := s.commitBeforePull(ctx, "auto-commit before pull"); err != nil {
 			// "nothing to commit" is fine — working set is already clean
 			if !isDoltNothingToCommit(err) {
 				return fmt.Errorf("failed to commit pending changes before pull: %w", err)

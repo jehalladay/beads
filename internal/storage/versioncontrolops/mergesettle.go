@@ -12,6 +12,12 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 )
 
+// memoryConfigKeyPrefix is the config-table key prefix under which `bd remember`
+// stores persistent memories (cmd/bd kvPrefix "kv." + memoryPrefix "memory.").
+// Config rows with this prefix are the only config class safe to auto-resolve on
+// merge; any other key (issue_prefix above all) is left for the operator.
+const memoryConfigKeyPrefix = "kv.memory."
+
 // This file holds the merge-settlement machinery shared by server-mode
 // DoltStore (which drives it inside an explicit *sql.Tx) and the embedded
 // store's pull path (which drives it on a pinned autocommit connection via
@@ -184,7 +190,7 @@ func workingSetClean(ctx context.Context, db DBConn) bool {
 
 // TryAutoResolveMergeConflicts auto-resolves merge conflicts that are safe to
 // resolve without operator input, and returns (true, nil) only if ALL conflicts
-// were resolved. It handles three classes:
+// were resolved. It handles four classes:
 //
 //   - metadata: machine-local rows (e.g. dolt_auto_push_*) that routinely diverge
 //     across clones (GH#2466). Resolved with "theirs".
@@ -204,10 +210,16 @@ func workingSetClean(ctx context.Context, db DBConn) bool {
 //     provenance beats its absence, and the result converges across clones.
 //     Two DIFFERENT non-empty hashes are the #4259 schema fork itself and are
 //     left for the operator (bd doctor reports them as Migration Content Skew).
+//   - config: persistent memories live in config as kv.memory.* rows (the
+//     pre-pull auto-commit now commits config so they sync). Like metadata,
+//     same-key memory edits across clones are machine-convergent: resolved with
+//     "theirs", so all clones pulling from one remote converge on the remote's
+//     value. A conflict touching ANY non-memory config key (issue_prefix above
+//     all) is a real semantic conflict and is left for the operator.
 //
-// Any conflict on another table, or an unresolvable dependencies or
-// schema_migrations conflict, returns (false, nil) so the caller fails the pull
-// and the operator resolves it.
+// Any conflict on another table, or an unresolvable dependencies,
+// schema_migrations, or config conflict, returns (false, nil) so the caller
+// fails the pull and the operator resolves it.
 //
 // The resolved tables are staged but NOT committed: the caller must run
 // CommitResolvedConflicts after the FK cascade repair, because DOLT_COMMIT
@@ -265,6 +277,15 @@ func TryAutoResolveMergeConflicts(ctx context.Context, db DBConn) (bool, error) 
 				return false, nil
 			}
 			resolvable = append(resolvable, "schema_migrations")
+		case "config":
+			memoryOnly, err := configConflictsAreMemoryConvergent(ctx, db)
+			if err != nil {
+				return false, err
+			}
+			if !memoryOnly {
+				return false, nil
+			}
+			resolvable = append(resolvable, "config")
 		default:
 			return false, nil
 		}
@@ -367,6 +388,40 @@ func dependencyConflictsAreAuditOnly(ctx context.Context, db DBConn) (bool, erro
 		// A differing type is the only remaining way this is a real semantic conflict.
 		if ourType.Valid != theirType.Valid || ourType.String != theirType.String {
 			return false, nil
+		}
+	}
+	return true, rows.Err()
+}
+
+// configConflictsAreMemoryConvergent reports whether every conflicted config
+// row is a persistent-memory row (key prefixed memoryConfigKeyPrefix). Memories
+// are the only config class safe to auto-resolve with --theirs: like metadata,
+// all clones pulling from the same remote converge on the remote's value (a
+// local edit to the same memory key loses, the same convergent trade-off
+// metadata makes). Any other config key in conflict — issue_prefix above all,
+// whose stale-value sweep GH#2455 specifically guards against — is a real
+// semantic conflict, so the whole config table is left for the operator.
+//
+// The key column is config's primary key, so a same-key conflict carries the
+// identical key on both sides; an add/delete conflict leaves one side NULL. A
+// row is convergent only if every key it presents is a memory key.
+func configConflictsAreMemoryConvergent(ctx context.Context, db DBConn) (bool, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT our_key, their_key FROM dolt_conflicts_config`)
+	if err != nil {
+		return false, fmt.Errorf("query config conflicts: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var ourKey, theirKey sql.NullString
+		if err := rows.Scan(&ourKey, &theirKey); err != nil {
+			return false, fmt.Errorf("scan config conflict: %w", err)
+		}
+		for _, k := range []sql.NullString{ourKey, theirKey} {
+			if k.Valid && !strings.HasPrefix(k.String, memoryConfigKeyPrefix) {
+				return false, nil
+			}
 		}
 	}
 	return true, rows.Err()
