@@ -1030,26 +1030,8 @@ var rootCmd = &cobra.Command{
 		dolt.ApplyCLIAutoStart(beadsDir, doltCfg)
 
 		if proxiedServerMode {
-			// Only commands with a proxied-server dispatch path may proceed:
-			// everything else reads the global store, which stays nil in this
-			// mode and would nil-panic mid-command (bd-6dnrw.44 item 1).
-			// Reject before spawning the proxy/dolt processes.
-			if !commandSupportsProxiedServer(cmd) {
-				FatalError("'bd %s' is not supported in proxied-server mode yet (supported: create, list, doctor, init; use 'bd list --ready' for ready work)", strings.TrimPrefix(cmd.CommandPath(), "bd "))
-			}
 			p, err := newProxiedServerUOWProvider(rootCtx, beadsDir)
 			if err != nil {
-				// #4259: same migrate-or-adopt UX as the dolt/embeddeddolt open
-				// paths when the remote-migrate gate refuses an in-place upgrade.
-				var gateErr *schema.RemoteMigrateGateError
-				if errors.As(err, &gateErr) {
-					if jsonOutput {
-						handleRemoteMigrateGateJSON(gateErr)
-					} else {
-						fmt.Fprint(os.Stderr, gateErr.UserMessage())
-					}
-					os.Exit(1)
-				}
 				FatalError("failed to open uow provider: %v", err)
 			}
 			uowProvider = p
