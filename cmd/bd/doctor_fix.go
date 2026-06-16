@@ -309,6 +309,11 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.OrphanedDependencies(path, doctorVerbose)
 		case "Dependency Keys":
 			err = fix.DependencyKeys(path, doctorVerbose)
+		case "Blocked State":
+			// bd-6dnrw.37: full is_blocked recompute. Unlisted in the order
+			// slice (priority 1000) so it runs after the dependency-graph fixes
+			// above, recomputing from the corrected graph.
+			err = fix.RecomputeBlocked(path)
 		case "Child-Parent Dependencies":
 			// Requires explicit opt-in flag (destructive, may remove intentional deps)
 			if !doctorFixChildParent {
