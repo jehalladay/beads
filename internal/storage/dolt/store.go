@@ -2731,6 +2731,15 @@ func (s *DoltStore) RecomputeAllBlocked(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("begin is_blocked recompute: %w", err)
 	}
+	// Refuse to derive and commit is_blocked from a dirty graph: the recompute
+	// reads the current working set and stages only `issues`, so pre-existing
+	// dirty issue/dependency edits would otherwise be swept into — or silently
+	// inform — the repair commit (bd-6dnrw.37). Checked inside this tx so it
+	// sees the same working set the recompute will read.
+	if err := issueops.GuardBlockedRecomputeWorkingSet(ctx, tx); err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
 	changed, err := issueops.RecomputeAllIsBlockedInTx(ctx, tx)
 	if err != nil {
 		_ = tx.Rollback()

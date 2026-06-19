@@ -42,6 +42,16 @@ func repairBlockedState(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
+	// Refuse to derive and commit is_blocked from a dirty graph: like the store
+	// paths, the recompute reads the working set and stages only `issues`, so a
+	// dirty issues/dependencies tree would taint the repair commit (bd-6dnrw.37).
+	// In a `bd doctor --fix` run the dependency-graph fixes commit ahead of this
+	// one, so the tree is normally clean here; when it is not, surface it as an
+	// actionable error rather than committing tainted state.
+	if err := issueops.GuardBlockedRecomputeWorkingSet(ctx, tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	changed, err := issueops.RecomputeAllIsBlockedInTx(ctx, tx)
 	if err != nil {
 		_ = tx.Rollback()
@@ -56,10 +66,18 @@ func repairBlockedState(ctx context.Context, db *sql.DB) error {
 		return nil
 	}
 
-	// Commit in Dolt, staging only issues — the synced table is_blocked lives
-	// on (wisps are dolt_ignore'd). Best effort: the repair is already applied.
-	_, _ = db.Exec("CALL DOLT_ADD(?)", "issues")
-	_, _ = db.Exec("CALL DOLT_COMMIT('-m', 'doctor: recompute is_blocked for all issues')")
+	// Persist the corrected flags as a Dolt commit, staging only issues — the
+	// synced table is_blocked lives on (wisps are dolt_ignore'd). This path keeps
+	// its own fresh-DB lifecycle rather than the shared store helper, but it must
+	// not report success on a failed commit: a swallowed DOLT_COMMIT error would
+	// leave the repair in the working set only, silently undone by the next pull.
+	// bd doctor is server-mode only, so the server supplies the commit identity.
+	if _, err := db.ExecContext(ctx, "CALL DOLT_ADD(?)", "issues"); err != nil {
+		return fmt.Errorf("failed to stage is_blocked repairs: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-m', 'doctor: recompute is_blocked for all issues')"); err != nil && !issueops.IsNothingToCommitError(err) {
+		return fmt.Errorf("failed to commit is_blocked repairs to Dolt: %w", err)
+	}
 
 	fmt.Printf("  Recomputed is_blocked: %d row(s) corrected\n", changed)
 	return nil

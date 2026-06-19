@@ -34,6 +34,14 @@ func TestEmbeddedRecomputeAllBlockedWiring(t *testing.T) {
 	if err := te.store.AddDependency(ctx, &types.Dependency{IssueID: "rcb-w", DependsOnID: "rcb-x", Type: types.DepBlocks}, "tester"); err != nil {
 		t.Fatalf("add dependency: %v", err)
 	}
+	// Embedded writes land in the working set; production flushes them to Dolt
+	// history on session shutdown, so `bd recompute-blocked` (a fresh process)
+	// sees a clean tree. Commit here to match that precondition — the recompute's
+	// dirty-graph guard refuses an uncommitted issues/dependencies tree
+	// (bd-6dnrw.37).
+	if err := te.store.Commit(ctx, "seed consistent graph"); err != nil {
+		t.Fatalf("commit seed: %v", err)
+	}
 
 	rc, ok := storage.UnwrapStore(te.store).(storage.BlockedRecomputer)
 	if !ok {

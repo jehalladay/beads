@@ -260,6 +260,12 @@ func (s *EmbeddedDoltStore) RecomputeBlockedAfterMerge(ctx context.Context, from
 func (s *EmbeddedDoltStore) RecomputeAllBlocked(ctx context.Context) (int, error) {
 	var changed int64
 	if err := s.withConn(ctx, true, func(tx *sql.Tx) error {
+		// Refuse to derive and commit is_blocked from a dirty graph (see
+		// DoltStore.RecomputeAllBlocked); checked inside the recompute tx so it
+		// sees the same working set the recompute will read (bd-6dnrw.37).
+		if e := issueops.GuardBlockedRecomputeWorkingSet(ctx, tx); e != nil {
+			return e
+		}
 		var e error
 		changed, e = issueops.RecomputeAllIsBlockedInTx(ctx, tx)
 		return e

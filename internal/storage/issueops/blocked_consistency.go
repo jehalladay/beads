@@ -2,8 +2,69 @@ package issueops
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
+	"strings"
 )
+
+// blockedRecomputeGraphTables are the version-controlled tables a full
+// is_blocked recompute reads and folds into its issues-only repair commit.
+//
+// The dolt-ignored wisp tables (wisps, wisp_dependencies) are deliberately
+// excluded. They are never staged or committed, so dirty wisp state cannot leak
+// into the repair commit; and because Dolt reports every ignored table as
+// perpetually "modified" in dolt_status, guarding on them would refuse the
+// recompute in any workspace that has ever created a wisp. is_blocked derived
+// from wisp state is the same working-set-derived value every local write path
+// already produces.
+var blockedRecomputeGraphTables = []string{"issues", "dependencies"}
+
+// ErrBlockedRecomputeDirtyGraph reports that a full is_blocked recompute was
+// asked to run while its committable graph tables had uncommitted changes.
+// Callers wrap it with the offending table names.
+var ErrBlockedRecomputeDirtyGraph = errors.New("is_blocked recompute needs a clean working set")
+
+// GuardBlockedRecomputeWorkingSet refuses a full is_blocked recompute when the
+// committable graph tables (issues, dependencies) have uncommitted working-set
+// changes (bd-6dnrw.37). The recompute derives is_blocked from the current graph
+// and stages only `issues`, so running it dirty would either sweep unrelated
+// issue edits into the repair commit or commit flags derived from uncommitted
+// dependency edits that are not part of the same commit. Run it as the first
+// statement inside the recompute's own transaction so it sees exactly the
+// working set the recompute will read. Returns a wrapped
+// ErrBlockedRecomputeDirtyGraph naming the dirty tables, or nil when clean.
+func GuardBlockedRecomputeWorkingSet(ctx context.Context, tx DBTX) error {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(blockedRecomputeGraphTables)), ",")
+	args := make([]any, len(blockedRecomputeGraphTables))
+	for i, t := range blockedRecomputeGraphTables {
+		args[i] = t
+	}
+	rows, err := tx.QueryContext(ctx,
+		"SELECT DISTINCT table_name FROM dolt_status WHERE table_name IN ("+placeholders+")", args...)
+	if err != nil {
+		return fmt.Errorf("check working set before is_blocked recompute: %w", err)
+	}
+	defer rows.Close()
+
+	var dirty []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("check working set before is_blocked recompute: %w", err)
+		}
+		dirty = append(dirty, name)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("check working set before is_blocked recompute: %w", err)
+	}
+	if len(dirty) == 0 {
+		return nil
+	}
+	sort.Strings(dirty)
+	return fmt.Errorf("%w: commit or discard pending changes to %s first",
+		ErrBlockedRecomputeDirtyGraph, strings.Join(dirty, ", "))
+}
 
 // RecomputeAllIsBlockedInTx recomputes the denormalized is_blocked column for
 // every issue and wisp in one batched mark/unmark fixpoint and returns the
