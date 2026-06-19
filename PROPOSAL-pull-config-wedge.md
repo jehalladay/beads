@@ -94,27 +94,27 @@ Use it in the two pre-pull sites:
 --- a/internal/storage/dolt/store.go
 +++ b/internal/storage/dolt/store.go
 @@ pullFromRemote (GH#2474 pre-pull auto-commit)
--		if err := s.Commit(ctx, "auto-commit before pull"); err != nil {
-+		// Include config: persistent memories live in config as kv.memory.* rows,
-+		// and Commit() excludes config (GH#2455), so they never commit and leave
-+		// the working set permanently dirty — DOLT_MERGE then refuses to start.
-+		if err := s.CommitWithConfig(ctx, "auto-commit before pull"); err != nil {
- 			if !isDoltNothingToCommit(err) {
- 				return fmt.Errorf("failed to commit pending changes before pull: %w", err)
- 			}
- 		}
+-        if err := s.Commit(ctx, "auto-commit before pull"); err != nil {
++        // Include config: persistent memories live in config as kv.memory.* rows,
++        // and Commit() excludes config (GH#2455), so they never commit and leave
++        // the working set permanently dirty — DOLT_MERGE then refuses to start.
++        if err := s.CommitWithConfig(ctx, "auto-commit before pull"); err != nil {
+             if !isDoltNothingToCommit(err) {
+                 return fmt.Errorf("failed to commit pending changes before pull: %w", err)
+             }
+         }
 ```
 
 ```diff
 --- a/internal/storage/dolt/federation.go
 +++ b/internal/storage/dolt/federation.go
 @@ PullFrom (GH#2474 pre-pull auto-commit)
--		if err := s.Commit(ctx, "auto-commit before pull"); err != nil {
-+		if err := s.CommitWithConfig(ctx, "auto-commit before pull"); err != nil {
- 			if !isDoltNothingToCommit(err) {
- 				return nil, fmt.Errorf("failed to commit pending changes before pull: %w", err)
- 			}
- 		}
+-        if err := s.Commit(ctx, "auto-commit before pull"); err != nil {
++        if err := s.CommitWithConfig(ctx, "auto-commit before pull"); err != nil {
+             if !isDoltNothingToCommit(err) {
+                 return nil, fmt.Errorf("failed to commit pending changes before pull: %w", err)
+             }
+         }
 ```
 
 ### Why this does not reintroduce GH#2455
