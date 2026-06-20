@@ -23,7 +23,7 @@ func isSerializationError(err error) bool {
 // driver connection failure (the dolt sql-server reaped an idle pooled
 // connection, the server restarted, the pipe broke, a brief network blip, etc.).
 //
-// This deliberately mirrors the connection-failure substrings recognised by the
+// This deliberately mirrors the connection-failure substrings recognized by the
 // DoltStore-layer classifier (internal/storage/dolt isRetryableError). The two
 // retry layers run over independent *sql.DB handles on parallel write paths —
 // uow.RunInTx backs the proxied-server create/init writes, withRetryTx backs the
