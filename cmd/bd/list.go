@@ -157,7 +157,42 @@ func findAllDescendants(ctx context.Context, store storage.DoltStorage, dbPath s
 // Uses polling instead of fsnotify because Dolt stores data in a server-side
 // database, not files — file watchers never fire.
 type watchListDependencyStore interface {
-	GetAllDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error)
+	GetDependencyRecordsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Dependency, error)
+}
+
+// dependencyRecordsForIssuesStore is the subset of storage used to load the
+// dependency records needed to render a list. It is satisfied by every Dolt
+// store (DependencyQueryStore) and kept narrow so the display helpers stay
+// testable.
+type dependencyRecordsForIssuesStore interface {
+	GetDependencyRecordsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Dependency, error)
+}
+
+// displayedIssueDeps loads dependency records for ONLY the displayed issues.
+//
+// The pretty/tree/formatted/watch consumers all read deps keyed by a displayed
+// issue and only nest when BOTH endpoints are in the displayed set, so loading
+// deps for just the displayed IDs is output-equivalent to loading every record
+// in the rig. Crucially it keeps `bd list` memory bounded by the number of
+// issues SHOWN rather than the total DB size: a bare `GetAllDependencyRecords`
+// on a large rig materialized every dep row (incl. JSON metadata) and grew one
+// process to 128GB RSS, OOM-crashing the host (RCA hq-lcu9o / beads-kbw).
+//
+// Returns nil on error or empty input, matching the prior behavior where a nil
+// dep map falls back to the dotted-ID hierarchy.
+func displayedIssueDeps(ctx context.Context, store dependencyRecordsForIssuesStore, issues []*types.Issue) map[string][]*types.Dependency {
+	if store == nil || len(issues) == 0 {
+		return nil
+	}
+	ids := make([]string, len(issues))
+	for i, issue := range issues {
+		ids[i] = issue.ID
+	}
+	deps, err := store.GetDependencyRecordsForIssues(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	return deps
 }
 
 func loadWatchedIssues(ctx context.Context, store storage.DoltStorage, filter types.IssueFilter, ready bool, parentID string, sortBy string, reverse bool) ([]*types.Issue, error) {
@@ -190,13 +225,7 @@ func loadWatchedIssues(ctx context.Context, store storage.DoltStorage, filter ty
 }
 
 func displayWatchedIssueList(ctx context.Context, store watchListDependencyStore, issues []*types.Issue) {
-	var allDeps map[string][]*types.Dependency
-	if store != nil {
-		deps, err := store.GetAllDependencyRecords(ctx)
-		if err == nil {
-			allDeps = deps
-		}
-	}
+	allDeps := displayedIssueDeps(ctx, store, issues)
 	displayPrettyListWithDeps(issues, true, allDeps)
 }
 
@@ -587,13 +616,13 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 				return nil
 			}
 
-			allDeps, _ := activeStore.GetAllDependencyRecords(ctx)
+			allDeps := displayedIssueDeps(ctx, activeStore, treeIssues)
 			displayPrettyListWithDeps(treeIssues, false, allDeps)
 			printSkipLabelsFooter(in.skipLabels)
 			return nil
 		}
 
-		allDeps, _ := activeStore.GetAllDependencyRecords(ctx)
+		allDeps := displayedIssueDeps(ctx, activeStore, issues)
 		displayPrettyListWithDeps(issues, false, allDeps)
 		printTruncationHint(truncated, in.effectiveLimit)
 		printSkipLabelsFooter(in.skipLabels)
@@ -601,7 +630,7 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 	}
 
 	if in.formatStr != "" {
-		depsByIssueID, _ := activeStore.GetAllDependencyRecords(ctx)
+		depsByIssueID := displayedIssueDeps(ctx, activeStore, issues)
 		if err := outputFormattedList(issues, depsByIssueID, in.formatStr); err != nil {
 			return HandleError("%v", err)
 		}
