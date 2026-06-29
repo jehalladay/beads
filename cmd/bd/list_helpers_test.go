@@ -6,6 +6,7 @@ import (
 	"context"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,10 +17,28 @@ import (
 type watchListDependencyStoreStub struct {
 	allDeps map[string][]*types.Dependency
 	err     error
+	// queriedIDs records the issue IDs passed to GetDependencyRecordsForIssues
+	// so tests can assert deps are loaded only for the displayed issues.
+	queriedIDs []string
 }
 
-func (s watchListDependencyStoreStub) GetAllDependencyRecords(_ context.Context) (map[string][]*types.Dependency, error) {
-	return s.allDeps, s.err
+func (s *watchListDependencyStoreStub) GetDependencyRecordsForIssues(_ context.Context, issueIDs []string) (map[string][]*types.Dependency, error) {
+	s.queriedIDs = append(s.queriedIDs, issueIDs...)
+	if s.err != nil {
+		return nil, s.err
+	}
+	// Mirror the real store: return records only for the requested IDs.
+	out := make(map[string][]*types.Dependency, len(issueIDs))
+	want := make(map[string]struct{}, len(issueIDs))
+	for _, id := range issueIDs {
+		want[id] = struct{}{}
+	}
+	for id, deps := range s.allDeps {
+		if _, ok := want[id]; ok {
+			out[id] = deps
+		}
+	}
+	return out, nil
 }
 
 func TestListParseTimeFlag(t *testing.T) {
@@ -270,7 +289,7 @@ func TestListDisplayPrettyList(t *testing.T) {
 func TestDisplayWatchedIssueList_UsesDependencyHierarchy(t *testing.T) {
 	parent := &types.Issue{ID: "bd-zparent", Title: "Parent", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic}
 	child := &types.Issue{ID: "bd-achild", Title: "Child", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	store := watchListDependencyStoreStub{
+	store := &watchListDependencyStoreStub{
 		allDeps: map[string][]*types.Dependency{
 			child.ID: {
 				{IssueID: child.ID, DependsOnID: parent.ID, Type: types.DepParentChild},
@@ -293,6 +312,72 @@ func TestDisplayWatchedIssueList_UsesDependencyHierarchy(t *testing.T) {
 	}
 	if strings.Contains(out, "\nbd-achild ") || strings.HasPrefix(out, "bd-achild ") {
 		t.Fatalf("expected child not to render as a root in watch output, got:\n%s", out)
+	}
+}
+
+// Regression test for beads-kbw / RCA hq-lcu9o: `bd list` must load dependency
+// records ONLY for the displayed issues, never the whole DB. A bare
+// GetAllDependencyRecords materialized every dep row (incl. JSON metadata) for
+// the entire rig and grew one process to 128GB RSS, OOM-crashing the host.
+//
+// This guards the memory contract: the number of issue IDs queried for
+// dependencies equals the number of DISPLAYED issues, independent of how many
+// issues (and deps) exist in the DB.
+func TestDisplayedIssueDeps_QueriesOnlyDisplayedIssues(t *testing.T) {
+	// Simulate a large rig: deps for 1000 issues live in the store, but only a
+	// handful are displayed.
+	allDeps := make(map[string][]*types.Dependency, 1000)
+	for i := 0; i < 1000; i++ {
+		id := "bd-" + strconv.Itoa(i)
+		allDeps[id] = []*types.Dependency{
+			{IssueID: id, DependsOnID: "bd-epic", Type: types.DepParentChild},
+		}
+	}
+	store := &watchListDependencyStoreStub{allDeps: allDeps}
+
+	displayed := []*types.Issue{
+		{ID: "bd-1", Title: "One", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: "bd-2", Title: "Two", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: "bd-3", Title: "Three", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+	}
+
+	got := displayedIssueDeps(context.Background(), store, displayed)
+
+	// Only the 3 displayed IDs may be queried — NOT all 1000.
+	if len(store.queriedIDs) != len(displayed) {
+		t.Fatalf("expected deps queried for exactly %d displayed issues, got %d: %v",
+			len(displayed), len(store.queriedIDs), store.queriedIDs)
+	}
+	wantIDs := []string{"bd-1", "bd-2", "bd-3"}
+	slices.Sort(store.queriedIDs)
+	if !slices.Equal(store.queriedIDs, wantIDs) {
+		t.Fatalf("expected queried IDs %v, got %v", wantIDs, store.queriedIDs)
+	}
+	// Returned map must be bounded by the displayed set, not the whole DB.
+	if len(got) != len(displayed) {
+		t.Fatalf("expected deps for %d displayed issues, got %d entries", len(displayed), len(got))
+	}
+	for id := range got {
+		if !slices.Contains(wantIDs, id) {
+			t.Fatalf("dep map contains non-displayed issue %q", id)
+		}
+	}
+}
+
+func TestDisplayedIssueDeps_EmptyAndNil(t *testing.T) {
+	// No issues displayed => no query, nil result.
+	store := &watchListDependencyStoreStub{allDeps: map[string][]*types.Dependency{
+		"bd-1": {{IssueID: "bd-1", DependsOnID: "bd-epic", Type: types.DepParentChild}},
+	}}
+	if got := displayedIssueDeps(context.Background(), store, nil); got != nil {
+		t.Fatalf("expected nil deps for no displayed issues, got %v", got)
+	}
+	if len(store.queriedIDs) != 0 {
+		t.Fatalf("expected no query for empty issue set, got %v", store.queriedIDs)
+	}
+	// Nil store => nil result, no panic.
+	if got := displayedIssueDeps(context.Background(), nil, []*types.Issue{{ID: "bd-1"}}); got != nil {
+		t.Fatalf("expected nil deps for nil store, got %v", got)
 	}
 }
 
