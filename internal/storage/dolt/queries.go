@@ -155,6 +155,10 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 		}
 		childIDs = append(childIDs, id)
 	}
+	if err := depRows.Err(); err != nil {
+		_ = depRows.Close() // Best effort cleanup on error path
+		return nil, wrapScanError("get molecule progress: iterate children", err)
+	}
 	_ = depRows.Close() // Redundant close for safety (rows already iterated)
 
 	// Step 2: Batch-fetch status for all children (batched IN clauses to avoid full table scans).
@@ -184,6 +188,10 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 					return nil, wrapScanError("get molecule progress: scan status", err)
 				}
 				childMap[id] = childInfo{status: status}
+			}
+			if err := statusRows.Err(); err != nil {
+				_ = statusRows.Close()
+				return nil, wrapScanError("get molecule progress: iterate statuses", err)
 			}
 			_ = statusRows.Close()
 		}
