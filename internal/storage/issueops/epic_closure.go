@@ -29,6 +29,10 @@ func GetEpicsEligibleForClosureInTx(ctx context.Context, tx *sql.Tx) ([]*types.E
 		}
 		epicIDs = append(epicIDs, id)
 	}
+	if err := epicRows.Err(); err != nil {
+		epicRows.Close()
+		return nil, fmt.Errorf("iterate epics: %w", err)
+	}
 	epicRows.Close()
 
 	if len(epicIDs) == 0 {
@@ -63,6 +67,10 @@ func GetEpicsEligibleForClosureInTx(ctx context.Context, tx *sql.Tx) ([]*types.E
 			if epicSet[parentID] {
 				epicChildMap[parentID] = append(epicChildMap[parentID], childID)
 			}
+		}
+		if err := depRows.Err(); err != nil {
+			depRows.Close()
+			return nil, fmt.Errorf("iterate parent-child deps from %s: %w", depTable, err)
 		}
 		depRows.Close()
 	}
@@ -99,6 +107,10 @@ func GetEpicsEligibleForClosureInTx(ctx context.Context, tx *sql.Tx) ([]*types.E
 						return nil, fmt.Errorf("scan child status: %w", err)
 					}
 					childStatusMap[id] = status
+				}
+				if err := statusRows.Err(); err != nil {
+					statusRows.Close()
+					return nil, fmt.Errorf("iterate child statuses from %s: %w", table, err)
 				}
 				statusRows.Close()
 			}

@@ -274,6 +274,11 @@ func probeForCorrectDoltDatabase(db *sql.DB, skipDB string) string {
 		}
 		candidates = append(candidates, dbName)
 	}
+	if err := rows.Err(); err != nil {
+		// A truncated SHOW DATABASES could omit the authoritative database and
+		// mislead metadata repair; treat a partial scan as "not found".
+		return ""
+	}
 
 	for _, dbName := range candidates {
 		var count int

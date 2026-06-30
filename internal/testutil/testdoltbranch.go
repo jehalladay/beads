@@ -122,6 +122,11 @@ func CleanTestBranches(db *sql.DB, database string) {
 			branches = append(branches, name)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		// A partial branch list could leave test branches behind; nothing to
+		// delete safely, so bail rather than act on a truncated scan.
+		return
+	}
 
 	// Make sure we're on main before deleting branches
 	_, _ = db.Exec("CALL DOLT_CHECKOUT('main')")

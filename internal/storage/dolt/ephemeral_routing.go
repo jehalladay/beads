@@ -168,6 +168,10 @@ func (s *DoltStore) batchWispExists(ctx context.Context, ids []string) map[strin
 				result[id] = true
 			}
 		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil // On error, assume no wisps (safe fallback)
+		}
 		_ = rows.Close()
 	}
 	return result
