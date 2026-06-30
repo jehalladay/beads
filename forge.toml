@@ -1,0 +1,26 @@
+# forge.toml — Forge package manifest for beads (bd).
+#
+# This file registers beads in the ReactiveCLI Forge workspace so that
+# `forge build/test/lint/check` resolve a real target. See AGENT_INSTRUCTIONS.md
+# and the Makefile for the authoritative build contract.
+#
+# SCOPE (beads-r06.1 / A1): declare the package + backend so `forge` resolves
+# beads. The mapping of forge's build/test/lint/check onto the real
+# gms_pure_go + version-stamped-ldflags build (so `forge build` == `make build`)
+# lands in beads-r06.2 / A2 via [build.commands] below.
+
+[package]
+name = "beads"
+type = "code"
+version = "1.1.0-rc.1"
+language = "go"
+description = "bd — dependency-aware issue tracker backed by Dolt (github.com/jehalladay/beads)"
+
+[build]
+backend = "go"
+
+# [build.commands] — A2 (beads-r06.2) overrides the default Go backend commands
+# (`go build ./...`, `go test ./...`, `golangci-lint run`, `go vet ./...`) with
+# the real beads build contract: BUILD_TAGS=gms_pure_go, CGO_ENABLED=1, and
+# version-stamped ldflags (-X main.Build=$(git rev-parse --short HEAD)), routing
+# through the Makefile / scripts so CI == forge (A3 / beads-r06.3).
