@@ -904,6 +904,13 @@ Use --dry-run to see what would be dropped without actually dropping.`,
 				}
 			}
 		}
+		if err := rows.Err(); err != nil {
+			// A truncated SHOW DATABASES list could hide stale DBs (or, on a
+			// retry, mislead the operator). Fail loudly rather than DROP a
+			// partial set built from an aborted scan.
+			fmt.Fprintf(os.Stderr, "Error reading database list: %v\n", err)
+			os.Exit(1)
+		}
 
 		if len(stale) == 0 {
 			fmt.Println("No stale databases found.")

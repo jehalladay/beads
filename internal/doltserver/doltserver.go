@@ -1011,6 +1011,12 @@ func FlushWorkingSet(host string, port int) error {
 		}
 		databases = append(databases, name)
 	}
+	if err := rows.Err(); err != nil {
+		// A truncated database list would silently skip flushing some
+		// databases, risking unflushed writes; fail loudly instead.
+		_ = rows.Close()
+		return fmt.Errorf("flush: failed to read database list: %w", err)
+	}
 	_ = rows.Close()
 
 	if len(databases) == 0 {

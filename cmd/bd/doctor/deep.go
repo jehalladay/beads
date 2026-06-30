@@ -471,6 +471,13 @@ func checkMoleculeIntegrity(db *sql.DB) DoctorCheck {
 					brokenMolecules = append(brokenMolecules, fmt.Sprintf("%s (%d missing children)", molID, orphanCount))
 				}
 			}
+			if err := brokenRows.Err(); err != nil {
+				_ = brokenRows.Close()
+				check.Status = StatusWarning
+				check.Message = "Row iteration error checking molecule integrity"
+				check.Detail = err.Error()
+				return check
+			}
 			_ = brokenRows.Close()
 		}
 	}

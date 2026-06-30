@@ -627,6 +627,11 @@ func probeForCorrectDatabase(conn *doltConn) string {
 		}
 		candidates = append(candidates, dbName)
 	}
+	if err := rows.Err(); err != nil {
+		// A truncated SHOW DATABASES could omit the authoritative database and
+		// mislead repair; treat a partial scan as "not found".
+		return ""
+	}
 
 	// Probe each candidate for an issues table
 	for _, dbName := range candidates {
