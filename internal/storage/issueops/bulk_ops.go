@@ -186,6 +186,12 @@ func DeleteIssuesBySourceRepoInTx(ctx context.Context, tx *sql.Tx, sourceRepo st
 		}
 		issueIDs = append(issueIDs, id)
 	}
+	if err := rows.Err(); err != nil {
+		// A truncated scan would build a partial delete set, silently
+		// orphaning the rows the aborted iteration never returned.
+		_ = rows.Close()
+		return 0, fmt.Errorf("iterate source-repo issues: %w", err)
+	}
 	_ = rows.Close()
 
 	if len(issueIDs) == 0 {
