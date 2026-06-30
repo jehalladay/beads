@@ -236,6 +236,35 @@ func (s *pureTestStore) SearchIssues(_ context.Context, _ string, _ types.IssueF
 	return append([]*types.Issue(nil), s.issues...), nil
 }
 
+// IterIssues streams the in-memory issues. The sync paths read local issues
+// via IterIssues (beads-r06.13 / OOM-1), so the pure test store must serve it
+// the same way it serves SearchIssues. Honors filter.Limit so bounded callers
+// behave as they would against a real store.
+func (s *pureTestStore) IterIssues(_ context.Context, _ string, filter types.IssueFilter) (storage.Iter[types.Issue], error) {
+	items := append([]*types.Issue(nil), s.issues...)
+	if filter.Limit > 0 && len(items) > filter.Limit {
+		items = items[:filter.Limit]
+	}
+	return storage.NewSliceIter(items), nil
+}
+
+// GetLabelsForIssues serves the batched label-hydration path used by the sync
+// engine after streaming issues with SkipLabels. Mirrors the in-memory issues'
+// own Labels so streamed results stay label-equivalent.
+func (s *pureTestStore) GetLabelsForIssues(_ context.Context, issueIDs []string) (map[string][]string, error) {
+	want := make(map[string]bool, len(issueIDs))
+	for _, id := range issueIDs {
+		want[id] = true
+	}
+	out := make(map[string][]string)
+	for _, iss := range s.issues {
+		if want[iss.ID] && len(iss.Labels) > 0 {
+			out[iss.ID] = append([]string(nil), iss.Labels...)
+		}
+	}
+	return out, nil
+}
+
 func (s *pureTestStore) UpdateIssue(_ context.Context, id string, updates map[string]interface{}, _ string) error {
 	for _, issue := range s.issues {
 		if issue.ID != id {
