@@ -31,12 +31,13 @@ import (
 // same conn, and the pool blocks forever. The dedicated-conn pattern is
 // pinned by the parity test (concurrent iterators).
 type doltIssueIter struct {
-	s      *DoltStore
-	conn   *sql.Conn
-	rows   *sql.Rows
-	cur    *types.Issue
-	err    error
-	closed bool
+	s          *DoltStore
+	conn       *sql.Conn
+	rows       *sql.Rows
+	cur        *types.Issue
+	err        error
+	closed     bool
+	skipLabels bool
 }
 
 // IterIssues streams issues matching the filter from the `issues` table.
@@ -75,7 +76,7 @@ func (s *DoltStore) IterIssues(ctx context.Context, query string, filter types.I
 		_ = conn.Close()
 		return nil, fmt.Errorf("iter issues: query: %w", err)
 	}
-	return &doltIssueIter{s: s, conn: conn, rows: rows}, nil
+	return &doltIssueIter{s: s, conn: conn, rows: rows, skipLabels: filter.SkipLabels}, nil
 }
 
 func (it *doltIssueIter) Next(ctx context.Context) bool {
@@ -98,12 +99,19 @@ func (it *doltIssueIter) Next(ctx context.Context) bool {
 	// Hydrate labels on a SEPARATE pool connection (NOT it.conn — the
 	// cursor conn is busy holding it.rows). s.db.QueryContext acquires a
 	// fresh conn from the pool for the duration of the label query.
-	labels, err := iterFetchLabels(ctx, it.s.db, "labels", iss.ID)
-	if err != nil {
-		it.err = fmt.Errorf("iter issues: hydrate labels: %w", err)
-		return false
+	//
+	// SkipLabels suppresses this entirely: it both saves the per-row query
+	// and removes the second-connection requirement, so the iterator works
+	// on a single-connection pool (e.g. the MaxOpenConns=1 embedded/test
+	// configuration) without deadlocking the cursor against label hydration.
+	if !it.skipLabels {
+		labels, err := iterFetchLabels(ctx, it.s.db, "labels", iss.ID)
+		if err != nil {
+			it.err = fmt.Errorf("iter issues: hydrate labels: %w", err)
+			return false
+		}
+		iss.Labels = labels
 	}
-	iss.Labels = labels
 	it.cur = iss
 	return true
 }

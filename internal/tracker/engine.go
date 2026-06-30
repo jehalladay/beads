@@ -227,6 +227,86 @@ func (e *Engine) Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error
 	return result, nil
 }
 
+// labelBatcher is the optional batched-label capability. Both real stores
+// (dolt, embeddeddolt) implement it; the per-issue GetLabels on the Storage
+// interface is the fallback for any store that does not.
+type labelBatcher interface {
+	GetLabelsForIssues(ctx context.Context, issueIDs []string) (map[string][]string, error)
+}
+
+// streamLocalIssues reads local issues for the sync paths via the streaming
+// IterIssues cursor instead of SearchIssues(ctx, "", IssueFilter{}).
+//
+// The old call materialized the full result set through search.go's Pattern A:
+// an unbounded 47-column SELECT plus per-issue label hydration, buffered whole
+// by the driver and then copied again by the wisps-merge dedup. Repeated four
+// times per bidirectional Sync on a large rig, that walked memory to 134GB RSS
+// and OOM-crashed the host (RCA hq-uo7a1 / beads-r06.13 / OOM-1).
+//
+// IterIssues streams a single cursor (issues table only) ordered identically
+// to the old default SearchIssues sort (priority ASC, created_at DESC, id ASC),
+// so callers that build maps/slices keyed by ID or external ref see an
+// output-equivalent result. We stream with SkipLabels so the cursor needs no
+// concurrent second connection for per-row label hydration (which deadlocks a
+// single-connection pool), then batch-hydrate labels AFTER the cursor has
+// drained and released its connection. Labels must be preserved because the
+// pull path compares existing.Labels in pullIssueEqual.
+//
+// Wisps are intentionally NOT merged here: ephemeral beads are "not synced via
+// git" and every production sync path sets ExcludeEphemeral, and a NoHistory
+// bead carries no external tracker ref so it never matches the ref-keyed
+// lookups these callers perform. No Limit cap is applied — capping would
+// silently drop issues from sync (the data-loss class fixed separately in
+// beads-r06.14); bounding here comes from streaming, not truncation.
+func (e *Engine) streamLocalIssues(ctx context.Context) ([]*types.Issue, error) {
+	it, err := e.Store.IterIssues(ctx, "", types.IssueFilter{SkipLabels: true})
+	if err != nil {
+		return nil, err
+	}
+	issues, err := storage.Collect(ctx, it)
+	if err != nil {
+		return nil, err
+	}
+	if err := e.hydrateLocalIssueLabels(ctx, issues); err != nil {
+		return nil, err
+	}
+	return issues, nil
+}
+
+// hydrateLocalIssueLabels populates issue.Labels for issues streamed with
+// SkipLabels. It prefers the batched GetLabelsForIssues (one chunked query)
+// and falls back to per-issue GetLabels. Called only after the streaming
+// cursor has closed, so it is safe on a single-connection pool.
+func (e *Engine) hydrateLocalIssueLabels(ctx context.Context, issues []*types.Issue) error {
+	if len(issues) == 0 {
+		return nil
+	}
+	if batcher, ok := e.Store.(labelBatcher); ok {
+		ids := make([]string, len(issues))
+		for i, iss := range issues {
+			ids[i] = iss.ID
+		}
+		labelMap, err := batcher.GetLabelsForIssues(ctx, ids)
+		if err != nil {
+			return fmt.Errorf("hydrating local issue labels: %w", err)
+		}
+		for _, iss := range issues {
+			if labels, ok := labelMap[iss.ID]; ok {
+				iss.Labels = labels
+			}
+		}
+		return nil
+	}
+	for _, iss := range issues {
+		labels, err := e.Store.GetLabels(ctx, iss.ID)
+		if err != nil {
+			return fmt.Errorf("hydrating labels for %s: %w", iss.ID, err)
+		}
+		iss.Labels = labels
+	}
+	return nil
+}
+
 // DetectConflicts identifies issues that were modified both locally and externally
 // since the last sync.
 func (e *Engine) DetectConflicts(ctx context.Context) ([]Conflict, error) {
@@ -247,9 +327,9 @@ func (e *Engine) DetectConflicts(ctx context.Context) ([]Conflict, error) {
 		return nil, fmt.Errorf("invalid last_sync timestamp %q: %w", lastSyncStr, err)
 	}
 
-	// Find local issues with external refs for this tracker
-	filter := types.IssueFilter{}
-	issues, err := e.Store.SearchIssues(ctx, "", filter)
+	// Find local issues with external refs for this tracker. Stream rather
+	// than materialize the whole rig (beads-r06.13 / OOM-1).
+	issues, err := e.streamLocalIssues(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("searching issues: %w", err)
 	}
@@ -321,7 +401,8 @@ func (e *Engine) doPull(ctx context.Context, opts SyncOptions, allowOverwriteIDs
 		}
 	}
 
-	localIssues, err := e.Store.SearchIssues(ctx, "", types.IssueFilter{})
+	// Stream local issues rather than materialize the whole rig (beads-r06.13 / OOM-1).
+	localIssues, err := e.streamLocalIssues(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("searching local issues: %w", err)
 	}
@@ -820,9 +901,9 @@ func (e *Engine) doPush(ctx context.Context, opts SyncOptions, skipIDs, forceIDs
 		}
 	}
 
-	// Fetch local issues
-	filter := types.IssueFilter{}
-	issues, err := e.Store.SearchIssues(ctx, "", filter)
+	// Fetch local issues by streaming rather than materializing the whole
+	// rig (beads-r06.13 / OOM-1).
+	issues, err := e.streamLocalIssues(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("searching local issues: %w", err)
 	}
@@ -1258,7 +1339,8 @@ func pendingDependencyPreviewKey(fromID, toID, depType string) string {
 }
 
 func (e *Engine) dependencyIssueResolver(ctx context.Context, extraIssues []*types.Issue) (func(context.Context, string) (*types.Issue, error), error) {
-	issues, searchErr := e.Store.SearchIssues(ctx, "", types.IssueFilter{})
+	// Stream local issues rather than materialize the whole rig (beads-r06.13 / OOM-1).
+	issues, searchErr := e.streamLocalIssues(ctx)
 	if searchErr != nil {
 		return nil, searchErr
 	}
