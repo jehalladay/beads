@@ -207,16 +207,28 @@ func (e *Engine) Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error
 		attribute.Int("sync.errors", result.Stats.Errors),
 	)
 
-	// Update last_sync timestamp. Dolt DATETIME columns round sub-second
-	// values, so rows this sync just wrote can carry updated_at values up
-	// to half a second in the future of wall clock. Record last_sync at
-	// the next whole second so the engine's own writes are never misread
-	// as local edits by the next pull's conflict guard.
+	// Update last_sync timestamp. Dolt DATETIME columns ROUND sub-second
+	// values (e.g. 12:00:00.700 -> 12:00:01), so rows this sync just wrote can
+	// carry updated_at values up to a whole second in the future of the write's
+	// wall clock. Record last_sync at floor(now)+2s so the engine's own writes
+	// are STRICTLY less than the cursor: a write at wall time t<=now rounds to
+	// at most floor(now)+1 < floor(now)+2. This keeps the conflict guards
+	// (UpdatedAt >= lastSync == "locally modified") from ever misreading the
+	// engine's own freshly-pulled rows as local edits, while still protecting a
+	// genuine local edit that lands exactly on the recorded cursor second.
 	if !opts.DryRun {
-		lastSync := time.Now().UTC().Truncate(time.Second).Add(time.Second).Format(time.RFC3339Nano)
+		lastSync := time.Now().UTC().Truncate(time.Second).Add(2 * time.Second).Format(time.RFC3339Nano)
 		key := e.Tracker.ConfigPrefix() + ".last_sync"
 		if err := e.Store.SetLocalMetadata(ctx, key, lastSync); err != nil {
-			e.warn("Failed to update last_sync: %v", err)
+			// A failed last_sync persist must not be swallowed: the next sync
+			// would re-evaluate conflicts against a stale cursor and could
+			// silently overwrite local edits. Surface it as a sync failure.
+			result.Success = false
+			result.Error = fmt.Sprintf("recording last_sync: %v", err)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, result.Error)
+			result.Warnings = append(result.Warnings, e.warnings...)
+			return result, fmt.Errorf("recording last_sync: %w", err)
 		}
 		result.LastSync = lastSync
 	}
@@ -341,8 +353,11 @@ func (e *Engine) DetectConflicts(ctx context.Context) ([]Conflict, error) {
 			continue
 		}
 
-		// Check if locally modified since last sync
-		if issue.UpdatedAt.Before(lastSync) || issue.UpdatedAt.Equal(lastSync) {
+		// Check if locally modified since last sync. An edit landing exactly
+		// at last_sync counts as "modified" — this must match doPull's
+		// overwrite guard (UpdatedAt >= lastSync), or an edit at the boundary
+		// is neither flagged here nor protected there, and is silently lost.
+		if issue.UpdatedAt.Before(lastSync) {
 			continue
 		}
 
@@ -540,7 +555,12 @@ func (e *Engine) doPull(ctx context.Context, opts SyncOptions, allowOverwriteIDs
 			// handle these per the configured resolution strategy.
 			// Without this guard, pull silently overwrites local changes
 			// before conflict detection can compare timestamps.
-			if lastSync != nil && existing.UpdatedAt.After(*lastSync) && !allowOverwriteIDs[existing.ID] && !prelinkedHydrateIDs[existing.ID] {
+			// An edit at exactly last_sync is a local modification (Dolt rounds
+			// DATETIME to whole seconds, so this is reachable). Protect it with
+			// the same boundary DetectConflicts uses (UpdatedAt >= lastSync,
+			// i.e. !Before) so it is not silently overwritten before conflict
+			// detection can compare timestamps.
+			if lastSync != nil && !existing.UpdatedAt.Before(*lastSync) && !allowOverwriteIDs[existing.ID] && !prelinkedHydrateIDs[existing.ID] {
 				stats.Skipped++
 				continue
 			}
