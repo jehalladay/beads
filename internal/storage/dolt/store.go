@@ -624,6 +624,26 @@ func endSpan(span trace.Span, err error) {
 // ErrStoreClosed is returned when an operation is attempted on a closed store.
 var ErrStoreClosed = errors.New("store is closed")
 
+// rlockOpen acquires the read lock and verifies the store is still open. On
+// success it returns a release func (which the caller MUST defer) and nil; on a
+// closed store it releases the lock and returns ErrStoreClosed.
+//
+// Checking s.closed/s.db *while holding s.mu* is what closes the TOCTOU against
+// Close. Close sets s.closed=true and only then takes s.mu.Lock() before niling
+// s.db, so a bare `if s.closed.Load()` check before the lock left a window where
+// Close could nil s.db between the check and the first s.db.* call, panicking
+// with a nil-pointer deref (use-after-close). Holding the read lock across the
+// whole db access forces Close's write-lock to wait, and re-reading closed/db
+// under the lock guarantees we never touch a niled s.db.
+func (s *DoltStore) rlockOpen() (func(), error) {
+	s.mu.RLock()
+	if s.closed.Load() || s.db == nil {
+		s.mu.RUnlock()
+		return nil, ErrStoreClosed
+	}
+	return s.mu.RUnlock, nil
+}
+
 // withReadTx runs fn inside a transaction while holding the store's read-lock.
 // Used for read operations that need a *sql.Tx to share issueops functions.
 //
@@ -633,11 +653,11 @@ var ErrStoreClosed = errors.New("store is closed")
 // the caller. This is safe because fn is read-only and the transaction is always
 // rolled back, so re-running the operation has no side effects.
 func (s *DoltStore) withReadTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	if s.closed.Load() {
-		return ErrStoreClosed
+	release, err := s.rlockOpen()
+	if err != nil {
+		return err
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	defer release()
 	return s.withRetry(ctx, func() error {
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
@@ -683,9 +703,11 @@ func (s *DoltStore) withRetryTx(ctx context.Context, fn func(tx *sql.Tx) error) 
 }
 
 func (s *DoltStore) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	if s.closed.Load() {
-		return ErrStoreClosed
+	release, err := s.rlockOpen()
+	if err != nil {
+		return err
 	}
+	defer release()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin write tx: %w", err)
@@ -704,9 +726,11 @@ func (s *DoltStore) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error) 
 // uncommitted implicit transaction that Dolt rolls back on connection close,
 // causing silent data loss for callers that do not use db.BeginTx themselves.
 func (s *DoltStore) execContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	if s.closed.Load() {
-		return nil, ErrStoreClosed
+	release, err := s.rlockOpen()
+	if err != nil {
+		return nil, err
 	}
+	defer release()
 	ctx, span := doltTracer.Start(ctx, "dolt.exec",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(append(s.doltSpanAttrs(),
@@ -715,7 +739,7 @@ func (s *DoltStore) execContext(ctx context.Context, query string, args ...any) 
 		)...),
 	)
 	var result sql.Result
-	err := s.withRetry(ctx, func() error {
+	err = s.withRetry(ctx, func() error {
 		tx, txErr := s.db.BeginTx(ctx, nil)
 		if txErr != nil {
 			return txErr
@@ -824,9 +848,11 @@ func (s *DoltStore) QueryContext(ctx context.Context, query string, args ...any)
 
 // queryContext wraps s.db.QueryContext with retry for transient errors.
 func (s *DoltStore) queryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	if s.closed.Load() {
-		return nil, ErrStoreClosed
+	release, err := s.rlockOpen()
+	if err != nil {
+		return nil, err
 	}
+	defer release()
 	ctx, span := doltTracer.Start(ctx, "dolt.query",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(append(s.doltSpanAttrs(),
@@ -835,7 +861,7 @@ func (s *DoltStore) queryContext(ctx context.Context, query string, args ...any)
 		)...),
 	)
 	var rows *sql.Rows
-	err := s.withRetry(ctx, func() error {
+	err = s.withRetry(ctx, func() error {
 		// Close any Rows from a previous failed attempt to avoid leaking connections.
 		if rows != nil {
 			_ = rows.Close()
@@ -853,9 +879,11 @@ func (s *DoltStore) queryContext(ctx context.Context, query string, args ...any)
 // queryRowContext wraps s.db.QueryRowContext with retry for transient errors.
 // The scan function receives the *sql.Row and should call .Scan() on it.
 func (s *DoltStore) queryRowContext(ctx context.Context, scan func(*sql.Row) error, query string, args ...any) error {
-	if s.closed.Load() {
-		return ErrStoreClosed
+	release, err := s.rlockOpen()
+	if err != nil {
+		return err
 	}
+	defer release()
 	ctx, span := doltTracer.Start(ctx, "dolt.query_row",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(append(s.doltSpanAttrs(),
