@@ -1,9 +1,9 @@
 # Linting Policy
 
-Last reviewed: 2026-05-29
+Last reviewed: 2026-07-02
 
 Freshness source: `.golangci.yml`, `.github/workflows/pr.yml`,
-`.github/workflows/main.yml`, and
+`.github/workflows/main.yml`, `scripts/check-resource-safety.sh`, and
 `golangci-lint run --timeout=5m --build-tags=gms_pure_go ./...` returning zero
 issues.
 
@@ -42,6 +42,34 @@ When a linter reports an intentional or false-positive pattern:
 The current configuration already encodes accepted exclusions for intentional
 patterns such as deferred cleanup errors, controlled subprocess execution,
 test-fixture file reads, and documented security false positives.
+
+## Resource-safety tier (beads-r06.4)
+
+To close the unbounded-resource-defect class behind the 134GB-RSS OOM that
+crashed a host (a bare `bd list` materialized every dependency row; RCA
+hq-lcu9o / fix beads-kbw), the gate enforces:
+
+- **`bodyclose`** — HTTP response bodies must be closed (fd/goroutine leak).
+- **`rowserrcheck`** — `rows.Err()` must be checked after iterating a result
+  set (the destructive-path defect swept in beads-r06.15). Three streaming/
+  ownership-handoff sites in `internal/storage/dolt/` are excluded with a
+  documented reason — they check `Err()` across a boundary the linter can't
+  follow.
+- **`scripts/check-resource-safety.sh`** — a source-time gate (wired into
+  `scripts/ci/pr-policy.sh`) enforcing the domain invariant the linters cannot
+  express: a display/list path must never call an unbounded whole-table loader
+  (e.g. `GetAllDependencyRecords`). New call sites fail CI unless allowlisted
+  with a justification or annotated `// resource-safety:allow <reason>`.
+
+Deliberately **not** in the required gate yet, because each would land
+pre-existing violations and a tolerated failing baseline is forbidden (see
+above); burndown is tracked under epic beads-r06 (see beads-yzo):
+
+- **`sqlclosecheck`** — 77 production findings, almost all false positives on
+  the correct eager `rows.Close()`-in-a-loop idiom (where a `defer` would leak
+  cursors). Not mechanizable without excluding ~31 files of correct code.
+- **`contextcheck`** (42) and **`staticcheck`** SA-class (14) — lifecycle and
+  dead-code/deprecation findings, not the resource-leak class.
 
 ## CI Cleanup Decision
 
