@@ -57,8 +57,34 @@ func TestValidateCheck_AllClean(t *testing.T) {
 			t.Errorf("%s: status = %q, want %q (message: %s)", cr.check.Name, cr.check.Status, statusOK, cr.check.Message)
 		}
 	}
-	if len(checks) != 4 {
-		t.Errorf("Expected 4 checks, got %d", len(checks))
+
+	// Assert the exact set of data-integrity checks rather than a bare count,
+	// so adding/removing a check fails with an actionable message (which one
+	// drifted) instead of an opaque "expected N, got M". Keep this in sync
+	// with collectValidateChecks in doctor_validate.go.
+	wantChecks := map[string]bool{
+		"Cross-Table Duplicates": true,
+		"Duplicate Issues":       true,
+		"Orphaned Dependencies":  true,
+		"Test Pollution":         true,
+		"Git Conflicts":          true,
+	}
+	gotChecks := make(map[string]bool, len(checks))
+	for _, cr := range checks {
+		gotChecks[cr.check.Name] = true
+	}
+	for name := range wantChecks {
+		if !gotChecks[name] {
+			t.Errorf("missing expected validate check %q", name)
+		}
+	}
+	for name := range gotChecks {
+		if !wantChecks[name] {
+			t.Errorf("unexpected validate check %q (update wantChecks if intentional)", name)
+		}
+	}
+	if len(checks) != len(wantChecks) {
+		t.Errorf("Expected %d checks, got %d", len(wantChecks), len(checks))
 	}
 }
 
