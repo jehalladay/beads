@@ -142,6 +142,12 @@ func (s *DoltStore) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error) 
 
 // uncommitted implicit transaction that Dolt rolls back on connection close,
 // causing silent data loss for callers that do not use db.BeginTx themselves.
+//
+// The sql.Result return mirrors database/sql ExecContext and is part of the
+// method's tested contract (unit tests read RowsAffected), even though current
+// production callers only need the error.
+//
+//nolint:unparam // sql.Result is consumed by unit tests; kept for API parity.
 func (s *DoltStore) execContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	release, err := s.rlockOpen()
 	if err != nil {

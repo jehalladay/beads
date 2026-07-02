@@ -324,15 +324,6 @@ func detectStructuralIssues(analysis *SwarmAnalysis, _ []*types.Issue) {
 		}
 	}
 
-	// 2. Find leaves (issues that nothing depends on within the epic)
-	//    Multiple leaves might indicate missing dependencies or just multiple end points.
-	var leaves []string
-	for id, node := range analysis.Issues {
-		if len(node.DependedOnBy) == 0 {
-			leaves = append(leaves, id)
-		}
-	}
-
 	// 3. Detect potential dependency inversions
 	//    Heuristic: If a "foundation" or "setup" issue has no dependents, it might be inverted.
 	//    Heuristic: If an "integration" or "final" issue depends on nothing, it might be inverted.

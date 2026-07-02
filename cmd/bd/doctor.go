@@ -853,11 +853,10 @@ func runDiagnostics(path string) doctorResult {
 					result.OverallOK = false
 					break
 				}
-				if check.Status == statusWarning {
-					// Some warnings are informational (don't fail), but
-					// replicate the per-check logic from above is complex.
-					// Conservative: don't change OverallOK for warnings here.
-				}
+				// Warnings are informational and deliberately do not change
+				// OverallOK here (replicating the per-check pass/fail logic
+				// above is complex; the conservative choice is to leave
+				// OverallOK untouched for warnings).
 			}
 			// Store suppressed count for display
 			result.SuppressedCount = suppressedCount

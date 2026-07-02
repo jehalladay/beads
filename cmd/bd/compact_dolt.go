@@ -87,7 +87,6 @@ Examples:
 		for _, entry := range logEntries {
 			if entry.Date.Before(cutoff) {
 				oldCommits++
-				boundaryHash = entry.Hash
 			} else {
 				recentHashes = append(recentHashes, entry.Hash)
 			}

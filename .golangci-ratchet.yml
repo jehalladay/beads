@@ -3,20 +3,24 @@ version: "2"
 # RESOURCE-SAFETY RATCHET (beads-r06.4, Mayor ruling Option 2).
 #
 # This config is NOT the required full-tree gate (that is .golangci.yml, which
-# runs bodyclose + rowserrcheck + the rest at zero-tolerance). This one enables
-# the three linters that were scoped OUT of the full gate because the codebase
-# carries pre-existing violations (docs/LINTING.md forbids a tolerated failing
-# baseline). Run with `--new-from-merge-base` (see scripts/ci/pr-lint-ratchet.sh),
-# it blocks only NEW violations introduced by a PR while the existing baseline is
-# burned down under beads-yzo (eng_5). As each class reaches zero it graduates
-# into .golangci.yml as a normal zero-tolerance linter and is removed here.
+# runs bodyclose + rowserrcheck + staticcheck-SA + the rest at zero-tolerance).
+# This one enables the linters that were scoped OUT of the full gate because the
+# codebase carries pre-existing violations (docs/LINTING.md forbids a tolerated
+# failing baseline). Run with `--new-from-merge-base` (see
+# scripts/ci/pr-lint-ratchet.sh), it blocks only NEW violations introduced by a
+# PR while the existing baseline is burned down under beads-yzo (eng_5). As each
+# class reaches zero it graduates into .golangci.yml as a normal zero-tolerance
+# linter and is removed here.
 #
 #   sqlclosecheck — sql.Rows/Stmt leaks. NOTE: it also flags the codebase's
 #                   CORRECT eager rows.Close()-in-a-loop idiom (defer would leak
 #                   cursors), so a NEW hit here may be a false positive — the
 #                   burndown (beads-yzo) decides exclusion-vs-refactor per site.
 #   contextcheck  — non-inherited contexts break cancellation lifecycle.
-#   staticcheck   — SA (bug/correctness) class only: dead code, deprecated APIs.
+#
+# GRADUATED (now zero-tolerance in .golangci.yml, removed from this ratchet):
+#   staticcheck   — SA (bug/correctness) class; the 17-finding baseline was
+#                   burned down in-tree under beads-yzo.
 run:
   timeout: 5m
   tests: false
@@ -26,14 +30,6 @@ linters:
   enable:
     - sqlclosecheck
     - contextcheck
-    - staticcheck
-
-  settings:
-    staticcheck:
-      # SA (bug/correctness) checks only — exclude ST (style) and S/QF
-      # (simplification) so the ratchet targets real defects, not style churn.
-      checks:
-        - SA*
 
 issues:
   # Report every new finding — do not cap. A ratchet that silently drops

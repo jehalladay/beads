@@ -346,9 +346,9 @@ func autoConfigureForkContributor(ctx context.Context, store storage.DoltStorage
 	_ = exec.Command("git", "config", "beads.role", "contributor").Run()
 
 	if configPath, err := config.FindConfigYAMLPath(); err == nil {
-		if addErr := config.AddRepo(configPath, planningPath); addErr != nil && !strings.Contains(addErr.Error(), "already exists") {
-			// Non-fatal: hydration config failure doesn't block routing setup
-		}
+		// Non-fatal: a hydration-config failure doesn't block routing setup, so
+		// the error (including the benign "already exists" case) is ignored.
+		_ = config.AddRepo(configPath, planningPath)
 	}
 
 	if !quiet {

@@ -78,7 +78,7 @@ func SanitizeForTerminal(s string) string {
 		}
 
 		// For multi-byte UTF-8, decode and check
-		r := rune(ch)
+		var r rune
 		size := 1
 		if ch >= 0x80 {
 			// Decode UTF-8 rune
