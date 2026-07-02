@@ -80,21 +80,13 @@ jobs:
           BEADS_TEST_SKIP: dolt
         run: go test -v -race -tags=integration,gms_pure_go -coverprofile=coverage.out -timeout=30m ./...
 
-      - name: Check coverage threshold
-        run: |
-          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
-          echo "Coverage: $COVERAGE%"
-          # Threshold is lower (30%) because Docker-based Dolt integration
-          # tests are skipped in CI (BEADS_TEST_SKIP=dolt). With Docker
-          # tests included, coverage would be ~50%+.
-          if (( $(echo "$COVERAGE < 30" | bc -l) )); then
-            echo "❌ Coverage is below 30% threshold"
-            exit 1
-          elif (( $(echo "$COVERAGE < 40" | bc -l) )); then
-            echo "⚠️  Coverage is below 40% (warning threshold)"
-          else
-            echo "✅ Coverage meets threshold"
-          fi
+      - name: Check coverage floor (ratchet)
+        # Ratcheting floor (beads-r06.12): fails if total coverage regresses
+        # below the committed .coverage-floor. The floor is raised (never
+        # lowered) as coverage improves — see scripts/ci/coverage-ratchet.sh.
+        # The floor is 30% because Docker-based Dolt integration tests are
+        # skipped in CI (BEADS_TEST_SKIP=dolt); with them, coverage is ~50%+.
+        run: ./scripts/ci/coverage-ratchet.sh --profile coverage.out
 
       - name: Upload coverage
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
