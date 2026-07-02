@@ -2,6 +2,10 @@ version: "2"
 
 run:
   timeout: 5m
+  # tests:false (unchanged) — the RESOURCE-SAFETY tier targets the production
+  # defect class behind the 134GB OOM. Flipping this to true would also expand
+  # every OTHER enabled linter onto the whole test tree (a large unrelated
+  # blast radius of pre-existing findings), so it stays false.
   tests: false
 
 linters:
@@ -13,6 +17,31 @@ linters:
     - unconvert
     - unparam
     - sloglint
+    # --- RESOURCE-SAFETY tier (beads-r06.4) ---------------------------------
+    # Closes the unbounded-resource-defect class behind the 134GB-RSS OOM that
+    # crashed m7i (RCA hq-lcu9o / fix beads-kbw). These make resource-leak
+    # patterns un-mergeable in CI rather than relying on review to catch them:
+    #   bodyclose    — HTTP response bodies must be closed (leak / fd exhaust)
+    #   rowserrcheck — rows.Err() must be checked after iteration (the exact
+    #                  #11/#12 destructive-path defect swept in beads-r06.15)
+    # The domain invariant these can't express — "a display/list path must not
+    # materialize a whole table" (the actual 134GB mechanism) — is enforced by
+    # scripts/check-resource-safety.sh, wired into scripts/ci/pr-policy.sh.
+    #
+    # SCOPED OUT of the required gate (each would land pre-existing violations,
+    # turning the gate red — docs/LINTING.md forbids a tolerated failing
+    # baseline; burndown tracked under epic beads-r06, see beads-yzo):
+    #   sqlclosecheck — 77 production findings. It flags the codebase's CORRECT
+    #                   eager `rows.Close()` idiom: closing per-iteration inside
+    #                   a `for range` loop that reopens rows (a `defer` there
+    #                   would accumulate open cursors until function return — a
+    #                   leak, the opposite of the fix). Not mechanizable here
+    #                   without ~31 file exclusions of correct code.
+    #   contextcheck  — 42 findings; ctx-threading through CLI/git-subprocess
+    #                   helper chains. Lifecycle, not the resource-leak class.
+    #   staticcheck   — 14 SA findings; dead code / deprecated APIs, not leaks.
+    - bodyclose
+    - rowserrcheck
 
   settings:
     errcheck:
@@ -159,6 +188,19 @@ linters:
         linters:
           - misspell
         text: 'cancelled'
+
+      # --- RESOURCE-SAFETY tier (beads-r06.4): false positives on correct code -
+      # rowserrcheck cannot follow rows.Err() across a boundary. These sites do
+      # check it: the streaming Iter implementations call rows.Err() inside
+      # Next() (iter_issues.go / iter_dependents.go), and store.go's queryContext
+      # returns the *Rows to a caller that owns Err(). Each is a bounded/
+      # streaming path — the opposite of the whole-table load this tier targets.
+      # A NEW unchecked rows.Err() elsewhere is still flagged; this only quiets
+      # these exact ownership-handoff sites.
+      - path: 'internal/storage/dolt/(iter_issues|iter_dependents|store)\.go'
+        linters:
+          - rowserrcheck
+        text: 'rows.Err must be checked'
 
 issues:
   uniq-by-line: true
