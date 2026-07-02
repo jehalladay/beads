@@ -3,8 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/audit"
@@ -65,15 +65,13 @@ var auditRecordCmd = &cobra.Command{
 			auditRecordError == ""
 
 		if auditRecordStdin || (stdinPiped && noFieldsProvided) {
-			b, err := io.ReadAll(os.Stdin)
+			b, err := readAllLimited(os.Stdin, "stdin")
 			if err != nil {
 				return HandleError("failed to read stdin: %v", err)
 			}
-			if err := json.Unmarshal(b, &e); err != nil {
-				return HandleError("invalid JSON on stdin: %v", err)
-			}
-			if actor != "" {
-				e.Actor = actor
+			e, err = parseAuditEntryFromStdin(b, actor)
+			if err != nil {
+				return HandleError("%v", err)
 			}
 		} else {
 			if auditRecordKind == "" {
@@ -110,6 +108,25 @@ var auditRecordCmd = &cobra.Command{
 		fmt.Println(id)
 		return nil
 	},
+}
+
+// parseAuditEntryFromStdin decodes an audit entry from a stdin JSON payload and
+// enforces the boundary invariants: valid JSON and a non-empty "kind" (the same
+// required field the flag branch enforces via --kind). Without the kind check
+// the stdin path silently appended kind-less records (beads-r06.11). When actor
+// is set it overrides the decoded actor.
+func parseAuditEntryFromStdin(b []byte, actor string) (audit.Entry, error) {
+	var e audit.Entry
+	if err := json.Unmarshal(b, &e); err != nil {
+		return audit.Entry{}, fmt.Errorf("invalid JSON on stdin: %v", err)
+	}
+	if actor != "" {
+		e.Actor = actor
+	}
+	if strings.TrimSpace(e.Kind) == "" {
+		return audit.Entry{}, fmt.Errorf("audit entry from stdin must include a non-empty \"kind\"")
+	}
+	return e, nil
 }
 
 var auditLabelCmd = &cobra.Command{

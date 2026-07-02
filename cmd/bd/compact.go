@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -667,7 +666,7 @@ func runCompactApply(ctx context.Context, store storage.DoltStorage) {
 	var err error
 	if compactSummary == "-" {
 		// Read from stdin
-		summaryBytes, err = io.ReadAll(os.Stdin)
+		summaryBytes, err = readAllLimited(os.Stdin, "summary")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to read summary from stdin: %v\n", err)
 			os.Exit(1)

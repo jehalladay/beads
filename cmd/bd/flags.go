@@ -183,13 +183,40 @@ func getDesignFlag(cmd *cobra.Command) (string, bool, error) {
 	return "", false, nil
 }
 
+// maxInputBytes caps the size of untrusted content read from stdin or a
+// user-supplied file (issue bodies, notes, comments, commit messages, compaction
+// summaries, audit records). Reading an unbounded stream into memory is an
+// allocation/OOM hazard on a hostile or accidentally-huge input; 16MB is far
+// above any legitimate free-text field while still bounding the read. Unlike a
+// bare io.LimitReader, readAllLimited errors on overflow rather than silently
+// truncating — truncating content that is then stored would be data corruption.
+const maxInputBytes = 16 * 1024 * 1024 // 16MB
+
+// readAllLimited reads all of r but fails if the input exceeds maxInputBytes,
+// so callers never materialize an unbounded untrusted stream. The what label is
+// used in the overflow error to point the operator at the offending input.
+func readAllLimited(r io.Reader, what string) ([]byte, error) {
+	// Read one byte past the limit so we can distinguish "exactly at limit"
+	// from "over the limit".
+	b, err := io.ReadAll(io.LimitReader(r, maxInputBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxInputBytes {
+		return nil, fmt.Errorf("%s exceeds maximum size of %d bytes", what, maxInputBytes)
+	}
+	return b, nil
+}
+
 // readBodyFile reads the description content from a file.
 // If filePath is "-", reads from stdin.
 func readBodyFile(filePath string) (string, error) {
 	var reader io.Reader
+	what := "input"
 
 	if filePath == "-" {
 		reader = os.Stdin
+		what = "stdin"
 	} else {
 		// #nosec G304 - filePath comes from user flag, validated by caller
 		file, err := os.Open(filePath)
@@ -198,11 +225,12 @@ func readBodyFile(filePath string) (string, error) {
 		}
 		defer file.Close()
 		reader = file
+		what = "file"
 	}
 
-	content, err := io.ReadAll(reader)
+	content, err := readAllLimited(reader, what)
 	if err != nil {
-		return "", fmt.Errorf("failed to read file: %w", err)
+		return "", fmt.Errorf("failed to read %s: %w", what, err)
 	}
 
 	return string(content), nil
