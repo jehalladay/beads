@@ -2,8 +2,9 @@
 
 Last reviewed: 2026-07-02
 
-Freshness source: `.golangci.yml`, `.github/workflows/pr.yml`,
-`.github/workflows/main.yml`, `scripts/check-resource-safety.sh`, and
+Freshness source: `.golangci.yml`, `.golangci-ratchet.yml`,
+`.github/workflows/pr.yml`, `.github/workflows/main.yml`,
+`scripts/check-resource-safety.sh`, `scripts/ci/pr-lint.sh`, and
 `golangci-lint run --timeout=5m --build-tags=gms_pure_go ./...` returning zero
 issues.
 
@@ -61,13 +62,23 @@ hq-lcu9o / fix beads-kbw), the gate enforces:
   (e.g. `GetAllDependencyRecords`). New call sites fail CI unless allowlisted
   with a justification or annotated `// resource-safety:allow <reason>`.
 
-Deliberately **not** in the required gate yet, because each would land
-pre-existing violations and a tolerated failing baseline is forbidden (see
-above); burndown is tracked under epic beads-r06 (see beads-yzo):
+### Ratchet for the deferred classes (Mayor ruling, Option 2)
+
+Three more linters carry a pre-existing baseline, so they are **not** in the
+zero-tolerance full-tree gate (a tolerated failing baseline is forbidden — see
+above). Instead they run in **ratchet** mode: `scripts/ci/pr-lint-ratchet.sh`
+runs `.golangci-ratchet.yml` with `golangci-lint --new-from-merge-base
+origin/main`, so a PR fails only on **new** violations it introduces; the
+existing baseline does not fail. This blocks regressions immediately while the
+baseline is burned down under beads-yzo (eng_5). As each class reaches zero it
+graduates into `.golangci.yml` as a normal zero-tolerance linter and is removed
+from the ratchet config. The ratchet needs full git history (CI checks out
+`fetch-depth: 0`).
 
 - **`sqlclosecheck`** — 77 production findings, almost all false positives on
   the correct eager `rows.Close()`-in-a-loop idiom (where a `defer` would leak
-  cursors). Not mechanizable without excluding ~31 files of correct code.
+  cursors). A new ratchet hit may itself be that idiom; the burndown decides
+  exclusion-vs-refactor per site.
 - **`contextcheck`** (42) and **`staticcheck`** SA-class (14) — lifecycle and
   dead-code/deprecation findings, not the resource-leak class.
 
@@ -78,6 +89,7 @@ easy to identify and rerun. It should include:
 
 - `make fmt-check`
 - `golangci-lint run --timeout=5m --build-tags=gms_pure_go ./...`
+- the resource-safety ratchet (`scripts/ci/pr-lint-ratchet.sh`)
 
 See [`CI_CLEANUP_PLAN.md`](CI_CLEANUP_PLAN.md) for the full CI tier policy.
 
