@@ -122,6 +122,55 @@ Unicode: 日本語 émojis 🎉
 	})
 }
 
+func TestReadAllLimited(t *testing.T) {
+	t.Run("UnderLimit", func(t *testing.T) {
+		want := "small input"
+		got, err := readAllLimited(strings.NewReader(want), "stdin")
+		if err != nil {
+			t.Fatalf("readAllLimited failed: %v", err)
+		}
+		if string(got) != want {
+			t.Errorf("expected %q, got %q", want, string(got))
+		}
+	})
+
+	t.Run("EmptyInput", func(t *testing.T) {
+		got, err := readAllLimited(strings.NewReader(""), "stdin")
+		if err != nil {
+			t.Fatalf("readAllLimited failed on empty input: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("expected empty result, got %d bytes", len(got))
+		}
+	})
+
+	t.Run("ExactlyAtLimit", func(t *testing.T) {
+		// A payload exactly at the cap must be accepted in full (no off-by-one
+		// rejection and no truncation).
+		want := strings.Repeat("a", maxInputBytes)
+		got, err := readAllLimited(strings.NewReader(want), "stdin")
+		if err != nil {
+			t.Fatalf("readAllLimited rejected an at-limit payload: %v", err)
+		}
+		if len(got) != maxInputBytes {
+			t.Errorf("expected %d bytes, got %d", maxInputBytes, len(got))
+		}
+	})
+
+	t.Run("OverLimitErrors", func(t *testing.T) {
+		// One byte over the cap must error rather than silently truncate —
+		// truncating stored content would be data corruption (beads-r06.11).
+		oversized := strings.Repeat("a", maxInputBytes+1)
+		_, err := readAllLimited(strings.NewReader(oversized), "stdin")
+		if err == nil {
+			t.Fatal("expected error for over-limit input, got nil")
+		}
+		if !strings.Contains(err.Error(), "maximum size") {
+			t.Errorf("expected 'maximum size' error, got: %v", err)
+		}
+	})
+}
+
 func TestGetDescriptionFlag(t *testing.T) {
 	// Helper to create a cobra command with common issue flags registered
 	newCmd := func() *cobra.Command {

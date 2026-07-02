@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 // Scope note:
@@ -378,9 +378,9 @@ func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp) (batchO
 		if strings.TrimSpace(op.args[0]) == "" {
 			return result, fmt.Errorf("create: type cannot be empty")
 		}
-		priority, err := strconv.Atoi(op.args[1])
+		priority, err := validation.ValidatePriority(op.args[1])
 		if err != nil {
-			return result, fmt.Errorf("create: invalid priority %q: %w", op.args[1], err)
+			return result, fmt.Errorf("create: %w", err)
 		}
 		title := strings.Join(op.args[2:], " ")
 		if strings.TrimSpace(title) == "" {
@@ -460,9 +460,9 @@ func parseUpdateKVs(kvs []string) (map[string]interface{}, error) {
 			}
 			updates["status"] = value
 		case "priority":
-			p, err := strconv.Atoi(value)
+			p, err := validation.ValidatePriority(value)
 			if err != nil {
-				return nil, fmt.Errorf("update: invalid priority %q: %w", value, err)
+				return nil, fmt.Errorf("update: %w", err)
 			}
 			updates["priority"] = p
 		case "title":

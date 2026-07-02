@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
@@ -159,7 +158,7 @@ Examples:
 			if vcCommitMessage != "" {
 				return HandleErrorRespectJSON("cannot specify both --stdin and -m/--message")
 			}
-			b, err := io.ReadAll(os.Stdin)
+			b, err := readAllLimited(os.Stdin, "commit message")
 			if err != nil {
 				return HandleErrorRespectJSON("failed to read commit message from stdin: %v", err)
 			}

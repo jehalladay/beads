@@ -11,6 +11,44 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// validatePriorityUpdate enforces the priority 0-4 invariant at the shared
+// update write path. The CLI update command routes priority through
+// validation.ValidatePriority, but the batch, graph-apply, and proxied-handler
+// paths build the updates map directly, so an out-of-range or malformed value
+// would otherwise be written to the DB — bypassing the invariant that
+// Issue.Validate enforces on every create (beads-r06.11).
+//
+// When present and valid, the value is normalized to int so the SQL bind is a
+// clean integer regardless of whether the caller supplied int/int64/float64
+// (JSON decoders deliver float64). A missing "priority" key is a no-op.
+func validatePriorityUpdate(updates map[string]interface{}) error {
+	raw, ok := updates["priority"]
+	if !ok {
+		return nil
+	}
+	var p int
+	switch v := raw.(type) {
+	case int:
+		p = v
+	case int64:
+		p = int(v)
+	case float64:
+		// JSON numbers arrive as float64; reject non-integral values rather
+		// than silently truncating (e.g. 2.5 is not a valid priority).
+		if v != float64(int(v)) {
+			return fmt.Errorf("invalid priority %v (expected an integer 0-4)", v)
+		}
+		p = int(v)
+	default:
+		return fmt.Errorf("invalid priority %v (expected an integer 0-4, got %T)", raw, raw)
+	}
+	if p < 0 || p > 4 {
+		return fmt.Errorf("invalid priority %d (must be between 0 and 4)", p)
+	}
+	updates["priority"] = p
+	return nil
+}
+
 // IsAllowedUpdateField checks if a field name is valid for issue updates.
 func IsAllowedUpdateField(key string) bool {
 	allowed := map[string]bool{
@@ -139,6 +177,14 @@ func updateIssueInTx(ctx context.Context, tx DBTX, id string, updates map[string
 	// Route to correct table.
 	isWisp := IsActiveWispInTx(ctx, tx, id)
 	issueTable, _, eventTable, _ := WispTableRouting(isWisp)
+
+	// Validate priority range before any DB work (beads-r06.11). Callers that
+	// build the updates map directly (batch/graph-apply/proxied handlers) do not
+	// route through validation.ValidatePriority, so this shared guard keeps the
+	// 0-4 invariant that Issue.Validate enforces on create.
+	if err := validatePriorityUpdate(updates); err != nil {
+		return nil, err
+	}
 
 	// Read old issue inside the transaction for consistency.
 	oldIssue, err := GetIssueInTx(ctx, tx, id)

@@ -235,6 +235,30 @@ func TestParseUpdateKVs(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			// beads-r06.11: out-of-range priority must be rejected at the CLI
+			// boundary rather than silently written to the DB.
+			name:    "priority above range",
+			in:      []string{"priority=999"},
+			wantErr: true,
+		},
+		{
+			name:    "priority below range",
+			in:      []string{"priority=-1"},
+			wantErr: true,
+		},
+		{
+			name:    "priority 5 out of range",
+			in:      []string{"priority=5"},
+			wantErr: true,
+		},
+		{
+			// P-prefix format is accepted and normalized to the numeric value,
+			// matching the `bd update --priority` flag path.
+			name: "priority P-format normalized",
+			in:   []string{"priority=P3"},
+			want: map[string]interface{}{"priority": 3},
+		},
+		{
 			name:    "empty status",
 			in:      []string{"status="},
 			wantErr: true,

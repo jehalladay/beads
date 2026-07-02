@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
@@ -46,7 +45,7 @@ Examples:
 		var commentText string
 		switch {
 		case stdinFlag:
-			content, err := io.ReadAll(os.Stdin)
+			content, err := readAllLimited(os.Stdin, "stdin")
 			if err != nil {
 				return HandleErrorRespectJSON("reading from stdin: %v", err)
 			}
