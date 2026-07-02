@@ -9,7 +9,7 @@ SHELL := $(subst cmd,bin,$(subst git.exe,bash.exe,$(GIT_BASH)))
 endif
 endif
 
-.PHONY: all build test test-icu-path test-full-cgo test-regression test-upgrade test-cross-version test-migration bench bench-quick clean clean-test-tmp install install-force help check-up-to-date fmt fmt-check check-testing-short
+.PHONY: all build test coverage-check coverage-bump test-icu-path test-full-cgo test-regression test-upgrade test-cross-version test-migration bench bench-quick clean clean-test-tmp install install-force help check-up-to-date fmt fmt-check check-testing-short
 .PHONY: ci-pr-core ci-pr-policy ci-pr-lint ci-package-mcp ci-package-npm ci-website
 
 # Default target
@@ -66,6 +66,18 @@ endif
 test:
 	@echo "Running tests..."
 	@TEST_COVER=1 ./scripts/test.sh
+
+# Check total coverage against the ratcheting floor (.coverage-floor).
+# beads-r06.12: fails on regression below the floor.
+coverage-check:
+	@TEST_COVER=1 ./scripts/test.sh >/dev/null
+	@./scripts/ci/coverage-ratchet.sh --profile $${TEST_COVERPROFILE:-/tmp/beads.coverage.out}
+
+# Ratchet the coverage floor UP to the current measured coverage (never down).
+# Run intentionally after landing coverage gains, then commit .coverage-floor.
+coverage-bump:
+	@TEST_COVER=1 ./scripts/test.sh >/dev/null
+	@./scripts/ci/coverage-ratchet.sh --profile $${TEST_COVERPROFILE:-/tmp/beads.coverage.out} --bump
 
 # Run the opt-in ICU regex path test suite (no skip list).
 # This is a local developer workflow for intentionally exercising the leftover
