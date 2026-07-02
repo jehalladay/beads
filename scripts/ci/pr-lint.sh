@@ -16,3 +16,9 @@ cd "$REPO_ROOT"
 ci_time "gofmt check" -- make fmt-check
 ci_time "golangci-lint" -- \
     golangci-lint run --timeout=5m --build-tags=gms_pure_go ./...
+
+# RESOURCE-SAFETY ratchet (beads-r06.4, Mayor ruling Option 2): block NEW
+# violations of the deferred linter classes (sqlclosecheck/contextcheck/
+# staticcheck-SA) without failing on the pre-existing baseline (burned down
+# under beads-yzo). Runs new-from-merge-base; needs full history (fetch-depth:0).
+"$SCRIPT_DIR/pr-lint-ratchet.sh"
