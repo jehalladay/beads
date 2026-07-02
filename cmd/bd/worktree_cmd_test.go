@@ -152,3 +152,29 @@ func initGitRepoForGitignoreTest(t *testing.T) string {
 
 	return repoRoot
 }
+
+// TestEnableUntrackedCache verifies enableUntrackedCache records the
+// core.untrackedCache=true preference on the target repo (beads-244). The
+// speed win on Lustre can't be asserted portably, but the config write is the
+// observable contract callers depend on.
+func TestEnableUntrackedCache(t *testing.T) {
+	repoRoot := initGitRepoForGitignoreTest(t)
+	ctx := context.Background()
+
+	// Precondition: unset before we touch it.
+	pre := gitCmdInDir(ctx, repoRoot, "config", "--get", "core.untrackedCache")
+	if out, err := pre.CombinedOutput(); err == nil && strings.TrimSpace(string(out)) == "true" {
+		t.Fatalf("core.untrackedCache already true before enable; got %q", string(out))
+	}
+
+	enableUntrackedCache(ctx, repoRoot)
+
+	got := gitCmdInDir(ctx, repoRoot, "config", "--get", "core.untrackedCache")
+	out, err := got.CombinedOutput()
+	if err != nil {
+		t.Fatalf("reading core.untrackedCache failed: %v\n%s", err, string(out))
+	}
+	if strings.TrimSpace(string(out)) != "true" {
+		t.Errorf("core.untrackedCache = %q, want \"true\"", strings.TrimSpace(string(out)))
+	}
+}

@@ -201,6 +201,15 @@ func runWorktreeCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Enable the untracked cache on the new worktree. On networked worktrees
+	// (e.g. crew worktrees on a distributed /fsx mount) a bare `git status`
+	// lstat()s every untracked file over the network on every run; the
+	// untracked cache turns that into a per-directory mtime check, cutting
+	// `git status` roughly in half (beads-244). Best-effort: a filesystem that
+	// can't support it just leaves status at its uncached speed, so a failure
+	// here is non-fatal.
+	enableUntrackedCache(ctx, worktreePath)
+
 	// Add to .gitignore if worktree is inside repo root
 	if strings.HasPrefix(worktreePath, repoRoot+string(os.PathSeparator)) {
 		// Use relative path from repo root for gitignore entry
@@ -484,6 +493,29 @@ func gitCmdInDir(ctx context.Context, dir string, args ...string) *exec.Cmd {
 		"GIT_TEMPLATE_DIR=",
 	)
 	return cmd
+}
+
+// enableUntrackedCache turns on git's untracked cache for the worktree at
+// worktreePath so repeated `git status` runs skip re-lstat()ing every
+// untracked file. This is a large win on distributed network filesystems
+// (crew worktrees on /fsx measured ~29s -> ~15.6s, beads-244) and harmless
+// elsewhere.
+//
+// Best-effort by design: `core.untrackedCache=true` records the preference and
+// `git update-index --untracked-cache` primes the on-disk cache after probing
+// that the filesystem reports mtimes reliably. On a filesystem git deems
+// unsupported the probe fails and status simply stays at its uncached speed —
+// so any error here is logged as a warning, never fatal to worktree creation.
+func enableUntrackedCache(ctx context.Context, worktreePath string) {
+	cfgCmd := gitCmdInDir(ctx, worktreePath, "config", "core.untrackedCache", "true")
+	if output, err := cfgCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to set core.untrackedCache: %v\n%s", err, string(output))
+		return
+	}
+	primeCmd := gitCmdInDir(ctx, worktreePath, "update-index", "--untracked-cache")
+	if output, err := primeCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to prime untracked cache: %v\n%s", err, string(output))
+	}
 }
 
 // listWorktreesWithoutBeads lists worktrees when no .beads directory exists.
