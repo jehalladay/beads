@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
@@ -167,7 +168,7 @@ func runFormulaList(cmd *cobra.Command, args []string) error {
 		}
 
 		typeIcon := getTypeIcon(t)
-		fmt.Printf("%s %s:\n", typeIcon, strings.Title(t))
+		fmt.Printf("%s %s:\n", typeIcon, capitalizeWord(t))
 
 		for _, e := range typeEntries {
 			varInfo := ""
@@ -424,6 +425,19 @@ func getTypeIcon(t string) string {
 	default:
 		return "📜"
 	}
+}
+
+// capitalizeWord upper-cases the first rune of a single word. It replaces the
+// deprecated strings.Title for our fixed-vocabulary ASCII formula-type labels
+// (workflow/expansion/aspect/convoy), where Unicode word-boundary handling is
+// not needed.
+func capitalizeWord(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
 }
 
 // printFormulaStepsTree prints steps in a tree format.

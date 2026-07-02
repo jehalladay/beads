@@ -162,8 +162,6 @@ func generateIssuesWithConfig(ctx context.Context, store *dolt.DoltStore, cfg Da
 	numFeatures := int(float64(cfg.TotalIssues) * cfg.FeatureRatio)
 	numTasks := cfg.TotalIssues - numEpics - numFeatures
 
-	// Track created issues for cross-linking
-	var allIssues []*types.Issue
 	epicIssues := make([]*types.Issue, 0, numEpics)
 	featureIssues := make([]*types.Issue, 0, numFeatures)
 	taskIssues := make([]*types.Issue, 0, numTasks)
@@ -209,7 +207,6 @@ func generateIssuesWithConfig(ctx context.Context, store *dolt.DoltStore, cfg Da
 		}
 
 		epicIssues = append(epicIssues, issue)
-		allIssues = append(allIssues, issue)
 		createdIssues++
 		logProgress()
 	}
@@ -257,7 +254,6 @@ func generateIssuesWithConfig(ctx context.Context, store *dolt.DoltStore, cfg Da
 		}
 
 		featureIssues = append(featureIssues, issue)
-		allIssues = append(allIssues, issue)
 		createdIssues++
 		logProgress()
 	}
@@ -305,7 +301,6 @@ func generateIssuesWithConfig(ctx context.Context, store *dolt.DoltStore, cfg Da
 		}
 
 		taskIssues = append(taskIssues, issue)
-		allIssues = append(allIssues, issue)
 		createdIssues++
 		logProgress()
 	}

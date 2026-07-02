@@ -274,14 +274,10 @@ func (i *Issue) ValidateForImport(customStatuses []string) error {
 	if !i.Status.IsValidWithCustom(customStatuses) {
 		return fmt.Errorf("invalid status: %s", i.Status)
 	}
-	// Issue type validation: federation trust model
-	// Only validate built-in types (catch typos like "tsak" vs "task")
-	// Trust non-built-in types from source repo
-	if i.IssueType != "" && i.IssueType.IsValid() {
-		// Built-in type - it's valid
-	} else if i.IssueType != "" && !i.IssueType.IsValid() {
-		// Non-built-in type - trust it (child repo already validated)
-	}
+	// Issue type validation: federation trust model.
+	// Built-in types are self-validating and non-built-in types are trusted
+	// from the source repo (a child repo has already validated them), so there
+	// is deliberately nothing to reject here — both cases are accepted.
 	if i.EstimatedMinutes != nil && *i.EstimatedMinutes < 0 {
 		return fmt.Errorf("estimated_minutes cannot be negative")
 	}

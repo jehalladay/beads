@@ -1,6 +1,6 @@
 # Linting Policy
 
-Last reviewed: 2026-07-02
+Last reviewed: 2026-07-02 (staticcheck SA-class added to the gate, beads-yzo)
 
 Freshness source: `.golangci.yml`, `.golangci-ratchet.yml`,
 `.github/workflows/pr.yml`, `.github/workflows/main.yml`,
@@ -61,10 +61,16 @@ hq-lcu9o / fix beads-kbw), the gate enforces:
   express: a display/list path must never call an unbounded whole-table loader
   (e.g. `GetAllDependencyRecords`). New call sites fail CI unless allowlisted
   with a justification or annotated `// resource-safety:allow <reason>`.
+- **`staticcheck`** (SA-class only) — the SA* bug/correctness checks (dead code,
+  nil-pointer derefs, deprecated APIs). The 17 pre-existing SA findings were
+  burned down in-tree (beads-yzo), so the class is green and now gates. The
+  style/simplify/quickfix families (`ST*`/`S*`/`QF*`, ~130 findings) are
+  intentionally excluded via `linters.settings.staticcheck.checks: ["SA*"]` —
+  they are not the resource-safety/correctness class.
 
 ### Ratchet for the deferred classes (Mayor ruling, Option 2)
 
-Three more linters carry a pre-existing baseline, so they are **not** in the
+Some linters carry a pre-existing baseline, so they are **not** in the
 zero-tolerance full-tree gate (a tolerated failing baseline is forbidden — see
 above). Instead they run in **ratchet** mode: `scripts/ci/pr-lint-ratchet.sh`
 runs `.golangci-ratchet.yml` with `golangci-lint --new-from-merge-base
@@ -75,12 +81,28 @@ graduates into `.golangci.yml` as a normal zero-tolerance linter and is removed
 from the ratchet config. The ratchet needs full git history (CI checks out
 `fetch-depth: 0`).
 
-- **`sqlclosecheck`** — 77 production findings, almost all false positives on
-  the correct eager `rows.Close()`-in-a-loop idiom (where a `defer` would leak
-  cursors). A new ratchet hit may itself be that idiom; the burndown decides
-  exclusion-vs-refactor per site.
-- **`contextcheck`** (42) and **`staticcheck`** SA-class (14) — lifecycle and
-  dead-code/deprecation findings, not the resource-leak class.
+Currently ratcheted (still carry a baseline):
+
+- **`sqlclosecheck`** — 84 production findings, effectively **all** false
+  positives on two correct idioms: (1) the eager `rows.Close()`-in-a-loop
+  pattern (a `defer` would accumulate open cursors until function return — a
+  leak), and (2) closing a result set before running a sequential query on the
+  same transaction (Dolt/the driver cannot hold two result sets open on one
+  connection; several sites document this inline, e.g. `stale.go`). The one
+  `"not closed"` finding is `DoltStore.queryContext`, which hands the `*sql.Rows`
+  to its caller (the same ownership-handoff already excluded for `rowserrcheck`).
+  Because there is no code to fix, a new ratchet hit may itself be that idiom;
+  the burndown decides exclusion-vs-refactor per site.
+- **`contextcheck`** (51) — non-inherited contexts break cancellation lifecycle
+  (ctx-threading through CLI/git-subprocess helper chains); not the resource-leak
+  class.
+
+**Graduated** to the zero-tolerance gate (removed from the ratchet):
+
+- **`staticcheck`** SA-class — the 17 pre-existing SA findings (dead code,
+  nil-deref false-positive, deprecated APIs) were burned down in-tree under
+  beads-yzo, so the class is green and now runs at zero-tolerance in
+  `.golangci.yml` (`checks: ["SA*"]`). See the resource-safety tier above.
 
 ## CI Cleanup Decision
 

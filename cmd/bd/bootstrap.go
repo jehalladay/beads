@@ -909,7 +909,10 @@ func serverClonePort(beadsDir string, cfg *configfile.Config) int {
 		return resolved.Port
 	}
 	if cfg != nil {
-		return cfg.GetDoltServerPort()
+		// Backward-compat fallback: the preferred doltserver.DefaultConfig path
+		// is tried above; only read the deprecated config field if it yielded
+		// nothing, before the hardcoded default below.
+		return cfg.GetDoltServerPort() //nolint:staticcheck // SA1019: intentional legacy fallback
 	}
 	return configfile.DefaultDoltServerPort
 }

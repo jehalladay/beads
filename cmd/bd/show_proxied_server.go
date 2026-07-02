@@ -314,6 +314,7 @@ func runShowProxiedThread(ctx context.Context, uw uow.UnitOfWork, in *showProxie
 	}
 	if startMsg == nil {
 		FatalErrorRespectJSON("message %s not found", in.ids[0])
+		return // unreachable (FatalErrorRespectJSON exits); makes non-nil startMsg explicit
 	}
 
 	rootMsg := startMsg

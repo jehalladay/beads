@@ -104,9 +104,8 @@ func RunDeepValidation(path string) DeepValidationResult {
 
 	result.EpicCompleteness = checkEpicCompleteness(db)
 	result.AllChecks = append(result.AllChecks, result.EpicCompleteness)
-	if result.EpicCompleteness.Status == StatusWarning {
-		// Epic completeness is informational, not an error
-	}
+	// Epic completeness is informational only; a warning here does not affect
+	// OverallOK.
 
 	result.MailThreadIntegrity = checkMailThreadIntegrity(db)
 	result.AllChecks = append(result.AllChecks, result.MailThreadIntegrity)

@@ -31,19 +31,36 @@ linters:
     # SCOPED OUT of the required gate (each would land pre-existing violations,
     # turning the gate red — docs/LINTING.md forbids a tolerated failing
     # baseline; burndown tracked under epic beads-r06, see beads-yzo):
-    #   sqlclosecheck — 77 production findings. It flags the codebase's CORRECT
-    #                   eager `rows.Close()` idiom: closing per-iteration inside
-    #                   a `for range` loop that reopens rows (a `defer` there
-    #                   would accumulate open cursors until function return — a
-    #                   leak, the opposite of the fix). Not mechanizable here
-    #                   without ~31 file exclusions of correct code.
-    #   contextcheck  — 42 findings; ctx-threading through CLI/git-subprocess
+    #   sqlclosecheck — 84 production findings, ~all FALSE POSITIVES on the
+    #                   codebase's CORRECT eager `rows.Close()` idiom: closing
+    #                   per-iteration inside a `for range` loop that reopens
+    #                   rows (a `defer` there would accumulate open cursors
+    #                   until function return — a leak), or closing before a
+    #                   sequential query on the same tx (Dolt can't hold two
+    #                   result sets open on one conn). Not mechanizable without
+    #                   ~30 file exclusions of correct code; a NEW genuine leak
+    #                   is best caught by a ratchet (--new-from-merge-base) —
+    #                   see docs/LINTING.md and beads-yzo.
+    #   contextcheck  — 51 findings; ctx-threading through CLI/git-subprocess
     #                   helper chains. Lifecycle, not the resource-leak class.
-    #   staticcheck   — 14 SA findings; dead code / deprecated APIs, not leaks.
+    #
+    # SA-class staticcheck IS now enabled (beads-yzo burndown): the 17 SA
+    # findings (dead code SA4006/SA4010/SA4017, empty branches SA9003, nil-deref
+    # false positive SA5011, deprecated-API SA1019) were fixed/annotated in-tree
+    # so the SA class is green. The style sub-linters (ST/S/QF, ~130 findings)
+    # stay off — they are not the resource-safety/correctness class.
     - bodyclose
     - rowserrcheck
+    - staticcheck
 
   settings:
+    staticcheck:
+      # Only the SA* bug/correctness checks (dead code, nil derefs, deprecated
+      # APIs) are in the required gate. The style/simplify/quickfix families
+      # (ST*/S*/QF*, ~130 findings) are intentionally excluded — they are not
+      # the resource-safety/correctness class this tier targets. See beads-yzo.
+      checks:
+        - "SA*"
     errcheck:
       exclude-functions:
         - (*database/sql.DB).Close

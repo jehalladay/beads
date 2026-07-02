@@ -192,8 +192,12 @@ Examples:
 			cfg = configfile.DefaultConfig()
 		}
 
-		lastSeenVersion := cfg.LastBdVersion
-		cfg.LastBdVersion = Version
+		// Legacy version tracking via metadata.json. Version tracking has moved
+		// to the gitignored .local_version file (see version_tracking.go); this
+		// path is retained for backward compatibility with old configs and is
+		// tracked for migration by beads-yzo follow-up.
+		lastSeenVersion := cfg.LastBdVersion //nolint:staticcheck // SA1019: legacy metadata.json version field
+		cfg.LastBdVersion = Version          //nolint:staticcheck // SA1019: legacy metadata.json version field
 
 		if err := cfg.Save(beadsDir); err != nil {
 			return HandleError("saving metadata.json: %v", err)
