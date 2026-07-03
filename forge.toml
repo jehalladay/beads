@@ -49,3 +49,32 @@ release = "make release-build"
 # Package == the release build artifact; the distributable archives are
 # assembled by GoReleaser in CI.
 package = "make release-build"
+
+# --- forge-green gate wiring (A3 / beads-r06.3) ---------------------------
+# The canonical gate lives in scripts/ci/forge-gate.sh (BUILD_TAGS=gms_pure_go,
+# CGO_ENABLED=1, version-stamped ldflags, cross-compile). git pre-push and CI
+# both invoke that SAME script, so CI == forge with no drift.
+#
+# INTERIM (now): forge 0.2.0's go backend ignores [build.commands] overrides
+# (beads-2hk) and its [build.hooks] run under a hardcoded 120s subprocess
+# timeout (cli/commands/build.py:137). A cold full beads build (~175s) does not
+# fit that window, so `forge build` cannot yet BE the full gate. We wire a fast
+# `pre_build` hook (--fast: build + ldflags-stamp assert, fits 120s warm) so
+# `forge build` still exercises the real canonical build and rejects a bare
+# untagged build; the FULL gate (pure-Go + cross-compile) is enforced by
+# pre-push + CI.
+[build.hooks]
+pre_build = "scripts/ci/forge-gate.sh --fast"
+
+# FINAL (once beads-2hk forge patch lands + forge is pinned >= that version):
+# replace the interim hook with a real command override so `forge build` runs
+# the identical gate and bare `go build ./...` is rejected outright:
+#
+#   [build.commands]
+#   build = "scripts/ci/forge-gate.sh"
+#   test  = "make test"
+#   lint  = "make ci-pr-lint"
+#   check = "go vet -tags gms_pure_go ./..."
+#
+# The gate logic stays in scripts/ci/forge-gate.sh either way, so this swap is a
+# no-behavior-drift config change. Tracked by beads-r06.2 (A2) + beads-2hk.

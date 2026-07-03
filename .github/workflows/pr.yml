@@ -37,6 +37,16 @@ jobs:
       - name: Run lint checks
         run: make ci-pr-lint
 
+      # forge build GREEN gate (beads-r06.3 / A3). Identical script to the local
+      # git pre-push hook (.githooks/pre-push) and the forge pre_build hook
+      # (forge.toml), so CI == forge == local by construction — no drift between
+      # a hand-maintained CI build list and what developers/forge run. Runs the
+      # canonical gms_pure_go+CGO+ldflags build, asserts the ldflags stamp
+      # (rejects a bare untagged build), the pure-Go compile check, and the
+      # linux-amd64 + darwin-arm64 cross-compile.
+      - name: Forge build gate (CI == forge)
+        run: ./scripts/ci/forge-gate.sh
+
       - name: Build reusable Linux artifacts
         run: |
           set -euo pipefail
@@ -44,7 +54,9 @@ jobs:
           source ./.buildflags
           go_version="$(go version)"
           commit="$(git rev-parse HEAD)"
-          go build -tags "$BEADS_BUILD_TAGS" -o artifacts/bd-linux-gms-pure ./cmd/bd
+          # Stamp the reusable artifact with the same ldflags the gate asserts,
+          # so the uploaded binary is the canonical tagged build (not a bare one).
+          go build -tags "$BEADS_BUILD_TAGS" -ldflags="-X main.Build=$(git rev-parse --short HEAD)" -o artifacts/bd-linux-gms-pure ./cmd/bd
           chmod +x artifacts/bd-linux-gms-pure
           (
             cd artifacts
