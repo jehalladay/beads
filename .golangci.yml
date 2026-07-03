@@ -13,6 +13,22 @@ linters:
     - unconvert
     - unparam
     - sloglint
+    # Resource-safety tier (beads-r06.6 / B1): catch unclosed HTTP response
+    # bodies and unchecked rows.Err() — leak classes adjacent to the OOM incident
+    # (epic beads-r06). rowserrcheck's iterator-boundary / caller-owned-rows false
+    # positives carry per-site //nolint:rowserrcheck justifications.
+    #
+    # sqlclosecheck is intentionally NOT enabled: its "Close should use defer"
+    # rule is unsafe for this codebase's deliberate single-connection pool
+    # (MaxOpenConns(1) embedded Dolt). Many sites open sql.Rows, drain them, and
+    # MUST rows.Close() explicitly BEFORE issuing the next query on the same
+    # connection (a deferred close would hold the lone conn and deadlock the
+    # follow-up query — the same class eng_1 fixed in beads-r06.13). Enabling it
+    # would flag correct code across backfills/iterators/loops and require
+    # open-ended per-site suppression with no real bug caught. Revisit only if a
+    # future golangci-lint understands the close-before-reuse pattern.
+    - bodyclose
+    - rowserrcheck
 
   settings:
     errcheck:

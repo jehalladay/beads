@@ -89,6 +89,9 @@ func (s *DoltStore) iterIssuesWithDepType(ctx context.Context, q string, args ..
 	if err != nil {
 		return nil, fmt.Errorf("iter dependents: acquire conn: %w", err)
 	}
+	//nolint:rowserrcheck // rows is handed to doltDependentsIter, whose Next()
+	// checks rows.Err() when the cursor stops; it cannot be checked here without
+	// draining.
 	rows, err := conn.QueryContext(ctx, q, args...)
 	if err != nil {
 		_ = conn.Close()

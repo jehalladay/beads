@@ -994,7 +994,11 @@ func FlushWorkingSet(host string, port int) error {
 		return fmt.Errorf("flush: server not reachable: %w", err)
 	}
 
-	// List all databases, skipping system databases
+	// List all databases, skipping system databases.
+	//
+	// rows is closed EXPLICITLY (not via defer) before the per-database loop
+	// below, which issues new queries on this MaxOpenConns(1) pool — a deferred
+	// close would hold the single connection and deadlock the loop.
 	rows, err := db.QueryContext(ctx, "SHOW DATABASES")
 	if err != nil {
 		return fmt.Errorf("flush: failed to list databases: %w", err)

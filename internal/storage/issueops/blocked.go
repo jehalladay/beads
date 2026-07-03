@@ -29,6 +29,9 @@ func loadBlockingDepsForIssueIDsInTx(ctx context.Context, tx DBTX, depTables []s
 			  AND (type = 'blocks' OR type = 'waits-for' OR type = 'conditional-blocks')
 		`, DepTargetExpr, depTable)
 		for _, id := range issueIDs {
+			// rows is closed explicitly at the end of each loop iteration (not
+			// deferred): a defer would leak every iteration's rows until the
+			// function returns.
 			rows, err := tx.QueryContext(ctx, query, id)
 			if err != nil {
 				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
@@ -63,6 +66,9 @@ func loadParentIDsForChildrenInTx(ctx context.Context, tx DBTX, depTables []stri
 			  AND type = 'parent-child'
 		`, DepTargetExpr, depTable)
 		for _, id := range childIDs {
+			// rows is closed explicitly at the end of each loop iteration (not
+			// deferred): a defer would leak every iteration's rows until the
+			// function returns.
 			rows, err := tx.QueryContext(ctx, query, id)
 			if err != nil {
 				if optionalBlockedTable(depTable) && isTableNotExistError(err) {

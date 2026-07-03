@@ -842,6 +842,8 @@ func (s *DoltStore) queryContext(ctx context.Context, query string, args ...any)
 			rows = nil
 		}
 		var queryErr error
+		//nolint:rowserrcheck // this helper returns *sql.Rows to the caller, which
+		// owns iteration and is responsible for checking rows.Err().
 		rows, queryErr = s.db.QueryContext(ctx, query, args...)
 		return queryErr
 	})
