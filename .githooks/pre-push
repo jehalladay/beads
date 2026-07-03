@@ -1,27 +1,62 @@
 #!/usr/bin/env bash
-# Pre-push hook: when pushing a release tag (refs/tags/v*), refuse the push if
-# version constants and the Docusaurus docs snapshot disagree. This stops a
-# release from being tagged/published with drifted docs (the failure mode that
-# left main red after the 1.0.5 release) before it ever reaches CI.
+# Pre-push hook. Two independent guards:
 #
-# Installed via: git config core.hooksPath .githooks
-# See also: make install (sets hooksPath automatically)
+#   1. forge-green gate (beads-r06.3 / A3): when pushing to main, run the SAME
+#      forge build gate CI runs (scripts/ci/forge-gate.sh) and refuse the push
+#      on red. Because CI and this hook invoke the identical script, a local
+#      push and CI cannot disagree about "green" (no drift). Work-branch pushes
+#      are NOT gated here — they are gated by CI on the PR — so day-to-day crew
+#      pushes stay fast; the gate fires at the main boundary (the refinery's
+#      push to main, or any direct push to main).
 #
-# Bypass (not recommended for release tags): git push --no-verify
+#   2. release-tag version/docs consistency: when pushing a refs/tags/v* tag,
+#      refuse if version constants and the Docusaurus docs snapshot disagree
+#      (stops a release being tagged with drifted docs — the 1.0.5 failure).
+#
+# Installed via: git config core.hooksPath .githooks  (also: make install)
+#
+# Escape hatches:
+#   git push --no-verify                 skip ALL hooks (use sparingly)
+#   BEADS_SKIP_FORGE_GATE=1 git push     skip only guard 1 (e.g. docs-only push
+#                                        you will let CI verify)
 
 set -euo pipefail
 
-# git feeds "<local ref> <local sha> <remote ref> <remote sha>" lines on stdin.
+repo_root="$(git rev-parse --show-toplevel)"
+
 pushing_version_tag=0
-while read -r local_ref _local_sha _remote_ref _remote_sha; do
+pushing_main=0
+
+# git feeds "<local ref> <local sha> <remote ref> <remote sha>" lines on stdin.
+while read -r local_ref _local_sha remote_ref _remote_sha; do
     case "$local_ref" in
         refs/tags/v[0-9]*) pushing_version_tag=1 ;;
     esac
+    case "$remote_ref" in
+        refs/heads/main) pushing_main=1 ;;
+    esac
 done
 
+# --- guard 1: forge-green gate on push to main ----------------------------
+if [ "$pushing_main" -eq 1 ] && [ "${BEADS_SKIP_FORGE_GATE:-0}" != "1" ]; then
+    if [ -x "$repo_root/scripts/ci/forge-gate.sh" ]; then
+        echo "Push to main detected — running forge build gate (scripts/ci/forge-gate.sh)..."
+        if ! (cd "$repo_root" && ./scripts/ci/forge-gate.sh); then
+            echo "" >&2
+            echo "❌ Refusing to push to main: forge build gate is RED." >&2
+            echo "   Reproduce locally: ./scripts/ci/forge-gate.sh" >&2
+            echo "   (CI runs the identical gate; a red push would fail CI anyway.)" >&2
+            echo "   Override with BEADS_SKIP_FORGE_GATE=1 or --no-verify only if you know why." >&2
+            exit 1
+        fi
+    else
+        echo "WARNING: scripts/ci/forge-gate.sh missing/not executable — skipping forge gate." >&2
+    fi
+fi
+
+# --- guard 2: release-tag version/docs consistency ------------------------
 [ "$pushing_version_tag" -eq 0 ] && exit 0
 
-repo_root="$(git rev-parse --show-toplevel)"
 if [ ! -x "$repo_root/scripts/check-versions.sh" ]; then
     # Older checkout without the consistency check; do not block.
     exit 0

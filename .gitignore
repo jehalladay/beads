@@ -138,3 +138,7 @@ bd_test
 
 # Beads / Dolt files (added by bd init)
 .beads/proxieddb/
+
+# Forge local build cache / logs (forge build writes .forge/logs). The forge
+# manifest (forge.toml) is tracked; its runtime cache is not (beads-r06.3).
+.forge/
