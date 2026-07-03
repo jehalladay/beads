@@ -67,6 +67,14 @@ test:
 	@echo "Running tests..."
 	@TEST_COVER=1 ./scripts/test.sh
 
+# Run the test suite under the Go race detector (beads-r06.8).
+# Local sibling of CI's pr-core -race gate: an agentic-tdd builder runs
+# `make test-race` before landing concurrency-touching work. Requires CGO
+# (the race detector is cgo-based); .buildflags defaults CGO_ENABLED=1.
+test-race:
+	@echo "Running tests with the race detector..."
+	@./scripts/test.sh --race
+
 # Check total coverage against the ratcheting floor (.coverage-floor).
 # beads-r06.12: fails on regression below the floor.
 coverage-check:
@@ -257,6 +265,7 @@ help:
 	@echo "Beads Makefile targets:"
 	@echo "  make build        - Build the bd binary"
 	@echo "  make test         - Run all tests"
+	@echo "  make test-race    - Run all tests under the Go race detector (needs CGO)"
 	@echo "  make test-icu-path - Run opt-in ICU regex path tests (maintainer-only)"
 	@echo "  make test-full-cgo - Deprecated alias for make test-icu-path"
 	@echo "  make ci-pr-core  - Run required PR core Go test wrapper"
