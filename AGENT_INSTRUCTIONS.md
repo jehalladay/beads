@@ -13,6 +13,41 @@ This document contains detailed operational instructions for AI agents working o
 - **Testing**: All new features need tests (`make test` for the normal local/CI path, `make test-icu-path` only when intentionally exercising the opt-in ICU regex path)
 - **Documentation**: Update relevant .md files
 
+### Agentic-TDD: The Required Builder Workflow
+
+Beads work follows **agentic-tdd** — the same test-first discipline the whole
+town uses. It is not optional polish; it is how you build here. The loop:
+
+1. **Tests-first (fail before impl).** Write the test *before* the
+   implementation and watch it fail for the right reason. A test that has never
+   been seen red proves nothing. If you are fixing a bug, first write the test
+   that reproduces it (red), then fix (green).
+2. **Shell-first.** Exercise the behavior at the shell/CLI level first —
+   `BEADS_DB=/tmp/t.db bd <cmd>` — before (or alongside) the Go unit test.
+   Beads is a CLI; the shell is the real contract. Reproduce and verify from
+   the command line, not only from an in-process test.
+3. **Green before commit, no weakened gates.** Do not commit until the tests
+   pass with no stubs, no `interface{}`/`any` widening to dodge a type, and no
+   skipped or loosened assertions. Never make a gate pass by weakening it.
+4. **Run the race tier on concurrency-touching work.** Any change to
+   goroutines, shared state, connection pools, or the storage layer must pass
+   `make test-race` locally before landing — the local sibling of CI's
+   `pr-core` `-race` gate (`scripts/ci/pr-core.sh`). Do not wait for CI to find
+   a data race you could have caught in one local run.
+
+**Test tiers at a glance:**
+
+| Tier | Command | When |
+|------|---------|------|
+| Default | `make test` (`./scripts/test.sh`) | Every change |
+| Race detector | `make test-race` (`./scripts/test.sh --race`) | Concurrency / storage / pool changes; required before landing them |
+| ICU regex path | `make test-icu-path` | Maintainer-only; opt-in ICU path |
+| Lint | `golangci-lint run ./...` | Before commit (see [docs/LINTING.md](docs/LINTING.md)) |
+
+The race tier is guarded by `tests/buildpolicy` so it cannot silently
+regress: those tests assert `pr-core.sh` keeps `-race`, that `make test-race`
+and `scripts/test.sh --race` exist, and that this workflow stays documented.
+
 ### File Organization
 
 ```

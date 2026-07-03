@@ -85,7 +85,9 @@ echo 'Updated text' | bd update <id> --description=-
 
 ## Testing Commands (No Ambiguity)
 
+- **Build workflow**: beads work is **agentic-tdd** (tests-first, shell-first, race tier on concurrency changes). See [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md#agentic-tdd-the-required-builder-workflow).
 - Default local test command: `make test` (or `./scripts/test.sh`).
+- Race detector tier: `make test-race` (or `./scripts/test.sh --race`) — required before landing concurrency/storage/pool changes.
 - Opt-in ICU regex path: `make test-icu-path` (or `./scripts/test-icu-path.sh ./...`).
 - This ICU path is maintainer-only and not part of normal validation; `make test-full-cgo` and `./scripts/test-cgo.sh` are deprecated aliases.
 - For package- or test-scoped shipped-config CGO runs, prefer:

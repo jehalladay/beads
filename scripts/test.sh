@@ -38,6 +38,9 @@ RUN_PATTERN="${TEST_RUN:-}"
 COVERAGE="${TEST_COVER:-}"
 COVERPROFILE="${TEST_COVERPROFILE:-/tmp/beads.coverage.out}"
 COVERPKG="${TEST_COVERPKG:-}"
+# Race detector tier (beads-r06.8). Enable via `--race`/`-race` or TEST_RACE=1
+# (make test-race). The race detector needs CGO, which .buildflags defaults on.
+RACE="${TEST_RACE:-}"
 
 # Parse arguments
 PACKAGES=()
@@ -50,6 +53,10 @@ while [[ $# -gt 0 ]]; do
         -timeout)
             TIMEOUT="$2"
             shift 2
+            ;;
+        -race|--race)
+            RACE="1"
+            shift
             ;;
         -run)
             RUN_PATTERN="$2"
@@ -128,6 +135,17 @@ fi
 
 # Build go test command
 CMD=(go test -p "$GO_TEST_PKG_PARALLEL" -parallel "$GO_TEST_PARALLEL" -timeout "$TIMEOUT")
+
+if [[ -n "$RACE" ]]; then
+    # The Go race detector is a cgo instrumentation pass; it cannot run under
+    # CGO_ENABLED=0. .buildflags defaults CGO on, but a caller may have forced
+    # it off — fail loudly rather than silently skip race coverage.
+    if [[ "${CGO_ENABLED:-1}" == "0" ]]; then
+        echo "ERROR: --race requires CGO_ENABLED=1 (race detector is cgo-based); refusing to run a no-op race tier" >&2
+        exit 2
+    fi
+    CMD+=(-race)
+fi
 
 if [[ -n "$VERBOSE" ]]; then
     CMD+=(-v)
