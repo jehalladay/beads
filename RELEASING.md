@@ -40,6 +40,40 @@ for details. The rest of this document is the manual / step-by-step process,
 useful for understanding what `release.sh` does and for handling edge cases
 (hotfixes, rollbacks, manual PyPI/npm publishes).
 
+### The Release Build Contract (Forge)
+
+The release + cross-compile path runs through the same build contract as CI and
+local builds (`gms_pure_go` tag, `CGO_ENABLED=1`, version-stamped ldflags), so a
+release binary reports the same `Version`/`Build`/`Commit`/`Branch` provenance
+everywhere. The pieces:
+
+- **`make release-build`** — builds a version-stamped release binary for the
+  **host** platform, using the same ldflags GoReleaser uses. This is the
+  buildable-anywhere entrypoint; override the version for a tagged build:
+  `make release-build RELEASE_VERSION=1.2.0`.
+- **`forge release` / `forge package`** — `forge.toml`'s `[build.commands]` maps
+  both verbs onto `make release-build`, so the release build is drivable through
+  the Forge gate alongside `forge build/test/lint/check`.
+  > ⚠️ **Activation note:** forge 0.2.0's Go backend does not yet honor
+  > `[build.commands]` overrides ([beads-2hk](https://github.com/gastownhall/beads);
+  > `go_backend.py` ignores `command_overrides`). Until the forge go-backend
+  > patch lands (staged at `/fsx/ubuntu/shared/forge-go-backend-patch/`) and
+  > forge is pinned — or the package switches to `backend=python` — run the
+  > release build directly with `make release-build`. The mapping in
+  > `forge.toml` is the final contract and activates automatically once forge
+  > supports it.
+- **The full cross-platform matrix** (linux amd64/arm64, windows amd64/arm64,
+  freebsd, android, and darwin amd64/arm64) is cut by **GoReleaser + the
+  `goreleaser-macos` job** in [`.github/workflows/release.yml`](.github/workflows/release.yml),
+  triggered by a `v*` tag. macOS is built natively (CGO for embedded Dolt);
+  the rest use cross-compilers installed in the CI job. GoReleaser cannot be run
+  from a bare cluster node (it needs the mingw/aarch64 cross-gccs); the tag-push
+  is the release trigger.
+- **Regression guards** in [`scripts/release_forge_test.go`](scripts/release_forge_test.go)
+  lock this contract: the build matrix, the `gms_pure_go` tag + version stamping
+  on every build, the forge release-verb wiring, the `make release-build` target,
+  and preservation of the `release-gates/be-*-gate.md` records.
+
 ## Prerequisites
 
 ### Required Tools
