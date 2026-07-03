@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -251,11 +252,7 @@ func isValidState(state string) bool {
 // GitLab labels like "priority::high" are split into ("priority", "high").
 // Labels without "::" return empty prefix and the original label as value.
 func parseLabelPrefix(label string) (prefix, value string) {
-	parts := strings.SplitN(label, "::", 2)
-	if len(parts) == 2 {
-		return parts[0], parts[1]
-	}
-	return "", label
+	return tracker.ParseLabelPrefix(label)
 }
 
 // PriorityMapping maps priority label values to beads priority (0-4).

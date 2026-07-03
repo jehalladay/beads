@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -44,15 +45,7 @@ func DefaultMappingConfig() *MappingConfig {
 // priorityFromLabels extracts priority from GitHub labels.
 // Returns default priority (2 = medium) if no priority label found.
 func priorityFromLabels(labels []string, config *MappingConfig) int {
-	for _, label := range labels {
-		prefix, value := parseLabelPrefix(label)
-		if prefix == "priority" {
-			if p, ok := config.PriorityMap[strings.ToLower(value)]; ok {
-				return p
-			}
-		}
-	}
-	return 2 // Default to medium
+	return tracker.PriorityFromLabels(labels, config.PriorityMap)
 }
 
 // statusFromLabelsAndState determines beads status from GitHub labels and state.
@@ -91,21 +84,7 @@ func statusFromLabelsAndState(labels []string, state string, config *MappingConf
 // Checks both scoped (type::bug) and bare (bug) labels.
 // Returns "task" if no type label found.
 func typeFromLabels(labels []string, config *MappingConfig) string {
-	for _, label := range labels {
-		prefix, value := parseLabelPrefix(label)
-		if prefix == "type" {
-			if t, ok := config.LabelTypeMap[strings.ToLower(value)]; ok {
-				return t
-			}
-		}
-		// Also check bare labels (no prefix)
-		if prefix == "" {
-			if t, ok := config.LabelTypeMap[strings.ToLower(value)]; ok {
-				return t
-			}
-		}
-	}
-	return "task" // Default to task
+	return tracker.TypeFromLabels(labels, config.LabelTypeMap)
 }
 
 // GitHubIssueToBeads converts a GitHub Issue to a beads Issue.
@@ -215,14 +194,5 @@ func priorityToLabel(priority int) string {
 // filterNonScopedLabels returns only labels without scoped prefixes.
 // Removes priority::*, status::*, and type::* labels.
 func filterNonScopedLabels(labels []string) []string {
-	var filtered []string
-	for _, label := range labels {
-		prefix, _ := parseLabelPrefix(label)
-		// Skip scoped labels that we handle specially
-		if prefix == "priority" || prefix == "status" || prefix == "type" {
-			continue
-		}
-		filtered = append(filtered, label)
-	}
-	return filtered
+	return tracker.FilterScopedLabels(labels)
 }
