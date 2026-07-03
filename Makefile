@@ -9,7 +9,7 @@ SHELL := $(subst cmd,bin,$(subst git.exe,bash.exe,$(GIT_BASH)))
 endif
 endif
 
-.PHONY: all build test coverage-check coverage-bump release-audit test-icu-path test-full-cgo test-regression test-upgrade test-cross-version test-migration bench bench-quick clean clean-test-tmp install install-force help check-up-to-date fmt fmt-check check-testing-short
+.PHONY: all build release-build test coverage-check coverage-bump release-audit test-icu-path test-full-cgo test-regression test-upgrade test-cross-version test-migration bench bench-quick clean clean-test-tmp install install-force help check-up-to-date fmt fmt-check check-testing-short
 .PHONY: ci-pr-core ci-pr-policy ci-pr-lint ci-package-mcp ci-package-npm ci-website
 
 # Default target
@@ -61,6 +61,44 @@ ifeq ($(shell uname),Darwin)
 	@echo "Signed bd for macOS"
 endif
 endif
+
+# Build a version-stamped release binary for the HOST platform.
+#
+# This is the local, forge-drivable entrypoint to the release build contract
+# (beads-r06.7): it mirrors the ldflags GoReleaser and the release.yml macOS job
+# use, so a binary built here reports the same Version/Build/Commit/Branch
+# provenance as an official release artifact. The full cross-platform matrix
+# (linux-arm64, windows, freebsd, android, darwin) is produced by GoReleaser +
+# the goreleaser-macos CI job in release.yml, which need cross-compilers and
+# native macOS runners; this target covers the host arch (linux/amd64 on CI, or
+# darwin/arm64 on a maintainer's mac) and is what `forge release` maps onto.
+#
+# GIT_COMMIT/GIT_BRANCH are optional provenance; keep the -X stamps even when
+# empty so the release contract test (scripts/release_forge_test.go) sees all
+# four symbols wired.
+GIT_COMMIT := $(shell git rev-parse HEAD 2>/dev/null)
+GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
+# RELEASE_VERSION defaults to the compiled-in version constant; override for a
+# tagged release build: `make release-build RELEASE_VERSION=1.2.0`.
+RELEASE_VERSION ?= $(shell sed -n 's/.*Version = "\(.*\)".*/\1/p' cmd/bd/version.go)
+RELEASE_LDFLAGS := -s -w \
+	-X main.Version=$(RELEASE_VERSION) \
+	-X main.Build=$(GIT_BUILD) \
+	-X main.Commit=$(GIT_COMMIT) \
+	-X main.Branch=$(GIT_BRANCH)
+
+.PHONY: release-build
+release-build:
+	@echo "Building version-stamped release binary (host platform)..."
+ifeq ($(OS),Windows_NT)
+	go build -tags "$(BUILD_TAGS)" -ldflags="$(RELEASE_LDFLAGS)" -o $(BUILD_DIR)/bd.exe ./cmd/bd
+else
+	go build -tags "$(BUILD_TAGS)" -ldflags="$(RELEASE_LDFLAGS)" -o $(BUILD_DIR)/bd ./cmd/bd
+ifeq ($(shell uname),Darwin)
+	@codesign -s - -f $(BUILD_DIR)/bd 2>/dev/null || true
+endif
+endif
+	@echo "Built release bd $(RELEASE_VERSION) ($(GIT_BUILD))"
 
 # Run all tests (skips known broken tests listed in .test-skip)
 test:
@@ -264,6 +302,7 @@ clean-test-tmp:
 help:
 	@echo "Beads Makefile targets:"
 	@echo "  make build        - Build the bd binary"
+	@echo "  make release-build - Build a version-stamped release binary (host platform; forge release maps here)"
 	@echo "  make test         - Run all tests"
 	@echo "  make test-race    - Run all tests under the Go race detector (needs CGO)"
 	@echo "  make test-icu-path - Run opt-in ICU regex path tests (maintainer-only)"

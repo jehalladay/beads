@@ -19,8 +19,33 @@ description = "bd — dependency-aware issue tracker backed by Dolt (github.com/
 [build]
 backend = "go"
 
-# [build.commands] — A2 (beads-r06.2) overrides the default Go backend commands
-# (`go build ./...`, `go test ./...`, `golangci-lint run`, `go vet ./...`) with
-# the real beads build contract: BUILD_TAGS=gms_pure_go, CGO_ENABLED=1, and
-# version-stamped ldflags (-X main.Build=$(git rev-parse --short HEAD)), routing
-# through the Makefile / scripts so CI == forge (A3 / beads-r06.3).
+# [build.commands] — map forge's verbs onto the real beads build contract
+# (BUILD_TAGS=gms_pure_go, CGO_ENABLED=1, version-stamped ldflags) via the
+# Makefile so CI == forge.
+#
+# OWNERSHIP (shared table; keep keys non-overlapping):
+#   - build/test/lint/check  → beads-r06.2 (A2), adds its keys here
+#   - release/package        → beads-r06.7 (this): the release + cross-compile
+#     path. `release` runs the version-stamped host-platform release build
+#     (`make release-build`); the full cross-platform matrix is cut by
+#     GoReleaser + the goreleaser-macos CI job in .github/workflows/release.yml.
+#
+# ⚠️ ACTIVATION BLOCKER (beads-2hk): forge 0.2.0's go backend does NOT honor
+# [build.commands] overrides (go_backend.py reads only its hardcoded default
+# dict; unlike the python/typescript/electron backends it never consults
+# ctx.command_overrides and has no run_custom). So `forge release` today still
+# runs the default `go build ./...` and ignores the mapping below. These entries
+# are the FINAL contract; they go live once the forge go-backend override patch
+# (staged at /fsx/ubuntu/shared/forge-go-backend-patch/) lands and forge is
+# pinned, OR r06.2 switches this package to backend=python (as the gt-fork
+# forge.toml does). Until then, run the release build directly: `make
+# release-build`. The regression guards in scripts/release_forge_test.go lock
+# this contract regardless of activation state.
+
+[build.commands]
+# --- beads-r06.7: release + cross-compile path ---
+# Version-stamped host-platform release build (mirrors GoReleaser ldflags).
+release = "make release-build"
+# Package == the release build artifact; the distributable archives are
+# assembled by GoReleaser in CI.
+package = "make release-build"
