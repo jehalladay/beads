@@ -9,7 +9,7 @@ SHELL := $(subst cmd,bin,$(subst git.exe,bash.exe,$(GIT_BASH)))
 endif
 endif
 
-.PHONY: all build test coverage-check coverage-bump test-icu-path test-full-cgo test-regression test-upgrade test-cross-version test-migration bench bench-quick clean clean-test-tmp install install-force help check-up-to-date fmt fmt-check check-testing-short
+.PHONY: all build test coverage-check coverage-bump release-audit test-icu-path test-full-cgo test-regression test-upgrade test-cross-version test-migration bench bench-quick clean clean-test-tmp install install-force help check-up-to-date fmt fmt-check check-testing-short
 .PHONY: ci-pr-core ci-pr-policy ci-pr-lint ci-package-mcp ci-package-npm ci-website
 
 # Default target
@@ -78,6 +78,18 @@ coverage-check:
 coverage-bump:
 	@TEST_COVER=1 ./scripts/test.sh >/dev/null
 	@./scripts/ci/coverage-ratchet.sh --profile $${TEST_COVERPROFILE:-/tmp/beads.coverage.out} --bump
+
+# L10 release-audit gate (beads-nsa): scripted version of the 6-criterion
+# release-gates/*.md checklist. Verifies tests/clean-tree/clean-divergence
+# mechanically and asserts review-PASS/AC-met/no-open-HIGH are recorded on the
+# feature bead, emitting PASS/FAIL + a release-gates/<bead>-gate.md stub.
+# Required: RELEASE_BEAD. Optional: RELEASE_BRANCH, RELEASE_BASE, RELEASE_TEST_CMD.
+release-audit:
+	@./scripts/ci/release-audit.sh \
+		--bead "$${RELEASE_BEAD:?set RELEASE_BEAD=<feature/review bead id>}" \
+		$${RELEASE_BRANCH:+--branch "$$RELEASE_BRANCH"} \
+		--base "$${RELEASE_BASE:-origin/main}" \
+		--test-cmd "$${RELEASE_TEST_CMD:-make test}"
 
 # Run the opt-in ICU regex path test suite (no skip list).
 # This is a local developer workflow for intentionally exercising the leftover
