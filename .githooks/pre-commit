@@ -2,25 +2,94 @@
 # Pre-commit hook: auto-format with gofmt and lint with golangci-lint.
 # Installed via: git config core.hooksPath .githooks
 # See also: make install (sets hooksPath automatically)
+#
+# LINT BINARY RESOLUTION (beads-24k)
+# ----------------------------------
+# This hook must NOT compile golangci-lint from source on every commit. Doing so
+# (`go run …@version`) rebuilds the linter under whatever load the shared crew
+# node is under, which OOMs / times out and forces crew to `git commit
+# --no-verify` — a gate everyone bypasses is not a gate.
+#
+# Instead we resolve a PREBUILT, version-PINNED binary (v2.9.0 — the same
+# version CI installs; v2.10.x emits phantom findings) in this order:
+#   1. `golangci-lint` already on PATH, IF it reports the pinned version
+#      (crew nodes symlink the cached /fsx binary into ~/.local/bin — beads-jec).
+#   2. $(go env GOPATH)/bin/golangci-lint, IF it reports the pinned version.
+#   3. `go install …@<pin>` ONCE into GOPATH/bin (cached; subsequent commits
+#      reuse it — no per-commit rebuild), then use that binary.
+# If none of these yields a runnable pinned binary (e.g. the toolchain genuinely
+# cannot build under load), the hook DEGRADES TO WARN — it prints a loud notice
+# and lets the commit proceed rather than forcing --no-verify. CI (make
+# ci-pr-lint / pr.yml) remains the HARD gate, so nothing red reaches main.
 
-set -euo pipefail
+set -uo pipefail
+
+# The pinned golangci-lint version. Keep in lockstep with the CI install in
+# .github/workflows/{pr,main}.yml and ci-measurements.yml.
+PINNED_VERSION="v2.9.0"
+PINNED_BARE="${PINNED_VERSION#v}"
 
 # Only check staged Go files (Added, Copied, Modified)
 staged_go_files=$(git diff --cached --name-only --diff-filter=ACM -- '*.go')
 [ -z "$staged_go_files" ] && exit 0
 
-# Use go run so golangci-lint is always built with the project's Go
-# toolchain, avoiding version-mismatch panics from a stale global binary.
-GOLANGCI_LINT="go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1"
-
-# Auto-format and re-stage
+# Auto-format and re-stage (gofmt is cheap and always available).
 echo "$staged_go_files" | xargs gofmt -w
 echo "$staged_go_files" | xargs git add
+
+# is_pinned <binary> — true if the binary runs and reports PINNED_BARE.
+is_pinned() {
+    local bin="$1"
+    [ -x "$bin" ] || command -v "$bin" >/dev/null 2>&1 || return 1
+    "$bin" --version 2>/dev/null | grep -q "version ${PINNED_BARE}\b"
+}
+
+# Resolve a runnable, pinned golangci-lint binary; echo its path, or nothing.
+resolve_linter() {
+    # 1. On PATH at the pinned version.
+    if command -v golangci-lint >/dev/null 2>&1 && is_pinned golangci-lint; then
+        command -v golangci-lint
+        return 0
+    fi
+    # 2. GOPATH/bin at the pinned version.
+    local gobin
+    gobin="$(go env GOPATH 2>/dev/null)/bin/golangci-lint"
+    if is_pinned "$gobin"; then
+        printf '%s\n' "$gobin"
+        return 0
+    fi
+    # 3. Install the pinned version once (cached in GOPATH/bin + build cache).
+    #    This builds ONCE; every later commit hits path 1/2 and never rebuilds.
+    echo "pre-commit: installing golangci-lint ${PINNED_VERSION} (one-time; cached for future commits)…" >&2
+    if go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${PINNED_VERSION}" >&2 2>&1; then
+        if is_pinned "$gobin"; then
+            printf '%s\n' "$gobin"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+LINTER="$(resolve_linter || true)"
+
+if [ -z "$LINTER" ]; then
+    # Degrade to warn (beads-24k fallback 2): could not obtain the pinned linter
+    # — do NOT force the developer to --no-verify. CI is the hard gate.
+    cat >&2 <<EOF
+⚠️  pre-commit: could not obtain golangci-lint ${PINNED_VERSION} (toolchain build
+    failed or unavailable). Skipping the local lint step for THIS commit.
+    Your commit is NOT blocked, but CI (make ci-pr-lint) will still enforce lint —
+    fix any findings before the merge queue picks this up.
+    To restore the local gate, ensure golangci-lint ${PINNED_VERSION} is on PATH
+    (crew nodes: symlink the cached /fsx binary into ~/.local/bin — see beads-jec).
+EOF
+    exit 0
+fi
 
 # Lint changed code with auto-fix; block on remaining issues.
 # CGO_ENABLED=0 avoids typecheck failures from CGO-only dependencies
 # (e.g., dolthub/go-icu-regex) that require system headers not always present.
-CGO_ENABLED=0 $GOLANGCI_LINT run --new-from-rev=HEAD --fix || exit 1
+CGO_ENABLED=0 "$LINTER" run --new-from-rev=HEAD --fix || exit 1
 
 # Re-stage any auto-fixes from the linter
 echo "$staged_go_files" | xargs git add
