@@ -51,6 +51,16 @@ COVERPKG="${TEST_COVERPKG:-}"
 # Race detector tier (beads-r06.8). Enable via `--race`/`-race` or TEST_RACE=1
 # (make test-race). The race detector needs CGO, which .buildflags defaults on.
 RACE="${TEST_RACE:-}"
+# On a shared cluster node, concurrent `-race` sweeps are the dominant driver
+# of CPU oversubscription (~7-10x slower + 30m timeout, load hit ~4x nproc and
+# stalled every crew's TDD loop — beads-cn5). Serialize the race tier behind a
+# node-wide flock and run it under `nice` so concurrent sweeps degrade
+# gracefully instead of thrashing. Same lock-serialize approach beads-ub3 used
+# for golangci-lint. Opt out by setting TEST_RACE_LOCK="" (dedicated host, or a
+# caller that owns scheduling). The non-race tier is unaffected — baseline
+# builds are tolerable at ~1.3x. TEST_RACE_NICE sets the niceness (default 10).
+TEST_RACE_LOCK="${TEST_RACE_LOCK-${TMPDIR:-/tmp}/beads-race-test.lock}"
+TEST_RACE_NICE="${TEST_RACE_NICE:-10}"
 
 # Parse arguments
 PACKAGES=()
@@ -151,6 +161,12 @@ if [[ -n "$RACE" && -z "$TIMEOUT_EXPLICIT" ]]; then
     TIMEOUT="$RACE_TIMEOUT"
 fi
 
+# A prefix that wraps the go test invocation. For the race tier this becomes a
+# node-wide flock + nice so concurrent race sweeps serialize/deprioritize
+# instead of oversubscribing a shared node (beads-cn5). Empty for the (cheap)
+# non-race tier.
+PREFIX=()
+
 # Build go test command
 CMD=(go test -p "$GO_TEST_PKG_PARALLEL" -parallel "$GO_TEST_PARALLEL" -timeout "$TIMEOUT")
 
@@ -163,6 +179,19 @@ if [[ -n "$RACE" ]]; then
         exit 2
     fi
     CMD+=(-race)
+
+    # Serialize + deprioritize the heavy race sweep on shared nodes (beads-cn5).
+    # flock takes the lock for the lifetime of the wrapped command; a concurrent
+    # sweep on the same node blocks here rather than fighting for cores. `nice`
+    # keeps the sweep from starving interactive crew builds. Both are optional:
+    # skip flock if TEST_RACE_LOCK is empty or flock is unavailable; skip nice
+    # if it is unavailable.
+    if command -v nice >/dev/null 2>&1; then
+        PREFIX+=(nice -n "$TEST_RACE_NICE")
+    fi
+    if [[ -n "$TEST_RACE_LOCK" ]] && command -v flock >/dev/null 2>&1; then
+        PREFIX+=(flock "$TEST_RACE_LOCK")
+    fi
 fi
 
 if [[ -n "$VERBOSE" ]]; then
@@ -186,11 +215,22 @@ fi
 
 CMD+=("${PACKAGES[@]}")
 
-echo "Running: ${CMD[*]}" >&2
+# Full command line including any serialization/nice prefix.
+FULL_CMD=("${PREFIX[@]}" "${CMD[@]}")
+
+# Dry-run mode: print the assembled command and exit without running it. Used
+# by scripts/test_race_serialize_test.go to pin the race-tier wiring without a
+# real (slow) go test run.
+if [[ -n "${TEST_PRINT_CMD:-}" ]]; then
+    echo "CMD: ${FULL_CMD[*]}"
+    exit 0
+fi
+
+echo "Running: ${FULL_CMD[*]}" >&2
 echo "Skipping: $SKIP_PATTERN" >&2
 echo "" >&2
 
-"${CMD[@]}"
+"${FULL_CMD[@]}"
 status=$?
 
 if [[ -n "$COVERAGE" ]]; then

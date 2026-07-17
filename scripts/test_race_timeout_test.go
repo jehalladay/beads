@@ -59,7 +59,10 @@ func runTestSh(t *testing.T, extraEnv []string, args ...string) string {
 func timeoutFromOutput(t *testing.T, out string) string {
 	t.Helper()
 	for _, line := range strings.Split(out, "\n") {
-		if !strings.Contains(line, "Running: go test") {
+		// The "Running:" line may carry a nice/flock prefix on the race tier
+		// (beads-cn5), so match the prefix + the embedded `go test`, not a
+		// fixed "Running: go test".
+		if !strings.HasPrefix(line, "Running:") || !strings.Contains(line, "go test") {
 			continue
 		}
 		fields := strings.Fields(line)

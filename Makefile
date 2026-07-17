@@ -109,6 +109,9 @@ test:
 # Local sibling of CI's pr-core -race gate: an agentic-tdd builder runs
 # `make test-race` before landing concurrency-touching work. Requires CGO
 # (the race detector is cgo-based); .buildflags defaults CGO_ENABLED=1.
+# On a shared cluster node the race tier is auto-serialized behind a node-wide
+# flock and niced so concurrent sweeps don't oversubscribe the CPU (beads-cn5).
+# Opt out with TEST_RACE_LOCK="" (dedicated host / caller-owned scheduling).
 test-race:
 	@echo "Running tests with the race detector..."
 	@./scripts/test.sh --race
