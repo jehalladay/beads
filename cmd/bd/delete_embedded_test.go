@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"strings"
@@ -63,6 +64,31 @@ func TestEmbeddedDelete(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "Delete me", "--type", "task")
 		bdDelete(t, bd, dir, issue.ID, "--force")
 		bdShowFail(t, bd, dir, issue.ID)
+	})
+
+	// A delete failure under --json must emit a parseable JSON error object on
+	// stdout (HandleErrorRespectJSON), matching the update/close/create
+	// convention — not plain text to stderr with empty stdout (beads-oe12).
+	// A nonexistent id is a deterministic not-found failure.
+	t.Run("delete_notfound_json_emits_stdout_error", func(t *testing.T) {
+		cmd := exec.Command(bd, "delete", "td-nope-zzz", "--force", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Errorf("expected non-zero exit deleting a nonexistent id, got success\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+		}
+		out := strings.TrimSpace(stdout.String())
+		if out == "" {
+			t.Fatalf("stdout is empty on a --json delete not-found error — must emit a JSON error object (beads-oe12)\nstderr:\n%s", stderr.String())
+		}
+		var obj map[string]any
+		if jerr := json.Unmarshal([]byte(out), &obj); jerr != nil {
+			t.Fatalf("stdout is not a JSON object on --json delete not-found error: %v\nstdout:\n%s", jerr, out)
+		}
+		if _, ok := obj["error"]; !ok {
+			t.Errorf("expected an \"error\" field in the --json delete-error stdout object, got: %s", out)
+		}
 	})
 
 	t.Run("delete_cleans_up_dependencies", func(t *testing.T) {
