@@ -136,6 +136,102 @@ func TestIssueUpsertAssignments(t *testing.T) {
 	})
 }
 
+// insertIssueColumns is the column list written by the fresh INSERT in
+// insertIssueIntoTable (helpers.go). It is duplicated here on purpose: the
+// contract test below asserts every INSERT column is either rewritten on
+// re-import (issueUpsertColumns) or explicitly blessed as re-import-immutable
+// (upsertImmutableColumns). If a new column is added to the INSERT but to
+// NEITHER set, this test fails — forcing an explicit round-trip decision so a
+// user-mutable field can never again be silently dropped on
+// export→edit→re-import (beads-kalv / beads-lbez).
+var insertIssueColumns = []string{
+	"id", "content_hash", "title", "description", "design", "acceptance_criteria", "notes",
+	"status", "priority", "issue_type", "assignee", "estimated_minutes",
+	"created_at", "created_by", "owner", "updated_at", "started_at", "closed_at", "external_ref", "spec_id",
+	"compaction_level", "compacted_at", "compacted_at_commit", "original_size",
+	"sender", "ephemeral", "no_history", "wisp_type", "pinned", "is_template",
+	"mol_type", "work_type", "source_system", "source_repo", "close_reason",
+	"event_kind", "actor", "target", "payload",
+	"await_type", "await_id", "timeout_ns", "waiters",
+	"due_at", "defer_until", "metadata",
+}
+
+// upsertImmutableColumns are INSERT columns deliberately NOT rewritten on
+// re-import, each with a ground-truth reason (see the block comment on
+// issueUpsertColumns in helpers.go). They are the complement of
+// issueUpsertColumns within insertIssueColumns.
+var upsertImmutableColumns = map[string]string{
+	"id":                  "identity / primary key",
+	"created_at":          "immutable creation timestamp",
+	"created_by":          "immutable creation actor",
+	"ephemeral":           "governs issues-vs-wisps table routing, not an in-place column update",
+	"no_history":          "governs issues-vs-wisps table routing, not an in-place column update",
+	"is_template":         "governs template routing, not an in-place column update",
+	"compaction_level":    "compaction-manager owned, not user round-trip data",
+	"compacted_at":        "compaction-manager owned, not user round-trip data",
+	"compacted_at_commit": "compaction-manager owned, not user round-trip data",
+	"original_size":       "compaction-manager owned, not user round-trip data",
+}
+
+// TestInsertColumnsAreUpsertedOrBlessed is the round-trip fidelity contract:
+// every column the fresh INSERT writes must be either re-imported (in
+// issueUpsertColumns) or explicitly blessed immutable — never silently absent.
+func TestInsertColumnsAreUpsertedOrBlessed(t *testing.T) {
+	t.Parallel()
+
+	upsertSet := make(map[string]bool, len(issueUpsertColumns))
+	for _, col := range issueUpsertColumns {
+		upsertSet[col] = true
+	}
+
+	// (1) Every INSERT column is accounted for: upserted or blessed-immutable,
+	//     never both, never neither.
+	for _, col := range insertIssueColumns {
+		_, blessed := upsertImmutableColumns[col]
+		upserted := upsertSet[col]
+		switch {
+		case upserted && blessed:
+			t.Errorf("column %q is BOTH upserted and blessed-immutable — pick one", col)
+		case !upserted && !blessed:
+			t.Errorf("INSERT column %q is neither re-imported (issueUpsertColumns) nor blessed "+
+				"immutable (upsertImmutableColumns): a bd export→edit→re-import would silently "+
+				"drop edits to it — add it to one set with a rationale (beads-lbez)", col)
+		}
+	}
+
+	// (2) The upsert set must not reference a column the INSERT never writes
+	//     (a rewrite of a non-existent column is a bug / typo).
+	insertSet := make(map[string]bool, len(insertIssueColumns))
+	for _, col := range insertIssueColumns {
+		insertSet[col] = true
+	}
+	for _, col := range issueUpsertColumns {
+		if !insertSet[col] {
+			t.Errorf("issueUpsertColumns rewrites %q which the INSERT never writes", col)
+		}
+	}
+
+	// (3) The blessed-immutable set must be a subset of INSERT columns too.
+	for col := range upsertImmutableColumns {
+		if !insertSet[col] {
+			t.Errorf("upsertImmutableColumns lists %q which the INSERT never writes", col)
+		}
+	}
+
+	// (4) Regression teeth for the specific fields beads-kalv + beads-lbez
+	//     restored: they MUST be re-imported.
+	for _, col := range []string{
+		"owner", "pinned", "mol_type", "work_type", // kalv
+		"spec_id", "due_at", "defer_until", "await_type", "await_id", // lbez tier-A
+		"timeout_ns", "waiters", "wisp_type", "sender", "source_system",
+		"event_kind", "actor", "target", "payload",
+	} {
+		if !upsertSet[col] {
+			t.Errorf("mutable field %q dropped from issueUpsertColumns — re-import silently loses edits", col)
+		}
+	}
+}
+
 func TestExpandAndAbsPath(t *testing.T) {
 	t.Parallel()
 

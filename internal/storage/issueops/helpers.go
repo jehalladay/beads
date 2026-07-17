@@ -62,7 +62,29 @@ var issueUpsertColumns = []string{
 	"content_hash", "title", "description", "design", "acceptance_criteria",
 	"notes", "status", "priority", "issue_type", "assignee",
 	"estimated_minutes", "started_at", "closed_at", "external_ref",
-	"source_repo", "close_reason", "metadata", "updated_at",
+	"source_repo", "close_reason", "metadata",
+	// The fields below are all user-mutable AND JSON-exported AND written by the
+	// fresh INSERT above, but were historically omitted from the UPSERT set, so a
+	// `bd export → edit → re-import` over an EXISTING issue silently DROPPED edits
+	// to them (beads-kalv named owner/pinned/mol_type/work_type; beads-lbez mapped
+	// the rest). Adding them here makes re-import lossless for the full mutable
+	// column set. They flow through issueUpsertAssignments, so the stale-reject /
+	// tie-row no-wipe guard (bd-hj85c) applies to them too.
+	//
+	// Deliberately NOT in this set (verified against ground truth, not assumed):
+	//   - id/created_at/created_by: identity/immutable.
+	//   - ephemeral/no_history/is_template: govern which TABLE a row lives in
+	//     (issues vs wisps); re-import routes by them rather than column-updating
+	//     an existing row in place, so an in-place UPSERT of them is wrong.
+	//   - compaction_level/compacted_at/compacted_at_commit/original_size:
+	//     compaction-manager-owned, not user round-trip data.
+	"owner", "spec_id",
+	"sender", "wisp_type",
+	"mol_type", "work_type", "source_system",
+	"event_kind", "actor", "target", "payload",
+	"await_type", "await_id", "timeout_ns", "waiters",
+	"due_at", "defer_until", "pinned",
+	"updated_at",
 }
 
 // issueUpsertAssignments renders the ON DUPLICATE KEY UPDATE clause. With
