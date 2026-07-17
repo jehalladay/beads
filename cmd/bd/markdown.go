@@ -41,11 +41,9 @@ type IssueTemplate struct {
 
 // parseStringList extracts a list of strings from content, splitting by comma or whitespace.
 // This is a generic helper used by parseLabels and parseDependencies.
-func parseStringList(content string) []string {
+func parseStringList(content string, isSep func(rune) bool) []string {
 	var items []string
-	fields := strings.FieldsFunc(content, func(r rune) bool {
-		return r == ',' || r == ' ' || r == '\n'
-	})
+	fields := strings.FieldsFunc(content, isSep)
 	for _, item := range fields {
 		item = strings.TrimSpace(item)
 		if item != "" {
@@ -55,14 +53,24 @@ func parseStringList(content string) []string {
 	return items
 }
 
-// parseLabels extracts labels from content, splitting by comma or whitespace.
+// parseLabels extracts labels from content, splitting on comma or newline ONLY
+// (not spaces). Labels may legitimately contain spaces — 'bd label add
+// "in progress"' is supported and the --labels flag is comma-separated — so a
+// markdown "### Labels\nin progress, needs review" must yield
+// ["in progress", "needs review"], not four single-word labels (beads-ehw7).
 func parseLabels(content string) []string {
-	return parseStringList(content)
+	return parseStringList(content, func(r rune) bool {
+		return r == ',' || r == '\n'
+	})
 }
 
-// parseDependencies extracts dependencies from content, splitting by comma or whitespace.
+// parseDependencies extracts dependencies from content, splitting by comma or
+// whitespace. Dependencies are issue IDs (e.g. "bd-10"), which never contain
+// spaces, so space-splitting is safe and convenient here.
 func parseDependencies(content string) []string {
-	return parseStringList(content)
+	return parseStringList(content, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\n'
+	})
 }
 
 // processIssueSection processes a parsed section and updates the issue template.
