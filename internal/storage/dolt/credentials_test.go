@@ -871,3 +871,51 @@ func TestEnvPrefixesForRemoteURL(t *testing.T) {
 		})
 	}
 }
+
+// TestWithPeerCredentialsUnknownPeerProceedsCredentialFree is the regression
+// for beads-1b9n: a Dolt remote with no row in federation_peers (the common
+// `origin` sync remote) must run credential-free rather than failing the whole
+// federation op with "not found: federation peer <name>".
+func TestWithPeerCredentialsUnknownPeerProceedsCredentialFree(t *testing.T) {
+	skipIfNoServer(t)
+
+	ctx := context.Background()
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	dbName := fmt.Sprintf("test_fed_unknown_peer_%d", testServerPort)
+
+	assertDatabaseNotExists(t, testServerPort, dbName)
+	t.Cleanup(func() { dropTestDatabase(t, testServerPort, dbName) })
+
+	store, err := New(ctx, &Config{
+		Path:            filepath.Join(beadsDir, "dolt"),
+		BeadsDir:        beadsDir,
+		ServerHost:      "127.0.0.1",
+		ServerPort:      testServerPort,
+		Database:        dbName,
+		MaxOpenConns:    1,
+		CreateIfMissing: true,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer store.Close()
+
+	// No AddFederationPeer — "origin" has no credentials row, mirroring the
+	// default single-remote workspace.
+	called := false
+	var gotCreds *remoteCredentials
+	err = store.withPeerCredentials(ctx, "origin", func(creds *remoteCredentials) error {
+		called = true
+		gotCreds = creds
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withPeerCredentials on an unknown (credential-less) peer should not error, got %v", err)
+	}
+	if !called {
+		t.Fatal("callback was not invoked for a credential-less peer")
+	}
+	if gotCreds != nil {
+		t.Errorf("expected nil creds for a peer with no stored credentials, got %+v", gotCreds)
+	}
+}
