@@ -446,6 +446,13 @@ func (s *DoltStore) filteredPushToPeer(ctx context.Context, peer string, exclude
 	}
 
 	// Delete excluded issues from the committed issues table.
+	//
+	// A delete error MUST be fatal (fail CLOSED): exclude_types is a privacy
+	// filter, so if we cannot remove an excluded type we must NOT go on to push
+	// the staging branch — doing so would leak the very issues the filter exists
+	// to withhold from the peer. Previously execErr was swallowed and the push
+	// proceeded regardless, shipping unfiltered data on a transient DELETE
+	// failure (beads-lgda).
 	deleted := false
 	for _, excludeType := range excludeTypes {
 		var result interface{ RowsAffected() (int64, error) }
@@ -455,10 +462,11 @@ func (s *DoltStore) filteredPushToPeer(ctx context.Context, peer string, exclude
 		} else {
 			result, execErr = conn.ExecContext(ctx, "DELETE FROM issues WHERE issue_type = ?", excludeType)
 		}
-		if execErr == nil {
-			if n, _ := result.RowsAffected(); n > 0 {
-				deleted = true
-			}
+		if execErr != nil {
+			return fmt.Errorf("federation filter: delete excluded type %q (aborting push to avoid leaking it): %w", excludeType, execErr)
+		}
+		if n, _ := result.RowsAffected(); n > 0 {
+			deleted = true
 		}
 	}
 
