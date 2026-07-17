@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -469,6 +470,39 @@ func TestIsProcessInDir(t *testing.T) {
 	if isProcessInDir(99999999, cwd) {
 		t.Error("isProcessInDir should return false for dead PID")
 	}
+
+	// beads-g4f0: a process whose real cwd is a directory must still match when
+	// that directory is queried via a SYMLINK. lsof reports the kernel-resolved
+	// (symlink-free) cwd, so without EvalSymlinks the symlinked query path would
+	// mismatch and the process would be misjudged as not-in-dir — recurring the
+	// pu8c orphan-dolt port-wedge on symlinked data dirs (e.g. /fsx .dolt-data).
+	t.Run("symlinked query dir still matches resolved cwd", func(t *testing.T) {
+		realDir, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatalf("resolve tempdir: %v", err)
+		}
+		link := filepath.Join(t.TempDir(), "link")
+		if err := os.Symlink(realDir, link); err != nil {
+			t.Fatalf("symlink: %v", err)
+		}
+		// A child process parked in the REAL dir; lsof will report its cwd as
+		// realDir (resolved), while we query with the symlink `link`.
+		cmd := exec.Command("sleep", "30")
+		cmd.Dir = realDir
+		if err := cmd.Start(); err != nil {
+			t.Skipf("cannot spawn helper process: %v", err)
+		}
+		defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
+
+		// Sanity: it matches the real dir (baseline; skip if lsof unavailable).
+		if !isProcessInDir(cmd.Process.Pid, realDir) {
+			t.Skip("isProcessInDir false for real dir — lsof likely unavailable in this env")
+		}
+		// The actual regression assertion: querying via the symlink must match.
+		if !isProcessInDir(cmd.Process.Pid, link) {
+			t.Errorf("isProcessInDir(pid, %q) = false; symlinked query dir must match the resolved cwd %q (beads-g4f0)", link, realDir)
+		}
+	})
 }
 
 func TestCountDoltProcesses(t *testing.T) {

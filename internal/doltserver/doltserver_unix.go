@@ -101,18 +101,35 @@ func isProcessInDir(pid int, dir string) bool {
 	if err != nil {
 		return false
 	}
-	absDir, _ := filepath.Abs(dir)
+	// Resolve symlinks on the target: lsof reports the kernel-RESOLVED cwd
+	// (symlink-free), so a dir that is/contains a symlink (e.g. /fsx .dolt-data
+	// symlinks, macOS /tmp->/private/tmp) would otherwise never match and the
+	// process would be misjudged as NOT in dir (beads-g4f0).
+	resolvedDir := resolvePathForCompare(dir)
 	// lsof -Fn output format: "p<pid>\nfcwd\nn<path>"
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.HasPrefix(line, "n") {
 			cwd := strings.TrimSpace(line[1:])
-			absCwd, _ := filepath.Abs(cwd)
-			if absCwd == absDir {
+			if resolvePathForCompare(cwd) == resolvedDir {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// resolvePathForCompare returns the fully symlink-resolved absolute path for
+// comparing a process cwd (which lsof reports symlink-resolved) against a
+// configured directory (which may contain symlink components). Falls back to
+// filepath.Abs when EvalSymlinks fails (e.g. the path no longer exists), so a
+// vanished dir still compares by its absolute form rather than silently
+// mismatching.
+func resolvePathForCompare(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	abs, _ := filepath.Abs(p)
+	return abs
 }
 
 // isProcessAlive checks if a process with the given PID is running.

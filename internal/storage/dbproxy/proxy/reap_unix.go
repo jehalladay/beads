@@ -56,16 +56,31 @@ func defaultDoltProcessInDir(pid int, dir string) bool {
 	if err != nil {
 		return false
 	}
-	absDir, _ := filepath.Abs(dir)
+	// Resolve symlinks on the target: lsof reports the kernel-RESOLVED cwd
+	// (symlink-free), so a rootDir that is/contains a symlink (e.g. the /fsx
+	// .dolt-data symlink) would otherwise never match and the orphaned dolt
+	// would be skipped — recurring the pu8c port-wedge (beads-g4f0).
+	resolvedDir := resolvePathForCompare(dir)
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.HasPrefix(line, "n") {
-			absCwd, _ := filepath.Abs(strings.TrimSpace(line[1:]))
-			if absCwd == absDir {
+			if resolvePathForCompare(strings.TrimSpace(line[1:])) == resolvedDir {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// resolvePathForCompare returns the fully symlink-resolved absolute path for
+// comparing a process cwd (lsof reports it symlink-resolved) against a
+// configured directory (which may contain symlink components). Falls back to
+// filepath.Abs when EvalSymlinks fails (e.g. the path no longer exists).
+func resolvePathForCompare(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	abs, _ := filepath.Abs(p)
+	return abs
 }
 
 // defaultStopProcess sends SIGTERM, polls for exit up to timeout, then SIGKILL.
