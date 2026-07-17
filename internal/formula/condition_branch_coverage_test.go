@@ -51,6 +51,40 @@ func TestCompare_UnknownOperator(t *testing.T) {
 	}
 }
 
+// TestCompare_BoolRelationalOperators is the beads-iffq guard: relational
+// operators on a bool actual must be evaluated as an actual ordering comparison
+// (on the bool's "true"/"false" string form), NOT silently degraded to ==. Prior
+// to the fix, every non-!= operator hit the default `== expected` path, so e.g.
+// `true > "false"` returned false (true==false) with a reason string that
+// falsely claimed the `>` comparison.
+func TestCompare_BoolRelationalOperators(t *testing.T) {
+	// String ordering: "false" < "true".
+	cases := []struct {
+		actual   bool
+		op       Operator
+		expected string
+		want     bool
+	}{
+		// "true" > "false" is true (lexical); the pre-fix bug returned true=="false"=false.
+		{true, OpGreater, "false", true},
+		{true, OpGreaterEqual, "false", true},
+		{true, OpGreaterEqual, "true", true},
+		// "false" < "true" is true; pre-fix returned false=="true"=false.
+		{false, OpLess, "true", true},
+		{false, OpLessEqual, "true", true},
+		{false, OpLessEqual, "false", true},
+		// "true" < "false" is false (correctly), and the pre-fix == also gave false —
+		// so this one only fails if the fix breaks the true case; keep for completeness.
+		{true, OpLess, "false", false},
+	}
+	for _, c := range cases {
+		got, reason := compare(c.actual, c.op, c.expected)
+		if got != c.want {
+			t.Errorf("compare(%v, %s, %q) = %v (%s), want %v", c.actual, c.op, c.expected, got, reason, c.want)
+		}
+	}
+}
+
 // TestCompareFloat_OperatorMatrix covers every operator arm of compareFloat via
 // numeric comparisons routed through compare (both operands parse as floats).
 func TestCompareFloat_OperatorMatrix(t *testing.T) {
