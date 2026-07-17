@@ -560,6 +560,33 @@ func (u *issueUseCaseImpl) CreateWisp(ctx context.Context, params CreateIssuePar
 	return u.create(ctx, params, actor, true)
 }
 
+// createValidationStatuses returns the custom status NAMES to allow during
+// create validation (in addition to built-ins), mirroring the direct path's
+// GetCustomStatusesTx. A config read error falls back to built-ins only —
+// validation still runs, it just won't recognize custom statuses (the same
+// fail-safe posture as validating with nil).
+func (u *issueUseCaseImpl) createValidationStatuses(ctx context.Context) []string {
+	custom, err := u.cfgRepo.GetCustomStatuses(ctx)
+	if err != nil || len(custom) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(custom))
+	for _, cs := range custom {
+		names = append(names, cs.Name)
+	}
+	return names
+}
+
+// createValidationTypes returns the custom issue types to allow during create
+// validation, mirroring the direct path. Falls back to built-ins on error.
+func (u *issueUseCaseImpl) createValidationTypes(ctx context.Context) []string {
+	customTypes, err := u.cfgRepo.GetCustomTypes(ctx)
+	if err != nil {
+		return nil
+	}
+	return customTypes
+}
+
 func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams, actor string, useWisp bool) (CreateIssueResult, error) {
 	if params.Issue == nil {
 		return CreateIssueResult{}, fmt.Errorf("create: Issue must not be nil")
@@ -599,6 +626,28 @@ func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams,
 		if parent, err := u.GetIssue(ctx, params.DiscoveredFromParent); err == nil && parent.SourceRepo != "" {
 			issue.SourceRepo = parent.SourceRepo
 		}
+	}
+
+	// Enforce the same field invariants the direct/embedded create path applies
+	// via PrepareIssueForInsert → Issue.ValidateWithCustom (beads-83h3). The
+	// proxied-server create reaches this use-case but previously skipped
+	// validation, so it could persist a malformed issue (title >500, invalid
+	// status, negative estimated_minutes, ephemeral+no_history both set,
+	// inconsistent closed_at) that the direct path rejects. Normalize closed_at
+	// for closed issues first — the direct path does this before validating, so
+	// a legitimate `--status closed` create must not trip the closed_at
+	// invariant. (Metadata-schema validation is tracked separately as
+	// beads-lsbu; this bead covers the Issue.Validate invariants.)
+	if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
+		maxTime := issue.CreatedAt
+		if issue.UpdatedAt.After(maxTime) {
+			maxTime = issue.UpdatedAt
+		}
+		closedAt := maxTime.Add(time.Second)
+		issue.ClosedAt = &closedAt
+	}
+	if err := issue.ValidateWithCustom(u.createValidationStatuses(ctx), u.createValidationTypes(ctx)); err != nil {
+		return CreateIssueResult{}, fmt.Errorf("create: validation failed for %s: %w", issue.ID, err)
 	}
 
 	insertOpts := InsertIssueOpts{UseWispsTable: useWisp}
