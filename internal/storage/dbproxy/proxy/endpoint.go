@@ -156,9 +156,14 @@ func spawnAndHandoff(rootDir string, opts OpenOpts, deadline time.Time, lock *ut
 
 	// Probe the proxy-child flock: if held, a previous proxy-child is still
 	// alive and has an orphaned dolt sql-server we must kill before
-	// respawning. If we can acquire it, no proxy-child is running — release
-	// immediately so the child we are about to spawn can take it.
+	// respawning. If we can acquire it, no proxy-child is running — but a dolt
+	// sql-server it detached (Setsid) may have been orphaned to init when the
+	// proxy-child was SIGKILLed/OOM-killed, and it is still holding the port.
+	// Reap any such orphan (identified by CWD==rootDir) before releasing the
+	// flock, or the child we spawn next cannot bind and the workspace wedges
+	// (beads-pu8c). Then release so that child can take the flock.
 	if l, err := util.TryLock(filepath.Join(rootDir, server.LockFileName)); err == nil {
+		reapOrphanedDoltServers(rootDir)
 		l.Unlock()
 	} else if lockfile.IsLocked(err) {
 		if pf, perr := pidfile.Read(rootDir, server.PIDFileName); perr == nil && pf != nil {
