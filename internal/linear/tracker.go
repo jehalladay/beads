@@ -583,15 +583,33 @@ func (t *Tracker) clientForExternalID(ctx context.Context, externalID string) *C
 	}
 
 	// Try to fetch the issue from each team's client to find the owner.
+	// Distinguish a genuine not-found (clean empty result) from a TRANSIENT
+	// error: if a probe errors (5xx/network), the issue's ownership is UNKNOWN
+	// for that team, not "absent". Falling back to primaryClient() on an
+	// unknown would misroute the update to the wrong team (and resolve stateId
+	// against the wrong workflow) — beads-x498. So we only fall back when every
+	// team was probed CLEANLY and none owned the issue.
+	sawTransientError := false
 	for _, teamID := range t.teamIDs {
 		client := t.clients[teamID]
 		if client == nil {
 			continue
 		}
 		li, err := client.FetchIssueByIdentifier(ctx, externalID)
-		if err == nil && li != nil {
+		if err != nil {
+			sawTransientError = true
+			continue
+		}
+		if li != nil {
 			return client
 		}
+	}
+
+	// Ownership genuinely undetermined because a probe failed transiently —
+	// return nil so the caller surfaces a clean error rather than silently
+	// updating the wrong team's issue.
+	if sawTransientError {
+		return nil
 	}
 
 	return t.primaryClient()
