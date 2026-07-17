@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Month/year relative durations no longer skew on month-end dates
+  (beads-aysw).** `ParseCompactDuration` used `time.AddDate` for `m`/`y` units,
+  which normalizes an impossible date forward — e.g. `Mar 31 - 1m` became
+  `Mar 3` (not `Feb 28`) and `May 31 - 1m` became `May 1` — silently skewing a
+  month/year-relative query threshold (`bd query updated>1m`) when run on the
+  29th-31st. Month/year arithmetic now clamps to the target month's last valid
+  day (`Mar 31 - 1m` → `Feb 28`, leap-aware). Day/week units and mid-month dates
+  are unchanged.
+
+### Fixed
+
 - **`bd ready --assignee` is now case-insensitive (beads-xl4k).** The ready-work
   query matched assignee case-sensitively (`assignee = ?`), so
   `bd ready --assignee Alice` missed an issue assigned `alice` — inconsistent
