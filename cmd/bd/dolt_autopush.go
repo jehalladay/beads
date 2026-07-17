@@ -66,6 +66,26 @@ func savePushState(ps *pushState) error {
 	return atomicWriteFile(path, data)
 }
 
+// loadPushStateTolerant loads the push state but never lets a bad state file
+// wedge auto-push. A missing file yields nil (fresh). A corrupt/unparseable
+// file ALSO yields nil (beads-y0cx) — the caller then runs change-detection and
+// the next push rewrites a clean state via savePushState, exactly like the
+// post-failure recovery path. Returning early on a corrupt file would silently
+// disable auto-push on every subsequent command with no self-heal, letting
+// local Dolt commits diverge from the remote unnoticed. The corruption is
+// surfaced once on stderr (not just debug) so it is not fully silent.
+func loadPushStateTolerant() *pushState {
+	ps, err := loadPushState()
+	if err != nil {
+		debug.Logf("dolt auto-push: ignoring unreadable push state (will reset): %v\n", err)
+		if !isQuiet() && !jsonOutput {
+			fmt.Fprintf(os.Stderr, "Warning: dolt auto-push: push-state.json unreadable (%v); resetting it\n", err)
+		}
+		return nil
+	}
+	return ps
+}
+
 // autoPushTimeout bounds the st.Push() call that shells out to git fetch,
 // which blocks indefinitely when the remote is unreachable (GH#3370).
 const autoPushTimeout = 30 * time.Second
@@ -121,11 +141,7 @@ func maybeAutoPush(ctx context.Context) {
 
 	// Load local push state (file-based, not in Dolt metadata table).
 	// This avoids merge conflicts on multi-machine setups (GH#2466).
-	ps, err := loadPushState()
-	if err != nil {
-		debug.Logf("dolt auto-push: failed to load push state: %v\n", err)
-		return
-	}
+	ps := loadPushStateTolerant()
 
 	// Debounce: skip if we pushed recently
 	interval := config.GetDuration("dolt.auto-push-interval")

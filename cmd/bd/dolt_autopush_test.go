@@ -265,3 +265,44 @@ func TestLoadPushState_CorruptJSON(t *testing.T) {
 		t.Error("loadPushState with corrupt JSON: expected error, got nil")
 	}
 }
+
+// loadPushStateTolerant must NEVER surface a corrupt-file error to the caller
+// (beads-y0cx): a corrupt push-state.json returns nil (treated as fresh) so
+// auto-push self-heals instead of being permanently disabled.
+func TestLoadPushStateTolerant_CorruptResetsToNil(t *testing.T) {
+	tmp := t.TempDir()
+	beadsDir := filepath.Join(tmp, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BEADS_DIR", beadsDir)
+
+	// Corrupt file → tolerant loader returns nil (not an error, not a bail).
+	if err := os.WriteFile(filepath.Join(beadsDir, "push-state.json"), []byte(`{ broken`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ps := loadPushStateTolerant(); ps != nil {
+		t.Errorf("loadPushStateTolerant(corrupt) = %+v, want nil", ps)
+	}
+
+	// A valid file still round-trips through the tolerant loader.
+	want := &pushState{LastPush: "2026-03-09T12:00:00Z", LastCommit: "abc123"}
+	if err := savePushState(want); err != nil {
+		t.Fatalf("savePushState: %v", err)
+	}
+	got := loadPushStateTolerant()
+	if got == nil || got.LastPush != want.LastPush || got.LastCommit != want.LastCommit {
+		t.Errorf("loadPushStateTolerant(valid) = %+v, want %+v", got, want)
+	}
+
+	// Missing file → nil (fresh).
+	if err := os.Remove(filepath.Join(beadsDir, "push-state.json")); err != nil {
+		t.Fatal(err)
+	}
+	if ps := loadPushStateTolerant(); ps != nil {
+		t.Errorf("loadPushStateTolerant(missing) = %+v, want nil", ps)
+	}
+}
