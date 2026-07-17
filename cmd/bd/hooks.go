@@ -1522,7 +1522,7 @@ func warnJSONLWithoutDoltRemote(reason string) {
 	fmt.Fprintf(os.Stderr, "beads: %s warning: no Dolt remote configured.\n", reason)
 	fmt.Fprintln(os.Stderr, "beads: .beads/issues.jsonl is an export, not cross-machine sync or source of truth.")
 	if originURL, err := gitOriginGetURL(); err == nil && originURL != "" {
-		fmt.Fprintf(os.Stderr, "beads: repair: bd dolt remote add origin %s && bd dolt push\n", normalizeRemoteURL(originURL))
+		fmt.Fprintf(os.Stderr, "beads: repair: bd dolt remote add origin %s && bd dolt push\n", redactURLCredentials(normalizeRemoteURL(originURL)))
 		return
 	}
 	fmt.Fprintln(os.Stderr, "beads: repair: add a git origin, then run 'bd dolt remote add origin <git-remote-url>' and 'bd dolt push'.")

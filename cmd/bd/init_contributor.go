@@ -85,7 +85,7 @@ func runContributorWizard(ctx context.Context, store storage.DoltStorage) error 
 	hasPushAccess, originURL := checkPushAccess()
 
 	if hasPushAccess {
-		fmt.Printf("%s You have push access to origin (%s)\n", ui.RenderPass("✓"), originURL)
+		fmt.Printf("%s You have push access to origin (%s)\n", ui.RenderPass("✓"), redactURLCredentials(originURL))
 		fmt.Printf("  %s You can commit directly to this repository.\n", ui.RenderWarn("⚠"))
 		fmt.Println()
 		fmt.Print("Do you want to use a separate planning repo anyway? [Y/n]: ")
@@ -103,7 +103,7 @@ func runContributorWizard(ctx context.Context, store storage.DoltStorage) error 
 			return nil
 		}
 	} else {
-		fmt.Printf("%s Read-only access to origin (%s)\n", ui.RenderPass("✓"), originURL)
+		fmt.Printf("%s Read-only access to origin (%s)\n", ui.RenderPass("✓"), redactURLCredentials(originURL))
 		fmt.Println("  Planning repo recommended to keep experimental work separate.")
 	}
 
