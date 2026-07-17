@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   29th-31st. Month/year arithmetic now clamps to the target month's last valid
   day (`Mar 31 - 1m` → `Feb 28`, leap-aware). Day/week units and mid-month dates
   are unchanged.
+- **`SearchIssues` now honors `filter.Offset` (beads-cand).** The embedded search
+  path applied `LIMIT` but ignored `Offset` entirely, so paginated `SearchIssues`
+  calls silently returned page 1 regardless of the requested offset. Offset is
+  now applied once over the merged issues+wisps result (each half over-fetches
+  `Offset+Limit` rows so the offset window is complete), with offset-past-end
+  yielding an empty page. Unblocks correct pagination for callers.
 
 ### Fixed
 
