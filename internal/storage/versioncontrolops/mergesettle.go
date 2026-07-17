@@ -488,10 +488,19 @@ func dependencyConflictsAreAuditOnly(ctx context.Context, db DBConn) (bool, erro
 		if ourIssue.Valid != theirIssue.Valid || ourIssue.String != theirIssue.String {
 			return false, nil
 		}
-		// ...and the same resolved target.
-		ourTarget, ourOK := resolveConflictDepTarget(ourDepIssue, ourDepWisp, ourDepExt)
-		theirTarget, theirOK := resolveConflictDepTarget(theirDepIssue, theirDepWisp, theirDepExt)
-		if ourOK != theirOK || ourTarget != theirTarget {
+		// ...and the same target in the SAME target column. Compare the three
+		// typed target columns individually rather than via a
+		// COALESCE(issue,wisp,external) collapse: the collapse maps
+		// (depends_on_issue_id=X) and (depends_on_wisp_id=X) to the same value,
+		// so a genuinely different edge whose target moved between the issue and
+		// wisp columns (same id string) would be misread as "same target" and
+		// auto-resolved with --theirs, silently dropping one edge. This is latent
+		// today — issue and wisp IDs are disjoint namespaces (wisps carry a
+		// "-wisp-" infix), so X can't be both — but comparing columns keeps the
+		// audit-only gate correct if that ID scheme ever changes (beads-uekw).
+		if !nullStringsEqual(ourDepIssue, theirDepIssue) ||
+			!nullStringsEqual(ourDepWisp, theirDepWisp) ||
+			!nullStringsEqual(ourDepExt, theirDepExt) {
 			return false, nil
 		}
 		// A differing type is a real semantic conflict.
@@ -712,20 +721,16 @@ func resolveSchemaMigrationsVintageConflicts(ctx context.Context, db DBConn) err
 	return nil
 }
 
-// resolveConflictDepTarget returns the single non-null dependency target from a
-// conflict row's three typed target columns, following the same precedence as
-// COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external).
-func resolveConflictDepTarget(issueTarget, wispTarget, external sql.NullString) (string, bool) {
-	switch {
-	case issueTarget.Valid:
-		return issueTarget.String, true
-	case wispTarget.Valid:
-		return wispTarget.String, true
-	case external.Valid:
-		return external.String, true
-	default:
-		return "", false
+// nullStringsEqual reports whether two nullable columns hold the same value:
+// both NULL, or both non-NULL with equal strings. Used to compare a dependency
+// conflict row's typed target columns (issue/wisp/external) individually so a
+// target that moved between columns is never mistaken for an unchanged edge
+// (beads-uekw).
+func nullStringsEqual(a, b sql.NullString) bool {
+	if a.Valid != b.Valid {
+		return false
 	}
+	return !a.Valid || a.String == b.String
 }
 
 // fkCascadeRepairDeletes maps each synced child table holding a FOREIGN KEY to
