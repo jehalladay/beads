@@ -258,6 +258,34 @@ func TestValidateRange(t *testing.T) {
 			expr:    "1..@10",
 			wantErr: true,
 		},
+		// beads-01pb: these LEX (tokenize) but do not PARSE — ValidateRange must
+		// reject them (parse, not just tokenize), matching ParseRange's runtime
+		// behavior, so a malformed range fails at validate time not pour time.
+		{
+			name:    "trailing operator",
+			expr:    "1..2+",
+			wantErr: true,
+		},
+		{
+			name:    "unclosed paren",
+			expr:    "1..(3",
+			wantErr: true,
+		},
+		{
+			name:    "extra close paren",
+			expr:    "1..3)",
+			wantErr: true,
+		},
+		{
+			name:    "leading binary operator",
+			expr:    "1..*3",
+			wantErr: true,
+		},
+		{
+			name:    "two numbers no operator",
+			expr:    "1..2 3",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
