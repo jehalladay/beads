@@ -225,6 +225,9 @@ func gatherUpdateInput(ctx context.Context, cmd *cobra.Command) *updateInput {
 		if !json.Valid([]byte(metadataJSON)) {
 			FatalErrorRespectJSON("invalid JSON in --metadata: must be valid JSON")
 		}
+		if !metadataIsJSONObject(metadataJSON) {
+			FatalErrorRespectJSON(`--metadata must be a JSON object, e.g. {"key":"value"} (arrays and scalars can't be edited by --set-metadata/--unset-metadata)`)
+		}
 		in.mergeMetadataIn = json.RawMessage(metadataJSON)
 	}
 	setMetadataFlags, _ := cmd.Flags().GetStringArray("set-metadata")
