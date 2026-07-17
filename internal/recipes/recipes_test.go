@@ -193,6 +193,63 @@ func TestContentForPathCopilot(t *testing.T) {
 	}
 }
 
+func TestContentForPath_TypeFile(t *testing.T) {
+	// TypeFile with explicit Content returns that content verbatim.
+	custom := Recipe{Name: "custom", Type: TypeFile, Content: "hello world"}
+	got, err := ContentForPath(custom, "AGENTS.md")
+	if err != nil {
+		t.Fatalf("ContentForPath(custom): %v", err)
+	}
+	if got != "hello world" {
+		t.Fatalf("got %q, want %q", got, "hello world")
+	}
+
+	// TypeFile with no Content falls back to the shared Template.
+	fallback := Recipe{Name: "fallback", Type: TypeFile}
+	got, err = ContentForPath(fallback, "AGENTS.md")
+	if err != nil {
+		t.Fatalf("ContentForPath(fallback): %v", err)
+	}
+	if got != Template {
+		t.Fatalf("empty-Content TypeFile should return Template, got %q", got)
+	}
+}
+
+func TestContentForPath_TypeMultiFileErrors(t *testing.T) {
+	// No Contents map => error.
+	empty := Recipe{Name: "empty", Type: TypeMultiFile}
+	if _, err := ContentForPath(empty, "any/path"); err == nil {
+		t.Fatal("expected error for TypeMultiFile with no Contents, got nil")
+	}
+
+	// Contents present but the requested path is absent => error.
+	partial := Recipe{
+		Name:     "partial",
+		Type:     TypeMultiFile,
+		Contents: map[string]string{"a.md": "A"},
+	}
+	got, err := ContentForPath(partial, "a.md")
+	if err != nil {
+		t.Fatalf("ContentForPath(partial, a.md): %v", err)
+	}
+	if got != "A" {
+		t.Fatalf("got %q, want %q", got, "A")
+	}
+	if _, err := ContentForPath(partial, "missing.md"); err == nil {
+		t.Fatal("expected error for missing path in Contents, got nil")
+	}
+}
+
+func TestContentForPath_UnsupportedType(t *testing.T) {
+	// Types without a ContentForPath branch (hooks, section, unknown) error out.
+	for _, typ := range []RecipeType{TypeHooks, TypeSection, RecipeType("bogus")} {
+		r := Recipe{Name: "r", Type: typ}
+		if _, err := ContentForPath(r, "path"); err == nil {
+			t.Errorf("expected error for unsupported type %q, got nil", typ)
+		}
+	}
+}
+
 func containsAll(s string, substrs ...string) bool {
 	for _, sub := range substrs {
 		found := false
