@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd ready --assignee` is now case-insensitive (beads-xl4k).** The ready-work
+  query matched assignee case-sensitively (`assignee = ?`), so
+  `bd ready --assignee Alice` missed an issue assigned `alice` — inconsistent
+  with `bd list`/`bd query --assignee` (and the predicate path). `BuildReadyWorkWhere`
+  now `LOWER()`s both sides, closing the consistency gap.
+
+### Fixed
+
 - **`bd query` date operators are now consistent (beads-76y9).** The `<`, `>`,
   and `>=` operators on date fields (`created`, `updated`, `closed`, `started`)
   previously compared against the raw parsed instant while `=` and `<=` snapped
