@@ -182,14 +182,20 @@ func runUnrelate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Remove relates-to dependency in both directions
-	// Per Decision 004, relates-to links are now stored in dependencies table
-	// Remove id1 -> id2
-	if err := store.RemoveDependency(ctx, id1, id2, actor); err != nil {
-		return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id1, id2, err)
-	}
-	// Remove id2 -> id1 (bidirectional)
-	if err := store.RemoveDependency(ctx, id2, id1, actor); err != nil {
-		return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id2, id1, err)
+	// Per Decision 004, relates-to links are now stored in dependencies table.
+	// Both directions are removed in ONE transaction so unrelate is atomic —
+	// a mid-op failure can never leave a half relation where one direction is
+	// removed but the reciprocal lingers. (beads-oyy1, mirror of relate)
+	if err := store.RunInTransaction(ctx, fmt.Sprintf("bd: unrelate %s <-> %s", id1, id2), func(tx storage.Transaction) error {
+		if err := tx.RemoveDependency(ctx, id1, id2, actor); err != nil {
+			return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id1, id2, err)
+		}
+		if err := tx.RemoveDependency(ctx, id2, id1, actor); err != nil {
+			return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id2, id1, err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	if jsonOutput {
