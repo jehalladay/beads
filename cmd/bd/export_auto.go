@@ -444,6 +444,14 @@ func exportToFile(ctx context.Context, path string, includeMemories bool) (issue
 		return issueCount, memoryCount, fmt.Errorf("failed to finalize export: %w", err)
 	}
 
+	// Opportunistically sweep crash-orphaned atomicfile temps from the export
+	// directory (beads-qoda). A process crash between Create and Close leaves a
+	// ".~<base>.<rand>" temp that nothing else removes. The 24h age gate is
+	// conservative — far longer than any real export — so a concurrent live
+	// write is never mistaken for an orphan. Best-effort: a sweep failure must
+	// never fail an otherwise-successful export.
+	_, _ = atomicfile.SweepStale(filepath.Dir(path), 24*time.Hour)
+
 	return issueCount, memoryCount, nil
 }
 
