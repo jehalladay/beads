@@ -313,6 +313,12 @@ create, update, show, or close operation).`,
 
 		// Get claim flag
 		claimFlag, _ := cmd.Flags().GetBool("claim")
+		// --force overrides the close-time integrity guards (blocked-by-open,
+		// epic-with-open-children) when `update --status closed` reaches the
+		// same terminal state `bd close` does. Mirrors `bd close --force`
+		// (beads-zgku): both CLI verbs must enforce, and be able to override,
+		// the same close invariants.
+		forceFlag, _ := cmd.Flags().GetBool("force")
 
 		if len(updates) == 0 && !claimFlag {
 			fmt.Println("No updates specified")
@@ -383,6 +389,38 @@ create, update, show, or close operation).`,
 				reportItemError("%s", err)
 				closeIfUnmutated(result)
 				continue
+			}
+
+			// Close-integrity guards (beads-zgku): `update --status closed`
+			// reaches the same terminal state as `bd close`, so it must enforce
+			// the same close-time invariants that live at the CLI layer in
+			// close.go — the epic-with-open-children guard (close.go:145) and
+			// the blocked-by-open-issues guard (close.go:166). Without this,
+			// `bd update --status closed` silently bypasses both. Only runs on a
+			// real open->closed transition (already-closed is a no-op close) and
+			// is overridable with --force, matching `bd close --force`.
+			if newStatus, ok := updates["status"].(string); ok && newStatus == "closed" &&
+				!forceFlag && issue.Status != types.StatusClosed {
+				// Epic close guard: prevent closing epics with open children.
+				if issue.IssueType == types.TypeEpic {
+					if openChildren := countEpicOpenChildren(ctx, issueStore, result.ResolvedID); openChildren > 0 {
+						reportItemError("cannot close epic %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
+						closeIfUnmutated(result)
+						continue
+					}
+				}
+				// Blocked close guard: prevent closing an issue with open blockers.
+				blocked, blockers, err := issueStore.IsBlocked(ctx, result.ResolvedID)
+				if err != nil {
+					reportItemError("Error checking blockers for %s: %v", id, err)
+					closeIfUnmutated(result)
+					continue
+				}
+				if blocked && len(blockers) > 0 {
+					reportItemError("cannot close %s: blocked by open issues %v (use --force to override)", id, blockers)
+					closeIfUnmutated(result)
+					continue
+				}
 			}
 
 			// Handle claim operation atomically using compare-and-swap semantics
@@ -834,6 +872,7 @@ func init() {
 	updateCmd.Flags().StringSlice("set-labels", nil, "Set labels, replacing all existing (repeatable)")
 	updateCmd.Flags().String("parent", "", "New parent issue ID (reparents the issue, use empty string to remove parent)")
 	updateCmd.Flags().Bool("claim", false, "Atomically claim the issue (sets assignee to you, status to in_progress; idempotent if already claimed by you)")
+	updateCmd.Flags().Bool("force", false, "Override close-time integrity guards when setting --status closed (blocked-by-open, epic-with-open-children); mirrors 'bd close --force'")
 	updateCmd.Flags().String("session", "", "Claude Code session ID for status=closed (or set CLAUDE_SESSION_ID env var)")
 	// Time-based scheduling flags (GH#820)
 	// Examples:

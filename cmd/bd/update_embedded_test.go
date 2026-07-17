@@ -1187,3 +1187,108 @@ func TestEmbeddedUpdateConcurrent(t *testing.T) {
 	t.Logf("created and updated %d issues across %d/%d successful workers, %d in DB",
 		len(allIDs), successes, numWorkers, stats.TotalIssues)
 }
+
+// TestEmbeddedUpdateStatusCloseGuards verifies that `bd update --status closed`
+// enforces the same close-time integrity guards that `bd close` does, and can
+// override them the same way with --force (beads-zgku). Before the fix, the
+// update-path status write reached the terminal `closed` state at the CLI layer
+// without ever hitting the blocked-close (close.go:166) or epic-open-children
+// (close.go:145) guards, so a blocked or epic-parent issue could be silently
+// closed with rc=0 and no --force — a guard-parity bypass with `bd close`.
+func TestEmbeddedUpdateStatusCloseGuards(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "tg")
+
+	// Blocked issue: `update --status closed` must refuse without --force.
+	t.Run("update_closed_blocked_refuses_without_force", func(t *testing.T) {
+		blocker := bdCreate(t, bd, dir, "Update blocker guard", "--type", "task")
+		blocked := bdCreate(t, bd, dir, "Update blocked guard", "--type", "task")
+		bdDepAdd(t, bd, dir, blocked.ID, blocker.ID)
+
+		// This is the beads-zgku regression: pre-fix it exited rc=0 and closed.
+		out := bdUpdateFail(t, bd, dir, blocked.ID, "--status", "closed")
+		if !strings.Contains(out, "blocked by open issues") {
+			t.Errorf("expected blocked-close guard message, got:\n%s", out)
+		}
+		got := bdShow(t, bd, dir, blocked.ID)
+		if got.Status == types.StatusClosed {
+			t.Error("expected blocked issue to remain open on `update --status closed` without --force")
+		}
+	})
+
+	// Blocked issue with --force closes, matching `bd close --force`.
+	t.Run("update_closed_blocked_with_force", func(t *testing.T) {
+		blocker := bdCreate(t, bd, dir, "Update blocker force", "--type", "task")
+		blocked := bdCreate(t, bd, dir, "Update blocked force", "--type", "task")
+		bdDepAdd(t, bd, dir, blocked.ID, blocker.ID)
+
+		bdUpdate(t, bd, dir, blocked.ID, "--status", "closed", "--force")
+		got := bdShow(t, bd, dir, blocked.ID)
+		if got.Status != types.StatusClosed {
+			t.Errorf("expected closed with --force, got %s", got.Status)
+		}
+	})
+
+	// Epic with open children: `update --status closed` must refuse without --force.
+	t.Run("update_closed_epic_open_children_refuses", func(t *testing.T) {
+		epic := bdCreate(t, bd, dir, "Update epic guard", "--type", "epic")
+		child := bdCreate(t, bd, dir, "Update epic child", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, epic.ID, "--type", "parent-child")
+
+		out := bdUpdateFail(t, bd, dir, epic.ID, "--status", "closed")
+		if !strings.Contains(out, "open child issue") {
+			t.Errorf("expected epic-open-children guard message, got:\n%s", out)
+		}
+		got := bdShow(t, bd, dir, epic.ID)
+		if got.Status == types.StatusClosed {
+			t.Error("expected epic with open children to remain open on `update --status closed` without --force")
+		}
+		// The child must not be orphaned closed either.
+		gotChild := bdShow(t, bd, dir, child.ID)
+		if gotChild.Status == types.StatusClosed {
+			t.Error("child should remain open")
+		}
+	})
+
+	// Epic with open children + --force closes.
+	t.Run("update_closed_epic_open_children_with_force", func(t *testing.T) {
+		epic := bdCreate(t, bd, dir, "Update epic force", "--type", "epic")
+		child := bdCreate(t, bd, dir, "Update epic child force", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, epic.ID, "--type", "parent-child")
+
+		bdUpdate(t, bd, dir, epic.ID, "--status", "closed", "--force")
+		got := bdShow(t, bd, dir, epic.ID)
+		if got.Status != types.StatusClosed {
+			t.Errorf("expected epic closed with --force, got %s", got.Status)
+		}
+	})
+
+	// A non-blocked, non-epic issue closes normally via update (no regression).
+	t.Run("update_closed_unblocked_succeeds", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "Update plain close", "--type", "task")
+		bdUpdate(t, bd, dir, issue.ID, "--status", "closed")
+		got := bdShow(t, bd, dir, issue.ID)
+		if got.Status != types.StatusClosed {
+			t.Errorf("expected plain issue closed via update, got %s", got.Status)
+		}
+	})
+
+	// Setting a NON-closed status on a blocked issue is unaffected by the guard.
+	t.Run("update_nonclosed_status_on_blocked_unaffected", func(t *testing.T) {
+		blocker := bdCreate(t, bd, dir, "Blocker np", "--type", "task")
+		blocked := bdCreate(t, bd, dir, "Blocked np", "--type", "task")
+		bdDepAdd(t, bd, dir, blocked.ID, blocker.ID)
+
+		// in_progress is not a close transition — must succeed.
+		bdUpdate(t, bd, dir, blocked.ID, "--status", "in_progress")
+		got := bdShow(t, bd, dir, blocked.ID)
+		if got.Status != types.StatusInProgress {
+			t.Errorf("expected in_progress on blocked issue (not a close), got %s", got.Status)
+		}
+	})
+}
