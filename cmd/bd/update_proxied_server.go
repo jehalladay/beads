@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/steveyegge/beads/internal/audit"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/domain"
@@ -96,6 +97,23 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput) (*ty
 			fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, err)
 		}
 		return nil, false
+	}
+
+	// Audit-log key field changes (survives Dolt GC flatten), mirroring the CLI
+	// update path (cmd/bd/update.go) and the proxied close/reopen handlers. Only
+	// the proxied UPDATE path was missing this, so it alone dropped the
+	// audit-file trail its sibling proxied handlers keep (beads-jffu). Emit only
+	// when the field actually changed to avoid a spurious no-op trail.
+	if updated != nil {
+		if string(updated.Status) != string(current.Status) {
+			audit.LogFieldChange(id, "status", string(current.Status), string(updated.Status), actor, "")
+		}
+		if updated.Assignee != current.Assignee {
+			audit.LogFieldChange(id, "assignee", current.Assignee, updated.Assignee, actor, "")
+		}
+		if updated.Priority != current.Priority {
+			audit.LogFieldChange(id, "priority", fmt.Sprintf("%d", current.Priority), fmt.Sprintf("%d", updated.Priority), actor, "")
+		}
 	}
 
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: update %s", id)); err != nil && !isDoltNothingToCommit(err) {
