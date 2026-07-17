@@ -162,6 +162,40 @@ func TestImportIssuesCoreReportsStaleSkippedIDs(t *testing.T) {
 	}
 }
 
+// beads-4sxm: an import batch containing two records with the SAME id collapses
+// to one row (the upsert is first-wins), so Created/ImportedIDs must count the
+// DISTINCT id once — not once per input occurrence. Over-counting reports
+// "Imported 2" when a single row landed, giving scripts a confidently-wrong
+// created count.
+func TestImportIssuesCoreDedupsIntraBatchDuplicateIDs(t *testing.T) {
+	// No existing rows: GetIssuesByIDs returns empty, so both are pure creates.
+	store := &fakeImportIssueLookupStore{}
+
+	result, err := importIssuesCore(context.Background(), "", store, []*types.Issue{
+		{ID: "dz-1", Title: "first wins"},
+		{ID: "dz-1", Title: "duplicate id"},
+		{ID: "dz-2", Title: "distinct"},
+	}, ImportOptions{})
+	if err != nil {
+		t.Fatalf("importIssuesCore: %v", err)
+	}
+	// dz-1 (x2) + dz-2 = 3 input records, but only 2 DISTINCT ids => 2 rows.
+	if result.Created != 2 {
+		t.Fatalf("Created = %d, want 2 (distinct ids, not input occurrences)", result.Created)
+	}
+	if len(result.ImportedIDs) != 2 {
+		t.Fatalf("ImportedIDs = %#v, want 2 distinct ids", result.ImportedIDs)
+	}
+	// First-seen order preserved, no duplicate id in the reported list.
+	seen := map[string]int{}
+	for _, id := range result.ImportedIDs {
+		seen[id]++
+	}
+	if seen["dz-1"] != 1 || seen["dz-2"] != 1 {
+		t.Fatalf("ImportedIDs = %#v, want exactly one dz-1 and one dz-2", result.ImportedIDs)
+	}
+}
+
 // bd-6dnrw.9: --allow-stale must bypass the stale guard so deliberately
 // restoring an older snapshot actually writes rows instead of silently
 // no-oping per row.
