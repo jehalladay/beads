@@ -85,6 +85,14 @@ This is useful for agents executing molecules to see which steps can run next.`,
 
 		limit, _ := cmd.Flags().GetInt("limit")
 		assignee, _ := cmd.Flags().GetString("assignee")
+		// beads-sabd: read-side twin of the llzt write-side trim (@7f1b7dae5).
+		// Writes now store trimmed assignees, but the read side matches only
+		// case-insensitively (sqlbuild LOWER(assignee)=LOWER(?)), never trimming,
+		// so a padded `--assignee "  alice  "` builds LOWER(assignee)=LOWER('  alice  ')
+		// -> no match -> silent empty (the exact `bd ready --assignee $GT_ROLE`
+		// never-idle orphaning). TrimSpace (not normalizeAssignee: `none` is a
+		// literal here; --unassigned handles the unassigned case) fixes it.
+		assignee = strings.TrimSpace(assignee)
 		unassigned, _ := cmd.Flags().GetBool("unassigned")
 		sortPolicy, _ := cmd.Flags().GetString("sort")
 		labels, _ := cmd.Flags().GetStringSlice("label")
