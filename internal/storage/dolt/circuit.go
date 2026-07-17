@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/steveyegge/beads/internal/atomicfile"
 )
 
 // Circuit breaker states.
@@ -309,17 +311,19 @@ func (cb *circuitBreaker) readState() circuitState {
 }
 
 // writeState atomically writes the circuit state to the shared file.
-// Uses write-to-temp + rename for atomic updates visible to other processes.
+// Uses atomicfile (write to a UNIQUELY-named temp + fsync + rename) so that
+// concurrent writers on the shared per-host:port:db breaker file never clobber
+// a common temp path and leave a torn JSON behind — a fixed "<file>.tmp" name
+// let two concurrent bd processes overwrite each other's temp mid-write, and
+// the resulting corrupt read fails safe to "closed", silently dropping a live
+// trip during an outage (beads-pwkv). atomicfile also fsyncs the parent dir so
+// the rename is durable (beads-hzr2).
 func (cb *circuitBreaker) writeState(state circuitState) {
 	data, err := json.Marshal(state)
 	if err != nil {
 		return
 	}
-	tmp := cb.filePath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
-		return
-	}
-	_ = os.Rename(tmp, cb.filePath)
+	_ = atomicfile.WriteFile(cb.filePath, data, 0600)
 }
 
 // CleanStaleCircuitBreakerFiles removes stale circuit breaker files.
