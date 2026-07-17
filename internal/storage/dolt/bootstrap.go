@@ -3,6 +3,7 @@ package dolt
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,49 @@ import (
 	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/remotecache"
 )
+
+// redactBootstrapURL removes credentials from a remote URL before it is printed
+// to stderr on a successful bootstrap. remoteURL commonly embeds credentials
+// (sync.remote config or a git origin URL like https://user:token@host/repo),
+// so echoing it raw on success leaks user:token into stderr/logs/CI. This is
+// the storage-layer counterpart to the cmd/bd redaction (beads-enax) and the
+// error-path redaction in versioncontrolops (beads-cc1); it is kept
+// self-contained so it carries no cross-package landing-order dependency.
+func redactBootstrapURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		// A malformed but credential-bearing string must never be echoed raw.
+		return "<redacted-url>"
+	}
+	// url.Parse routes "user:pass@host/path" (no // authority) to an OPAQUE URL
+	// (scheme=user, opaque=pass@host/...) with a nil User, so clearing
+	// parsed.User leaves the secret intact. When there is no proper Host but the
+	// remainder looks like it carries "userinfo@" before the first path
+	// separator, redact wholesale.
+	if parsed.Host == "" && strings.Contains(firstSegment(parsed.Opaque, parsed.Path), "@") {
+		return "<redacted-url>"
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+// firstSegment returns the first non-empty of the given strings up to (but not
+// including) the first '/', used to detect a "userinfo@host" prefix on
+// opaque/schemeless URLs.
+func firstSegment(candidates ...string) string {
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if i := strings.IndexByte(c, '/'); i >= 0 {
+			return c[:i]
+		}
+		return c
+	}
+	return ""
+}
 
 // staleLockAge is the maximum age of a lock file before it's considered stale.
 // Bootstrap operations should complete well within this window.
@@ -76,7 +120,7 @@ func BootstrapFromRemoteWithDB(ctx context.Context, doltDir, remoteURL, database
 		return false, fmt.Errorf("dolt clone failed: %w\nOutput: %s", err, output)
 	}
 
-	fmt.Fprintf(os.Stderr, "Bootstrapped from remote: %s\n", remoteURL)
+	fmt.Fprintf(os.Stderr, "Bootstrapped from remote: %s\n", redactBootstrapURL(remoteURL))
 	return true, nil
 }
 
