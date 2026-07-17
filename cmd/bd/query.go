@@ -150,6 +150,19 @@ Examples:
 			result.Filter.Limit = limit
 		}
 
+		// Non-predicate path: push the requested sort into SQL so the LIMIT
+		// window is selected in the sorted order, not the default priority
+		// order (beads-s4sn). Without this, `--sort created --limit N` returned
+		// the N highest-priority rows merely displayed in created order, not the
+		// N newest. Bare "id" is Go-side only (empty SQL ORDER BY, beads-l4ja),
+		// left to the client-side sortIssues below. The predicate path already
+		// pages ALL candidates then sorts the full set (beads-7hu4), so it does
+		// not rely on the SQL order.
+		if !result.RequiresPredicate && sortBy != "" && sortBy != "id" {
+			result.Filter.SortBy = sortBy
+			result.Filter.SortDesc = reverse
+		}
+
 		if !allFlag && result.Filter.Status == nil && !hasExplicitStatusFilter(node) {
 			result.Filter.ExcludeStatus = append(result.Filter.ExcludeStatus, types.StatusClosed)
 		}
