@@ -41,8 +41,8 @@ Supported fields:
   status            Stored status (open, in_progress, blocked, deferred, closed). Note: dependency-blocked issues stay "open"; use 'bd blocked' to find them
   priority          Priority level (0-4)
   type              Issue type (bug, feature, task, epic, chore, decision)
-  assignee          Assigned user (use "none" for unassigned)
-  owner             Issue owner
+  assignee          Assigned user, e.g. rig/crew/name (use "none" for unassigned)
+  owner             Issue owner, e.g. rig/crew/name or user@host
   label             Issue label (use "none" for unlabeled)
   title             Search in title (contains)
   description       Search in description (contains, "none" for empty)
@@ -59,6 +59,12 @@ Supported fields:
   parent            Parent issue ID
   mol_type          Molecule type (swarm, patrol, work)
 
+Values:
+  Bare values may contain letters, digits, and _ - . : / (so Gas Town
+  addresses like beads/crew/beads_eng_5 parse unquoted). Wrap a value in
+  double quotes if it contains spaces or any other special character,
+  e.g. owner="user@host" or title="hello world".
+
 Date values:
   Relative durations: 7d (7 days ago), 24h (24 hours ago), 2w (2 weeks ago)
   Absolute dates: 2025-01-15, 2025-01-15T10:00:00Z
@@ -71,6 +77,8 @@ Examples:
   bd query "type=bug AND label=urgent"
   bd query "NOT status=closed"
   bd query "assignee=none AND type=task"
+  bd query "assignee=beads/crew/beads_eng_5 AND status=open"
+  bd query "owner=beads/crew/beads_sr_pm"
   bd query "created>30d AND status!=closed"
   bd query "label=frontend OR label=backend"
   bd query "title=authentication AND priority=0"`,

@@ -323,8 +323,11 @@ func isIdentStart(r rune) bool {
 // isIdentChar returns true if r can be part of an identifier.
 // Colons are allowed so that namespaced labels (e.g., gt:merge-request) can
 // be used unquoted in query expressions like "label=gt:merge-request".
+// Slashes are allowed so that Gas Town addresses (rig/crew/name) can be used
+// unquoted in expressions like "assignee=beads/crew/beads_eng_5" — every gt
+// assignee/owner value is a slash-path, so the natural form must parse.
 func isIdentChar(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' || r == '.' || r == ':'
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' || r == '.' || r == ':' || r == '/'
 }
 
 // isDurationSuffix returns true if r is a valid duration suffix.
