@@ -65,7 +65,7 @@ func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID s
 			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
 		defer func() { _ = tx.Rollback() }()
-		if err := issueops.RemoveDependencyInTx(ctx, tx, issueID, dependsOnID); err != nil {
+		if err := issueops.RemoveDependencyInTx(ctx, tx, issueID, dependsOnID, actor); err != nil {
 			return err
 		}
 		return wrapTransactionError("commit remove wisp dependency", tx.Commit())
@@ -77,7 +77,7 @@ func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID s
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := issueops.RemoveDependencyInTx(ctx, tx, issueID, dependsOnID); err != nil {
+	if err := issueops.RemoveDependencyInTx(ctx, tx, issueID, dependsOnID, actor); err != nil {
 		return err
 	}
 

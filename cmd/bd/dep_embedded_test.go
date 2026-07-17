@@ -94,6 +94,48 @@ func bdDepWithInputFail(t *testing.T, bd, dir, input string, args ...string) str
 	return string(out)
 }
 
+// TestEmbeddedDepRecordsHistoryEvents proves beads-yfqn: `bd dep add` and
+// `bd dep remove` record dependency_added/dependency_removed events, so
+// dependency-graph mutations are visible in the audit trail — matching how
+// label/status/close changes record events. Before the fix, dep mutations
+// recorded NO event (the EventDependencyAdded/Removed types had zero writers).
+func TestEmbeddedDepRecordsHistoryEvents(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "de")
+	a := bdCreate(t, bd, dir, "src", "--type", "task")
+	b := bdCreate(t, bd, dir, "target", "--type", "task")
+
+	countDepEvents := func(want string) int {
+		store := openStore(t, beadsDir, "de")
+		evs, err := store.GetEvents(t.Context(), a.ID, 0)
+		if err != nil {
+			t.Fatalf("GetEvents(%s): %v", a.ID, err)
+		}
+		n := 0
+		for _, e := range evs {
+			if string(e.EventType) == want {
+				n++
+			}
+		}
+		return n
+	}
+
+	bdDep(t, bd, dir, "add", a.ID, b.ID)
+	if got := countDepEvents("dependency_added"); got != 1 {
+		t.Errorf("after dep add: dependency_added events = %d, want 1 (beads-yfqn: dep mutations must be in history)", got)
+	}
+
+	bdDep(t, bd, dir, "remove", a.ID, b.ID)
+	if got := countDepEvents("dependency_removed"); got != 1 {
+		t.Errorf("after dep remove: dependency_removed events = %d, want 1 (beads-yfqn)", got)
+	}
+}
+
 func TestEmbeddedDep(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")

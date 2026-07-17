@@ -101,6 +101,16 @@ type AddDependencyOpts struct {
 //
 // The caller is responsible for transaction lifecycle, dolt commits, and
 // any cache invalidation.
+// recordDependencyEventInTx writes a dependency_added/removed event into the
+// source issue's event table (events or wisp_events) so dependency-graph
+// mutations appear in `bd history`, matching how label/status/close changes
+// record events in the shared core (beads-yfqn). srcIsWisp selects the wisp
+// event table. The human-readable description goes in new_value.
+func recordDependencyEventInTx(ctx context.Context, tx DBTX, srcIsWisp bool, issueID string, eventType types.EventType, actor, description string) error {
+	_, _, eventTable, _ := WispTableRouting(srcIsWisp)
+	return RecordEventInTable(ctx, tx, eventTable, issueID, eventType, actor, description)
+}
+
 func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, actor string, opts AddDependencyOpts) error {
 	// Auto-detect source routing if not provided.
 	sourceTable := opts.SourceTable
@@ -218,6 +228,17 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 		VALUES (?, ?, ?, ?, NOW(), ?, ?, ?)
 	`, writeTable, targetCol), depid.New(dep.IssueID, dep.DependsOnID), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
 		return fmt.Errorf("failed to add dependency: %w", err)
+	}
+
+	// Record a dependency_added event so graph mutations are visible in
+	// `bd history` (beads-yfqn). The event lives in the SOURCE issue's event
+	// table (a dep is an attribute of its source), matching how label/status
+	// changes record in the shared core. writeTable is the source dep table, so
+	// its sibling event table is wisp_events iff writeTable is wisp_dependencies.
+	if err := recordDependencyEventInTx(ctx, tx, writeTable == "wisp_dependencies",
+		dep.IssueID, types.EventDependencyAdded, actor,
+		fmt.Sprintf("Added dependency: %s %s %s", dep.IssueID, dep.Type, dep.DependsOnID)); err != nil {
+		return fmt.Errorf("add dependency: record event: %w", err)
 	}
 
 	srcIsWisp := writeTable == "wisp_dependencies"
@@ -702,7 +723,7 @@ func checkRenameTargetCollision(ctx context.Context, tx *sql.Tx, table, typedCol
 // source issue is an active wisp.
 //
 //nolint:gosec // G201: depTable from WispTableRouting (hardcoded constants)
-func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID string) error {
+func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID, actor string) error {
 	isWisp := IsActiveWispInTx(ctx, tx, issueID)
 	_, _, _, depTable := WispTableRouting(isWisp)
 
@@ -723,6 +744,15 @@ func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID 
 		`DELETE FROM %s WHERE issue_id = ? AND %s = ?`, depTable, DepTargetExpr),
 		issueID, dependsOnID); err != nil {
 		return fmt.Errorf("remove dependency: %w", err)
+	}
+
+	// Record a dependency_removed event so graph mutations are visible in
+	// `bd history` (beads-yfqn). Only reached after a row was confirmed present
+	// (the ErrNoRows guard above short-circuits a no-op remove), so this never
+	// records a spurious event for an absent edge.
+	if err := recordDependencyEventInTx(ctx, tx, isWisp, issueID, types.EventDependencyRemoved, actor,
+		fmt.Sprintf("Removed dependency: %s %s %s", issueID, depType, dependsOnID)); err != nil {
+		return fmt.Errorf("remove dependency: record event: %w", err)
 	}
 
 	var affectedIssues, affectedWisps []string
