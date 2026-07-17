@@ -51,7 +51,10 @@ func PromoteFromEphemeralInTx(ctx context.Context, tx *sql.Tx, id string, actor 
 	if err := PrepareIssueForInsert(issue, bc.CustomStatuses, bc.CustomTypes); err != nil {
 		return fmt.Errorf("promote wisp to issues: %w", err)
 	}
-	if _, _, err := InsertIssueIfNew(ctx, tx, "issues", issue, storage.BatchCreateOptions{}); err != nil {
+	// The source wisp row is still present (it is deleted below), so opt out of
+	// InsertIssueIfNew's cross-table id-collision guard (beads-tnv9); the
+	// issues-side collision is already rejected by the check above.
+	if _, _, err := InsertIssueIfNew(ctx, tx, "issues", issue, storage.BatchCreateOptions{SkipCrossTableIDCollisionCheck: true}); err != nil {
 		return fmt.Errorf("promote wisp to issues: %w", err)
 	}
 

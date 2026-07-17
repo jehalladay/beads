@@ -11,10 +11,12 @@ import (
 
 // These tests cover GetNextChildIDTx using sqlmock — hermetic, no live Dolt.
 // The function issues, in order: an IsActiveWispInTx probe (SELECT 1 FROM
-// wisps), a counter read (SELECT last_child FROM <counter table>), an existing-
-// children scan (SELECT id FROM <issue table> WHERE id LIKE ...), and a counter
-// upsert (INSERT ... ON DUPLICATE KEY UPDATE). The default sqlmock QueryMatcher
-// is regexp/partial, so expectations match on stable substrings.
+// wisps), a counter read (SELECT last_child FROM <counter table>), TWO existing-
+// children scans (SELECT id FROM <own table> then FROM <sibling table> WHERE id
+// LIKE ... — both tables are scanned so a cross-table child bumps the counter,
+// beads-tnv9), and a counter upsert (INSERT ... ON DUPLICATE KEY UPDATE). The
+// default sqlmock QueryMatcher is regexp/partial, so expectations match on
+// stable substrings.
 
 // expectNotWisp (the IsActiveWispInTx probe returning no row, keeping the
 // issue-table path) is shared from comments_sqlmock_test.go in this package.
@@ -38,8 +40,11 @@ func TestGetNextChildIDTx_IssuePathFresh(t *testing.T) {
 	mock.ExpectQuery(`SELECT last_child FROM child_counters WHERE parent_id = \?`).
 		WithArgs("bd-1").
 		WillReturnError(sql.ErrNoRows)
-	// Existing-children scan: none.
+	// Existing-children scan (own table then sibling): none in either.
 	mock.ExpectQuery(`SELECT id FROM issues`).
+		WithArgs("bd-1", "bd-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(`SELECT id FROM wisps`).
 		WithArgs("bd-1", "bd-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	// Counter upsert to 1.
@@ -77,6 +82,10 @@ func TestGetNextChildIDTx_ExistingChildrenWin(t *testing.T) {
 			AddRow("bd-2.5").
 			AddRow("bd-2.7").
 			AddRow("bd-2.notanum"))
+	// Sibling (wisps) scan: no cross-table children here.
+	mock.ExpectQuery(`SELECT id FROM wisps`).
+		WithArgs("bd-2", "bd-2").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	// Upsert to 8 (7 + 1).
 	mock.ExpectExec(`INSERT INTO child_counters`).
 		WithArgs("bd-2", 8, 8).
@@ -105,6 +114,10 @@ func TestGetNextChildIDTx_WispPath(t *testing.T) {
 		WithArgs("bd-w").
 		WillReturnRows(sqlmock.NewRows([]string{"last_child"}).AddRow(1))
 	mock.ExpectQuery(`SELECT id FROM wisps`).
+		WithArgs("bd-w", "bd-w").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	// Sibling (issues) scan for a wisp parent: no cross-table children.
+	mock.ExpectQuery(`SELECT id FROM issues`).
 		WithArgs("bd-w", "bd-w").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectExec(`INSERT INTO wisp_child_counters`).
@@ -214,6 +227,9 @@ func TestGetNextChildIDTx_InsertError(t *testing.T) {
 		WithArgs("bd-5").
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(`SELECT id FROM issues`).
+		WithArgs("bd-5", "bd-5").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(`SELECT id FROM wisps`).
 		WithArgs("bd-5", "bd-5").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectExec(`INSERT INTO child_counters`).

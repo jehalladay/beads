@@ -50,26 +50,42 @@ func (r *childCounterSQLRepositoryImpl) NextChildID(ctx context.Context, parentI
 		return "", fmt.Errorf("db: ChildCounterSQLRepository.NextChildID: read counter for %s: %w", parentID, err)
 	}
 
-	rows, err := r.runner.QueryContext(ctx, fmt.Sprintf(`
-		SELECT id FROM %s
-		WHERE id LIKE CONCAT(?, '.%%')
-		  AND id NOT LIKE CONCAT(?, '.%%.%%')
-	`, issueTable), parentID, parentID) //nolint:gosec // G201: issueTable is one of two hardcoded constants
-	if err != nil {
-		return "", fmt.Errorf("db: ChildCounterSQLRepository.NextChildID: scan existing children of %s: %w", parentID, err)
+	// Scan BOTH the parent's own table and the sibling table for existing
+	// children. issues and wisps have no cross-table uniqueness, so scanning
+	// only issueTable let the mint return parent.N while parent.N already lived
+	// in the OTHER table (an orphaned wisp child left by promote, or an
+	// imported/carried id), minting a same-id issue+wisp collision (beads-tnv9,
+	// xaxe family). Bumping past a cross-table child keeps the mint fail-safe;
+	// InsertIssueIfNew remains the hard fail-closed guard. Mirrors the direct
+	// stack (issueops.GetNextChildIDTx) to avoid a direct-vs-proxied asymmetry.
+	siblingTable := "wisps"
+	if issueTable == "wisps" {
+		siblingTable = "issues"
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return "", fmt.Errorf("db: ChildCounterSQLRepository.NextChildID: scan: %w", err)
+	for _, table := range []string{issueTable, siblingTable} {
+		rows, err := r.runner.QueryContext(ctx, fmt.Sprintf(`
+			SELECT id FROM %s
+			WHERE id LIKE CONCAT(?, '.%%')
+			  AND id NOT LIKE CONCAT(?, '.%%.%%')
+		`, table), parentID, parentID) //nolint:gosec // G201: table is one of the hardcoded constants above
+		if err != nil {
+			return "", fmt.Errorf("db: ChildCounterSQLRepository.NextChildID: scan existing children of %s: %w", parentID, err)
 		}
-		if n, ok := parseChildSuffix(id); ok && n > lastChild {
-			lastChild = n
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return "", fmt.Errorf("db: ChildCounterSQLRepository.NextChildID: scan: %w", err)
+			}
+			if n, ok := parseChildSuffix(id); ok && n > lastChild {
+				lastChild = n
+			}
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("db: ChildCounterSQLRepository.NextChildID: rows: %w", err)
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return "", fmt.Errorf("db: ChildCounterSQLRepository.NextChildID: rows: %w", err)
+		}
+		rows.Close()
 	}
 
 	next := lastChild + 1

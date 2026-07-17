@@ -275,8 +275,18 @@ func TestPromoteFromEphemeralRejectsIDCollisionWithPermanentIssue(t *testing.T) 
 		t.Fatalf("seed distinctive perm issue: %v", err)
 	}
 
-	// A wisp sharing the same id string (separate table) with a distinctive label.
-	createWisp(t, ctx, store, "jym1-collide")
+	// A wisp sharing the same id string (separate table) with a distinctive
+	// label. The guarded create path (InsertIssueIfNew, beads-tnv9) now rejects
+	// minting a wisp over an existing issue id, so seed this pre-existing
+	// collision via a direct INSERT — modelling exactly how such a same-id pair
+	// arises in the wild (explicit/imported/carried ids that bypass the
+	// chokepoint). This keeps promote's own cross-table guard (jym1) tested as
+	// defense-in-depth for any collision that slips past create.
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO wisps (id, title, status, priority, issue_type) VALUES (?, ?, ?, ?, ?)`,
+		"jym1-collide", "wisp jym1-collide", string(types.StatusOpen), 2, string(types.TypeTask)); err != nil {
+		t.Fatalf("seed colliding wisp via direct insert: %v", err)
+	}
 	if _, err := store.db.ExecContext(ctx,
 		`INSERT INTO wisp_labels (issue_id, label) VALUES (?, ?)`,
 		"jym1-collide", "WISP-ONLY-LABEL"); err != nil {

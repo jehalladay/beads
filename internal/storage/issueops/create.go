@@ -553,6 +553,28 @@ func CheckOrphan(ctx context.Context, tx *sql.Tx, issue *types.Issue, issueTable
 func InsertIssueIfNew(ctx context.Context, tx *sql.Tx, issueTable string, issue *types.Issue, opts storage.BatchCreateOptions) (isNew bool, staleRejected bool, err error) {
 	var existingCount int
 	if issue.ID != "" {
+		// issues and wisps are separate tables with no cross-table uniqueness,
+		// so inserting into one an id that already lives in the other would mint
+		// a same-id issue+wisp — the collision the rename (mgsx) and promote
+		// (jym1) guards exist to prevent (beads-tnv9, xaxe family). Reject
+		// fail-closed here so every create stack (direct, proxied, bulk-import,
+		// explicit-id, child-mint) inherits the guard. Promote opts out
+		// (SkipCrossTableIDCollisionCheck): it legitimately inserts into `issues`
+		// an id whose wisp row is deleted later in the same tx, and carries its
+		// own cross-table guard first.
+		if !opts.SkipCrossTableIDCollisionCheck {
+			otherTable, otherLabel := "wisps", "a wisp"
+			if issueTable == "wisps" {
+				otherTable, otherLabel = "issues", "an issue"
+			}
+			exists, existsErr := rowExistsInTable(ctx, tx, otherTable, issue.ID)
+			if existsErr != nil {
+				return false, false, existsErr
+			}
+			if exists {
+				return false, false, fmt.Errorf("cannot create %s: id already exists as %s", issue.ID, otherLabel)
+			}
+		}
 		if err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE id = ?`, issueTable), issue.ID).Scan(&existingCount); err != nil {
 			return false, false, fmt.Errorf("failed to check issue existence for %s: %w", issue.ID, err)
 		}
