@@ -111,6 +111,12 @@ func runJiraSync(cmd *cobra.Command, args []string) error {
 	createOnly, _ := cmd.Flags().GetBool("create-only")
 	state, _ := cmd.Flags().GetString("state")
 
+	// Reject an invalid --state before any side effects, instead of silently
+	// falling through to "match all" (beads-jvx).
+	if err := tracker.ValidateSyncState(state); err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
+
 	if !dryRun {
 		CheckReadonly("jira sync")
 	}
