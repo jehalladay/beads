@@ -59,12 +59,12 @@ func TestRemoteRepositorySlug(t *testing.T) {
 		wantSlug string
 		wantOK   bool
 	}{
-		{"scp-like with .git", "git@github.com:owner/repo.git", "owner/repo", true},
-		{"scp-like without .git", "git@github.com:owner/repo", "owner/repo", true},
-		{"https with .git", "https://github.com/owner/repo.git", "owner/repo", true},
-		{"https without .git", "https://github.com/owner/repo", "owner/repo", true},
-		{"https trailing slash", "https://github.com/owner/repo/", "owner/repo", true},
-		{"ssh url scheme", "ssh://git@github.com/owner/repo.git", "owner/repo", true},
+		{"scp-like with .git", "git@github.com:owner/repo.git", "github.com/owner/repo", true},
+		{"scp-like without .git", "git@github.com:owner/repo", "github.com/owner/repo", true},
+		{"https with .git", "https://github.com/owner/repo.git", "github.com/owner/repo", true},
+		{"https without .git", "https://github.com/owner/repo", "github.com/owner/repo", true},
+		{"https trailing slash", "https://github.com/owner/repo/", "github.com/owner/repo", true},
+		{"ssh url scheme", "ssh://git@github.com/owner/repo.git", "github.com/owner/repo", true},
 		{"empty", "", "", false},
 		{"whitespace only", "   ", "", false},
 		{"scp-like empty path", "git@github.com:", "", false},
@@ -95,6 +95,12 @@ func TestSameRemoteRepository(t *testing.T) {
 		{"identical https", "https://github.com/o/r.git", "https://github.com/o/r.git", true},
 		{"scp vs https same repo", "git@github.com:o/r.git", "https://github.com/o/r", true},
 		{"different repos", "https://github.com/o/r1.git", "https://github.com/o/r2.git", false},
+		// beads-hbfz regression: different HOSTS, same owner/repo path — must be UNEQUAL.
+		{"cross-host same slug", "https://github.com/o/r.git", "https://gitlab.com/o/r.git", false},
+		{"cross-host scp vs https", "git@github.com:o/r.git", "https://gitlab.com/o/r", false},
+		// beads-hbfz regression: same repo differing only in case — must be EQUAL.
+		{"case-insensitive owner/repo", "https://github.com/Owner/Repo.git", "https://github.com/owner/repo", true},
+		{"case-insensitive host", "https://GitHub.com/o/r", "https://github.com/o/r", true},
 		// Neither parses to a slug → raw trimmed-string comparison fallback.
 		{"raw fallback equal", "not a url", "not a url", true},
 		{"raw fallback trimmed", "  local-path  ", "local-path", true},
@@ -116,24 +122,26 @@ func TestSameRemoteRepository(t *testing.T) {
 func TestNormalizeRemotePath(t *testing.T) {
 	tests := []struct {
 		name     string
+		host     string
 		path     string
 		wantSlug string
 		wantOK   bool
 	}{
-		{"plain", "/owner/repo", "owner/repo", true},
-		{"strip .git", "/owner/repo.git", "owner/repo", true},
-		{"trailing slash", "owner/repo/", "owner/repo", true},
-		{"empty", "", "", false},
-		{"only slashes", "///", "", false},
+		{"plain no host", "", "/owner/repo", "owner/repo", true},
+		{"strip .git no host", "", "/owner/repo.git", "owner/repo", true},
+		{"trailing slash no host", "", "owner/repo/", "owner/repo", true},
+		{"with host", "github.com", "/owner/repo.git", "github.com/owner/repo", true},
+		{"empty path drops host", "github.com", "", "", false},
+		{"only slashes", "", "///", "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			slug, ok := normalizeRemotePath(tt.path)
+			slug, ok := normalizeRemotePath(tt.host, tt.path)
 			if ok != tt.wantOK {
-				t.Errorf("normalizeRemotePath(%q) ok = %v, want %v", tt.path, ok, tt.wantOK)
+				t.Errorf("normalizeRemotePath(%q, %q) ok = %v, want %v", tt.host, tt.path, ok, tt.wantOK)
 			}
 			if slug != tt.wantSlug {
-				t.Errorf("normalizeRemotePath(%q) = %q, want %q", tt.path, slug, tt.wantSlug)
+				t.Errorf("normalizeRemotePath(%q, %q) = %q, want %q", tt.host, tt.path, slug, tt.wantSlug)
 			}
 		})
 	}
