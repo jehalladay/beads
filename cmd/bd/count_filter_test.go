@@ -4,6 +4,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -111,4 +112,54 @@ func ptrStr[T any](p *T) string {
 		return "<nil>"
 	}
 	return "&" + reflect.ValueOf(*p).String()
+}
+
+// TestCountArgsRejectsPositional pins that bd count rejects positional
+// arguments instead of silently ignoring them. Before this guard,
+// `bd count status=open` (a natural habit from `bd query status=open`)
+// returned the grand total with exit 0 — a confidently-wrong count.
+func TestCountArgsRejectsPositional(t *testing.T) {
+	t.Run("no_args_ok", func(t *testing.T) {
+		if err := countArgs(countCmd, nil); err != nil {
+			t.Fatalf("expected no error for zero args, got: %v", err)
+		}
+		if err := countArgs(countCmd, []string{}); err != nil {
+			t.Fatalf("expected no error for empty args, got: %v", err)
+		}
+	})
+
+	t.Run("bare_positional_rejected", func(t *testing.T) {
+		err := countArgs(countCmd, []string{"garbagearg123"})
+		if err == nil {
+			t.Fatal("expected error for a bare positional argument, got nil")
+		}
+		if !strings.Contains(err.Error(), "does not accept positional arguments") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("key_value_hints_flag", func(t *testing.T) {
+		// key matches a real flag (status) -> hint --status
+		err := countArgs(countCmd, []string{"status=open"})
+		if err == nil {
+			t.Fatal("expected error for 'status=open' positional, got nil")
+		}
+		if !strings.Contains(err.Error(), "--status") {
+			t.Errorf("expected a --status hint for 'status=open', got: %v", err)
+		}
+	})
+
+	t.Run("key_value_unknown_key_generic", func(t *testing.T) {
+		// key=value form whose key is not a flag -> generic message, no bogus hint
+		err := countArgs(countCmd, []string{"bogus=1"})
+		if err == nil {
+			t.Fatal("expected error for 'bogus=1' positional, got nil")
+		}
+		if strings.Contains(err.Error(), "did you mean --bogus") {
+			t.Errorf("must not hint a nonexistent flag: %v", err)
+		}
+		if !strings.Contains(err.Error(), "use flags instead") {
+			t.Errorf("expected generic 'use flags instead' message, got: %v", err)
+		}
+	})
 }

@@ -32,6 +32,7 @@ Examples:
   bd count --assignee alice --by-status  # Count alice's issues by status
   bd count --include-infra          # Count issues + wisps tier (matches 'bd list --include-infra --all' cardinality)
 `,
+	Args:          countArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -273,6 +274,25 @@ Examples:
 		}
 		return nil
 	},
+}
+
+// countArgs rejects positional arguments. bd count is a flag-only command (it
+// shares bd list's flag set), but unlike bd list it historically read no args
+// and silently ignored any positional — so `bd count status=open` (a natural
+// habit from `bd query status=open`) returned the grand total with exit 0
+// instead of a filtered count. Mirror bd list's rejection so the mistake is
+// loud, and hint key=value forms toward the corresponding --flag.
+func countArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	first := args[0]
+	if key, _, ok := strings.Cut(first, "="); ok && key != "" {
+		if cmd.Flags().Lookup(key) != nil {
+			return fmt.Errorf("bd count does not accept positional arguments; did you mean --%s? (see bd count --help)", key)
+		}
+	}
+	return fmt.Errorf("bd count does not accept positional arguments; use flags instead (see bd count --help)")
 }
 
 // applyCountIncludeInfra switches the count filter to the wisps-inclusive
