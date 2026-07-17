@@ -34,8 +34,23 @@ var (
 	compactDolt    bool
 )
 
+// compactNoArgs rejects positional arguments for `bd compact`. compact is
+// flag-driven (its Run func reads no args[]) and destructive ("permanent
+// graceful decay - original content is discarded"), and it targets a single
+// issue via --id. Historically a stray positional was silently discarded, so
+// `bd compact bd-42 --force` (natural muscle memory) compacted the WHOLE
+// database instead of the intended issue with rc=0 (beads-jg5e). Reject it
+// loudly and point at --id.
+func compactNoArgs(_ *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return fmt.Errorf("bd compact does not accept positional arguments; to compact a single issue use --id %q (see bd compact --help). Got unexpected argument %q", args[0], args[0])
+}
+
 var compactCmd = &cobra.Command{
 	Use:   "compact",
+	Args:  compactNoArgs,
 	Short: "Compact old closed issues to save space",
 	Long: `Compact old closed issues using semantic summarization.
 
