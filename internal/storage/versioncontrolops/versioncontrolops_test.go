@@ -873,7 +873,9 @@ func TestFlatten_FullSequence(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"commit_hash"}).AddRow("root"))
 	mock.ExpectQuery("SELECT COUNT.*FROM dolt_log").
 		WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(5))
-	// The 7 flatten steps in order.
+	// Best-effort pre-delete of any stale flatten-tmp (beads-wmup) runs first.
+	mock.ExpectExec("CALL DOLT_BRANCH.*-D.*flatten-tmp").WillReturnResult(sqlmock.NewResult(0, 0))
+	// Then the flatten steps in order.
 	mock.ExpectExec("CALL DOLT_BRANCH.*flatten-tmp").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CALL DOLT_CHECKOUT.*flatten-tmp").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CALL DOLT_RESET.*--soft").WithArgs("root").WillReturnResult(sqlmock.NewResult(0, 0))
@@ -894,8 +896,40 @@ func TestFlatten_StepError(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"commit_hash"}).AddRow("root"))
 	mock.ExpectQuery("SELECT COUNT.*FROM dolt_log").
 		WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(3))
+	// Pre-delete of any stale temp branch.
+	mock.ExpectExec("CALL DOLT_BRANCH.*-D.*flatten-tmp").WillReturnResult(sqlmock.NewResult(0, 0))
+	// create temp branch fails.
 	mock.ExpectExec("CALL DOLT_BRANCH.*flatten-tmp").
 		WillReturnError(errors.New("branch exists"))
+	// branchCreated is still false, so the defer does NOT run cleanup here.
+
+	err := Flatten(context.Background(), db)
+	if err == nil || !strings.Contains(err.Error(), "flatten step") {
+		t.Errorf("expected 'flatten step' error, got %v", err)
+	}
+	assertMet(t, mock)
+}
+
+// TestFlatten_CleanupOnStepErrorAfterBranchCreate covers beads-wmup: when a
+// step fails AFTER the temp branch is created, the defer returns to main and
+// deletes the temp branch so the session isn't stranded on flatten-tmp and a
+// re-run isn't wedged by the leftover branch.
+func TestFlatten_CleanupOnStepErrorAfterBranchCreate(t *testing.T) {
+	db, mock := newMock(t)
+	mock.ExpectQuery("SELECT commit_hash FROM dolt_log ORDER BY date ASC LIMIT 1").
+		WillReturnRows(sqlmock.NewRows([]string{"commit_hash"}).AddRow("root"))
+	mock.ExpectQuery("SELECT COUNT.*FROM dolt_log").
+		WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(3))
+	// Pre-delete stale temp.
+	mock.ExpectExec("CALL DOLT_BRANCH.*-D.*flatten-tmp").WillReturnResult(sqlmock.NewResult(0, 0))
+	// create temp branch SUCCEEDS (branchCreated = true).
+	mock.ExpectExec("CALL DOLT_BRANCH.*flatten-tmp").WillReturnResult(sqlmock.NewResult(0, 0))
+	// checkout temp branch FAILS mid-sequence.
+	mock.ExpectExec("CALL DOLT_CHECKOUT.*flatten-tmp").
+		WillReturnError(errors.New("checkout boom"))
+	// defer cleanup: back to main + delete the temp branch.
+	mock.ExpectExec("CALL DOLT_CHECKOUT.*main").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CALL DOLT_BRANCH.*-D.*flatten-tmp").WillReturnResult(sqlmock.NewResult(0, 0))
 
 	err := Flatten(context.Background(), db)
 	if err == nil || !strings.Contains(err.Error(), "flatten step") {
