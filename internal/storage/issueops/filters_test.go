@@ -234,7 +234,8 @@ func TestBuildLabelDrivenSearchUsesLabelJoins(t *testing.T) {
 	if !strings.Contains(plan.FromSQL, "JOIN labels label_filter_any ON label_filter_any.issue_id = issues.id") {
 		t.Fatalf("fromSQL missing any-label join: %s", plan.FromSQL)
 	}
-	if got, want := strings.Join(plan.Where, " AND "), "label_filter_0.label = ? AND label_filter_1.label = ? AND label_filter_any.label IN (?, ?)"; got != want {
+	// Case-insensitive label match (beads-hqp8): LOWER() both sides.
+	if got, want := strings.Join(plan.Where, " AND "), "LOWER(label_filter_0.label) = LOWER(?) AND LOWER(label_filter_1.label) = LOWER(?) AND LOWER(label_filter_any.label) IN (LOWER(?), LOWER(?))"; got != want {
 		t.Fatalf("where = %q, want %q", got, want)
 	}
 	if !reflect.DeepEqual(plan.Args, []interface{}{"bug", "urgent", "frontend", "backend"}) {

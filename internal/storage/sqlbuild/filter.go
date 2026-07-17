@@ -85,7 +85,12 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 	}
 
 	if filter.Assignee != nil {
-		whereClauses = append(whereClauses, "assignee = ?")
+		// Case-insensitive to match the predicate path (buildAssigneePredicate
+		// uses strings.EqualFold), so `assignee=Alice` returns the same set in a
+		// simple filter query as in an OR/complex predicate query (beads-xl4k,
+		// sibling of the label-case fix beads-hqp8; owner is predicate-only so
+		// it is already consistent).
+		whereClauses = append(whereClauses, "LOWER(assignee) = LOWER(?)")
 		args = append(args, *filter.Assignee)
 	}
 
@@ -145,27 +150,35 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 		args = append(args, string(*filter.WispType))
 	}
 
+	// Label matching is case-insensitive to stay consistent with the predicate
+	// path (query.buildLabelPredicate uses strings.EqualFold). Without LOWER()
+	// on both sides the SQL compare is case-SENSITIVE under the label column's
+	// collation, so `label=Bug` matched a different set in a simple filter query
+	// than in an OR/complex predicate query (beads-hqp8, confirmed via live
+	// embedded-dolt). LOWER(?) is applied to the bound value too so callers pass
+	// the label verbatim. (Matches how TitleContains/DescriptionContains already
+	// lowercase both sides.)
 	if len(filter.Labels) > 0 {
 		for _, label := range filter.Labels {
-			whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE label = ?)", tables.Labels))
+			whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) = LOWER(?))", tables.Labels))
 			args = append(args, label)
 		}
 	}
 	if len(filter.LabelsAny) > 0 {
 		placeholders := make([]string, len(filter.LabelsAny))
 		for i, label := range filter.LabelsAny {
-			placeholders[i] = "?"
+			placeholders[i] = "LOWER(?)"
 			args = append(args, label)
 		}
-		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE label IN (%s))", tables.Labels, strings.Join(placeholders, ", ")))
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) IN (%s))", tables.Labels, strings.Join(placeholders, ", ")))
 	}
 	if len(filter.ExcludeLabels) > 0 {
 		placeholders := make([]string, len(filter.ExcludeLabels))
 		for i, label := range filter.ExcludeLabels {
-			placeholders[i] = "?"
+			placeholders[i] = "LOWER(?)"
 			args = append(args, label)
 		}
-		whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (SELECT issue_id FROM %s WHERE label IN (%s))", tables.Labels, strings.Join(placeholders, ", ")))
+		whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (SELECT issue_id FROM %s WHERE LOWER(label) IN (%s))", tables.Labels, strings.Join(placeholders, ", ")))
 	}
 	if filter.NoLabels {
 		whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (SELECT DISTINCT issue_id FROM %s)", tables.Labels))

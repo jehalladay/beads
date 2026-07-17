@@ -13,7 +13,7 @@ func TestGetIssuesByLabelInTx(t *testing.T) {
 	t.Parallel()
 
 	issuesQ := regexp.QuoteMeta("SELECT i.id FROM issues i")
-	wispQ := regexp.QuoteMeta("SELECT issue_id FROM wisp_labels WHERE label = ?")
+	wispQ := regexp.QuoteMeta("SELECT issue_id FROM wisp_labels WHERE LOWER(label) = LOWER(?)")
 
 	t.Run("returns issue IDs from both issues and wisp_labels", func(t *testing.T) {
 		t.Parallel()
