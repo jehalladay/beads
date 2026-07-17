@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -94,6 +95,12 @@ Example:
 		if autoMerge && !dryRun {
 			commandDidWrite.Store(true)
 		}
+		// Collect any per-merge errors so they are neither hidden in text mode
+		// nor swallowed as a success exit code (beads-tg0f). performMerge records
+		// failures (reparent/close/link) in result["errors"], but the text path
+		// previously printed only "Merged N group(s)" and returned nil, so partial
+		// failures were invisible AND exited 0.
+		mergeErrors := collectMergeErrors(mergeResults)
 		if jsonOutput {
 			output := map[string]interface{}{
 				"duplicate_groups": len(duplicateGroups),
@@ -105,7 +112,15 @@ Example:
 					output["merge_results"] = mergeResults
 				}
 			}
-			return outputJSON(output)
+			if err := outputJSON(output); err != nil {
+				return err
+			}
+			// Errors are already visible in merge_results; still signal a
+			// non-zero exit so scripts can detect partial failure.
+			if len(mergeErrors) > 0 {
+				return SilentExit()
+			}
+			return nil
 		}
 		fmt.Printf("%s Found %d duplicate group(s):\n\n", ui.RenderWarn("🔍"), len(duplicateGroups))
 		for i, group := range duplicateGroups {
@@ -139,6 +154,16 @@ Example:
 				fmt.Printf("%s Dry run - would execute %d merge(s)\n", ui.RenderWarn("⚠"), len(mergeCommands))
 			} else {
 				fmt.Printf("%s Merged %d group(s)\n", ui.RenderPass("✓"), len(mergeCommands))
+				// Surface any per-merge failures instead of silently discarding
+				// them (beads-tg0f).
+				for _, e := range mergeErrors {
+					fmt.Fprintf(os.Stderr, "%s %s\n", ui.RenderFail("✗"), e)
+				}
+				if len(mergeErrors) > 0 {
+					fmt.Fprintf(os.Stderr, "%s %d merge error(s) — some duplicates were not fully merged\n",
+						ui.RenderFail("✗"), len(mergeErrors))
+					return SilentExit()
+				}
 			}
 		} else {
 			fmt.Printf("%s Run with --auto-merge to execute all suggested merges\n", ui.RenderAccent("💡"))
@@ -347,6 +372,22 @@ func formatDuplicateGroupsJSON(groups [][]*types.Issue, refCounts map[string]int
 		})
 	}
 	return result
+}
+
+// collectMergeErrors flattens the per-group error slices recorded by
+// performMerge in each result["errors"] into a single list. Used so the caller
+// can both surface the messages (text mode) and set a non-zero exit code
+// (beads-tg0f).
+func collectMergeErrors(mergeResults []map[string]interface{}) []string {
+	var errs []string
+	for _, r := range mergeResults {
+		if raw, ok := r["errors"]; ok {
+			if list, ok := raw.([]string); ok {
+				errs = append(errs, list...)
+			}
+		}
+	}
+	return errs
 }
 
 // performMerge executes the merge operation:
