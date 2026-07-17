@@ -22,3 +22,15 @@ export BEADS_BUILD_TAGS="gms_pure_go"
 if [[ "${GOFLAGS:-}" != *gms_pure_go* ]]; then
     export GOFLAGS="${GOFLAGS:+$GOFLAGS }-tags=${BEADS_BUILD_TAGS}"
 fi
+
+# Share ONE Go build cache per node across all beads builders instead of a
+# fresh per-crew/per-task dir each build. The Go build cache is
+# content-addressed and safe for concurrent readers/writers, so one shared
+# path gives BETTER hit rates AND avoids fragmenting the node's inode table
+# into dozens of gocache-<task> dirs (a RAM-backed /tmp can hit inode ENOSPC
+# → silent gate REDs when Go/pytest can't create files). Respect a caller who
+# set GOCACHE explicitly (e.g. the eladba build host's /opt/gt-build/.gocache,
+# or an intentionally isolated cache). Default lives on RAM-backed /tmp to
+# keep builds off the contended /fsx (Lustre) mount.
+: "${GOCACHE:=/tmp/gocache-shared-beads}"
+export GOCACHE
