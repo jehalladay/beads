@@ -106,7 +106,11 @@ create, update, show, or close operation).`,
 		}
 		if cmd.Flags().Changed("assignee") {
 			assignee, _ := cmd.Flags().GetString("assignee")
-			updates["assignee"] = assignee
+			// Trim + fold "none" through the shared normalizer so `bd update
+			// --assignee "  x  "` stores the canonical form the read/filter side
+			// matches (beads-llzt). Otherwise the padded value is unmatchable by
+			// `bd ready/list --assignee x`, orphaning the work.
+			updates["assignee"] = normalizeAssignee(assignee)
 		}
 		description, descChanged, err := getDescriptionFlag(cmd)
 		if err != nil {
