@@ -57,21 +57,21 @@ var createCmd = &cobra.Command{
 
 		if file != "" {
 			if graphFile != "" {
-				return HandleError("cannot specify both --file and --graph")
+				return HandleErrorRespectJSON("cannot specify both --file and --graph")
 			}
 			if len(args) > 0 {
-				return HandleError("cannot specify both title and --file flag")
+				return HandleErrorRespectJSON("cannot specify both title and --file flag")
 			}
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			if dryRun {
-				return HandleError("--dry-run is not supported with --file flag")
+				return HandleErrorRespectJSON("--dry-run is not supported with --file flag")
 			}
 			return createIssuesFromMarkdown(cmd, file)
 		}
 
 		if graphFile != "" {
 			if len(args) > 0 {
-				return HandleError("cannot specify both title and --graph flag")
+				return HandleErrorRespectJSON("cannot specify both title and --graph flag")
 			}
 			graphDryRun, _ := cmd.Flags().GetBool("dry-run")
 			wisp, _ := cmd.Flags().GetBool("ephemeral")
@@ -81,7 +81,7 @@ var createCmd = &cobra.Command{
 				NoHistory: noHistory,
 			}
 			if err := graphOpts.Validate(); err != nil {
-				return HandleError("invalid graph options: %v", err)
+				return HandleErrorRespectJSON("invalid graph options: %v", err)
 			}
 			return createIssuesFromGraph(graphFile, graphDryRun, graphOpts)
 		}
@@ -91,18 +91,18 @@ var createCmd = &cobra.Command{
 
 		if len(args) > 0 && titleFlag != "" {
 			if args[0] != titleFlag {
-				return HandleError("cannot specify different titles as both positional argument and --title flag\n  Positional: %q\n  --title:    %q", args[0], titleFlag)
+				return HandleErrorRespectJSON("cannot specify different titles as both positional argument and --title flag\n  Positional: %q\n  --title:    %q", args[0], titleFlag)
 			}
 			title = args[0]
 		} else if len(args) > 0 {
 			if strings.HasPrefix(args[0], "-") {
-				return HandleError("title %q looks like a flag (starts with '-').\n  Run 'bd create --help' for available options.\n  To use this title anyway, pass it explicitly: bd create --title=%q", args[0], args[0])
+				return HandleErrorRespectJSON("title %q looks like a flag (starts with '-').\n  Run 'bd create --help' for available options.\n  To use this title anyway, pass it explicitly: bd create --title=%q", args[0], args[0])
 			}
 			title = args[0]
 		} else if titleFlag != "" {
 			title = titleFlag
 		} else {
-			return HandleError("title required (or use --file to create from markdown)")
+			return HandleErrorRespectJSON("title required (or use --file to create from markdown)")
 		}
 
 		// Get silent flag
@@ -142,7 +142,7 @@ var createCmd = &cobra.Command{
 
 		if description == "" && !isTestIssue(title) {
 			if config.GetBool("create.require-description") {
-				return HandleError("description is required (set create.require-description: false in config.yaml to disable)")
+				return HandleErrorRespectJSON("description is required (set create.require-description: false in config.yaml to disable)")
 			}
 		}
 
@@ -157,7 +157,7 @@ var createCmd = &cobra.Command{
 		priorityStr, _ := cmd.Flags().GetString("priority")
 		priority, err := validation.ValidatePriority(priorityStr)
 		if err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		issueType, _ := cmd.Flags().GetString("type")
@@ -180,14 +180,14 @@ var createCmd = &cobra.Command{
 		wisp, _ := cmd.Flags().GetBool("ephemeral")
 		noHistory, _ := cmd.Flags().GetBool("no-history")
 		if wisp && noHistory {
-			return HandleError("--ephemeral and --no-history are mutually exclusive")
+			return HandleErrorRespectJSON("--ephemeral and --no-history are mutually exclusive")
 		}
 		molTypeStr, _ := cmd.Flags().GetString("mol-type")
 		var molType types.MolType
 		if molTypeStr != "" {
 			molType = types.MolType(molTypeStr)
 			if !molType.IsValid() {
-				return HandleError("invalid mol-type %q (must be swarm, patrol, or work)", molTypeStr)
+				return HandleErrorRespectJSON("invalid mol-type %q (must be swarm, patrol, or work)", molTypeStr)
 			}
 		}
 
@@ -196,7 +196,7 @@ var createCmd = &cobra.Command{
 		if wispTypeStr != "" {
 			wispType = types.WispType(wispTypeStr)
 			if !wispType.IsValid() {
-				return HandleError("invalid wisp-type %q (must be heartbeat, ping, patrol, gc_report, recovery, error, or escalation)", wispTypeStr)
+				return HandleErrorRespectJSON("invalid wisp-type %q (must be heartbeat, ping, patrol, gc_report, recovery, error, or escalation)", wispTypeStr)
 			}
 		}
 
@@ -206,7 +206,7 @@ var createCmd = &cobra.Command{
 		eventPayload, _ := cmd.Flags().GetString("event-payload")
 
 		if (eventCategory != "" || eventActor != "" || eventTarget != "" || eventPayload != "") && issueType != "event" {
-			return HandleError("--event-category, --event-actor, --event-target, and --event-payload flags require --type=event")
+			return HandleErrorRespectJSON("--event-category, --event-actor, --event-target, and --event-payload flags require --type=event")
 		}
 
 		var dueAt *time.Time
@@ -214,7 +214,7 @@ var createCmd = &cobra.Command{
 		if dueStr != "" {
 			t, err := timeparsing.ParseRelativeTime(dueStr, time.Now())
 			if err != nil {
-				return HandleError("invalid --due format %q. Examples: +6h, tomorrow, next monday, 2025-01-15", dueStr)
+				return HandleErrorRespectJSON("invalid --due format %q. Examples: +6h, tomorrow, next monday, 2025-01-15", dueStr)
 			}
 			dueAt = &t
 		}
@@ -224,7 +224,7 @@ var createCmd = &cobra.Command{
 		if deferStr != "" {
 			t, err := timeparsing.ParseRelativeTime(deferStr, time.Now())
 			if err != nil {
-				return HandleError("invalid --defer format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", deferStr)
+				return HandleErrorRespectJSON("invalid --defer format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", deferStr)
 			}
 			// Warn if defer date is in the past (user probably meant future)
 			if t.Before(time.Now()) && !silent && !debug.IsQuiet() {
@@ -244,14 +244,14 @@ var createCmd = &cobra.Command{
 				// #nosec G304 -- user explicitly provides file path via @file.json syntax
 				data, err := os.ReadFile(filePath)
 				if err != nil {
-					return HandleError("failed to read metadata file %s: %v", filePath, err)
+					return HandleErrorRespectJSON("failed to read metadata file %s: %v", filePath, err)
 				}
 				metadataJSON = string(data)
 			} else {
 				metadataJSON = metadataValue
 			}
 			if !json.Valid([]byte(metadataJSON)) {
-				return HandleError("invalid JSON in --metadata: must be valid JSON")
+				return HandleErrorRespectJSON("invalid JSON in --metadata: must be valid JSON")
 			}
 			// This is the live single-issue create path; gatherCreateInput's
 			// gate covers only the batch path (beads-eum2/ef2k).
@@ -271,7 +271,7 @@ var createCmd = &cobra.Command{
 			}
 			if err := validation.LintIssue(lintIssue); err != nil {
 				if validateTemplate || validationMode == "error" {
-					return HandleError("%v", err)
+					return HandleErrorRespectJSON("%v", err)
 				}
 				fmt.Fprintf(os.Stderr, "%s %v\n", ui.RenderWarn("⚠"), err)
 			}
@@ -283,7 +283,7 @@ var createCmd = &cobra.Command{
 		if cmd.Flags().Changed("estimate") {
 			est, _ := cmd.Flags().GetInt("estimate")
 			if est < 0 {
-				return HandleError("estimate must be a non-negative number of minutes")
+				return HandleErrorRespectJSON("estimate must be a non-negative number of minutes")
 			}
 			estimatedMinutes = &est
 		}
@@ -376,28 +376,28 @@ var createCmd = &cobra.Command{
 				var err error
 				remoteCache, err = remotecache.DefaultCache()
 				if err != nil {
-					return HandleError("failed to initialize remote cache: %v", err)
+					return HandleErrorRespectJSON("failed to initialize remote cache: %v", err)
 				}
 				if _, err := remoteCache.Ensure(rootCtx, repoPath); err != nil {
-					return HandleError("failed to sync remote %s: %v", repoPath, err)
+					return HandleErrorRespectJSON("failed to sync remote %s: %v", repoPath, err)
 				}
 				targetStore, err = remoteCache.OpenStore(rootCtx, repoPath, newDoltStoreFromConfig)
 				if err != nil {
-					return HandleError("failed to open remote store: %v", err)
+					return HandleErrorRespectJSON("failed to open remote store: %v", err)
 				}
 			} else {
 				targetBeadsDir := routing.ExpandPath(repoPath)
 				debug.Logf("DEBUG: Routing to target repo: %s\n", targetBeadsDir)
 
 				if err := ensureBeadsDirForPath(rootCtx, targetBeadsDir, store); err != nil {
-					return HandleError("failed to initialize target repo: %v", err)
+					return HandleErrorRespectJSON("failed to initialize target repo: %v", err)
 				}
 
 				targetBeadsDirPath := filepath.Join(targetBeadsDir, ".beads")
 				var err error
 				targetStore, err = newDoltStoreFromConfig(rootCtx, targetBeadsDirPath)
 				if err != nil {
-					return HandleError("failed to open target store: %v", err)
+					return HandleErrorRespectJSON("failed to open target store: %v", err)
 				}
 			}
 
@@ -417,7 +417,7 @@ var createCmd = &cobra.Command{
 		}
 
 		if explicitID != "" && parentID != "" {
-			return HandleError("cannot specify both --id and --parent flags")
+			return HandleErrorRespectJSON("cannot specify both --id and --parent flags")
 		}
 
 		parentLookupStore := store
@@ -425,7 +425,7 @@ var createCmd = &cobra.Command{
 			var err error
 			parentLookupStore, err = openDryRunTargetStore(rootCtx, repoPath)
 			if err != nil {
-				return HandleError("%v", err)
+				return HandleErrorRespectJSON("%v", err)
 			}
 			defer func() { _ = parentLookupStore.Close() }()
 		}
@@ -436,9 +436,9 @@ var createCmd = &cobra.Command{
 			_, err := parentLookupStore.GetIssue(ctx, parentID)
 			if err != nil {
 				if errors.Is(err, storage.ErrNotFound) {
-					return HandleError("parent issue %s not found", parentID)
+					return HandleErrorRespectJSON("parent issue %s not found", parentID)
 				}
-				return HandleError("failed to check parent issue: %v", err)
+				return HandleErrorRespectJSON("failed to check parent issue: %v", err)
 			}
 
 			noInheritLabels, _ := cmd.Flags().GetBool("no-inherit-labels")
@@ -457,7 +457,7 @@ var createCmd = &cobra.Command{
 		if parentID != "" {
 			childID, err := store.GetNextChildID(rootCtx, parentID)
 			if err != nil {
-				return HandleError("%v", err)
+				return HandleErrorRespectJSON("%v", err)
 			}
 			explicitID = childID
 			createCtx = storage.WithReservedChildCounter(createCtx, parentID, childID)
@@ -466,7 +466,7 @@ var createCmd = &cobra.Command{
 		if explicitID != "" {
 			_, err := validation.ValidateIDFormat(explicitID)
 			if err != nil {
-				return HandleError("%v", err)
+				return HandleErrorRespectJSON("%v", err)
 			}
 
 			ctx := createCtx
@@ -480,7 +480,7 @@ var createCmd = &cobra.Command{
 			allowedPrefixes, _ = store.GetConfig(ctx, "allowed_prefixes")
 
 			if err := validation.ValidateIDPrefixAllowed(explicitID, dbPrefix, allowedPrefixes, forceCreate); err != nil {
-				return HandleError("%v", err)
+				return HandleErrorRespectJSON("%v", err)
 			}
 		}
 
@@ -551,7 +551,7 @@ var createCmd = &cobra.Command{
 		}
 
 		if err := store.CreateIssue(ctx, issue, actor); err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		// Track whether any post-create writes occurred. CreateIssue commits
@@ -639,7 +639,7 @@ var createCmd = &cobra.Command{
 				gate = types.WaitsForAllChildren
 			}
 			if gate != types.WaitsForAllChildren && gate != types.WaitsForAnyChildren {
-				return HandleError("invalid --waits-for-gate value '%s' (valid: all-children, any-children)", gate)
+				return HandleErrorRespectJSON("invalid --waits-for-gate value '%s' (valid: all-children, any-children)", gate)
 			}
 
 			meta := types.WaitsForMeta{
@@ -647,7 +647,7 @@ var createCmd = &cobra.Command{
 			}
 			metaJSON, err := json.Marshal(meta)
 			if err != nil {
-				return HandleError("failed to serialize waits-for metadata: %v", err)
+				return HandleErrorRespectJSON("failed to serialize waits-for metadata: %v", err)
 			}
 
 			dep := &types.Dependency{
@@ -665,7 +665,7 @@ var createCmd = &cobra.Command{
 
 		shouldCommit, err := shouldCommitCreatePostWrites(issue, postCreateWrites)
 		if err != nil {
-			return HandleError("dolt auto-commit failed: %v", err)
+			return HandleErrorRespectJSON("dolt auto-commit failed: %v", err)
 		}
 		if shouldCommit {
 			commitMsg := fmt.Sprintf("bd: create %s", issue.ID)
@@ -685,7 +685,7 @@ var createCmd = &cobra.Command{
 
 		if remoteCache != nil {
 			if pushErr := remoteCache.Push(rootCtx, repoPath); pushErr != nil {
-				return HandleError("failed to push to %s: %v\nThe issue was created locally but not synced to the remote.", repoPath, pushErr)
+				return HandleErrorRespectJSON("failed to push to %s: %v\nThe issue was created locally but not synced to the remote.", repoPath, pushErr)
 			}
 		}
 
