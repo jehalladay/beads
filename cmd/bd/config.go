@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -130,6 +131,14 @@ var configSetCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Warning: %q is not a recognized config key. Use 'custom.*' for user-defined keys.\n", key)
 			}
 			fmt.Fprintf(os.Stderr, "Run 'bd config --help' for valid namespaces.\n")
+		}
+
+		// beads-8fp: reject a value whose type doesn't match a known-typed key
+		// (bool/int), so a misconfiguration surfaces at set-time rather than
+		// latently when the parsing code path runs. Unknown/untyped keys are
+		// unaffected (stored as-is, as before).
+		if err := validateConfigValueType(key, value); err != nil {
+			return HandleError("%v", err)
 		}
 
 		if !forceGitTracked {
@@ -878,6 +887,40 @@ var recognizedConfigKeys = map[string]bool{
 	"create.require-description": true, "beads.role": true,
 	"auto_compact_enabled": true, "schema_version": true,
 	"output.title-length": true,
+}
+
+// boolConfigKeys and intConfigKeys name config keys whose values are parsed as
+// a specific type by the code that consumes them. `bd config set` validates a
+// value against these before storing so a type-invalid value (e.g. a non-bool
+// string in a bool key) is rejected at set-time rather than surfacing latently
+// when the parsing path runs. (beads-8fp) This is a conservative allowlist of
+// well-known typed keys; untyped/unknown keys are stored as-is.
+var boolConfigKeys = map[string]bool{
+	"no-db": true, "json": true, "no-push": true, "no-git-ops": true,
+	"create.require-description": true, "auto_compact_enabled": true,
+	"export.auto": true, "export.git-add": true, "backup.enabled": true,
+}
+
+var intConfigKeys = map[string]bool{
+	"output.title-length": true, "schema_version": true,
+}
+
+// validateConfigValueType rejects a value that does not parse as the key's
+// declared type. Returns nil for untyped keys or valid values. Bool parsing
+// matches viper's cast.ToBool (strconv.ParseBool: 1/t/T/TRUE/true/0/f/F/FALSE/
+// false, etc.); int parsing matches a base-10 integer. (beads-8fp)
+func validateConfigValueType(key, value string) error {
+	if boolConfigKeys[key] {
+		if _, err := strconv.ParseBool(value); err != nil {
+			return fmt.Errorf("invalid value %q for boolean key %q (use true or false)", value, key)
+		}
+	}
+	if intConfigKeys[key] {
+		if _, err := strconv.Atoi(value); err != nil {
+			return fmt.Errorf("invalid value %q for integer key %q (expected a whole number)", value, key)
+		}
+	}
+	return nil
 }
 
 func isRecognizedConfigKey(key string) bool {
