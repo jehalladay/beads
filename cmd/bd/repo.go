@@ -76,17 +76,17 @@ shared across all clones of this repository.`,
 
 			beadsDir := filepath.Join(expandedPath, ".beads")
 			if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
-				return HandleError("no beads workspace found at %s", expandedPath)
+				return HandleErrorRespectJSON("no beads workspace found at %s", expandedPath)
 			}
 		}
 
 		configPath, err := config.FindConfigYAMLPath()
 		if err != nil {
-			return HandleError("failed to find config.yaml: %v", err)
+			return HandleErrorRespectJSON("failed to find config.yaml: %v", err)
 		}
 
 		if err := config.AddRepo(configPath, repoPath); err != nil {
-			return HandleError("failed to add repository: %v", err)
+			return HandleErrorRespectJSON("failed to add repository: %v", err)
 		}
 
 		if jsonOutput {
@@ -127,14 +127,14 @@ that came from the removed repository.`,
 		repoPath := args[0]
 
 		if err := ensureDirectMode("repo remove requires direct database access"); err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		ctx := rootCtx
 
 		deletedCount, err := store.DeleteIssuesBySourceRepo(ctx, repoPath)
 		if err != nil {
-			return HandleError("failed to delete issues from repo: %v", err)
+			return HandleErrorRespectJSON("failed to delete issues from repo: %v", err)
 		}
 
 		if err := store.ClearRepoMtime(ctx, repoPath); err != nil {
@@ -143,11 +143,11 @@ that came from the removed repository.`,
 
 		configPath, err := config.FindConfigYAMLPath()
 		if err != nil {
-			return HandleError("failed to find config.yaml: %v", err)
+			return HandleErrorRespectJSON("failed to find config.yaml: %v", err)
 		}
 
 		if err := config.RemoveRepo(configPath, repoPath); err != nil {
-			return HandleError("failed to remove repository: %v", err)
+			return HandleErrorRespectJSON("failed to remove repository: %v", err)
 		}
 
 		// Evict remote cache if applicable
@@ -195,12 +195,12 @@ repositories configured for hydration.`,
 
 		configPath, err := config.FindConfigYAMLPath()
 		if err != nil {
-			return HandleError("failed to find config.yaml: %v", err)
+			return HandleErrorRespectJSON("failed to find config.yaml: %v", err)
 		}
 
 		repos, err := config.ListRepos(configPath)
 		if err != nil {
-			return HandleError("failed to load config: %v", err)
+			return HandleErrorRespectJSON("failed to load config: %v", err)
 		}
 
 		if jsonOutput {
@@ -253,7 +253,7 @@ Also triggers Dolt push/pull if a remote is configured.`,
 		}()
 
 		if err := ensureDirectMode("repo sync requires direct database access"); err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		ctx := rootCtx
@@ -261,12 +261,12 @@ Also triggers Dolt push/pull if a remote is configured.`,
 
 		configPath, err := config.FindConfigYAMLPath()
 		if err != nil {
-			return HandleError("failed to find config.yaml: %v", err)
+			return HandleErrorRespectJSON("failed to find config.yaml: %v", err)
 		}
 
 		repos, err := config.ListRepos(configPath)
 		if err != nil {
-			return HandleError("failed to load repo config: %v", err)
+			return HandleErrorRespectJSON("failed to load repo config: %v", err)
 		}
 
 		totalImported := 0
@@ -466,10 +466,11 @@ func init() {
 	repoCmd.AddCommand(repoListCmd)
 	repoCmd.AddCommand(repoSyncCmd)
 
-	repoAddCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON")
-	repoRemoveCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON")
-	repoListCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON")
-	repoSyncCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON")
+	// NOTE: do NOT register command-local --json flags bound to jsonOutput; a
+	// local flag shadows the root persistent --json and PersistentPreRun clobbers
+	// jsonOutput back to the config default (--json silently non-functional).
+	// These commands inherit the honored persistent flag. See beads-lv51 /
+	// beads-9fww / beads-06km.
 	repoSyncCmd.Flags().Bool("verbose", false, "Show detailed sync progress")
 
 	rootCmd.AddCommand(repoCmd)
