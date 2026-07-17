@@ -1795,6 +1795,57 @@ func TestSearchIssues_ByDescription(t *testing.T) {
 	}
 }
 
+// TestTxSearchIssues_ByAssigneeCaseInsensitive gives beads-3px4 teeth. The
+// in-transaction SearchIssues (doltTransaction.SearchIssues, the read-your-writes
+// path of the storage.Transaction interface) must filter assignee
+// case-INSENSITIVELY, matching every other assignee read filter:
+// issueops.SearchIssuesInTx -> sqlbuild/filter.go (store-level search / bd list)
+// and sqlbuild/ready.go (bd ready, beads-xl4k).
+//
+// This MUST exercise the transaction path, not store.SearchIssues — the store
+// path already delegates to the (already case-insensitive) sqlbuild builder, so
+// a store-level test has NO teeth on the transaction.go clause. The column
+// collation is utf8mb4_0900_bin (case-sensitive), so a plain `assignee = ?` is
+// RED (0 results for "Alice" vs stored "alice"); LOWER(assignee)=LOWER(?) is
+// GREEN. Verified: revert the fix -> this test fails.
+func TestTxSearchIssues_ByAssigneeCaseInsensitive(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	issue := &types.Issue{
+		ID:        "tx-assignee-ci",
+		Title:     "Assigned to lowercase alice",
+		Assignee:  "alice",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+		t.Fatalf("failed to create issue: %v", err)
+	}
+
+	for _, q := range []string{"Alice", "ALICE", "alice"} {
+		assignee := q
+		var results []*types.Issue
+		if err := store.RunInTransaction(ctx, "beads-3px4 test", func(tx storage.Transaction) error {
+			r, err := tx.SearchIssues(ctx, "", types.IssueFilter{Assignee: &assignee})
+			results = r
+			return err
+		}); err != nil {
+			t.Fatalf("tx.SearchIssues(assignee=%q): unexpected error: %v", q, err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("tx.SearchIssues(assignee=%q): got %d results, want 1 (case-insensitive parity, beads-3px4)", q, len(results))
+		}
+		if results[0].ID != issue.ID {
+			t.Errorf("tx.SearchIssues(assignee=%q): got issue %s, want %s", q, results[0].ID, issue.ID)
+		}
+	}
+}
+
 // TestSearchIssues_ByExternalRef verifies two things:
 //  1. A free-text query like "BE-1521" (which looksLikeIssueID returns true for)
 //     matches an issue whose external_ref contains that string.
