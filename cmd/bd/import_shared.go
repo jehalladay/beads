@@ -12,6 +12,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 // ImportOptions configures import behavior.
@@ -77,6 +78,32 @@ type ImportChange struct {
 func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, issues []*types.Issue, opts ImportOptions) (*ImportResult, error) {
 	if opts.DryRun || len(issues) == 0 {
 		return &ImportResult{Skipped: len(issues)}, nil
+	}
+
+	// Reject malformed explicit IDs before the batch write (beads-a2jv).
+	// `bd import` accepts arbitrary/hand-edited JSONL, and the storage write
+	// path does no ID-format validation — the batch's only ID check is a
+	// prefix HasPrefix test that lets trailing/internal whitespace through
+	// ("bd-x1 " still "starts with" the prefix). Without this guard a
+	// whitespace-corrupted ID lands in storage and then fails to round-trip
+	// on lookup by its clean ID. ValidateIDFormat is the same guard `bd
+	// create` applies (cmd/bd/create.go), so validating here brings import to
+	// create-parity. Empty IDs are left alone — they are legitimately
+	// generated downstream. Reject the whole import (naming offenders) rather
+	// than silently writing: a malformed ID in an import file is an input
+	// error the caller must fix, and `bd export` never emits one.
+	var badIDs []string
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" {
+			continue
+		}
+		if _, err := validation.ValidateIDFormat(issue.ID); err != nil {
+			badIDs = append(badIDs, fmt.Sprintf("%q (%v)", issue.ID, err))
+		}
+	}
+	if len(badIDs) > 0 {
+		return nil, fmt.Errorf("import rejected: %d issue ID(s) have an invalid format: %s",
+			len(badIDs), strings.Join(badIDs, "; "))
 	}
 
 	// The stale guard has two halves (bd-pkim8). This pre-filter reports the
