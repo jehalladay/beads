@@ -39,7 +39,14 @@ func (e *TemplateError) Error() string {
 // Section matching is case-insensitive and looks for the heading text
 // anywhere in the description (doesn't require exact markdown format).
 func ValidateTemplate(issueType types.IssueType, description string) error {
-	required := issueType.RequiredSections()
+	// Normalize first so an alias ("enhancement") or mixed-case ("BUG") stored
+	// type resolves to its canonical form before the section lookup. The import
+	// ingestion path stores IssueType verbatim (SetDefaults, no Normalize), so a
+	// non-canonical type would otherwise miss RequiredSections()'s canonical-only
+	// switch, fall to default->nil, and make lint silently pass an issue it
+	// should warn on (beads-pw8k). Every other IssueType consumer (create,
+	// query evaluator) already normalizes; the lint rule engine was the gap.
+	required := issueType.Normalize().RequiredSections()
 	if len(required) == 0 {
 		return nil
 	}
