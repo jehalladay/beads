@@ -137,6 +137,18 @@ var closeEligibleEpicsCmd = &cobra.Command{
 		if len(closedIDs) > 0 {
 			commandDidWrite.Store(true)
 		}
+		// All-failed guard: eligibleEpics was non-empty (the len==0 early-out
+		// above already handled "nothing eligible"), so if closedIDs is empty
+		// every CloseIssue attempt failed. Per-item errors are already on
+		// stderr; a bare rc=0 with "✓ Closed 0 epic(s)" / {"closed":[]} would
+		// be a false success indistinguishable from "nothing eligible". Trip a
+		// non-zero exit, mirroring the close.go all-failed path (beads-b0df).
+		if len(closedIDs) == 0 {
+			if jsonOutput {
+				return HandleErrorRespectJSON("no epics closed (all %d eligible epic(s) failed to close)", len(eligibleEpics))
+			}
+			return SilentExit()
+		}
 		if jsonOutput {
 			return outputJSON(map[string]interface{}{
 				"closed": closedIDs,
