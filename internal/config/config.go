@@ -19,6 +19,15 @@ var v *viper.Viper
 // GetValueSource can distinguish them from Viper defaults.
 var overriddenKeys = map[string]bool{}
 
+// beadsBoundEnvKeys maps config keys to the BEADS_-prefixed env var they are
+// BindEnv'd to. Viper reads a BEADS_<KEY> var ONLY for these keys (all other
+// keys use the BD_ prefix via SetEnvPrefix/AutomaticEnv). Initialize() binds
+// exactly these, and GetValueSource consults the same map so the reported
+// source can't claim a BEADS_ env var that viper never reads (beads-mxed).
+var beadsBoundEnvKeys = map[string]string{
+	"identity": "BEADS_IDENTITY",
+}
+
 // Initialize sets up the viper configuration singleton
 // Should be called once at application startup
 func Initialize() error {
@@ -176,8 +185,12 @@ func Initialize() error {
 	v.SetDefault("db", "")
 	v.SetDefault("actor", "")
 	v.SetDefault("issue-prefix", "")
-	// Additional environment variables (not prefixed with BD_)
-	_ = v.BindEnv("identity", "BEADS_IDENTITY") // BindEnv only fails with zero args, which can't happen here
+	// Additional environment variables (not prefixed with BD_). Each such key
+	// MUST be listed in beadsBoundEnvKeys so GetValueSource only reports it as
+	// an env source when viper actually reads it (beads-mxed).
+	for key, envName := range beadsBoundEnvKeys {
+		_ = v.BindEnv(key, envName) // BindEnv only fails with zero args, which can't happen here
+	}
 	v.SetDefault("identity", "")
 
 	// Dolt configuration defaults
@@ -410,10 +423,15 @@ func GetValueSource(key string) ConfigSource {
 		return SourceEnvVar
 	}
 
-	// Check BEADS_ prefixed env vars for legacy compatibility
-	beadsEnvKey := "BEADS_" + strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(key, "-", "_"), ".", "_"))
-	if _, ok := os.LookupEnv(beadsEnvKey); ok {
-		return SourceEnvVar
+	// Check BEADS_ prefixed env vars — but ONLY for keys that are actually
+	// BindEnv'd to a BEADS_ name (beadsBoundEnvKeys). Viper's value path binds
+	// only these; reporting SourceEnvVar for an unbound BEADS_<KEY> would lie
+	// about the value (viper never reads it), which flips source-gated callers
+	// like isBackupAutoEnabled (beads-mxed).
+	if envName, bound := beadsBoundEnvKeys[key]; bound {
+		if _, ok := os.LookupEnv(envName); ok {
+			return SourceEnvVar
+		}
 	}
 
 	// Check if value is set in config file (as opposed to being a default)
