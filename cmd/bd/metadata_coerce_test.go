@@ -30,6 +30,13 @@ func TestToJSONValue_LosslessCoercion(t *testing.T) {
 		{"whitespace padded", "  3  ", `"  3  "`},
 		{"trailing space", "3 ", `"3 "`},
 		{"trailing-zero float", "5.0", `"5.0"`},
+		// beads-3raj: numeric-looking strings whose canonical JSON form differs
+		// from the input must stay STRING (else read-back silently mutates the
+		// value). Fixed by the isLosslessJSONNumber guard (shared with nj8y).
+		{"one-point-zero", "1.0", `"1.0"`},
+		{"one-point-double-zero", "1.00", `"1.00"`},
+		{"trailing-zero decimal", "1.10", `"1.10"`},
+		{"exponent form", "1e3", `"1e3"`},
 		// Non-numeric — string (unchanged behavior).
 		{"version string", "1.2.3", `"1.2.3"`},
 		{"plain word", "platform", `"platform"`},
