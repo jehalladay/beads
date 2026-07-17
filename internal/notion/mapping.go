@@ -198,16 +198,22 @@ func BuildPageProperties(pushIssue *PushIssue) map[string]interface{} {
 		}
 		labels = append(labels, map[string]interface{}{"name": label})
 	}
-	return map[string]interface{}{
-		PropertyTitle:       map[string]interface{}{"title": richTextRequest(pushIssue.Title)},
-		PropertyBeadsID:     map[string]interface{}{"rich_text": richTextRequest(pushIssue.ID)},
-		PropertyStatus:      map[string]interface{}{"select": map[string]interface{}{"name": pushIssue.Status}},
-		PropertyPriority:    map[string]interface{}{"select": map[string]interface{}{"name": pushIssue.Priority}},
-		PropertyType:        map[string]interface{}{"select": map[string]interface{}{"name": pushIssue.IssueType}},
-		PropertyDescription: map[string]interface{}{"rich_text": richTextRequest(pushIssue.Description)},
-		PropertyAssignee:    map[string]interface{}{"rich_text": richTextRequest(pushIssue.Assignee)},
-		PropertyLabels:      map[string]interface{}{"multi_select": labels},
+	props := map[string]interface{}{
+		PropertyTitle:    map[string]interface{}{"title": richTextRequest(pushIssue.Title)},
+		PropertyBeadsID:  map[string]interface{}{"rich_text": richTextRequest(pushIssue.ID)},
+		PropertyStatus:   map[string]interface{}{"select": map[string]interface{}{"name": pushIssue.Status}},
+		PropertyPriority: map[string]interface{}{"select": map[string]interface{}{"name": pushIssue.Priority}},
+		PropertyType:     map[string]interface{}{"select": map[string]interface{}{"name": pushIssue.IssueType}},
+		PropertyAssignee: map[string]interface{}{"rich_text": richTextRequest(pushIssue.Assignee)},
+		PropertyLabels:   map[string]interface{}{"multi_select": labels},
 	}
+	// Omit an empty description so a local issue with no body does not
+	// overwrite (wipe) a non-empty description on the external Notion page
+	// during an update. Matches jira's intended guard; see beads-fmb9.
+	if pushIssue.Description != "" {
+		props[PropertyDescription] = map[string]interface{}{"rich_text": richTextRequest(pushIssue.Description)}
+	}
+	return props
 }
 
 func PulledIssueFromPage(page Page) PulledIssue {

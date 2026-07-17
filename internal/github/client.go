@@ -95,6 +95,12 @@ func (c *Client) doRequest(ctx context.Context, method, urlStr string, body inte
 		resp, err := c.HTTPClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("request failed (attempt %d/%d): %w", attempt+1, retry.MaxRetries+1, err)
+			// A transport error on a non-idempotent request (POST/create) is
+			// ambiguous: the server may have processed it before the response
+			// was lost. Do not retry — a blind retry can create a duplicate.
+			if !isIdempotentMethod(method) {
+				return nil, nil, &AmbiguousError{Method: method, URL: urlStr, Cause: lastErr}
+			}
 			continue
 		}
 
@@ -103,6 +109,12 @@ func (c *Client) doRequest(ctx context.Context, method, urlStr string, body inte
 		_ = resp.Body.Close()
 		if readErr != nil {
 			lastErr = fmt.Errorf("failed to read response (attempt %d/%d): %w", attempt+1, retry.MaxRetries+1, readErr)
+			// The server returned a status but we could not read the body. For
+			// a non-idempotent request the create may have committed — treat as
+			// ambiguous rather than retrying into a duplicate.
+			if !isIdempotentMethod(method) {
+				return nil, nil, &AmbiguousError{Method: method, URL: urlStr, Cause: lastErr}
+			}
 			continue
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -113,6 +125,9 @@ func (c *Client) doRequest(ctx context.Context, method, urlStr string, body inte
 			if rlErr := classifyRateLimit(resp.Header, respBody, resp.StatusCode, urlStr); rlErr != nil {
 				lastRateLimit = rlErr
 				lastErr = rlErr
+				// A rate limit is a clean rejection: GitHub throttled the
+				// request WITHOUT processing it, so retrying (even a POST)
+				// cannot create a duplicate. Keep the backoff-retry behavior.
 				if attempt >= retry.MaxRetries {
 					continue
 				}
@@ -133,11 +148,17 @@ func (c *Client) doRequest(ctx context.Context, method, urlStr string, body inte
 		switch resp.StatusCode {
 		case http.StatusInternalServerError, http.StatusBadGateway,
 			http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			lastErr = fmt.Errorf("transient error %d (attempt %d/%d): %s", resp.StatusCode, attempt+1, retry.MaxRetries+1, extractGitHubMessage(respBody))
+			// A 5xx on a non-idempotent request is ambiguous: the create may
+			// have committed before the server errored. Do not retry — surface
+			// an AmbiguousError so the caller reconciles instead of duplicating.
+			if !isIdempotentMethod(method) {
+				return nil, nil, &AmbiguousError{Method: method, URL: urlStr, Cause: lastErr}
+			}
 			delay := exponentialBackoff(retry.BaseDelay, attempt, retry.MaxBackoff)
 			if half := int64(delay / 2); half > 0 {
 				delay += time.Duration(rand.Int64N(half)) //nolint:gosec // jitter does not need crypto rand
 			}
-			lastErr = fmt.Errorf("transient error %d (attempt %d/%d): %s", resp.StatusCode, attempt+1, retry.MaxRetries+1, extractGitHubMessage(respBody))
 			if err := sleep(ctx, delay); err != nil {
 				return nil, nil, err
 			}

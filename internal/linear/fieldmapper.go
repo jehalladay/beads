@@ -77,9 +77,14 @@ func (m *linearFieldMapper) IssueToBeads(ti *tracker.TrackerIssue) *tracker.Issu
 
 func (m *linearFieldMapper) IssueToTracker(issue *types.Issue) map[string]interface{} {
 	updates := map[string]interface{}{
-		"title":       issue.Title,
-		"description": issue.Description,
-		"priority":    PriorityToLinear(issue.Priority, m.config),
+		"title":    issue.Title,
+		"priority": PriorityToLinear(issue.Priority, m.config),
+	}
+	// Omit an empty description so a local issue with no body does not
+	// overwrite (wipe) a non-empty description on the external Linear issue
+	// during an update. Matches jira's intended guard; see beads-fmb9.
+	if issue.Description != "" {
+		updates["description"] = issue.Description
 	}
 	return updates
 }
