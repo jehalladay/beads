@@ -1461,14 +1461,17 @@ func TestHierarchicalChildren(t *testing.T) {
 		}
 	})
 
-	// Test leaf node (should return only itself)
+	// Test leaf node (a node with no children returns no results — the parent
+	// is only echoed as the tree root when descendants exist, so callers can
+	// print "has no children". This matches --json/--flat and the proxied
+	// gatherProxiedHierarchical path (GH#3349, #3374).
 	t.Run("leaf_node", func(t *testing.T) {
 		issues, err := getHierarchicalChildren(ctx, store, "", grandchild11.ID, types.IssueFilter{})
 		if err != nil {
 			t.Fatalf("getHierarchicalChildren for leaf failed: %v", err)
 		}
-		if len(issues) != 1 || issues[0].ID != grandchild11.ID {
-			t.Errorf("Expected 1 issue (leaf), got %d", len(issues))
+		if len(issues) != 0 {
+			t.Errorf("Expected 0 issues for a leaf node (no children), got %d", len(issues))
 		}
 	})
 
