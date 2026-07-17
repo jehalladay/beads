@@ -161,59 +161,52 @@ Examples:
 		}
 
 		searchFilter := result.Filter
-		if result.RequiresPredicate && limit > 0 {
-			searchFilter.Limit = limit * 3
-			if searchFilter.Limit < 100 {
-				searchFilter.Limit = 100
-			}
-		}
 
 		if jsonOutput {
-			iwc, err := store.SearchIssuesWithCounts(ctx, "", searchFilter)
-			if err != nil {
-				return HandleErrorRespectJSON("%v", err)
-			}
+			var iwc []*types.IssueWithCounts
 			if result.RequiresPredicate && result.Predicate != nil {
-				filtered := make([]*types.IssueWithCounts, 0, len(iwc))
-				for _, item := range iwc {
-					if item == nil || item.Issue == nil {
-						continue
-					}
-					if result.Predicate(item.Issue) {
-						filtered = append(filtered, item)
-					}
+				// Predicate path: page through ALL candidates (beads-7hu4) so a
+				// selective predicate over a large table does not silently
+				// under-return, then sort the full survivor set and truncate to
+				// the limit so the result is the true sorted-top-N.
+				iwc, err = collectPredicateMatchesWithCounts(ctx, store, searchFilter, sortBy, reverse, result.Predicate)
+				if err != nil {
+					return HandleErrorRespectJSON("%v", err)
 				}
-				iwc = filtered
+				sortIssuesWithCounts(iwc, sortBy, reverse)
 				if limit > 0 && len(iwc) > limit {
 					iwc = iwc[:limit]
 				}
+			} else {
+				iwc, err = store.SearchIssuesWithCounts(ctx, "", searchFilter)
+				if err != nil {
+					return HandleErrorRespectJSON("%v", err)
+				}
+				sortIssuesWithCounts(iwc, sortBy, reverse)
 			}
-			sortIssuesWithCounts(iwc, sortBy, reverse)
 			if iwc == nil {
 				iwc = []*types.IssueWithCounts{}
 			}
 			return outputJSON(iwc)
 		}
 
-		issues, err := store.SearchIssues(ctx, "", searchFilter)
-		if err != nil {
-			return HandleErrorRespectJSON("%v", err)
-		}
-
+		var issues []*types.Issue
 		if result.RequiresPredicate && result.Predicate != nil {
-			filtered := make([]*types.Issue, 0, len(issues))
-			for _, issue := range issues {
-				if result.Predicate(issue) {
-					filtered = append(filtered, issue)
-				}
+			issues, err = collectPredicateMatches(ctx, store, searchFilter, sortBy, reverse, result.Predicate)
+			if err != nil {
+				return HandleErrorRespectJSON("%v", err)
 			}
-			issues = filtered
+			sortIssues(issues, sortBy, reverse)
 			if limit > 0 && len(issues) > limit {
 				issues = issues[:limit]
 			}
+		} else {
+			issues, err = store.SearchIssues(ctx, "", searchFilter)
+			if err != nil {
+				return HandleErrorRespectJSON("%v", err)
+			}
+			sortIssues(issues, sortBy, reverse)
 		}
-
-		sortIssues(issues, sortBy, reverse)
 
 		outputQueryResults(issues, queryStr, longFormat)
 		return nil
