@@ -128,12 +128,21 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		return nil, err
 	}
 
+	// Count DISTINCT ids: the batch upsert collapses intra-batch duplicate ids
+	// to a single row (first-wins), so appending once per input occurrence
+	// would over-report Created (e.g. two {id:dz-1} records => "Imported 2"
+	// when one row landed). Dedup by id, preserving first-seen order (beads-4sxm).
 	importedIDs := make([]string, 0, len(issues))
+	seenImported := make(map[string]struct{}, len(issues))
 	for _, issue := range issues {
 		if _, rejected := staleRejectedSet[issue.ID]; rejected {
 			staleSkippedIDs = append(staleSkippedIDs, issue.ID)
 			continue
 		}
+		if _, dup := seenImported[issue.ID]; dup {
+			continue
+		}
+		seenImported[issue.ID] = struct{}{}
 		importedIDs = append(importedIDs, issue.ID)
 	}
 	// Drop planned updates the in-txn guard rejected (a local update raced
