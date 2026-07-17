@@ -140,6 +140,17 @@ func (m *adoFieldMapper) IssueToTracker(issue *types.Issue) map[string]interface
 		}
 	}
 
+	// Push assignee: beads Owner (a git-author email) → System.AssignedTo
+	// (beads-eotj). ADO resolves an email/unique-name to an identity
+	// server-side (like Linear), so unlike github/gitlab/jira (beads-bqeq, which
+	// need a user-ID lookup the code lacks) ADO CAN round-trip the assignee.
+	// A non-member email would 400-reject the whole patch, so the client
+	// (CreateWorkItem/UpdateWorkItem) retries WITHOUT this field on such a 400 —
+	// the assignee is dropped, the rest of the push still lands.
+	if issue.Owner != "" {
+		fields[FieldAssignedTo] = issue.Owner
+	}
+
 	// Set Severity for Bug-type work items (required by ADO).
 	// This is set before restoreMetadata so that a severity value previously
 	// pulled from ADO (stored in metadata) takes precedence over the computed one.

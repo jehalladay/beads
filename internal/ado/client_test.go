@@ -1550,3 +1550,74 @@ func TestWithBaseURL_AllowsLocalhost(t *testing.T) {
 		t.Errorf("BaseURL = %q, want %q", got.BaseURL, "http://localhost:8080")
 	}
 }
+
+// TestClient_CreateWorkItem_AssigneeIdentityFallback is the beads-eotj teeth:
+// when System.AssignedTo cannot be resolved (a non-member email), ADO 400s the
+// whole patch. The client must retry WITHOUT the assignee so the create still
+// lands, rather than failing the entire push.
+func TestClient_CreateWorkItem_AssigneeIdentityFallback(t *testing.T) {
+	var calls int
+	var sawAssigneeOnRetry bool
+	client, _ := setupTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		body, _ := io.ReadAll(r.Body)
+		var ops []PatchOperation
+		_ = json.Unmarshal(body, &ops)
+		hasAssignee := false
+		for _, op := range ops {
+			if op.Path == "/fields/"+FieldAssignedTo {
+				hasAssignee = true
+			}
+		}
+		if calls == 1 {
+			// First attempt carries the assignee → simulate ADO's identity 400.
+			if !hasAssignee {
+				t.Errorf("first attempt should include AssignedTo")
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"message":"The identity for field 'System.AssignedTo' does not exist"}`))
+			return
+		}
+		// Retry must NOT carry the assignee.
+		sawAssigneeOnRetry = hasAssignee
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":7,"rev":1,"fields":{"System.Title":"T"},"url":"u"}`))
+	})
+
+	fields := map[string]interface{}{
+		FieldTitle:      "T",
+		FieldAssignedTo: "not-a-member@example.com",
+	}
+	item, err := client.CreateWorkItem(context.Background(), "Task", fields)
+	if err != nil {
+		t.Fatalf("expected fallback success, got error: %v", err)
+	}
+	if item.ID != 7 {
+		t.Errorf("expected ID 7 from the retry, got %d", item.ID)
+	}
+	if calls != 2 {
+		t.Errorf("expected 2 calls (fail-with-assignee then retry-without), got %d", calls)
+	}
+	if sawAssigneeOnRetry {
+		t.Error("retry patch still included AssignedTo — the assignee was not dropped")
+	}
+}
+
+// TestClient_CreateWorkItem_NoAssigneeNoRetry verifies a 400 that is NOT an
+// assignee-identity error (or a request with no assignee) does not trigger the
+// eotj retry — it surfaces the error as before.
+func TestClient_CreateWorkItem_NoAssigneeNoRetry(t *testing.T) {
+	var calls int
+	client, _ := setupTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"some other validation error"}`))
+	})
+	_, err := client.CreateWorkItem(context.Background(), "Task", map[string]interface{}{FieldTitle: "T"})
+	if err == nil {
+		t.Fatal("expected error for a non-assignee 400")
+	}
+	if calls != 1 {
+		t.Errorf("expected exactly 1 call (no fallback retry), got %d", calls)
+	}
+}
