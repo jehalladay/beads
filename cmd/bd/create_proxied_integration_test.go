@@ -144,6 +144,43 @@ func TestProxiedServerCreate(t *testing.T) {
 		}
 	})
 
+	// beads-ie84: on the proxied path, reusing an existing --id previously
+	// UPSERTED silently (INSERT ... ON DUPLICATE KEY UPDATE) — clobbering the
+	// stored bead while printing "✓ Created". The direct path guards this
+	// (beads-k75k); the proxied path must too. Without --force a collision must
+	// FAIL and leave the original intact; --force keeps the overwrite escape.
+	t.Run("explicit_id_collision", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "ec")
+		orig := bdProxiedCreate(t, bd, p.dir, "Original title", "--id", "ec-dup1")
+		if orig.ID != "ec-dup1" {
+			t.Fatalf("setup ID: got %q, want ec-dup1", orig.ID)
+		}
+
+		// Reuse without --force must fail (not upsert).
+		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "create", "Overwrite attempt", "--id", "ec-dup1")
+		if err == nil {
+			t.Fatalf("expected reuse of --id ec-dup1 without --force to fail, got:\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+		if !strings.Contains(stdout+stderr, "already exists") {
+			t.Errorf("error should say the id already exists, got:\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+
+		// Original must be untouched by the refused create.
+		after := bdProxiedShow(t, bd, p.dir, "ec-dup1")
+		if after.Title != "Original title" {
+			t.Errorf("original was clobbered: title = %q, want %q", after.Title, "Original title")
+		}
+
+		// --force keeps the deliberate-overwrite escape hatch.
+		forced := bdProxiedCreate(t, bd, p.dir, "Forced overwrite", "--id", "ec-dup1", "--force")
+		if forced.ID != "ec-dup1" {
+			t.Errorf("forced overwrite ID: got %q, want ec-dup1", forced.ID)
+		}
+		if forced.Title != "Forced overwrite" {
+			t.Errorf("--force should overwrite: title = %q, want %q", forced.Title, "Forced overwrite")
+		}
+	})
+
 	t.Run("dependencies", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "dp")
 		parent := bdProxiedCreate(t, bd, p.dir, "Parent issue")

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -11,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
@@ -121,6 +124,35 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 		effectivePrefix := overlayYAMLPrefix(cctx.IssuePrefix)
 		if err := validation.ValidateIDPrefixAllowed(in.explicitID, effectivePrefix, cctx.AllowedPrefixes, in.force); err != nil {
 			FatalError("%v", err)
+		}
+
+		// A user-supplied --id that already exists would be silently UPSERTED
+		// (insertIssueRow uses INSERT ... ON DUPLICATE KEY UPDATE), clobbering
+		// the stored bead while printing "✓ Created" — silent data-loss on id
+		// reuse (beads-k75k). The direct create path guards this in create.go;
+		// the proxied path must too, or the guard leaks on whichever path is
+		// active — the create.go-vs-proxied dual-parse trap (cf. beads-n5xz
+		// title-trim, beads-83h3 create-validation). Scoped to parentID==""
+		// (user --id only, not a parent-minted child ID). Refuse unless --force.
+		if !in.force && in.parentID == "" {
+			checkUW, err := uowProvider.NewUOW(ctx)
+			if err != nil {
+				FatalError("open unit of work: %v", err)
+			}
+			_, gerr := checkUW.IssueUseCase().GetIssue(ctx, in.explicitID)
+			checkUW.Close(ctx)
+			if gerr == nil {
+				FatalErrorWithHint(
+					fmt.Sprintf("issue %s already exists", in.explicitID),
+					"Use 'bd update' to modify it, or pass --force to overwrite.")
+			} else if !errors.Is(gerr, sql.ErrNoRows) && !errors.Is(gerr, storage.ErrNotFound) {
+				// A genuine "not found" is the happy path (the id is free).
+				// The domain use-case surfaces sql.ErrNoRows on miss (via
+				// issueRepo.Get); storage.ErrNotFound is checked too for
+				// defensiveness against a future store swap. Any OTHER error is
+				// a real lookup failure and must not be swallowed into a create.
+				FatalError("failed to check whether %s already exists: %v", in.explicitID, gerr)
+			}
 		}
 	}
 
