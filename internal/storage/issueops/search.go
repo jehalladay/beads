@@ -24,7 +24,7 @@ func SearchIssuesInTx(ctx context.Context, tx DBTX, query string, filter types.I
 			return nil, fmt.Errorf("search wisps (ephemeral filter): %w", err)
 		}
 		if len(results) > 0 {
-			return results, nil
+			return applyOffsetLimit(results, filter), nil
 		}
 		// Fall through: wisps table doesn't exist or returned no results
 	}
@@ -36,7 +36,7 @@ func SearchIssuesInTx(ctx context.Context, tx DBTX, query string, filter types.I
 
 	// Skip wisps merge entirely when caller opts out (Q2: perf escape hatch).
 	if filter.SkipWisps {
-		return results, nil
+		return applyOffsetLimit(results, filter), nil
 	}
 
 	// When filter.Ephemeral is nil (search everything) or false (non-ephemeral
@@ -52,7 +52,7 @@ func SearchIssuesInTx(ctx context.Context, tx DBTX, query string, filter types.I
 			return nil, fmt.Errorf("search wisps (merge): probe: %w", probeErr)
 		}
 		if empty {
-			return results, nil
+			return applyOffsetLimit(results, filter), nil
 		}
 		wispResults, wispErr := searchTableInTx(ctx, tx, query, filter, WispsFilterTables)
 		if wispErr != nil && !isTableNotExistError(wispErr) {
@@ -73,33 +73,61 @@ func SearchIssuesInTx(ctx context.Context, tx DBTX, query string, filter types.I
 				}
 			}
 			results = append(filtered, wispResults...)
-			// The two halves were each ORDER BY'd and LIMIT'd independently, so
-			// the concatenation is [issues sorted]++[wisps sorted] and up to
-			// 2*Limit long. Re-sort the merged set by the requested order and
-			// re-apply Limit so the store honors both its SortBy and Limit
-			// contract (beads-4t1m). Mirrors finishSearchIssuesWithCounts, which
-			// already does this for the WithCounts sibling path.
-			results = sortAndLimitMergedIssues(results, filter)
+			// The two halves were each ORDER BY'd and fetched independently, so
+			// the concatenation is [issues sorted]++[wisps sorted]. Re-sort the
+			// merged set by the requested order, then apply Offset+Limit over the
+			// merged sequence so the store honors SortBy, Offset, and Limit
+			// together (beads-4t1m + beads-cand). Each half over-fetched
+			// Offset+Limit rows (effectiveFetchLimit) so the merged slice has
+			// enough rows to reach the offset window.
+			results = sortAndPaginateMergedIssues(results, filter)
+			return results, nil
 		}
 	}
 
-	return results, nil
+	return applyOffsetLimit(results, filter), nil
 }
 
-// sortAndLimitMergedIssues re-orders the merged issues+wisps slice by the
-// filter's sort key and truncates it to filter.Limit. It must order rows the
-// same way sqlbuild.OrderBy orders each per-table query; otherwise the Limit
-// cut keeps a different row set than the union of the two SQL queries selected.
-func sortAndLimitMergedIssues(issues []*types.Issue, filter types.IssueFilter) []*types.Issue {
+// sortAndPaginateMergedIssues re-orders the merged issues+wisps slice by the
+// filter's sort key, then applies Offset+Limit. It must order rows the same way
+// sqlbuild.OrderBy orders each per-table query; otherwise the pagination window
+// keeps a different row set than the union of the two SQL queries selected.
+func sortAndPaginateMergedIssues(issues []*types.Issue, filter types.IssueFilter) []*types.Issue {
 	if len(issues) > 1 {
 		sort.SliceStable(issues, func(i, j int) bool {
 			return sqlbuild.Less(issues[i], issues[j], filter.SortBy, filter.SortDesc)
 		})
 	}
+	return applyOffsetLimit(issues, filter)
+}
+
+// applyOffsetLimit applies filter.Offset then filter.Limit to an already-sorted
+// slice. Offset past the end yields an empty slice (not an error); a
+// zero/negative Offset is a no-op. Used by every SearchIssuesInTx return path so
+// filter.Offset is honored consistently — previously it was ignored entirely on
+// the embedded stack, silently returning page 1 regardless (beads-cand).
+func applyOffsetLimit(issues []*types.Issue, filter types.IssueFilter) []*types.Issue {
+	if filter.Offset > 0 {
+		if filter.Offset >= len(issues) {
+			return nil
+		}
+		issues = issues[filter.Offset:]
+	}
 	if filter.Limit > 0 && len(issues) > filter.Limit {
-		return issues[:filter.Limit]
+		issues = issues[:filter.Limit]
 	}
 	return issues
+}
+
+// effectiveFetchLimit is the number of rows each per-table query must fetch so
+// the post-merge Offset+Limit window is complete: Offset+Limit. Returns 0
+// (unbounded) when Limit is 0, since an unbounded query already returns all rows
+// for the merge to offset into.
+func effectiveFetchLimit(filter types.IssueFilter) int {
+	if filter.Limit <= 0 {
+		return 0
+	}
+	return filter.Offset + filter.Limit
 }
 
 // searchTableInTx runs a filtered search against a specific table set (issues or wisps).
@@ -127,9 +155,13 @@ func searchTableInTx(ctx context.Context, tx DBTX, query string, filter types.Is
 	}
 
 	// Pattern A: full 47-column scan (used for unlimited queries or when NoIDShrink is set).
+	// Fetch Offset+Limit rows (effectiveFetchLimit), not just Limit: the caller
+	// applies Offset over the merged issues+wisps result, so each half must
+	// over-fetch enough to reach the offset window (beads-cand). No per-table
+	// OFFSET — pagination is applied once, post-merge, in SearchIssuesInTx.
 	limitSQL := ""
-	if filter.Limit > 0 {
-		limitSQL = fmt.Sprintf(" LIMIT %d", filter.Limit)
+	if n := effectiveFetchLimit(filter); n > 0 {
+		limitSQL = fmt.Sprintf(" LIMIT %d", n)
 	}
 
 	selectSQL := "SELECT "
@@ -179,10 +211,13 @@ func searchTablePatternB(ctx context.Context, tx DBTX, fromSQL, whereSQL string,
 	if labelDriven {
 		idSelect = "SELECT DISTINCT "
 	}
+	// Fetch Offset+Limit ids (effectiveFetchLimit), not just Limit: pagination is
+	// applied post-merge in SearchIssuesInTx, so this half must over-fetch enough
+	// ids to reach the offset window (beads-cand).
 	//nolint:gosec // G201: SQL fragments from fixed column/table names and parameterized filters.
 	idQuery := fmt.Sprintf(`%s%s.id FROM %s %s %s LIMIT %d`,
 		idSelect, tables.Main, fromSQL, whereSQL,
-		sqlbuild.OrderBy(filter.SortBy, filter.SortDesc, tables.Main), filter.Limit)
+		sqlbuild.OrderBy(filter.SortBy, filter.SortDesc, tables.Main), effectiveFetchLimit(filter))
 
 	rows, err := tx.QueryContext(ctx, idQuery, args...)
 	if err != nil {
