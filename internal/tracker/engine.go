@@ -1108,6 +1108,18 @@ func (e *Engine) doPush(ctx context.Context, opts SyncOptions, skipIDs, forceIDs
 							stats.Skipped++
 							continue
 						}
+					} else if extIssue.UpdatedAt.IsZero() {
+						// The provider returned no usable timestamp for the
+						// external issue (github/gitlab type updated_at as a
+						// nil-able pointer; jira/linear leave it zero on a parse
+						// error). A zero time compares as "before" any real
+						// local time, so the default same-or-newer check below
+						// would treat the external as infinitely old and push
+						// local over it — silently clobbering an external issue
+						// of unknown age (beads-mckz). Age is unknown, so skip
+						// rather than overwrite blindly.
+						stats.Skipped++
+						continue
 					} else if !extIssue.UpdatedAt.Before(issue.UpdatedAt) {
 						stats.Skipped++ // Default: external is same or newer
 						continue
