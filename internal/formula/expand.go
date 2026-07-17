@@ -25,6 +25,14 @@ import (
 // generation. The limit applies to template children, not to expansion rules.
 const DefaultMaxExpansionDepth = 5
 
+// DefaultMaxLoopIterations bounds the number of iterations a count/range loop
+// may expand at cook time. Without it, a formula with e.g. count: 1000000 or
+// range: "1..2^30" eagerly materializes millions/billions of step bodies,
+// causing unbounded memory growth / OOM / DoS before anything runs. This is the
+// iteration-count analog of DefaultMaxExpansionDepth (which caps recursive
+// template depth). See beads-r7bv.
+const DefaultMaxLoopIterations = 10000
+
 // ApplyExpansions applies all expand and map rules to a formula's steps.
 // Returns a new steps slice with expansions applied.
 // The original steps slice is not modified.
