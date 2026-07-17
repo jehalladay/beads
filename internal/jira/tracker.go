@@ -237,6 +237,11 @@ func (t *Tracker) FetchIssue(ctx context.Context, identifier string) (*tracker.T
 }
 
 func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker.TrackerIssue, error) {
+	// Fail loud before the API call on labels Jira cannot accept (beads-xcbd).
+	if err := validateJiraLabels(issue.Labels); err != nil {
+		return nil, err
+	}
+
 	mapper := t.FieldMapper()
 	fields := mapper.IssueToTracker(issue)
 
@@ -253,6 +258,11 @@ func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker
 }
 
 func (t *Tracker) UpdateIssue(ctx context.Context, externalID string, issue *types.Issue) (*tracker.TrackerIssue, error) {
+	// Fail loud before the API call on labels Jira cannot accept (beads-xcbd).
+	if err := validateJiraLabels(issue.Labels); err != nil {
+		return nil, err
+	}
+
 	mapper := t.FieldMapper()
 	fields := mapper.IssueToTracker(issue)
 
