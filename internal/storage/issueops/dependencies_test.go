@@ -9,6 +9,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/steveyegge/beads/internal/storage/depid"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestReplaceDependencyTargetNormalizesTargetColumns(t *testing.T) {
@@ -105,7 +106,8 @@ func TestCycleDetectionTablesUseBothTablesByDefault(t *testing.T) {
 }
 
 func TestCycleReachabilityQuerySingleTableJoinsDirectly(t *testing.T) {
-	query := cycleReachabilityQuery([]string{"wisp_dependencies"})
+	blockingTypes := cycleCheckTypesFor(types.DepBlocks)
+	query := cycleReachabilityQuery([]string{"wisp_dependencies"}, blockingTypes)
 	if !strings.Contains(query, "JOIN wisp_dependencies d ON d.issue_id = r.node") {
 		t.Fatalf("query does not join wisp_dependencies directly:\n%s", query)
 	}
@@ -121,7 +123,8 @@ func TestCycleReachabilityQuerySingleTableJoinsDirectly(t *testing.T) {
 }
 
 func TestCycleReachabilityQueryMultipleTablesTraversesUniqueNodes(t *testing.T) {
-	query := cycleReachabilityQuery([]string{"dependencies", "wisp_dependencies"})
+	blockingTypes := cycleCheckTypesFor(types.DepBlocks)
+	query := cycleReachabilityQuery([]string{"dependencies", "wisp_dependencies"}, blockingTypes)
 	if strings.Contains(query, "UNION ALL") || strings.Contains(query, "depth") {
 		t.Fatalf("multi-table cycle query should traverse unique nodes, not enumerate paths:\n%s", query)
 	}
@@ -133,5 +136,37 @@ func TestCycleReachabilityQueryMultipleTablesTraversesUniqueNodes(t *testing.T) 
 	}
 	if !strings.Contains(query, DepTargetExpr) {
 		t.Fatalf("query does not resolve depends_on_id via DepTargetExpr:\n%s", query)
+	}
+}
+
+// beads-8qij: a parent-child edge is cycle-checked against the parent-child
+// graph, not the blocking graph — the reachability walk must filter on
+// 'parent-child' so it detects hierarchy cycles and does not spuriously
+// traverse blocks edges.
+func TestCycleReachabilityQueryParentChildFiltersParentChildEdges(t *testing.T) {
+	parentTypes := cycleCheckTypesFor(types.DepParentChild)
+	query := cycleReachabilityQuery([]string{"dependencies"}, parentTypes)
+	if !strings.Contains(query, "d.type IN ('parent-child')") {
+		t.Fatalf("parent-child cycle query does not filter parent-child edges:\n%s", query)
+	}
+	if strings.Contains(query, "blocks") {
+		t.Fatalf("parent-child cycle query should not traverse blocking edges:\n%s", query)
+	}
+}
+
+// beads-8qij: types outside a cycle-checked family (e.g. waits-for) are not
+// graph-walked; only self-dependency is rejected for them.
+func TestCycleCheckTypesForFamilies(t *testing.T) {
+	if got := cycleCheckTypesFor(types.DepBlocks); len(got) != 2 {
+		t.Errorf("blocks family: got %v, want 2 blocking types", got)
+	}
+	if got := cycleCheckTypesFor(types.DepConditionalBlocks); len(got) != 2 {
+		t.Errorf("conditional-blocks family: got %v, want 2 blocking types", got)
+	}
+	if got := cycleCheckTypesFor(types.DepParentChild); len(got) != 1 || got[0] != string(types.DepParentChild) {
+		t.Errorf("parent-child family: got %v, want [parent-child]", got)
+	}
+	if got := cycleCheckTypesFor(types.DepWaitsFor); got != nil {
+		t.Errorf("waits-for should not be cycle-checked: got %v", got)
 	}
 }

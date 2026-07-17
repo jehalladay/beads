@@ -64,6 +64,85 @@ func TestAddDependency(t *testing.T) {
 		}
 	})
 
+	// beads-8qij: parent-child edges were exempt from cycle detection, so a
+	// multi-level parent hierarchy cycle (A parent-of B, B parent-of A) could be
+	// created — corrupting tree/epic-rollup/descendant traversal. Only a direct
+	// self-parent was caught. The cycle gate must reject parent-child cycles the
+	// same way it rejects blocks cycles.
+	t.Run("parent_child_cycle_detection", func(t *testing.T) {
+		te := newTestEnv(t, "pc")
+		ctx := t.Context()
+
+		a := &types.Issue{ID: "pc-a", Title: "A", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic}
+		b := &types.Issue{ID: "pc-b", Title: "B", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic}
+		if err := te.store.CreateIssue(ctx, a, "tester"); err != nil {
+			t.Fatalf("CreateIssue A: %v", err)
+		}
+		if err := te.store.CreateIssue(ctx, b, "tester"); err != nil {
+			t.Fatalf("CreateIssue B: %v", err)
+		}
+
+		// A is the parent of B (A parent-child B).
+		dep1 := &types.Dependency{IssueID: "pc-a", DependsOnID: "pc-b", Type: types.DepParentChild}
+		if err := te.store.AddDependency(ctx, dep1, "tester"); err != nil {
+			t.Fatalf("AddDependency A parent-child B: %v", err)
+		}
+		if err := te.store.Commit(ctx, "dep1"); err != nil {
+			t.Fatalf("Commit: %v", err)
+		}
+
+		// B parent-child A closes the cycle and must be rejected.
+		dep2 := &types.Dependency{IssueID: "pc-b", DependsOnID: "pc-a", Type: types.DepParentChild}
+		err := te.store.AddDependency(ctx, dep2, "tester")
+		if err == nil {
+			t.Fatal("expected parent-child cycle detection error")
+		}
+		if !strings.Contains(err.Error(), "cycle") {
+			t.Errorf("expected cycle error, got: %v", err)
+		}
+	})
+
+	// beads-8qij: a 3-level parent chain A>B>C must reject re-parenting A under C
+	// (C parent-child A closes the cycle A>B>C>A). This is the case direct
+	// self-parent checks miss.
+	t.Run("parent_child_transitive_cycle_detection", func(t *testing.T) {
+		te := newTestEnv(t, "pt")
+		ctx := t.Context()
+
+		for _, issue := range []*types.Issue{
+			{ID: "pt-a", Title: "A", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic},
+			{ID: "pt-b", Title: "B", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic},
+			{ID: "pt-c", Title: "C", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic},
+		} {
+			if err := te.store.CreateIssue(ctx, issue, "tester"); err != nil {
+				t.Fatalf("CreateIssue %s: %v", issue.ID, err)
+			}
+		}
+
+		// A parent-of B, B parent-of C (chain A>B>C).
+		for _, dep := range []*types.Dependency{
+			{IssueID: "pt-a", DependsOnID: "pt-b", Type: types.DepParentChild},
+			{IssueID: "pt-b", DependsOnID: "pt-c", Type: types.DepParentChild},
+		} {
+			if err := te.store.AddDependency(ctx, dep, "tester"); err != nil {
+				t.Fatalf("AddDependency %s->%s: %v", dep.IssueID, dep.DependsOnID, err)
+			}
+		}
+		if err := te.store.Commit(ctx, "chain"); err != nil {
+			t.Fatalf("Commit: %v", err)
+		}
+
+		// C parent-of A closes the transitive cycle and must be rejected.
+		dep := &types.Dependency{IssueID: "pt-c", DependsOnID: "pt-a", Type: types.DepParentChild}
+		err := te.store.AddDependency(ctx, dep, "tester")
+		if err == nil {
+			t.Fatal("expected transitive parent-child cycle detection error")
+		}
+		if !strings.Contains(err.Error(), "cycle") {
+			t.Errorf("expected cycle error, got: %v", err)
+		}
+	})
+
 	t.Run("mixed_table_cycle_permanent_endpoints", func(t *testing.T) {
 		te := newTestEnv(t, "mp")
 		ctx := t.Context()

@@ -326,21 +326,31 @@ func markDirectBlockingDependencySourceInTx(ctx context.Context, tx *sql.Tx, sou
 	return err
 }
 
-// CheckDependencyCycleInTx rejects self-dependencies and blocking dependency
-// cycles before a dependency insert. The caller may pass a restricted depTables
-// list for a known storage bucket; nil uses all dependency tables.
+// CheckDependencyCycleInTx rejects self-dependencies and dependency cycles
+// before an insert. The caller may pass a restricted depTables list for a known
+// storage bucket; nil uses all dependency tables.
+//
+// Cycle detection is per edge-type FAMILY: a blocks/conditional-blocks edge is
+// checked for reachability over blocking edges only; a parent-child edge is
+// checked over parent-child edges only. Mixing families would wrongly reject a
+// valid edge (e.g. a reparent that closes no parent cycle but shares nodes with
+// a blocks chain). Parent-child cycles are exactly as corrupting as blocks
+// cycles — they break tree/epic-rollup/descendant traversal — so parent-child
+// is no longer exempt (beads-8qij). Types outside a checked family (e.g.
+// waits-for) still skip the graph walk.
 func CheckDependencyCycleInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, depTables []string) error {
 	if dep.IssueID == dep.DependsOnID {
 		return fmt.Errorf("cannot add self-dependency: %s cannot depend on itself", dep.IssueID)
 	}
-	if dep.Type != types.DepBlocks && dep.Type != types.DepConditionalBlocks {
+	depTypes := cycleCheckTypesFor(dep.Type)
+	if len(depTypes) == 0 {
 		return nil
 	}
 	if len(depTables) == 0 {
 		depTables = cycleDetectionTables()
 	}
 	var reachable int
-	query := cycleReachabilityQuery(depTables)
+	query := cycleReachabilityQuery(depTables, depTypes)
 	if err := tx.QueryRowContext(ctx, query, dep.DependsOnID, dep.IssueID).Scan(&reachable); err != nil {
 		return fmt.Errorf("failed to check for dependency cycle: %w", err)
 	}
@@ -350,9 +360,38 @@ func CheckDependencyCycleInTx(ctx context.Context, tx *sql.Tx, dep *types.Depend
 	return nil
 }
 
+// cycleCheckTypesFor returns the edge-type family whose graph must stay acyclic
+// for the given new-edge type, or nil if the type is not cycle-checked. A
+// blocks/conditional-blocks edge walks the blocking graph; a parent-child edge
+// walks the parent-child graph (beads-8qij).
+func cycleCheckTypesFor(t types.DependencyType) []string {
+	switch t {
+	case types.DepBlocks, types.DepConditionalBlocks:
+		return []string{string(types.DepBlocks), string(types.DepConditionalBlocks)}
+	case types.DepParentChild:
+		return []string{string(types.DepParentChild)}
+	default:
+		return nil
+	}
+}
+
+// sqlTypeInList renders a quoted, comma-separated SQL IN list for the given
+// dependency-type strings. The values come from cycleCheckTypesFor (fixed
+// constants), never user input.
+func sqlTypeInList(depTypes []string) string {
+	quoted := make([]string, len(depTypes))
+	for i, t := range depTypes {
+		quoted[i] = "'" + t + "'"
+	}
+	return strings.Join(quoted, ", ")
+}
+
 // cycleReachabilityQuery uses UNION distinct recursion so cyclic and diamond
-// graphs terminate by unique reachable node instead of enumerating paths.
-func cycleReachabilityQuery(depTables []string) string {
+// graphs terminate by unique reachable node instead of enumerating paths. The
+// recursion traverses only edges in depTypes so each edge-type family is
+// checked against its own graph.
+func cycleReachabilityQuery(depTables []string, depTypes []string) string {
+	typeIn := sqlTypeInList(depTypes)
 	if len(depTables) == 1 {
 		return fmt.Sprintf(`
 			WITH RECURSIVE reachable(node) AS (
@@ -360,15 +399,15 @@ func cycleReachabilityQuery(depTables []string) string {
 				UNION
 				SELECT %s
 				FROM reachable r
-				JOIN %s d ON d.issue_id = r.node AND d.type IN ('blocks', 'conditional-blocks')
+				JOIN %s d ON d.issue_id = r.node AND d.type IN (%s)
 			)
 			SELECT COUNT(*) FROM reachable WHERE node = ?
-		`, DepTargetExpr, depTables[0])
+		`, DepTargetExpr, depTables[0], typeIn)
 	}
 
 	var unions []string
 	for _, t := range depTables {
-		unions = append(unions, fmt.Sprintf("SELECT issue_id, %s AS depends_on_id FROM %s WHERE type IN ('blocks', 'conditional-blocks')", DepTargetExpr, t))
+		unions = append(unions, fmt.Sprintf("SELECT issue_id, %s AS depends_on_id FROM %s WHERE type IN (%s)", DepTargetExpr, t, typeIn))
 	}
 	unionQuery := strings.Join(unions, " UNION ")
 	return fmt.Sprintf(`
