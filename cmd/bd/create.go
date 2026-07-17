@@ -168,6 +168,15 @@ var createCmd = &cobra.Command{
 		if len(labelAlias) > 0 {
 			labels = append(labels, labelAlias...)
 		}
+		// Reserve the gt identity family (beads-3c4g): a hand-set gt:agent/role/rig
+		// label would mint a bead the ready discriminator silently hides. gt stamps
+		// these via its own (GT_INTERNAL) shell-outs, so only non-internal writes
+		// are rejected.
+		for _, label := range labels {
+			if msg := reservedIdentityLabelError(label); msg != "" {
+				return HandleErrorRespectJSON("%s", msg)
+			}
+		}
 
 		explicitID, _ := cmd.Flags().GetString("id")
 		parentID, _ := cmd.Flags().GetString("parent")

@@ -138,6 +138,9 @@ var labelAddCmd = &cobra.Command{
 			if strings.HasPrefix(label, "provides:") {
 				return HandleErrorRespectJSON("'provides:' labels are reserved for cross-project capabilities. Hint: use 'bd ship %s' instead", strings.TrimPrefix(label, "provides:"))
 			}
+			if msg := reservedIdentityLabelError(label); msg != "" {
+				return HandleErrorRespectJSON("%s", msg)
+			}
 		}
 		ctx := rootCtx
 		resolvedIDs := make([]string, 0, len(issueIDs))
@@ -346,6 +349,9 @@ var labelPropagateCmd = &cobra.Command{
 
 		if strings.HasPrefix(label, "provides:") {
 			return HandleErrorRespectJSON("'provides:' labels are reserved for cross-project capabilities. Hint: use 'bd ship %s' instead", strings.TrimPrefix(label, "provides:"))
+		}
+		if msg := reservedIdentityLabelError(label); msg != "" {
+			return HandleErrorRespectJSON("%s", msg)
 		}
 
 		children, err := store.SearchIssues(ctx, "", types.IssueFilter{ParentID: &parentID})
