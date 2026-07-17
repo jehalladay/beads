@@ -35,6 +35,35 @@ func ApplyMetadataKeyEditsInTx(ctx context.Context, tx DBTX, table, id string, s
 	// takes (doc, path, ...). Order: set first, then remove (a key in both sets
 	// and unsets ends up removed — matches the client-side applyMetadataEdits
 	// which deletes after setting).
+	//
+	// Guard: JSON_SET/JSON_REMOVE on a NON-OBJECT scalar document (e.g. an issue
+	// whose metadata is the bare number 42, reachable via bd import's verbatim
+	// upsert or a pre-object-gate legacy row) is a silent no-op in Dolt — the
+	// statement succeeds but writes nothing. The old client-side path errored
+	// loudly ("existing metadata is not a JSON object"); preserve that so a
+	// per-key edit never silently loses its write (beads-kkqu). We read the
+	// current value in this same transaction and reject a non-null non-object.
+	// The subsequent JSON_SET still merges server-side against the column, so
+	// concurrent DIFFERENT-key edits remain safe (beads-fnp6).
+	var current sql.NullString
+	if rerr := tx.QueryRowContext(ctx,
+		fmt.Sprintf("SELECT metadata FROM %s WHERE id = ?", table), id).Scan(&current); rerr != nil {
+		if rerr == sql.ErrNoRows {
+			// Missing row: no-op (rowsAffected 0), matching the prior contract.
+			return nil
+		}
+		return fmt.Errorf("read metadata for key edits %s: %w", id, rerr)
+	}
+	if current.Valid {
+		trimmed := strings.TrimSpace(current.String)
+		if trimmed != "" && trimmed != "null" {
+			var probe map[string]json.RawMessage
+			if uerr := json.Unmarshal([]byte(current.String), &probe); uerr != nil {
+				return fmt.Errorf("existing metadata for %s is not a JSON object: %w", id, uerr)
+			}
+		}
+	}
+
 	expr := "COALESCE(metadata, '{}')"
 	var args []interface{}
 
