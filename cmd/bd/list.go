@@ -513,22 +513,22 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 
 	if usesProxiedServer() {
 		if err := runListProxiedServer(cmd, rootCtx, in); err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 		return nil
 	}
 
 	if in.offset > 0 {
-		return HandleError("--offset is only supported under --proxied-server")
+		return HandleErrorRespectJSON("--offset is only supported under --proxied-server")
 	}
 
 	cfg, err := loadDirectListFilterConfig(rootCtx, store)
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	filter, err := buildListFilter(in, cfg)
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	ctx := rootCtx
@@ -536,7 +536,7 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 	activeStore := store
 	routedStore, routed, err := openRoutedReadStore(ctx, activeStore)
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if routed {
 		defer func() { _ = routedStore.Close() }()
@@ -557,7 +557,7 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 			iwc, err = activeStore.SearchIssuesWithCounts(ctx, "", withFetchOneExtra(filter))
 		}
 		if err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 		sortIssuesWithCounts(iwc, in.sortBy, in.reverse)
 		truncated := in.effectiveLimit > 0 && len(iwc) > in.effectiveLimit
@@ -587,13 +587,13 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 		var err error
 		issues, err = activeStore.GetReadyWork(ctx, wf)
 		if err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 	} else {
 		var err error
 		issues, err = activeStore.SearchIssues(ctx, "", withFetchOneExtra(filter))
 		if err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 	}
 
@@ -608,7 +608,7 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 		if in.parentID != "" && !in.readyFlag {
 			treeIssues, err := getHierarchicalChildren(ctx, activeStore, "", in.parentID, filter)
 			if err != nil {
-				return HandleError("%v", err)
+				return HandleErrorRespectJSON("%v", err)
 			}
 
 			if len(treeIssues) == 0 {
@@ -632,7 +632,7 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 	if in.formatStr != "" {
 		depsByIssueID := displayedIssueDeps(ctx, activeStore, issues)
 		if err := outputFormattedList(issues, depsByIssueID, in.formatStr); err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 		printTruncationHint(truncated, in.effectiveLimit)
 		return nil

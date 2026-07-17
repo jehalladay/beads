@@ -152,7 +152,7 @@ func gatherListInput(cmd *cobra.Command) (listInput, error) {
 		priorityStr, _ := cmd.Flags().GetString("priority")
 		p, err := validation.ValidatePriority(priorityStr)
 		if err != nil {
-			return in, HandleError("%v", err)
+			return in, HandleErrorRespectJSON("%v", err)
 		}
 		in.priority = p
 		in.prioritySet = true
@@ -161,7 +161,7 @@ func gatherListInput(cmd *cobra.Command) (listInput, error) {
 		s, _ := cmd.Flags().GetString("priority-min")
 		p, err := validation.ValidatePriority(s)
 		if err != nil {
-			return in, HandleError("parsing --priority-min: %v", err)
+			return in, HandleErrorRespectJSON("parsing --priority-min: %v", err)
 		}
 		in.priorityMin = p
 		in.priorityMinSet = true
@@ -170,7 +170,7 @@ func gatherListInput(cmd *cobra.Command) (listInput, error) {
 		s, _ := cmd.Flags().GetString("priority-max")
 		p, err := validation.ValidatePriority(s)
 		if err != nil {
-			return in, HandleError("parsing --priority-max: %v", err)
+			return in, HandleErrorRespectJSON("parsing --priority-max: %v", err)
 		}
 		in.priorityMax = p
 		in.priorityMaxSet = true
@@ -179,7 +179,7 @@ func gatherListInput(cmd *cobra.Command) (listInput, error) {
 	in.pinnedFlag, _ = cmd.Flags().GetBool("pinned")
 	in.noPinnedFlag, _ = cmd.Flags().GetBool("no-pinned")
 	if in.pinnedFlag && in.noPinnedFlag {
-		return in, HandleError("--pinned and --no-pinned are mutually exclusive")
+		return in, HandleErrorRespectJSON("--pinned and --no-pinned are mutually exclusive")
 	}
 
 	in.includeTemplates, _ = cmd.Flags().GetBool("include-templates")
@@ -193,20 +193,20 @@ func gatherListInput(cmd *cobra.Command) (listInput, error) {
 	}
 	in.noParent, _ = cmd.Flags().GetBool("no-parent")
 	if in.parentID != "" && in.noParent {
-		return in, HandleError("--parent and --no-parent are mutually exclusive")
+		return in, HandleErrorRespectJSON("--parent and --no-parent are mutually exclusive")
 	}
 
 	if s, _ := cmd.Flags().GetString("mol-type"); s != "" {
 		mt := types.MolType(s)
 		if !mt.IsValid() {
-			return in, HandleError("invalid mol-type %q (must be swarm, patrol, or work)", s)
+			return in, HandleErrorRespectJSON("invalid mol-type %q (must be swarm, patrol, or work)", s)
 		}
 		in.molType = &mt
 	}
 	if s, _ := cmd.Flags().GetString("wisp-type"); s != "" {
 		wt := types.WispType(s)
 		if !wt.IsValid() {
-			return in, HandleError("invalid wisp-type %q (must be heartbeat, ping, patrol, gc_report, recovery, error, or escalation)", s)
+			return in, HandleErrorRespectJSON("invalid wisp-type %q (must be heartbeat, ping, patrol, gc_report, recovery, error, or escalation)", s)
 		}
 		in.wispType = &wt
 	}
@@ -287,7 +287,7 @@ func gatherListInput(cmd *cobra.Command) (listInput, error) {
 			"status": true, "id": true, "title": true, "type": true, "assignee": true,
 		}
 		if !validSortFields[in.sortBy] {
-			return in, HandleError("invalid sort field %q (valid: priority, created, updated, closed, status, id, title, type, assignee)", in.sortBy)
+			return in, HandleErrorRespectJSON("invalid sort field %q (valid: priority, created, updated, closed, status, id, title, type, assignee)", in.sortBy)
 		}
 	}
 
@@ -324,7 +324,7 @@ func gatherListInput(cmd *cobra.Command) (listInput, error) {
 	if cmd.Flags().Changed("offset") {
 		offset, _ := cmd.Flags().GetInt("offset")
 		if offset < 0 {
-			return in, HandleError("--offset must be >= 0")
+			return in, HandleErrorRespectJSON("--offset must be >= 0")
 		}
 		// --offset only makes sense when pagination happens in SQL. Sorts
 		// that fall back to Go-side (currently --sort id) fetch everything
@@ -332,7 +332,7 @@ func gatherListInput(cmd *cobra.Command) (listInput, error) {
 		// caller would think they're paging when they're really pulling
 		// the whole result set.
 		if offset > 0 && in.sqlLimit == 0 && in.sortBy == "id" {
-			return in, HandleError("--offset is not supported with --sort %s (sort requires fetching the full result set)", in.sortBy)
+			return in, HandleErrorRespectJSON("--offset is not supported with --sort %s (sort requires fetching the full result set)", in.sortBy)
 		}
 		in.offset = offset
 	}
@@ -350,7 +350,7 @@ func parseListTimeFlag(cmd *cobra.Command, name string) (*time.Time, error) {
 	}
 	t, err := parseTimeFlag(s)
 	if err != nil {
-		return nil, HandleError("parsing --%s: %v", name, err)
+		return nil, HandleErrorRespectJSON("parsing --%s: %v", name, err)
 	}
 	return &t, nil
 }

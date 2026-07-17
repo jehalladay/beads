@@ -174,6 +174,32 @@ func TestEmbeddedList(t *testing.T) {
 		}
 	})
 
+	// A list input-validation failure under --json must emit a parseable JSON
+	// error object on stdout (HandleErrorRespectJSON), matching the
+	// update/close/create convention — not plain text to stderr with empty
+	// stdout (beads-8lqh). --priority-min with a non-numeric value is a
+	// deterministic gatherListInput error (exercises list_input.go).
+	t.Run("input_error_json_emits_stdout_error", func(t *testing.T) {
+		cmd := exec.Command(bd, "list", "--priority-min", "not-a-number", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Errorf("expected non-zero exit on invalid --priority-min, got success\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+		}
+		out := strings.TrimSpace(stdout.String())
+		if out == "" {
+			t.Fatalf("stdout is empty on a --json list input error — must emit a JSON error object (beads-8lqh)\nstderr:\n%s", stderr.String())
+		}
+		var obj map[string]any
+		if jerr := json.Unmarshal([]byte(out), &obj); jerr != nil {
+			t.Fatalf("stdout is not a JSON object on --json list input error: %v\nstdout:\n%s", jerr, out)
+		}
+		if _, ok := obj["error"]; !ok {
+			t.Errorf("expected an \"error\" field in the --json list-error stdout object, got: %s", out)
+		}
+	})
+
 	t.Run("all", func(t *testing.T) {
 		issues := bdListJSON(t, bd, dir, "--all")
 		if !containsID(issues, seed.openBug) {
