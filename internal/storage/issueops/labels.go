@@ -140,6 +140,15 @@ func getLabelsIntoFromTable(ctx context.Context, tx DBTX, labelTable string, ids
 const maxLabelLen = 255
 
 func AddLabelInTx(ctx context.Context, tx DBTX, labelTable, eventTable, issueID, label, actor string) error {
+	// Trim surrounding whitespace so the stored label matches what the
+	// query/filter side searches for (utils.NormalizeLabels trims its input);
+	// an untrimmed "  bug  " is permanently unmatchable (beads-13zc). This is
+	// the single live-path chokepoint for AddLabel across the dolt and
+	// embeddeddolt stores, and mirrors the CLI `bd label add` TrimSpace guard.
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return fmt.Errorf("label must not be empty")
+	}
 	if len(label) > maxLabelLen {
 		return fmt.Errorf("label must be %d characters or less (got %d)", maxLabelLen, len(label))
 	}
@@ -179,6 +188,11 @@ func AddLabelInTx(ctx context.Context, tx DBTX, labelTable, eventTable, issueID,
 //
 //nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
 func RemoveLabelInTx(ctx context.Context, tx DBTX, labelTable, eventTable, issueID, label, actor string) error {
+	// Trim so a padded `--remove-label "  bug  "` matches a label stored as
+	// "bug" (labels are persisted trimmed after beads-13zc). A whitespace-only
+	// arg trims to empty and can never match an existing label, so the DELETE
+	// no-ops (matching the add-side empty guard's intent).
+	label = strings.TrimSpace(label)
 	if labelTable == "" || eventTable == "" {
 		isWisp := IsActiveWispInTx(ctx, tx, issueID)
 		_, lt, et, _ := WispTableRouting(isWisp)
