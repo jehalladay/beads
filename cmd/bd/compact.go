@@ -48,6 +48,37 @@ func compactNoArgs(_ *cobra.Command, args []string) error {
 	return fmt.Errorf("bd compact does not accept positional arguments; to compact a single issue use --id %q (see bd compact --help). Got unexpected argument %q", args[0], args[0])
 }
 
+// validateCompactMode enforces that exactly one compaction mode is selected and
+// that the tier is implemented. It is pure (no I/O, no os.Exit) so callers can
+// route the error through HandleErrorRespectJSON/FatalErrorRespectJSON — under
+// --json that yields a structured error on stdout rather than the historical
+// empty-stdout + os.Exit(1) (beads-9fww). Kept as a standalone func so the
+// validation is unit-testable without invoking the destructive command body.
+func validateCompactMode(analyze, apply, auto bool, tier int) error {
+	activeModes := 0
+	if analyze {
+		activeModes++
+	}
+	if apply {
+		activeModes++
+	}
+	if auto {
+		activeModes++
+	}
+	if activeModes == 0 {
+		return fmt.Errorf("must specify one mode: --analyze, --apply, or --auto")
+	}
+	if activeModes > 1 {
+		return fmt.Errorf("cannot use multiple modes together (--analyze, --apply, --auto are mutually exclusive)")
+	}
+	// Only Tier 1 compaction is implemented. Reject other tiers up front with a
+	// clear message rather than failing deep inside a mode.
+	if tier != 1 {
+		return fmt.Errorf("Tier %d compaction is not yet implemented; only --tier 1 is available", tier)
+	}
+	return nil
+}
+
 var compactCmd = &cobra.Command{
 	Use:   "compact",
 	Args:  compactNoArgs,
@@ -117,41 +148,17 @@ Examples:
 			return
 		}
 
-		// Count active modes
-		activeModes := 0
-		if compactAnalyze {
-			activeModes++
-		}
-		if compactApply {
-			activeModes++
-		}
-		if compactAuto {
-			activeModes++
-		}
-
-		// Check for exactly one mode
-		if activeModes == 0 {
-			fmt.Fprintf(os.Stderr, "Error: must specify one mode: --analyze, --apply, or --auto\n")
-			os.Exit(1)
-		}
-		if activeModes > 1 {
-			fmt.Fprintf(os.Stderr, "Error: cannot use multiple modes together (--analyze, --apply, --auto are mutually exclusive)\n")
-			os.Exit(1)
-		}
-
-		// Only Tier 1 compaction is implemented. Reject other tiers up front with
-		// a clear message rather than failing deep inside a mode.
-		if compactTier != 1 {
-			fmt.Fprintf(os.Stderr, "Error: Tier %d compaction is not yet implemented; only --tier 1 is available\n", compactTier)
-			os.Exit(1)
+		// Mode/tier validation (pure, testable — no os.Exit). Under --json this
+		// must surface as structured JSON on stdout, never an empty-stdout exit
+		// (beads-9fww).
+		if err := validateCompactMode(compactAnalyze, compactApply, compactAuto, compactTier); err != nil {
+			FatalErrorRespectJSON("%v", err)
 		}
 
 		// Handle analyze mode (requires direct database access)
 		if compactAnalyze {
 			if err := ensureDirectMode("compact --analyze requires direct database access"); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Hint: %s\n", diagHint())
-				os.Exit(1)
+				FatalErrorWithHintRespectJSON(err.Error(), diagHint())
 			}
 			runCompactAnalyze(ctx, store)
 			return
@@ -160,17 +167,13 @@ Examples:
 		// Handle apply mode (requires direct database access)
 		if compactApply {
 			if err := ensureDirectMode("compact --apply requires direct database access"); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Hint: %s\n", diagHint())
-				os.Exit(1)
+				FatalErrorWithHintRespectJSON(err.Error(), diagHint())
 			}
 			if compactID == "" {
-				fmt.Fprintf(os.Stderr, "Error: --apply requires --id\n")
-				os.Exit(1)
+				FatalErrorRespectJSON("--apply requires --id")
 			}
 			if compactSummary == "" {
-				fmt.Fprintf(os.Stderr, "Error: --apply requires --summary\n")
-				os.Exit(1)
+				FatalErrorRespectJSON("--apply requires --summary")
 			}
 			runCompactApply(ctx, store)
 			return
@@ -180,16 +183,13 @@ Examples:
 		if compactAuto {
 			// Validation checks
 			if compactID != "" && compactAll {
-				fmt.Fprintf(os.Stderr, "Error: cannot use --id and --all together\n")
-				os.Exit(1)
+				FatalErrorRespectJSON("cannot use --id and --all together")
 			}
 			if compactForce && compactID == "" {
-				fmt.Fprintf(os.Stderr, "Error: --force requires --id\n")
-				os.Exit(1)
+				FatalErrorRespectJSON("--force requires --id")
 			}
 			if compactID == "" && !compactAll && !compactDryRun {
-				fmt.Fprintf(os.Stderr, "Error: must specify --all, --id, or --dry-run\n")
-				os.Exit(1)
+				FatalErrorRespectJSON("must specify --all, --id, or --dry-run")
 			}
 
 			// Direct mode
@@ -198,8 +198,7 @@ Examples:
 				apiKey = config.GetString("ai.api_key")
 			}
 			if apiKey == "" && !compactDryRun {
-				fmt.Fprintf(os.Stderr, "Error: --auto mode requires ANTHROPIC_API_KEY environment variable or ai.api_key in config\n")
-				os.Exit(1)
+				FatalErrorRespectJSON("--auto mode requires ANTHROPIC_API_KEY environment variable or ai.api_key in config")
 			}
 
 			compactCfg := &compact.Config{
@@ -210,8 +209,7 @@ Examples:
 
 			compactor, err := compact.New(store, apiKey, compactCfg)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to create compactor: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("failed to create compactor: %v", err)
 			}
 
 			if compactID != "" {
@@ -230,19 +228,16 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store s
 	if !compactForce {
 		eligible, reason, err := store.CheckEligibility(ctx, issueID, compactTier)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to check eligibility: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("failed to check eligibility: %v", err)
 		}
 		if !eligible {
-			fmt.Fprintf(os.Stderr, "Error: %s is not eligible for Tier %d compaction: %s\n", issueID, compactTier, reason)
-			os.Exit(1)
+			FatalErrorRespectJSON("%s is not eligible for Tier %d compaction: %s", issueID, compactTier, reason)
 		}
 	}
 
 	issue, err := store.GetIssue(ctx, issueID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to get issue: %v\n", err)
-		os.Exit(1)
+		FatalErrorRespectJSON("failed to get issue: %v", err)
 	}
 
 	originalSize := len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
@@ -294,19 +289,16 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store s
 	if compactTier == 1 {
 		compactErr = compactor.CompactTier1(ctx, issueID)
 	} else {
-		fmt.Fprintf(os.Stderr, "Error: Tier 2 compaction not yet implemented\n")
-		os.Exit(1)
+		FatalErrorRespectJSON("Tier 2 compaction not yet implemented")
 	}
 
 	if compactErr != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", compactErr)
-		os.Exit(1)
+		FatalErrorRespectJSON("%v", compactErr)
 	}
 
 	issue, err = store.GetIssue(ctx, issueID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to get updated issue: %v\n", err)
-		os.Exit(1)
+		FatalErrorRespectJSON("failed to get updated issue: %v", err)
 	}
 
 	compactedSize := len(issue.Description)
@@ -344,8 +336,7 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store stor
 	if compactTier == 1 {
 		tier1, err := store.GetTier1Candidates(ctx)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to get candidates: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("failed to get candidates: %v", err)
 		}
 		for _, c := range tier1 {
 			candidates = append(candidates, c.IssueID)
@@ -353,8 +344,7 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store stor
 	} else {
 		tier2, err := store.GetTier2Candidates(ctx)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to get candidates: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("failed to get candidates: %v", err)
 		}
 		for _, c := range tier2 {
 			candidates = append(candidates, c.IssueID)
@@ -446,8 +436,7 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store stor
 
 	results, err := compactor.CompactTier1Batch(ctx, candidates)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: batch compaction failed: %v\n", err)
-		os.Exit(1)
+		FatalErrorRespectJSON("batch compaction failed: %v", err)
 	}
 
 	successCount := 0
@@ -500,14 +489,12 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store stor
 func runCompactStats(ctx context.Context, store storage.DoltStorage) {
 	tier1, err := store.GetTier1Candidates(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to get Tier 1 candidates: %v\n", err)
-		os.Exit(1)
+		FatalErrorRespectJSON("failed to get Tier 1 candidates: %v", err)
 	}
 
 	tier2, err := store.GetTier2Candidates(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to get Tier 2 candidates: %v\n", err)
-		os.Exit(1)
+		FatalErrorRespectJSON("failed to get Tier 2 candidates: %v", err)
 	}
 
 	tier1Size := 0
@@ -571,8 +558,7 @@ func runCompactAnalyze(ctx context.Context, store storage.DoltStorage) {
 	if compactID != "" {
 		issue, err := store.GetIssue(ctx, compactID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to get issue: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("failed to get issue: %v", err)
 		}
 
 		sizeBytes := len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
@@ -603,8 +589,7 @@ func runCompactAnalyze(ctx context.Context, store storage.DoltStorage) {
 			tierCandidates, err = store.GetTier2Candidates(ctx)
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to get candidates: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("failed to get candidates: %v", err)
 		}
 
 		// Apply limit if specified
@@ -683,15 +668,13 @@ func runCompactApply(ctx context.Context, store storage.DoltStorage) {
 		// Read from stdin
 		summaryBytes, err = readAllLimited(os.Stdin, "summary")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to read summary from stdin: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("failed to read summary from stdin: %v", err)
 		}
 	} else {
 		// #nosec G304 -- summary file path provided explicitly by operator
 		summaryBytes, err = os.ReadFile(compactSummary)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to read summary file: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("failed to read summary file: %v", err)
 		}
 	}
 	summary := string(summaryBytes)
@@ -699,8 +682,7 @@ func runCompactApply(ctx context.Context, store storage.DoltStorage) {
 	// Get issue
 	issue, err := store.GetIssue(ctx, compactID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to get issue: %v\n", err)
-		os.Exit(1)
+		FatalErrorRespectJSON("failed to get issue: %v", err)
 	}
 
 	// Calculate sizes
@@ -711,20 +693,15 @@ func runCompactApply(ctx context.Context, store storage.DoltStorage) {
 	if !compactForce {
 		eligible, reason, err := store.CheckEligibility(ctx, compactID, compactTier)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to check eligibility: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("failed to check eligibility: %v", err)
 		}
 		if !eligible {
-			fmt.Fprintf(os.Stderr, "Error: %s is not eligible for Tier %d compaction: %s\n", compactID, compactTier, reason)
-			fmt.Fprintf(os.Stderr, "Hint: use --force to bypass eligibility checks\n")
-			os.Exit(1)
+			FatalErrorWithHintRespectJSON(fmt.Sprintf("%s is not eligible for Tier %d compaction: %s", compactID, compactTier, reason), "use --force to bypass eligibility checks")
 		}
 
 		// Enforce size reduction unless --force
 		if compactedSize >= originalSize {
-			fmt.Fprintf(os.Stderr, "Error: summary (%d bytes) is not shorter than original (%d bytes)\n", compactedSize, originalSize)
-			fmt.Fprintf(os.Stderr, "Hint: use --force to bypass size validation\n")
-			os.Exit(1)
+			FatalErrorWithHintRespectJSON(fmt.Sprintf("summary (%d bytes) is not shorter than original (%d bytes)", compactedSize, originalSize), "use --force to bypass size validation")
 		}
 	}
 
@@ -741,8 +718,7 @@ func runCompactApply(ctx context.Context, store storage.DoltStorage) {
 	// design/notes/acceptance text is lost (beads-zh1r). If archiving fails we
 	// abort with the original content intact rather than silently destroy it.
 	if err := store.SnapshotIssue(ctx, compactID, compactTier); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to archive pre-compaction snapshot: %v\n", err)
-		os.Exit(1)
+		FatalErrorRespectJSON("failed to archive pre-compaction snapshot: %v", err)
 	}
 
 	updates := map[string]interface{}{
@@ -753,22 +729,19 @@ func runCompactApply(ctx context.Context, store storage.DoltStorage) {
 	}
 
 	if err := store.UpdateIssue(ctx, compactID, updates, actor); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to update issue: %v\n", err)
-		os.Exit(1)
+		FatalErrorRespectJSON("failed to update issue: %v", err)
 	}
 
 	commitHash := compact.GetCurrentCommitHash()
 	if err := store.ApplyCompaction(ctx, compactID, compactTier, originalSize, compactedSize, commitHash, actor); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to apply compaction: %v\n", err)
-		os.Exit(1)
+		FatalErrorRespectJSON("failed to apply compaction: %v", err)
 	}
 
 	savingBytes := originalSize - compactedSize
 	reductionPct := float64(savingBytes) / float64(originalSize) * 100
 	eventData := fmt.Sprintf("Tier %d compaction: %d → %d bytes (saved %d, %.1f%%)", compactTier, originalSize, compactedSize, savingBytes, reductionPct)
 	if err := store.AddComment(ctx, compactID, actor, eventData); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to record event: %v\n", err)
-		os.Exit(1)
+		FatalErrorRespectJSON("failed to record event: %v", err)
 	}
 
 	elapsed := time.Since(start)
@@ -825,9 +798,7 @@ func runCompactDolt() {
 			fmt.Printf("No local Dolt directory found; nothing to collect.\n")
 			return
 		}
-		fmt.Fprintf(os.Stderr, "Error: Dolt directory not found at %s\n", doltPath)
-		fmt.Fprintf(os.Stderr, "Hint: --dolt flag is only for repositories using the Dolt backend\n")
-		os.Exit(1)
+		FatalErrorWithHintRespectJSON(fmt.Sprintf("Dolt directory not found at %s", doltPath), "--dolt flag is only for repositories using the Dolt backend")
 	}
 
 	// Get size before GC
@@ -859,9 +830,7 @@ func runCompactDolt() {
 
 	// Check if dolt command is available
 	if _, err := exec.LookPath("dolt"); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: dolt command not found in PATH\n")
-		fmt.Fprintf(os.Stderr, "Hint: install Dolt from https://github.com/dolthub/dolt\n")
-		os.Exit(1)
+		FatalErrorWithHintRespectJSON("dolt command not found in PATH", "install Dolt from https://github.com/dolthub/dolt")
 	}
 
 	if !jsonOutput {
