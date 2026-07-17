@@ -459,11 +459,20 @@ func compare(actual interface{}, op Operator, expected string) (bool, string) {
 	// Handle bool values (from JSON unmarshaling)
 	if b, ok := actual.(bool); ok {
 		actualStr := strconv.FormatBool(b)
-		satisfied := actualStr == expected
-		if op == OpNotEqual {
-			satisfied = actualStr != expected
+		switch op {
+		case OpEqual:
+			satisfied := actualStr == expected
+			return satisfied, fmt.Sprintf("%v %s %q: %v", b, op, expected, satisfied)
+		case OpNotEqual:
+			satisfied := actualStr != expected
+			return satisfied, fmt.Sprintf("%v %s %q: %v", b, op, expected, satisfied)
+		default:
+			// Relational operators (>, >=, <, <=) on a bool: compare the
+			// "true"/"false" string form by lexical ordering rather than
+			// silently degrading to == (beads-iffq). compareString handles the
+			// full operator set and returns the honest comparison + reason.
+			return compareString(actualStr, op, expected)
 		}
-		return satisfied, fmt.Sprintf("%v %s %q: %v", b, op, expected, satisfied)
 	}
 
 	actualStr := fmt.Sprintf("%v", actual)
