@@ -93,3 +93,32 @@ func TestNormalizeMetadataValue(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateMetadataKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		key     string
+		wantErr bool
+	}{
+		{"simple", "sprint", false},
+		{"leading underscore", "_project_id", false},
+		{"nested dotted path", "jira.sprint", false},
+		{"alphanumeric", "field2", false},
+		{"underscores and dots", "gc.routed_to", false},
+		{"empty", "", true},
+		{"leading digit", "2field", true},
+		{"leading dot", ".sprint", true},
+		{"hyphen", "jira-sprint", true},
+		{"space", "my key", true},
+		{"json-path injection quote", `key"]`, true},
+		{"dollar sign", "$key", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateMetadataKey(tc.key)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ValidateMetadataKey(%q) err = %v, wantErr = %v", tc.key, err, tc.wantErr)
+			}
+		})
+	}
+}
