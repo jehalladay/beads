@@ -277,9 +277,18 @@ func TestApplyCompactionInTx(t *testing.T) {
 func TestSnapshotIssueInTx(t *testing.T) {
 	t.Parallel()
 
+	// existingSnapshotCount stubs the per-(issue,tier) idempotency probe
+	// (beads-hm8l) that SnapshotIssueInTx now runs before reading content.
+	existingSnapshotCount := func(mock sqlmock.Sqlmock, id string, n int) {
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM compaction_snapshots WHERE issue_id = \? AND compaction_level = \?`).
+			WithArgs(id, sqlmock.AnyArg()).
+			WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(n))
+	}
+
 	t.Run("happy", func(t *testing.T) {
 		t.Parallel()
 		_, mock, tx := beginMockTx(t)
+		existingSnapshotCount(mock, "bd-1", 0)
 		mock.ExpectQuery(`SELECT title, description, design, notes, acceptance_criteria FROM issues WHERE id = \?`).
 			WithArgs("bd-1").
 			WillReturnRows(sqlmock.NewRows([]string{"title", "description", "design", "notes", "acceptance_criteria"}).
@@ -294,9 +303,36 @@ func TestSnapshotIssueInTx(t *testing.T) {
 		}
 	})
 
+	t.Run("idempotent skip when snapshot exists at tier", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		// A snapshot already exists at this tier — SnapshotIssueInTx must NOT
+		// read content or insert a second row (which would shadow the original
+		// with now-summarized text on a partial-compaction retry, beads-hm8l).
+		existingSnapshotCount(mock, "bd-dup", 1)
+		if err := SnapshotIssueInTx(context.Background(), tx, "bd-dup", 1); err != nil {
+			t.Fatalf("SnapshotIssueInTx: %v", err)
+		}
+		// No content SELECT and no INSERT should have been issued.
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations (should have skipped content read + insert): %v", err)
+		}
+	})
+
+	t.Run("existing-check error", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM compaction_snapshots WHERE issue_id = \? AND compaction_level = \?`).
+			WithArgs("bd-c", sqlmock.AnyArg()).WillReturnError(errors.New("count boom"))
+		if err := SnapshotIssueInTx(context.Background(), tx, "bd-c", 1); err == nil {
+			t.Fatal("err = nil, want existing-check error")
+		}
+	})
+
 	t.Run("not found", func(t *testing.T) {
 		t.Parallel()
 		_, mock, tx := beginMockTx(t)
+		existingSnapshotCount(mock, "bd-x", 0)
 		mock.ExpectQuery(`FROM issues WHERE id = \?`).
 			WithArgs("bd-x").
 			WillReturnRows(sqlmock.NewRows([]string{"title", "description", "design", "notes", "acceptance_criteria"}))
@@ -308,6 +344,7 @@ func TestSnapshotIssueInTx(t *testing.T) {
 	t.Run("read error", func(t *testing.T) {
 		t.Parallel()
 		_, mock, tx := beginMockTx(t)
+		existingSnapshotCount(mock, "bd-e", 0)
 		mock.ExpectQuery(`FROM issues WHERE id = \?`).
 			WithArgs("bd-e").WillReturnError(errors.New("read boom"))
 		if err := SnapshotIssueInTx(context.Background(), tx, "bd-e", 1); err == nil {
@@ -318,6 +355,7 @@ func TestSnapshotIssueInTx(t *testing.T) {
 	t.Run("insert error", func(t *testing.T) {
 		t.Parallel()
 		_, mock, tx := beginMockTx(t)
+		existingSnapshotCount(mock, "bd-i", 0)
 		mock.ExpectQuery(`FROM issues WHERE id = \?`).
 			WithArgs("bd-i").
 			WillReturnRows(sqlmock.NewRows([]string{"title", "description", "design", "notes", "acceptance_criteria"}).

@@ -104,7 +104,31 @@ func ApplyCompactionInTx(ctx context.Context, tx *sql.Tx, issueID string, tier i
 // of a tier-N issue finds the pre-N content) and is the source of truth for
 // bd restore. Callers MUST invoke this before clearing/overwriting the fields
 // so the archive captures the originals.
+//
+// It is idempotent per (issue, tier): if a snapshot already exists for the
+// issue at this tier, it does NOT insert a second one (beads-hm8l). Snapshot,
+// text-overwrite, and ApplyCompaction run as three separate transactions, so a
+// crash after the overwrite commits but before compaction_level is bumped
+// leaves the issue eligible for compaction again with its text already
+// summarized. Without this guard the retry would archive the *summarized* text
+// as a newer tier-N row, and GetLatestSnapshotInTx (newest-wins) would then
+// return it — shadowing the true pre-compaction content and defeating restore.
+// The first snapshot at a tier captured the genuine originals, so it wins.
 func SnapshotIssueInTx(ctx context.Context, tx *sql.Tx, issueID string, tier int) error {
+	var existing int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM compaction_snapshots WHERE issue_id = ? AND compaction_level = ?`,
+		issueID, tier,
+	).Scan(&existing); err != nil {
+		return fmt.Errorf("snapshot issue %s: check existing: %w", issueID, err)
+	}
+	if existing > 0 {
+		// A snapshot at this tier already holds the true pre-compaction content
+		// (a prior, possibly partially-completed, compaction attempt). Preserve
+		// it rather than overwrite with now-summarized text.
+		return nil
+	}
+
 	snap := types.IssueSnapshot{CompactionLevel: tier}
 	err := tx.QueryRowContext(ctx,
 		`SELECT title, description, design, notes, acceptance_criteria FROM issues WHERE id = ?`, issueID,

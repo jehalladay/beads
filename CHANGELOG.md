@@ -100,6 +100,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd list` happened to mask this (it re-sorts and re-truncates client-side) but
   `bd search` did not, silently exceeding `--limit`. The merge now re-sorts by
   the requested key and truncates to the limit, matching the `--counts` path.
+- **Compaction snapshots are now idempotent per tier, protecting `bd restore`
+  (beads-hm8l).** Compaction archives an issue's original text to a snapshot
+  before overwriting it with a summary, in three separate transactions
+  (snapshot → overwrite → mark-compacted). If the process died after the
+  overwrite committed but before the compaction level was recorded, the issue
+  looked un-compacted again and a retry would archive the *already-summarized*
+  text as a newer snapshot — so `bd restore` returned the summary instead of
+  the true original. `SnapshotIssueInTx` now skips archiving when a snapshot
+  already exists for the issue at that tier, so the first (genuine) snapshot
+  always wins.
 
 ## [1.1.0-rc.1] - 2026-06-23
 
