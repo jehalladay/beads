@@ -208,9 +208,37 @@ func (m *jiraFieldMapper) IssueToBeads(ti *tracker.TrackerIssue) *tracker.IssueC
 	}
 }
 
+// maxSummaryLength is Jira's hard cap on the summary field. Jira 400-rejects a
+// create/update whose summary exceeds this, failing the whole push.
+const maxSummaryLength = 255
+
+// truncateSummary caps a title at Jira's summary limit (maxSummaryLength),
+// appending an ellipsis marker so the truncation is visible on the Jira side
+// (beads-a2lv). A local beads title may be up to 500 chars, but Jira 400-rejects
+// anything over maxSummaryLength — so the PUSHED copy is truncated while the
+// local title is left untouched. Rune-aware so a multi-byte character is never
+// split. Mirrors the landed ado truncateTitle pattern (beads-z5ys).
+func truncateSummary(title string) string {
+	if len(title) <= maxSummaryLength {
+		return title
+	}
+	const marker = "..."
+	runes := []rune(title)
+	// If the rune count already fits, the byte-length overflow was from
+	// multi-byte runes — Jira's limit is on characters, so it is fine as-is.
+	if len(runes) <= maxSummaryLength {
+		return title
+	}
+	keep := maxSummaryLength - len([]rune(marker))
+	if keep < 0 {
+		keep = 0
+	}
+	return string(runes[:keep]) + marker
+}
+
 func (m *jiraFieldMapper) IssueToTracker(issue *types.Issue) map[string]interface{} {
 	fields := map[string]interface{}{
-		"summary": issue.Title,
+		"summary": truncateSummary(issue.Title),
 	}
 
 	// v3 requires ADF (Atlassian Document Format); v2 accepts a plain string.
