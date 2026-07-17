@@ -109,6 +109,65 @@ func TestEmbeddedChildren(t *testing.T) {
 			t.Fatalf("expected children of nonexistent to fail, got: %s", out)
 		}
 	})
+
+	// beads-n8lv: JSON mode must NOT silently swallow a bad parent id.
+	// Before the fix, `--json` on a nonexistent parent returned `[]` exit 0,
+	// indistinguishable from a valid parent that happens to have no children —
+	// a JSON consumer could not tell "bad id" from "no children". The error
+	// contract must match text mode: a missing parent is an error in every
+	// output mode.
+	t.Run("children_nonexistent_parent_json_errors", func(t *testing.T) {
+		cmd := exec.Command(bd, "children", "ch-nonexistent999", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Fatalf("expected `children <nonexistent> --json` to fail (exit != 0), got exit 0\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+		}
+		// The error must be JSON-shaped (respects --json), not a bare Cobra line.
+		combined := stdout.String() + stderr.String()
+		if !strings.Contains(combined, "{") {
+			t.Errorf("expected a JSON-shaped error object under --json, got:\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+		}
+	})
+
+	// beads-n8lv regression guard: a VALID parent with no children must stay
+	// `[]` exit 0 under --json (the fix must not over-error the valid-empty
+	// case — that is the whole point of distinguishing the two).
+	t.Run("children_valid_parent_no_children_json_ok", func(t *testing.T) {
+		parent := bdCreate(t, bd, dir, "Valid childless parent", "--type", "task")
+		cmd := exec.Command(bd, "children", parent.ID, "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("expected `children <valid-no-children> --json` to succeed (exit 0), got: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+		s := strings.TrimSpace(stdout.String())
+		start := strings.Index(s, "[")
+		if start < 0 {
+			t.Fatalf("expected a JSON array for a valid childless parent, got:\n%s", s)
+		}
+		var issues []map[string]interface{}
+		if uerr := json.Unmarshal([]byte(s[start:]), &issues); uerr != nil {
+			t.Fatalf("parse children JSON: %v\n%s", uerr, s)
+		}
+		if len(issues) != 0 {
+			t.Errorf("expected empty array for a childless parent, got %d", len(issues))
+		}
+	})
+
+	// beads-n8lv: the same asymmetry existed on the --flat text path — a bad
+	// parent id printed nothing and exited 0. Flat mode must also error.
+	t.Run("children_nonexistent_parent_flat_errors", func(t *testing.T) {
+		cmd := exec.Command(bd, "list", "--flat", "--parent", "ch-nonexistent999")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("expected `list --flat --parent <nonexistent>` to fail (exit != 0), got exit 0:\n%s", out)
+		}
+	})
 }
 
 // TestEmbeddedChildrenConcurrent exercises children listing concurrently.
