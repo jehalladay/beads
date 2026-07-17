@@ -67,7 +67,10 @@ func gatherUpdateInput(ctx context.Context, cmd *cobra.Command) *updateInput {
 	}
 	if cmd.Flags().Changed("assignee") {
 		assignee, _ := cmd.Flags().GetString("assignee")
-		in.fields["assignee"] = assignee
+		// Trim + fold "none" through the shared normalizer so the proxied
+		// update path stores the canonical form the read/filter side matches
+		// (beads-llzt); mirrors the live update.go path and create_input.go.
+		in.fields["assignee"] = normalizeAssignee(assignee)
 	}
 	description, descChanged, err := getDescriptionFlag(cmd)
 	if err != nil {

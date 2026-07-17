@@ -69,7 +69,11 @@ func runPour(cmd *cobra.Command, args []string) error {
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	varFlags, _ := cmd.Flags().GetStringArray("var")
-	assignee, _ := cmd.Flags().GetString("assignee")
+	rawAssignee, _ := cmd.Flags().GetString("assignee")
+	// Trim + fold "none" so the molecule root's stored assignee matches what
+	// `bd ready/list --assignee x` searches for (beads-llzt); a padded value
+	// would orphan the poured root from its assignee.
+	assignee := normalizeAssignee(rawAssignee)
 	attachFlags, _ := cmd.Flags().GetStringSlice("attach")
 	attachType, _ := cmd.Flags().GetString("attach-type")
 

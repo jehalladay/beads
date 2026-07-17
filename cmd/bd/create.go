@@ -161,7 +161,13 @@ var createCmd = &cobra.Command{
 		}
 
 		issueType, _ := cmd.Flags().GetString("type")
-		assignee, _ := cmd.Flags().GetString("assignee")
+		// Trim + fold the "none" sentinel through the shared normalizer so the
+		// create path stores the canonical form the read/filter side searches
+		// for. A padded `-a "  x  "` stored verbatim is permanently unmatchable
+		// by `bd list/ready --assignee x` (beads-llzt, assignee sibling of the
+		// label-trim class) — silently orphaning the work from its assignee.
+		rawAssignee, _ := cmd.Flags().GetString("assignee")
+		assignee := normalizeAssignee(rawAssignee)
 
 		labels, _ := cmd.Flags().GetStringSlice("labels")
 		labelAlias, _ := cmd.Flags().GetStringSlice("label")

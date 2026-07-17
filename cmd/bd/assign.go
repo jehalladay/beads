@@ -13,9 +13,21 @@ import (
 // normalizeAssignee maps the unassigned sentinel "none" (case-insensitive) to
 // the empty string, so `bd assign <id> none` unassigns — matching the query/list
 // semantics where assignee=none means unassigned (beads-19g). "" already means
-// unassign; any other value is returned unchanged.
+// unassign.
+//
+// It also TRIMS surrounding whitespace from real values (beads-llzt): the
+// read/filter side matches case-insensitively but never trims
+// (sqlbuild/filter.go LOWER(assignee)=LOWER(?), evaluator.go EqualFold), so a
+// padded `-a "  alice  "` stored verbatim is PERMANENTLY UNMATCHABLE by
+// `bd ready/list --assignee alice` — silently orphaning work from the assignee
+// who is meant to pull it. This is the assignee sibling of the label-trim class
+// (beads-13zc/4g2h); assignee has no single storage chokepoint (writes flow
+// through a generic updates["assignee"] map + a create struct field), so the
+// three CLI input sites (assign/create/update) are the seam. Trimming before
+// the "none" check also folds a padded `" none "` to unassign.
 func normalizeAssignee(name string) string {
-	if strings.EqualFold(strings.TrimSpace(name), "none") {
+	name = strings.TrimSpace(name)
+	if strings.EqualFold(name, "none") {
 		return ""
 	}
 	return name

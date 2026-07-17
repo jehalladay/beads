@@ -156,7 +156,13 @@ func gatherCreateInput(cmd *cobra.Command, args []string) (createInput, error) {
 	in.priority = priority
 
 	in.issueType, _ = cmd.Flags().GetString("type")
-	in.assignee, _ = cmd.Flags().GetString("assignee")
+	rawAssignee, _ := cmd.Flags().GetString("assignee")
+	// Trim + fold the "none" sentinel so the create path stores the same
+	// canonical form the read/filter side searches for — a padded `-a "  x  "`
+	// stored verbatim is permanently unmatchable by `bd list --assignee x`
+	// (beads-llzt, assignee sibling of the label-trim class). Shares the one
+	// normalizer with assign/update.
+	in.assignee = normalizeAssignee(rawAssignee)
 	in.externalRef, _ = cmd.Flags().GetString("external-ref")
 	in.explicitID, _ = cmd.Flags().GetString("id")
 	in.parentID, _ = cmd.Flags().GetString("parent")
