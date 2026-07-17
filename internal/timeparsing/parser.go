@@ -21,6 +21,15 @@ import (
 // Examples: +6h, -1d, +2w, 3m, 1y
 var compactDurationRe = regexp.MustCompile(`^([+-]?)(\d+)([hdwmy])$`)
 
+// maxDurationAmount bounds the numeric amount of a compact duration to keep the
+// arithmetic in applyDuration overflow-safe in every unit while staying far
+// beyond any real defer/due horizon (beads-85u5). The binding constraint is
+// hours: 1e6 * time.Hour ≈ 3.6e18 ns, well within int64's ~9.2e18; weeks
+// (amount*7) and AddDate counts are trivially safe at this cap. 1,000,000 of
+// any unit (≈1M years / 1M weeks) is absurd for a real deadline yet blocks the
+// int64 wrap that silently produced a wrong/past date from a positive input.
+const maxDurationAmount = 1_000_000
+
 // ParseCompactDuration parses compact duration syntax and returns the resulting time.
 //
 // Format: [+-]?(\d+)([hdwmy])
@@ -54,6 +63,17 @@ func ParseCompactDuration(s string, now time.Time) (time.Time, error) {
 	if err != nil {
 		// Should not happen given regex ensures digits, but handle gracefully
 		return time.Time{}, fmt.Errorf("invalid duration amount: %q", amountStr)
+	}
+
+	// Bound the amount before arithmetic. The regex's (\d+) has no digit cap, so
+	// Atoi accepts values up to MaxInt64; applyDuration then computes amount*7
+	// (weeks → int64 overflow, sign-flip → a PAST date) or feeds an absurd count
+	// to AddDate, silently producing a wrong/past time from a hugely-positive
+	// input (beads-b1l7 sibling class: no bound → surprising result). Cap at a
+	// value far beyond any real defer/due horizon yet safe from overflow in
+	// every unit (hours: maxDurationAmount*time.Hour stays well within int64).
+	if amount > maxDurationAmount {
+		return time.Time{}, fmt.Errorf("duration amount too large: %s%s (max %d)", amountStr, unit, maxDurationAmount)
 	}
 
 	// Apply sign (default positive)
