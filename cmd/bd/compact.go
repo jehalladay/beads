@@ -939,7 +939,15 @@ func init() {
 	compactCmd.Flags().IntVar(&compactBatch, "batch-size", 10, "Issues per batch")
 	compactCmd.Flags().IntVar(&compactWorkers, "workers", 5, "Parallel workers")
 	compactCmd.Flags().BoolVar(&compactStats, "stats", false, "Show compaction statistics")
-	compactCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON format")
+	// NOTE: do NOT register a local --json flag. The root command already
+	// provides a persistent --json, and PersistentPreRun resolves jsonOutput
+	// from it. A command-local --json binding to the same global shadows the
+	// persistent flag: cobra sets jsonOutput from the local flag, but
+	// PersistentPreRun then sees root.PersistentFlags().Changed("json")==false
+	// and clobbers jsonOutput back to the config default (false), so a local
+	// --json is silently non-functional and the structured-stdout error paths
+	// below never fire under --json (beads-9fww / beads-lv51). Inherit the
+	// honored persistent flag instead.
 
 	// New mode flags
 	compactCmd.Flags().BoolVar(&compactAnalyze, "analyze", false, "Analyze mode: export candidates for agent review")
