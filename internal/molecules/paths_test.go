@@ -2,10 +2,49 @@ package molecules
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// TestLoadMoleculesFromFile_LargeLine is the beads-4uxm guard: a molecule whose
+// JSONL line exceeds bufio.Scanner's 64KB default must still load. Without a
+// raised scanner buffer, scanner.Scan() stops with bufio.ErrTooLong and
+// loadMoleculesFromFile returns an error — which LoadAll's `err==nil` guard then
+// silently drops the whole file. Build a >64KB single-line molecule (large
+// description) and assert it parses.
+func TestLoadMoleculesFromFile_LargeLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, MoleculeFileName)
+
+	bigDesc := strings.Repeat("x", 200*1024) // 200KB — well past the 64KB default
+	line, err := json.Marshal(map[string]any{
+		"id":          "mol-big",
+		"title":       "Big molecule",
+		"description": bigDesc,
+		"issue_type":  "molecule",
+		"status":      "open",
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(path, append(line, '\n'), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	molecules, err := loadMoleculesFromFile(path)
+	if err != nil {
+		t.Fatalf("loadMoleculesFromFile on a >64KB molecule line = %v, want nil (beads-4uxm: raise the scanner buffer)", err)
+	}
+	if len(molecules) != 1 {
+		t.Fatalf("got %d molecules, want 1 (the large molecule must not be dropped)", len(molecules))
+	}
+	if len(molecules[0].Description) != len(bigDesc) {
+		t.Errorf("description length = %d, want %d (large line truncated?)", len(molecules[0].Description), len(bigDesc))
+	}
+}
 
 // isolateMoleculeEnv points HOME and GT_ROOT at empty temp dirs so the path
 // resolvers are deterministic regardless of the host's real home / orchestrator
