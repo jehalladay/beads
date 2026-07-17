@@ -3,11 +3,44 @@ package gitlab
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// beadsEstimateLabelPrefix is the marker label that preserves the exact beads
+// EstimatedMinutes through the GitLab round-trip. GitLab's native Weight field
+// is a coarse integer (hours), so pushing weight = minutes/60 silently loses
+// sub-hour precision (90 min → weight 1 → 60 min; any 1-59 min → weight 0 →
+// lost entirely). We push weight for GitLab-native scheduling AND a
+// "bd:estimate:<minutes>" label that import prefers for a lossless round-trip.
+// Mirrors the ADO beads:priority:N tag pattern (see internal/ado/mapping.go).
+const beadsEstimateLabelPrefix = "bd:estimate:"
+
+// beadsEstimateLabel builds the marker label preserving an exact estimate
+// (e.g. 45 minutes → "bd:estimate:45").
+func beadsEstimateLabel(minutes int) string {
+	return beadsEstimateLabelPrefix + strconv.Itoa(minutes)
+}
+
+// estimateFromLabels recovers the exact beads EstimatedMinutes from a
+// bd:estimate:N label, if present and valid (> 0). Returns ok=false when no
+// such label exists or the value is malformed/non-positive.
+func estimateFromLabels(labels []string) (int, bool) {
+	for _, l := range labels {
+		if !strings.HasPrefix(l, beadsEstimateLabelPrefix) {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimPrefix(l, beadsEstimateLabelPrefix))
+		if err != nil || n <= 0 {
+			return 0, false
+		}
+		return n, true
+	}
+	return 0, false
+}
 
 // MappingConfig configures how GitLab fields map to beads fields.
 type MappingConfig struct {
@@ -114,8 +147,18 @@ func GitLabIssueToBeads(gl *Issue, config *MappingConfig) *IssueConversion {
 		Labels:       filterNonScopedLabels(gl.Labels),
 	}
 
-	// Set estimate from weight (convert to minutes - assume 1 weight = 1 hour)
-	if gl.Weight > 0 {
+	// Strip the bd:estimate:<minutes> marker (a single-colon label that
+	// filterNonScopedLabels does not remove) so it never leaks into the
+	// user-facing label set; its value was already recovered above.
+	issue.Labels = stripEstimateLabels(issue.Labels)
+
+	// Set estimate. Prefer the exact bd:estimate:<minutes> marker (lossless
+	// round-trip) over GitLab's coarse hour-granular Weight, which can only
+	// carry 60-minute multiples. Falls back to Weight*60 for issues authored
+	// natively in GitLab (no marker).
+	if minutes, ok := estimateFromLabels(gl.Labels); ok {
+		issue.EstimatedMinutes = &minutes
+	} else if gl.Weight > 0 {
 		estimatedMinutes := gl.Weight * 60
 		issue.EstimatedMinutes = &estimatedMinutes
 	}
@@ -185,8 +228,13 @@ func BeadsIssueToGitLabFields(issue *types.Issue, config *MappingConfig) map[str
 	fields["labels"] = labels
 
 	// Set weight from estimate (convert minutes to weight - 60 minutes = 1 weight)
+	// for GitLab-native scheduling, AND emit a bd:estimate:<minutes> marker
+	// label so the exact estimate survives a beads→GitLab→beads round-trip
+	// (Weight is hour-granular and would otherwise lose sub-hour precision).
 	if issue.EstimatedMinutes != nil && *issue.EstimatedMinutes > 0 {
 		fields["weight"] = *issue.EstimatedMinutes / 60
+		labels = append(labels, beadsEstimateLabel(*issue.EstimatedMinutes))
+		fields["labels"] = labels
 	}
 
 	// Set state_event for closed issues
@@ -257,4 +305,22 @@ func issueLinksToDependencies(sourceIID int, links []IssueLink, config *MappingC
 // Removes priority::*, status::*, and type::* labels.
 func filterNonScopedLabels(labels []string) []string {
 	return tracker.FilterScopedLabels(labels)
+}
+
+// stripEstimateLabels drops the bd:estimate:<minutes> marker label. It is a
+// single-colon label that FilterScopedLabels (which only handles "::"-scoped
+// priority/status/type labels) does not remove, so the estimate marker must be
+// filtered explicitly to keep it out of the user-facing label set.
+func stripEstimateLabels(labels []string) []string {
+	if len(labels) == 0 {
+		return labels
+	}
+	filtered := labels[:0:0]
+	for _, l := range labels {
+		if strings.HasPrefix(l, beadsEstimateLabelPrefix) {
+			continue
+		}
+		filtered = append(filtered, l)
+	}
+	return filtered
 }
