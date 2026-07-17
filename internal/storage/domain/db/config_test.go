@@ -60,6 +60,7 @@ func (s *testSuite) TestConfigSQLRepository() {
 		s.Run("MissingKeysReturnsDefaults", s.configGetAdaptiveIDConfigDefaults)
 		s.Run("OverridesApplied", s.configGetAdaptiveIDConfigOverrides)
 		s.Run("MalformedValuesFallBackToDefaults", s.configGetAdaptiveIDConfigMalformed)
+		s.Run("OutOfRangeValuesClamped", s.configGetAdaptiveIDConfigClamped)
 	})
 	s.Run("GetCustomStatuses", func() {
 		s.Run("EmptyTableReturnsNil", s.configGetCustomStatusesEmpty)
@@ -264,6 +265,20 @@ func (s *testSuite) configGetAdaptiveIDConfigOverrides() {
 	s.InDelta(0.05, got.MaxCollisionProbability, 0.0001)
 	s.Equal(4, got.MinLength)
 	s.Equal(7, got.MaxLength)
+}
+
+func (s *testSuite) configGetAdaptiveIDConfigClamped() {
+	r := s.configRepo()
+	// A negative min flows into ComputeAdaptiveLength → GenerateHashID →
+	// EncodeBase36(make cap<0) panic on bd create; and an inverted Min>Max
+	// yields an empty candidate loop. Both must be floored (beads-722j).
+	s.Require().NoError(r.SetConfig(s.Ctx(), "min_hash_length", "-1"))
+	s.Require().NoError(r.SetConfig(s.Ctx(), "max_hash_length", "0"))
+
+	got, err := r.GetAdaptiveIDConfig(s.Ctx())
+	s.Require().NoError(err)
+	s.GreaterOrEqual(got.MinLength, 1, "MinLength must be floored to >=1")
+	s.GreaterOrEqual(got.MaxLength, got.MinLength, "MaxLength must be >= MinLength")
 }
 
 func (s *testSuite) configGetCustomStatusesEmpty() {
