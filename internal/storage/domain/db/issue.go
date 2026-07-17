@@ -781,10 +781,14 @@ func (r *issueSQLRepositoryImpl) GetStatistics(ctx context.Context) (*types.Stat
 		return nil, fmt.Errorf("db: IssueSQLRepository.GetStatistics: count blocked: %w", err)
 	}
 	stats.BlockedIssues = blocked
-	stats.ReadyIssues = stats.OpenIssues - blocked
-	if stats.ReadyIssues < 0 {
-		stats.ReadyIssues = 0
+	// beads-phoh: count ready work through the shared bd-ready predicate
+	// (identity type/label exclusions included) so `bd stats` ready_issues
+	// matches `bd ready` instead of overcounting unblocked identity beads.
+	readyCount, rerr := issueops.CountReadyWorkInTx(ctx, r.runner, issueops.StatsReadyWorkFilter())
+	if rerr != nil {
+		return nil, fmt.Errorf("db: IssueSQLRepository.GetStatistics: count ready: %w", rerr)
 	}
+	stats.ReadyIssues = readyCount
 	return stats, nil
 }
 
