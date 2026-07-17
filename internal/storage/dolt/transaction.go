@@ -367,7 +367,16 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 
 	// Assignee
 	if filter.Assignee != nil {
-		whereClauses = append(whereClauses, "assignee = ?")
+		// Case-insensitive to match the sibling read-filter paths: the store-level
+		// search (issueops.SearchIssuesInTx -> sqlbuild/filter.go) and bd ready
+		// (sqlbuild/ready.go, beads-xl4k) both use LOWER(assignee) = LOWER(?).
+		// This in-transaction SearchIssues is the read-your-writes path of the
+		// storage.Transaction interface; keeping it case-sensitive made an issue
+		// stored "alice" invisible to a same-tx read filtering on "Alice",
+		// diverging from every other assignee read filter. Claim/self-assign
+		// guards (issue.go, claim.go) keep exact `assignee = ?` on purpose —
+		// those are ownership checks, not read filters (beads-3px4).
+		whereClauses = append(whereClauses, "LOWER(assignee) = LOWER(?)")
 		args = append(args, *filter.Assignee)
 	}
 
