@@ -73,6 +73,41 @@ func TestEmbeddedImport(t *testing.T) {
 		}
 	})
 
+	// beads-od9b: a JSONL row whose metadata is not a JSON object (array/scalar)
+	// must be SKIPPED + REPORTED, not imported verbatim (which would edit-lock
+	// the bead per beads-ef2k). The valid sibling row in the same batch must
+	// still import. Mirrors create/update's metadataIsJSONObject reject.
+	t.Run("non_object_metadata_skipped_and_reported", func(t *testing.T) {
+		dir, beadsDir, _ := bdInit(t, bd, "--prefix", "imbad")
+		jsonlPath := filepath.Join(t.TempDir(), "import.jsonl")
+		now := time.Now().UTC()
+		writeJSONLFile(t, jsonlPath, []types.Issue{
+			{ID: "imbad-good", Title: "valid obj meta", Status: types.StatusOpen, IssueType: types.TypeTask, CreatedAt: now, UpdatedAt: now, Metadata: json.RawMessage(`{"k":"v"}`)},
+			{ID: "imbad-arr", Title: "array meta", Status: types.StatusOpen, IssueType: types.TypeTask, CreatedAt: now, UpdatedAt: now, Metadata: json.RawMessage(`[1,2,3]`)},
+			{ID: "imbad-num", Title: "scalar meta", Status: types.StatusOpen, IssueType: types.TypeTask, CreatedAt: now, UpdatedAt: now, Metadata: json.RawMessage(`42`)},
+		})
+
+		out := bdImport(t, bd, dir, jsonlPath)
+		// Exactly the 1 valid row imports; the 2 non-object rows are skipped+reported.
+		if !strings.Contains(out, "Imported 1 issue") {
+			t.Errorf("expected 'Imported 1 issue' (only the valid-metadata row), got: %s", out)
+		}
+		if !strings.Contains(out, "imbad-arr") || !strings.Contains(out, "imbad-num") {
+			t.Errorf("expected the 2 non-object rows reported as skipped, got: %s", out)
+		}
+
+		// The bad rows must NOT be in the store (not imported verbatim/locked).
+		store := openStore(t, beadsDir, "imbad")
+		if got, _ := store.GetIssue(t.Context(), "imbad-arr"); got != nil {
+			t.Errorf("imbad-arr (array metadata) was imported — must be skipped to avoid edit-lockout")
+		}
+		// The valid row IS present with its object metadata intact.
+		good, err := store.GetIssue(t.Context(), "imbad-good")
+		if err != nil || good == nil {
+			t.Fatalf("valid-metadata row imbad-good must import: %v", err)
+		}
+	})
+
 	t.Run("from_default_path", func(t *testing.T) {
 		dir, _, _ := bdInit(t, bd, "--prefix", "imdef")
 

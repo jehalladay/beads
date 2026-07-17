@@ -65,6 +65,14 @@ type ImportResult struct {
 	// row for these (second-granularity timestamp ties, bd-hj85c); their
 	// aux data still merges.
 	TieKeptLocalIDs []string
+	// InvalidMetadataIDs lists incoming rows skipped because their metadata is
+	// not a JSON object (array/scalar). The metadata column is object-only by
+	// design (JSON DEFAULT (JSON_OBJECT())); a non-object value would import
+	// verbatim then permanently edit-lock the bead — every metadata edit path
+	// unmarshals into a JSON object and hard-errors otherwise (beads-ef2k). So
+	// such rows are skipped-and-reported rather than silently poisoning the
+	// bead (beads-od9b), mirroring create/update's metadataIsJSONObject reject.
+	InvalidMetadataIDs []string
 }
 
 // ImportChange describes how an import row modified an existing local issue.
@@ -105,6 +113,29 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		return nil, fmt.Errorf("import rejected: %d issue ID(s) have an invalid format: %s",
 			len(badIDs), strings.Join(badIDs, "; "))
 	}
+	// Skip-and-report rows whose metadata is not a JSON object (beads-od9b).
+	// The metadata column is object-only by design; a non-object value imports
+	// verbatim then permanently edit-locks the bead (beads-ef2k). Filter them
+	// out before the batch (matching bd import's per-row skip model) rather than
+	// silently poisoning the bead or aborting the whole import.
+	var invalidMetadataIDs []string
+	if len(issues) > 0 {
+		kept := issues[:0:0]
+		for _, iss := range issues {
+			if iss != nil && len(iss.Metadata) > 0 && !metadataIsJSONObject(string(iss.Metadata)) {
+				invalidMetadataIDs = append(invalidMetadataIDs, iss.ID)
+				continue
+			}
+			kept = append(kept, iss)
+		}
+		issues = kept
+		if len(issues) == 0 {
+			return &ImportResult{
+				Skipped:            len(invalidMetadataIDs),
+				InvalidMetadataIDs: invalidMetadataIDs,
+			}, nil
+		}
+	}
 
 	// The stale guard has two halves (bd-pkim8). This pre-filter reports the
 	// rows that are already known stale (StaleSkippedIDs) and keeps their
@@ -123,7 +154,11 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		staleSkippedIDs = skipped
 		changePlan = plan
 		if len(issues) == 0 {
-			return &ImportResult{Skipped: len(staleSkippedIDs), StaleSkippedIDs: staleSkippedIDs}, nil
+			return &ImportResult{
+				Skipped:            len(staleSkippedIDs) + len(invalidMetadataIDs),
+				StaleSkippedIDs:    staleSkippedIDs,
+				InvalidMetadataIDs: invalidMetadataIDs,
+			}, nil
 		}
 	}
 
@@ -186,9 +221,10 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 	return &ImportResult{
 		Created:             len(importedIDs),
 		Updated:             updatedCount,
-		Skipped:             len(staleSkippedIDs),
+		Skipped:             len(staleSkippedIDs) + len(invalidMetadataIDs),
 		ImportedIDs:         importedIDs,
 		StaleSkippedIDs:     staleSkippedIDs,
+		InvalidMetadataIDs:  invalidMetadataIDs,
 		SkippedDependencies: skippedDependencies,
 		UpdatedIssues:       updatedIssues,
 		TieKeptLocalIDs:     changePlan.TieKeptLocal,
