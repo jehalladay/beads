@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exclusion columns); it now routes an unsupported `!=` to predicate evaluation
   (as it already did for `owner`), so the comparison matches the documented
   behavior. Priority range validation (0–4) is enforced on both paths.
+- **`bd query` no longer corrupts non-ASCII filter values (beads-wlz3).** The
+  query lexer read input one byte at a time instead of decoding UTF-8 runes, so
+  a quoted value like `title="café"` was silently mangled into mojibake
+  (`cafÃ©`) and matched nothing, and an unquoted non-ASCII value like
+  `label=café` failed to parse with a garbled position error. Accented names,
+  CJK, and emoji in `title`/`desc`/`label`/`assignee`/`owner` values now
+  tokenize and match correctly.
 
 ## [1.1.0-rc.1] - 2026-06-23
 
