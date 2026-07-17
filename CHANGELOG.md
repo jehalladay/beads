@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`SearchIssues` now honors `filter.Offset` (beads-cand).** The embedded search
+  path applied `LIMIT` but ignored `Offset` entirely, so paginated `SearchIssues`
+  calls silently returned page 1 regardless of the requested offset. Offset is
+  now applied once over the merged issues+wisps result (each half over-fetches
+  `Offset+Limit` rows so the offset window is complete), with offset-past-end
+  yielding an empty page. Unblocks correct pagination for callers.
+
+### Fixed
+
 - **`bd ready --assignee` is now case-insensitive (beads-xl4k).** The ready-work
   query matched assignee case-sensitively (`assignee = ?`), so
   `bd ready --assignee Alice` missed an issue assigned `alice` — inconsistent
