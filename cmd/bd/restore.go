@@ -39,50 +39,48 @@ from Dolt version history, which can only be displayed, not applied.`,
 		// Get the issue
 		issue, err := store.GetIssue(ctx, issueID)
 		if err != nil {
+			// json-error-contract (beads): this command registers its own --json
+			// flag and emits every success payload via outputJSON to stdout, so
+			// error paths must also surface structured JSON on stdout under --json
+			// rather than an empty-stdout os.Exit(1) a consumer can't distinguish
+			// from a decode failure. FatalErrorRespectJSON preserves the exact
+			// text-mode stderr behavior when --json is off.
 			if errors.Is(err, storage.ErrNotFound) {
-				fmt.Fprintf(os.Stderr, "Error: issue '%s' not found\n", issueID)
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: issue '%s' not found: %v\n", issueID, err)
+				FatalErrorRespectJSON("issue '%s' not found", issueID)
 			}
-			os.Exit(1)
+			FatalErrorRespectJSON("issue '%s' not found: %v", issueID, err)
 		}
 
 		// Check if issue is compacted
 		if issue.CompactionLevel == 0 {
-			fmt.Fprintf(os.Stderr, "Error: issue %s is not compacted\n", issueID)
-			fmt.Fprintf(os.Stderr, "Hint: only compacted issues need restoration\n")
-			os.Exit(1)
+			FatalErrorWithHintRespectJSON(
+				fmt.Sprintf("issue %s is not compacted", issueID),
+				"only compacted issues need restoration")
 		}
 
 		// Prefer the archived snapshot: it is the authoritative pre-compaction
 		// copy and the only source that can be safely written back.
 		snap, err := store.GetCompactionSnapshot(ctx, issueID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to read compaction snapshot: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("failed to read compaction snapshot: %v", err)
 		}
 
 		if restoreApply {
 			if snap == nil {
-				fmt.Fprintf(os.Stderr, "Error: no archived snapshot for %s; cannot safely restore content\n", issueID)
-				fmt.Fprintf(os.Stderr, "Hint: this issue was compacted before snapshot archiving existed.\n")
-				fmt.Fprintf(os.Stderr, "      Run 'bd restore %s' (without --apply) to view the best-effort\n", issueID)
-				fmt.Fprintf(os.Stderr, "      version reconstructed from Dolt history.\n")
-				os.Exit(1)
+				FatalErrorWithHintRespectJSON(
+					fmt.Sprintf("no archived snapshot for %s; cannot safely restore content", issueID),
+					fmt.Sprintf("this issue was compacted before snapshot archiving existed. Run 'bd restore %s' (without --apply) to view the best-effort version reconstructed from Dolt history.", issueID))
 			}
 			applied, err := store.RestoreFromSnapshot(ctx, issueID, getActor())
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to restore issue: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("failed to restore issue: %v", err)
 			}
 			if applied == nil {
-				fmt.Fprintf(os.Stderr, "Error: no archived snapshot for %s\n", issueID)
-				os.Exit(1)
+				FatalErrorRespectJSON("no archived snapshot for %s", issueID)
 			}
 			restored, err := store.GetIssue(ctx, issueID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: restored, but failed to re-read issue: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("restored, but failed to re-read issue: %v", err)
 			}
 			if jsonOutput {
 				if err := outputJSON(restored); err != nil {
@@ -113,14 +111,13 @@ from Dolt version history, which can only be displayed, not applied.`,
 		// Query Dolt history for the pre-compaction version
 		history, err := store.History(ctx, issueID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to query history: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("failed to query history: %v", err)
 		}
 
 		if len(history) == 0 {
-			fmt.Fprintf(os.Stderr, "Error: no history found for issue %s\n", issueID)
-			fmt.Fprintf(os.Stderr, "Hint: issue may have been compacted before Dolt history was available\n")
-			os.Exit(1)
+			FatalErrorWithHintRespectJSON(
+				fmt.Sprintf("no history found for issue %s", issueID),
+				"issue may have been compacted before Dolt history was available")
 		}
 
 		// Find the pre-compaction version: the history entry with the most content.
@@ -136,9 +133,9 @@ from Dolt version history, which can only be displayed, not applied.`,
 		}
 
 		if best == nil || bestSize <= issueContentSize(issue) {
-			fmt.Fprintf(os.Stderr, "Error: no pre-compaction version found in Dolt history\n")
-			fmt.Fprintf(os.Stderr, "Hint: issue may have been compacted before Dolt history was available\n")
-			os.Exit(1)
+			FatalErrorWithHintRespectJSON(
+				"no pre-compaction version found in Dolt history",
+				"issue may have been compacted before Dolt history was available")
 		}
 
 		if jsonOutput {
@@ -175,7 +172,14 @@ func issueContentSize(issue *types.Issue) int {
 }
 
 func init() {
-	restoreCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output restore results in JSON format")
+	// NOTE: do NOT register a local --json flag here. The root command already
+	// provides a persistent --json (main.go), and the PersistentPreRun resolves
+	// jsonOutput from it. A command-local --json binding to the same global
+	// shadows the persistent flag: cobra sets jsonOutput from the local flag,
+	// but PersistentPreRun then sees root.PersistentFlags().Changed("json")==false
+	// and clobbers jsonOutput back to the config default (false) — so a local
+	// --json is silently non-functional. Relying on the inherited persistent
+	// flag makes `bd restore --json` actually take effect (json-error-contract).
 	restoreCmd.Flags().BoolVar(&restoreApply, "apply", false, "Write the restored content back into the issue (default: display only)")
 	rootCmd.AddCommand(restoreCmd)
 }
