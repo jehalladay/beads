@@ -100,7 +100,10 @@ func collectLabelArgs(args []string, flagLabels []string) (issueIDs []string, la
 }
 
 func parseLabelArgs(args []string) (issueIDs []string, label string) {
-	label = args[len(args)-1]
+	// beads-3bbm: trim the label to mirror the add path (collectLabelArgs). The
+	// remove DELETE is exact-match (label = ?), so a padded `bd label remove id
+	// " bug "` otherwise matches nothing yet reports success (silent no-op).
+	label = strings.TrimSpace(args[len(args)-1])
 	issueIDs = args[:len(args)-1]
 	return
 }

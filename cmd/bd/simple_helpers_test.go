@@ -30,6 +30,15 @@ func TestParseLabelArgs(t *testing.T) {
 			expectIDs:   3,
 			expectLabel: "bug",
 		},
+		{
+			// beads-3bbm: the label is trimmed to mirror the add path
+			// (collectLabelArgs). A padded label otherwise never matches the
+			// verbatim-stored value on the exact-match remove DELETE.
+			name:        "padded label is trimmed",
+			args:        []string{"bd-1", "  bug  "},
+			expectIDs:   1,
+			expectLabel: "bug",
+		},
 	}
 
 	for _, tt := range tests {
