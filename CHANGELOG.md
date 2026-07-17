@@ -23,14 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now applied once over the merged issues+wisps result (each half over-fetches
   `Offset+Limit` rows so the offset window is complete), with offset-past-end
   yielding an empty page. Unblocks correct pagination for callers.
-
-### Fixed
-
 - **`bd ready --assignee` is now case-insensitive (beads-xl4k).** The ready-work
   query matched assignee case-sensitively (`assignee = ?`), so
   `bd ready --assignee Alice` missed an issue assigned `alice` — inconsistent
   with `bd list`/`bd query --assignee` (and the predicate path). `BuildReadyWorkWhere`
   now `LOWER()`s both sides. The identity-label default exclusion (`gt:agent`/`role`/`rig`) and `--label` matching in `bd ready` are likewise case-insensitive now, so a mixed-case `GT:Agent` label is correctly excluded and `bd ready --label Bug` finds `bug`.
+- **`bd query`/`bd list`/`bd search` label matching is now case-insensitive and
+  consistent across query modes (beads-hqp8).** The SQL filter path matched
+  labels case-sensitively (`label = ?`) while the predicate path (used for
+  `OR`/complex queries) matched case-insensitively (`strings.EqualFold`), so
+  `label=Bug` silently returned a different set depending on the query shape.
+  All label match paths — the label-driven search JOIN, `ExcludeLabels`, and
+  `GetIssuesByLabel` (used by `bd ship`/templates) — now `LOWER()` both sides to
+  match the predicate path. `assignee=` matching in `bd list`/`search`/`query` is likewise now case-insensitive (beads-xl4k); `owner` was already predicate-only and consistent.
 
 ### Fixed
 

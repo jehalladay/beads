@@ -47,10 +47,12 @@ func GetIssueByExternalRefInTx(ctx context.Context, tx *sql.Tx, externalRef stri
 func GetIssuesByLabelInTx(ctx context.Context, tx *sql.Tx, label string) ([]string, error) {
 	var ids []string
 
+	// Case-insensitive label match, consistent with the query filter/predicate
+	// paths (beads-hqp8).
 	rows, err := tx.QueryContext(ctx, `
 		SELECT i.id FROM issues i
 		JOIN labels l ON i.id = l.issue_id
-		WHERE l.label = ?
+		WHERE LOWER(l.label) = LOWER(?)
 		ORDER BY i.priority ASC, i.created_at DESC
 	`, label)
 	if err != nil {
@@ -69,7 +71,7 @@ func GetIssuesByLabelInTx(ctx context.Context, tx *sql.Tx, label string) ([]stri
 		return nil, fmt.Errorf("iterate issues by label: %w", err)
 	}
 
-	wispRows, err := tx.QueryContext(ctx, `SELECT issue_id FROM wisp_labels WHERE label = ?`, label)
+	wispRows, err := tx.QueryContext(ctx, `SELECT issue_id FROM wisp_labels WHERE LOWER(label) = LOWER(?)`, label)
 	if err != nil {
 		return nil, fmt.Errorf("get wisp issues by label: %w", err)
 	}

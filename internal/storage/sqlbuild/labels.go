@@ -47,10 +47,17 @@ func BuildLabelDrivenSearch(filter types.IssueFilter, tables FilterTables) Label
 	var joins, where []string
 	var args []any
 
+	// Label matching is case-insensitive (LOWER both sides) to stay consistent
+	// with the predicate path (query.buildLabelPredicate uses strings.EqualFold)
+	// and with the ExcludeLabels/NoLabels clauses in BuildIssueFilterClauses.
+	// Without this the JOIN compare is case-SENSITIVE under the label column
+	// collation, so `label=Bug` matched a different set in a simple filter query
+	// than in an OR/complex predicate query (beads-hqp8, confirmed via live
+	// embedded-dolt).
 	for i, label := range labels {
 		alias := fmt.Sprintf("label_filter_%d", i)
 		joins = append(joins, fmt.Sprintf("JOIN %s %s ON %s.issue_id = %s.id", tables.Labels, alias, alias, tables.Main))
-		where = append(where, fmt.Sprintf("%s.label = ?", alias))
+		where = append(where, fmt.Sprintf("LOWER(%s.label) = LOWER(?)", alias))
 		args = append(args, label)
 	}
 
@@ -59,10 +66,10 @@ func BuildLabelDrivenSearch(filter types.IssueFilter, tables FilterTables) Label
 		joins = append(joins, fmt.Sprintf("JOIN %s %s ON %s.issue_id = %s.id", tables.Labels, alias, alias, tables.Main))
 		placeholders := make([]string, len(labelsAny))
 		for i, label := range labelsAny {
-			placeholders[i] = "?"
+			placeholders[i] = "LOWER(?)"
 			args = append(args, label)
 		}
-		where = append(where, fmt.Sprintf("%s.label IN (%s)", alias, strings.Join(placeholders, ", ")))
+		where = append(where, fmt.Sprintf("LOWER(%s.label) IN (%s)", alias, strings.Join(placeholders, ", ")))
 	}
 
 	return LabelSearchPlan{

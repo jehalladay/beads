@@ -83,7 +83,7 @@ func TestBuildIssueFilterClauses_ScalarFilters(t *testing.T) {
 		"LOWER(title) LIKE ?", "LOWER(description) LIKE ?", "LOWER(notes) LIKE ?",
 		"LOWER(external_ref) LIKE ?", "status = ?", "status IN (?,?)",
 		"status NOT IN (?)", "issue_type = ?", "issue_type NOT IN (?)",
-		"assignee = ?", "priority = ?", "priority >= ?", "priority <= ?",
+		"LOWER(assignee) = LOWER(?)", "priority = ?", "priority >= ?", "priority <= ?",
 		"priority NOT IN (?)",
 	} {
 		if !hasClause(where, want) {
@@ -116,9 +116,10 @@ func TestBuildIssueFilterClauses_IDsLabelsBooleans(t *testing.T) {
 	}
 	for _, want := range []string{
 		"id IN (?, ?)", "id LIKE ?", "spec_id LIKE ?",
-		"SELECT issue_id FROM labels WHERE label = ?",
-		"SELECT issue_id FROM labels WHERE label IN (?, ?)",
-		"id NOT IN (SELECT issue_id FROM labels WHERE label IN (?))",
+		// Label matching is case-insensitive (beads-hqp8): LOWER() both sides.
+		"SELECT issue_id FROM labels WHERE LOWER(label) = LOWER(?)",
+		"SELECT issue_id FROM labels WHERE LOWER(label) IN (LOWER(?), LOWER(?))",
+		"id NOT IN (SELECT issue_id FROM labels WHERE LOWER(label) IN (LOWER(?)))",
 		"pinned = 1", "source_repo = ?",
 		"(ephemeral = 0 OR ephemeral IS NULL)", "is_template = 1",
 	} {
