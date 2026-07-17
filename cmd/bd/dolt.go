@@ -321,6 +321,21 @@ func printDivergedHistoryGuidance(operation string) {
 	fmt.Fprintln(os.Stderr, "existing remote instead of 'bd init' to avoid divergent histories.")
 }
 
+// doltRemoteNoPositional rejects positional arguments for the dolt push/pull
+// commands. These commands select a named remote via --remote, never a
+// positional. Before this guard, `bd dolt push origin` (git muscle memory)
+// silently ignored "origin" and pushed to the DEFAULT remote with rc=0 — a
+// state-changing op sending data to an unintended target (beads-cdx9).
+func doltRemoteNoPositional(verb string) cobra.PositionalArgs {
+	return func(_ *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return nil
+		}
+		return fmt.Errorf("bd dolt %s does not take a positional remote; use --remote %q instead "+
+			"(see 'bd dolt remote list'). Got unexpected argument %q", verb, args[0], args[0])
+	}
+}
+
 var doltPushCmd = &cobra.Command{
 	Use:   "push",
 	Short: "Push commits to Dolt remote",
@@ -335,6 +350,7 @@ uncommitted changes in its working set).
 
 Use --remote to push to a specific named remote instead of the default.
 The remote must already exist (see 'bd dolt remote add').`,
+	Args: doltRemoteNoPositional("push"),
 	Run: func(cmd *cobra.Command, args []string) {
 		if config.GetBool("no-push") {
 			fmt.Println("skipping push: rig is local-only (no-push: true)")
@@ -412,6 +428,7 @@ variables for authentication.
 
 Use --remote to pull from a specific named remote instead of the default.
 The remote must already exist (see 'bd dolt remote add').`,
+	Args: doltRemoteNoPositional("pull"),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
 		st := getStore()
