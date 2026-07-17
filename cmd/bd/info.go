@@ -1432,6 +1432,11 @@ func init() {
 	infoCmd.Flags().Bool("schema", false, "Include schema information in output")
 	infoCmd.Flags().Bool("whats-new", false, "Show agent-relevant changes from recent versions")
 	infoCmd.Flags().Bool("thanks", false, "Show thank you page for contributors")
-	infoCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	// NOTE: do NOT register a command-local --json flag bound to jsonOutput.
+	// A local flag shadows the root persistent --json (main.go): cobra would set
+	// jsonOutput=true from the local flag, but PersistentPreRun then sees
+	// root.PersistentFlags().Changed("json")==false and clobbers jsonOutput back
+	// to the config default, silently disabling --json. Inherit the persistent
+	// flag instead (like `list`). See beads-lv51 / beads-9fww / beads-06km.
 	rootCmd.AddCommand(infoCmd)
 }

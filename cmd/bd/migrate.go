@@ -82,7 +82,7 @@ Subcommands:
 				}
 				return SilentExit()
 			}
-			return HandleError("failed to load config: %v", err)
+			return HandleErrorRespectJSON("failed to load config: %v", err)
 		}
 
 		return handleDoltMetadataUpdate(cfg, dryRun)
@@ -189,7 +189,7 @@ func handleDoltMetadataUpdate(cfg *configfile.Config, dryRun bool) error {
 				}
 				return SilentExit()
 			}
-			return HandleError("failed to update version: %v", err)
+			return HandleErrorRespectJSON("failed to update version: %v", err)
 		}
 		versionUpdated = true
 
@@ -308,12 +308,12 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) error {
 			}
 			return SilentExit()
 		}
-		return HandleError("failed to compute repository ID: %v", err)
+		return HandleErrorRespectJSON("failed to compute repository ID: %v", err)
 	}
 
 	store := getStore()
 	if store == nil {
-		return HandleError("no database — run 'bd init' first")
+		return HandleErrorRespectJSON("no database — run 'bd init' first")
 	}
 
 	ctx := rootCtx
@@ -328,7 +328,7 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) error {
 			}
 			return SilentExit()
 		}
-		return HandleError("failed to read repo_id: %v", err)
+		return HandleErrorRespectJSON("failed to read repo_id: %v", err)
 	}
 
 	oldDisplay := "none"
@@ -374,7 +374,7 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) error {
 			}
 			return SilentExit()
 		}
-		return HandleError("failed to update repo_id: %v", err)
+		return HandleErrorRespectJSON("failed to update repo_id: %v", err)
 	}
 
 	commandDidWrite.Store(true)
@@ -435,7 +435,7 @@ func handleInspect() error {
 
 	store := getStore()
 	if store == nil {
-		return HandleError("no database — run 'bd init' first")
+		return HandleErrorRespectJSON("no database — run 'bd init' first")
 	}
 
 	ctx := rootCtx
@@ -561,7 +561,7 @@ func handleSchemaMigrate() error {
 			}
 			return SilentExit()
 		}
-		return HandleError("current storage backend does not support schema migration")
+		return HandleErrorRespectJSON("current storage backend does not support schema migration")
 	}
 
 	applied, err := migrator.ApplySchemaMigrations(rootCtx)
@@ -575,7 +575,7 @@ func handleSchemaMigrate() error {
 			}
 			return SilentExit()
 		}
-		return HandleError("schema migration failed: %v", err)
+		return HandleErrorRespectJSON("schema migration failed: %v", err)
 	}
 
 	latest := schema.LatestVersion()
@@ -632,7 +632,7 @@ func handleToSeparateBranch(branch string, dryRun bool) error {
 
 	store := getStore()
 	if store == nil {
-		return HandleError("no database — run 'bd init' first")
+		return HandleErrorRespectJSON("no database — run 'bd init' first")
 	}
 
 	ctx := rootCtx
@@ -679,7 +679,7 @@ func handleToSeparateBranch(branch string, dryRun bool) error {
 			}
 			return SilentExit()
 		}
-		return HandleError("failed to set sync.branch: %v", err)
+		return HandleErrorRespectJSON("failed to set sync.branch: %v", err)
 	}
 
 	commandDidWrite.Store(true)
@@ -776,19 +776,19 @@ func init() {
 	migrateCmd.Flags().Bool("dry-run", false, "Show what would be done without making changes")
 	migrateCmd.Flags().Bool("update-repo-id", false, "Update repository ID (use after changing git remote)")
 	migrateCmd.Flags().Bool("inspect", false, "Show migration plan and database state for AI agent analysis")
-	migrateCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output migration statistics in JSON format")
+	// NOTE: do NOT register a command-local --json flag bound to jsonOutput; it
+	// shadows the root persistent --json and PersistentPreRun clobbers jsonOutput
+	// back to the config default (--json silently non-functional). Inherit the
+	// persistent flag. See beads-lv51 / beads-9fww / beads-06km.
 
 	migrateSyncCmd.Flags().Bool("dry-run", false, "Show what would be done without making changes")
-	migrateSyncCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	migrateCmd.AddCommand(migrateSyncCmd)
 
 	migrateHooksCmd.Flags().Bool("dry-run", false, "Show what would be done without making changes")
 	migrateHooksCmd.Flags().Bool("apply", false, "Apply planned hook migration changes")
 	migrateHooksCmd.Flags().Bool("yes", false, "Skip confirmation prompt for --apply")
-	migrateHooksCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	migrateCmd.AddCommand(migrateHooksCmd)
 
-	migrateSchemaCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	migrateCmd.AddCommand(migrateSchemaCmd)
 
 	rootCmd.AddCommand(migrateCmd)
