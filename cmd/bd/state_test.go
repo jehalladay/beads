@@ -263,3 +263,33 @@ func TestStatePatterns(t *testing.T) {
 		h.assertStateValue(issue.ID, "health", "healthy") // Health unchanged
 	})
 }
+
+// TestParseStateSpec verifies set-state accepts both "=" and ":" separators
+// (beads-zk8): the Usage says "=", but the help examples + stored label use ":"
+// (e.g. health:healthy), so copying a documented example must work.
+func TestParseStateSpec(t *testing.T) {
+	cases := []struct {
+		spec    string
+		dim     string
+		val     string
+		ok      bool
+	}{
+		{"health=healthy", "health", "healthy", true}, // documented input form
+		{"health:healthy", "health", "healthy", true}, // documented example / label form (beads-zk8)
+		{"patrol:active", "patrol", "active", true},
+		{"mode=degraded", "mode", "degraded", true},
+		{"nosep", "", "", false},         // no separator
+		{"=value", "", "", false},        // empty dimension
+		{"dim=", "", "", false},          // empty value
+		{":value", "", "", false},        // empty dimension (colon)
+		{"a=b:c", "a", "b:c", true},      // earliest sep wins ('='), value keeps ':'
+		{"a:b=c", "a", "b=c", true},      // earliest sep wins (':'), value keeps '='
+	}
+	for _, c := range cases {
+		dim, val, ok := parseStateSpec(c.spec)
+		if ok != c.ok || dim != c.dim || val != c.val {
+			t.Errorf("parseStateSpec(%q) = (%q, %q, %v), want (%q, %q, %v)",
+				c.spec, dim, val, ok, c.dim, c.val, c.ok)
+		}
+	}
+}
