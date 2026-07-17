@@ -8,6 +8,17 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// beadsDeferredLabel is a marker label that preserves the beads "deferred"
+// status across a Jira round-trip (beads-n1y7). Jira's default workflow has no
+// native "deferred" state (To Do / In Progress / Done), so StatusToTracker maps
+// deferred → "To Do" and StatusToBeads would reimport it as "open" — silently
+// downgrading the work-planning semantics. Emitting this label on push (when no
+// custom statusMap entry claims deferred) and recovering it on import makes the
+// round-trip lossless, matching how ado (Removed state) and gitlab
+// (status::deferred label) already preserve it. Jira supports issue labels, so
+// this rides the existing label push/import path.
+const beadsDeferredLabel = "bd:status:deferred"
+
 // jiraFieldMapper implements tracker.FieldMapper for Jira.
 type jiraFieldMapper struct {
 	apiVersion       string                            // "2" or "3" (default: "3")
@@ -173,7 +184,17 @@ func (m *jiraFieldMapper) IssueToBeads(ti *tracker.TrackerIssue) *tracker.IssueC
 	}
 
 	if ji.Fields.Labels != nil {
-		issue.Labels = ji.Fields.Labels
+		// Recover a beads "deferred" status preserved via the marker label
+		// (beads-n1y7). A custom statusMap entry, if present, already yields
+		// the correct status via StatusToBeads, so only override when the
+		// marker is present. Strip the marker so it does not leak into the
+		// user-facing label set.
+		labels := ji.Fields.Labels
+		if hasLabel(labels, beadsDeferredLabel) {
+			issue.Status = types.StatusDeferred
+			labels = stripLabel(labels, beadsDeferredLabel)
+		}
+		issue.Labels = labels
 	}
 
 	// Set external ref from issue URL
@@ -213,9 +234,19 @@ func (m *jiraFieldMapper) IssueToTracker(issue *types.Issue) map[string]interfac
 		fields["priority"] = map[string]string{"name": name}
 	}
 
-	// Set labels
-	if len(issue.Labels) > 0 {
-		fields["labels"] = issue.Labels
+	// Set labels. Preserve a beads "deferred" status via a marker label when
+	// Jira cannot represent it natively (beads-n1y7): if the operator has
+	// configured a custom statusMap entry for deferred, StatusToTracker already
+	// pushes the real status and the round-trip is lossless, so the marker is
+	// only needed for the default To-Do fallback.
+	labels := issue.Labels
+	if issue.Status == types.StatusDeferred {
+		if _, mapped := m.statusMap[string(types.StatusDeferred)]; !mapped && !hasLabel(labels, beadsDeferredLabel) {
+			labels = append(labels, beadsDeferredLabel)
+		}
+	}
+	if len(labels) > 0 {
+		fields["labels"] = labels
 	}
 
 	for fieldName, value := range m.customFields {
@@ -234,6 +265,32 @@ func (m *jiraFieldMapper) IssueToTracker(issue *types.Issue) map[string]interfac
 	}
 
 	return fields
+}
+
+// hasLabel reports whether labels contains target (case-sensitive).
+func hasLabel(labels []string, target string) bool {
+	for _, l := range labels {
+		if l == target {
+			return true
+		}
+	}
+	return false
+}
+
+// stripLabel returns labels with every occurrence of target removed, preserving
+// order. It allocates a fresh slice so the caller's input is left untouched.
+func stripLabel(labels []string, target string) []string {
+	if len(labels) == 0 {
+		return labels
+	}
+	filtered := make([]string, 0, len(labels))
+	for _, l := range labels {
+		if l == target {
+			continue
+		}
+		filtered = append(filtered, l)
+	}
+	return filtered
 }
 
 // Helper functions for safe field extraction from Jira issues.

@@ -1310,3 +1310,67 @@ func TestGetConfig_YamlOnlyKeyReadsFromYaml(t *testing.T) {
 		t.Errorf("getConfig(jira.api_token) = %q, want %q (yaml value)", got, wantToken)
 	}
 }
+
+// TestJiraDeferredStatusRoundTrip verifies a beads "deferred" status survives a
+// Jira round-trip via the bd:status:deferred marker label, since Jira's default
+// workflow has no native deferred state (beads-n1y7). Without the marker,
+// deferred → "To Do" on push → "open" on reimport (silent downgrade).
+func TestJiraDeferredStatusRoundTrip(t *testing.T) {
+	mapper := &jiraFieldMapper{apiVersion: "3"}
+
+	// PUSH: a deferred issue (no custom statusMap) must emit the marker label.
+	deferred := &types.Issue{
+		Title:  "Iced feature",
+		Status: types.StatusDeferred,
+		Labels: []string{"frontend"},
+	}
+	fields := mapper.IssueToTracker(deferred)
+	labels, ok := fields["labels"].([]string)
+	if !ok {
+		t.Fatalf("fields[\"labels\"] is not []string: %T", fields["labels"])
+	}
+	if !hasLabel(labels, beadsDeferredLabel) {
+		t.Errorf("push: labels missing %q marker, got %v", beadsDeferredLabel, labels)
+	}
+
+	// IMPORT: a Jira issue carrying the marker must recover status=deferred and
+	// must NOT leak the marker into the user-facing label set.
+	ji := &Issue{
+		Key:  "PROJ-99",
+		Self: "https://company.atlassian.net/rest/api/3/issue/10099",
+		Fields: IssueFields{
+			Summary: "Iced feature",
+			Status:  &StatusField{Name: "To Do"}, // native downgrade
+			Labels:  []string{"frontend", beadsDeferredLabel},
+		},
+	}
+	ti := jiraToTrackerIssue(ji, nil)
+	conv := mapper.IssueToBeads(&ti)
+	if conv == nil || conv.Issue == nil {
+		t.Fatal("IssueToBeads returned nil")
+	}
+	if conv.Issue.Status != types.StatusDeferred {
+		t.Errorf("import: Status = %q, want %q (recovered from marker)", conv.Issue.Status, types.StatusDeferred)
+	}
+	if hasLabel(conv.Issue.Labels, beadsDeferredLabel) {
+		t.Errorf("import: marker label leaked into user labels: %v", conv.Issue.Labels)
+	}
+	if !hasLabel(conv.Issue.Labels, "frontend") {
+		t.Errorf("import: real label 'frontend' dropped, got %v", conv.Issue.Labels)
+	}
+}
+
+// TestJiraDeferredCustomStatusMapNoMarker verifies that when the operator has a
+// custom statusMap entry for deferred, the real status is pushed and NO marker
+// label is added (the round-trip is already lossless via the native status).
+func TestJiraDeferredCustomStatusMapNoMarker(t *testing.T) {
+	mapper := &jiraFieldMapper{
+		apiVersion: "3",
+		statusMap:  map[string]string{string(types.StatusDeferred): "On Hold"},
+	}
+	deferred := &types.Issue{Title: "Iced", Status: types.StatusDeferred}
+	fields := mapper.IssueToTracker(deferred)
+	if labels, ok := fields["labels"].([]string); ok && hasLabel(labels, beadsDeferredLabel) {
+		t.Errorf("custom statusMap present: marker should NOT be added, got %v", labels)
+	}
+}
