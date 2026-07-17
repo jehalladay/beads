@@ -733,6 +733,12 @@ func (s *configStore) SlotGet(_ context.Context, _, _ string) (string, error) {
 	return "", nil
 }
 func (s *configStore) SlotClear(_ context.Context, _, _, _ string) error { return nil }
+func (s *configStore) UpdateMetadataFields(_ context.Context, _ string, _ map[string]json.RawMessage, _ []string, _ string) error {
+	return nil
+}
+func (s *configStore) MergeMetadataWithCAS(_ context.Context, _ string, _ json.RawMessage, _ string) error {
+	return nil
+}
 
 func (s *configStore) CountIssues(_ context.Context, _ string, _ types.IssueFilter) (int64, error) {
 	return 0, nil

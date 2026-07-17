@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -241,6 +242,12 @@ func (r *recordingStorage) SlotGet(context.Context, string, string) (string, err
 }
 func (r *recordingStorage) SlotClear(context.Context, string, string, string) error {
 	return r.rec("SlotClear")
+}
+func (r *recordingStorage) UpdateMetadataFields(context.Context, string, map[string]json.RawMessage, []string, string) error {
+	return r.rec("UpdateMetadataFields")
+}
+func (r *recordingStorage) MergeMetadataWithCAS(context.Context, string, json.RawMessage, string) error {
+	return r.rec("MergeMetadataWithCAS")
 }
 
 // ── Lifecycle ──

@@ -2,37 +2,33 @@ package dolt
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+
+	"github.com/steveyegge/beads/internal/storage/issueops"
 )
 
 // SlotSet sets a key-value pair in the issue's metadata JSON.
 // If the issue has no metadata, a new JSON object is created.
 // If the key already exists, its value is overwritten.
+//
+// The write is a single server-side JSON_SET (issueops.ApplyMetadataKeyEditsInTx)
+// rather than a read-modify-write of the whole blob, so two concurrent slot
+// edits to DIFFERENT keys on the same issue both survive instead of the second
+// client-rebuilt blob clobbering the first (beads-fnp6).
 func (s *DoltStore) SlotSet(ctx context.Context, issueID, key, value, actor string) error {
-	issue, err := s.GetIssue(ctx, issueID)
+	// Preserve prior behavior: the slot value is stored as a JSON string.
+	encoded, err := json.Marshal(value)
 	if err != nil {
-		return fmt.Errorf("getting issue %s: %w", issueID, err)
+		return fmt.Errorf("marshaling slot value for %s: %w", issueID, err)
 	}
-
-	metadata := make(map[string]interface{})
-	if len(issue.Metadata) > 0 {
-		if err := json.Unmarshal(issue.Metadata, &metadata); err != nil {
-			return fmt.Errorf("parsing metadata for %s: %w", issueID, err)
-		}
-	}
-
-	metadata[key] = value
-
-	raw, err := json.Marshal(metadata)
-	if err != nil {
-		return fmt.Errorf("marshaling metadata for %s: %w", issueID, err)
-	}
-
-	updates := map[string]interface{}{
-		"metadata": string(raw),
-	}
-	return s.UpdateIssue(ctx, issueID, updates, actor)
+	return s.withWriteTx(ctx, func(tx *sql.Tx) error {
+		isWisp := issueops.IsActiveWispInTx(ctx, tx, issueID)
+		issueTable, _, _, _ := issueops.WispTableRouting(isWisp)
+		return issueops.ApplyMetadataKeyEditsInTx(ctx, tx, issueTable, issueID,
+			map[string]json.RawMessage{key: encoded}, nil)
+	})
 }
 
 // SlotGet retrieves the value of a metadata key from an issue.
@@ -73,33 +69,35 @@ func (s *DoltStore) SlotGet(ctx context.Context, issueID, key string) (string, e
 // SlotClear removes a metadata key from an issue.
 // It is not an error to clear a key that doesn't exist.
 func (s *DoltStore) SlotClear(ctx context.Context, issueID, key, actor string) error {
-	issue, err := s.GetIssue(ctx, issueID)
-	if err != nil {
-		return fmt.Errorf("getting issue %s: %w", issueID, err)
-	}
+	// Single server-side JSON_REMOVE (idempotent: removing an absent key is a
+	// no-op), atomic against concurrent edits to other keys (beads-fnp6).
+	return s.withWriteTx(ctx, func(tx *sql.Tx) error {
+		isWisp := issueops.IsActiveWispInTx(ctx, tx, issueID)
+		issueTable, _, _, _ := issueops.WispTableRouting(isWisp)
+		return issueops.ApplyMetadataKeyEditsInTx(ctx, tx, issueTable, issueID,
+			nil, []string{key})
+	})
+}
 
-	if len(issue.Metadata) == 0 {
-		return nil // No metadata, nothing to clear
+// UpdateMetadataFields applies per-key metadata edits atomically (beads-fnp6).
+func (s *DoltStore) UpdateMetadataFields(ctx context.Context, issueID string, sets map[string]json.RawMessage, unsets []string, actor string) error {
+	if len(sets) == 0 && len(unsets) == 0 {
+		return nil
 	}
+	return s.withWriteTx(ctx, func(tx *sql.Tx) error {
+		isWisp := issueops.IsActiveWispInTx(ctx, tx, issueID)
+		issueTable, _, _, _ := issueops.WispTableRouting(isWisp)
+		return issueops.ApplyMetadataKeyEditsInTx(ctx, tx, issueTable, issueID, sets, unsets)
+	})
+}
 
-	metadata := make(map[string]interface{})
-	if err := json.Unmarshal(issue.Metadata, &metadata); err != nil {
-		return fmt.Errorf("parsing metadata for %s: %w", issueID, err)
-	}
-
-	if _, ok := metadata[key]; !ok {
-		return nil // Key doesn't exist, nothing to clear
-	}
-
-	delete(metadata, key)
-
-	raw, err := json.Marshal(metadata)
-	if err != nil {
-		return fmt.Errorf("marshaling metadata for %s: %w", issueID, err)
-	}
-
-	updates := map[string]interface{}{
-		"metadata": string(raw),
-	}
-	return s.UpdateIssue(ctx, issueID, updates, actor)
+// MergeMetadataWithCAS merges incoming metadata via a read-merge-write in one
+// serializable transaction; withRetryTx replays on a commit-time conflict so
+// concurrent --metadata merges don't clobber each other (beads-fnp6).
+func (s *DoltStore) MergeMetadataWithCAS(ctx context.Context, issueID string, incoming json.RawMessage, actor string) error {
+	return s.withRetryTx(ctx, func(tx *sql.Tx) error {
+		isWisp := issueops.IsActiveWispInTx(ctx, tx, issueID)
+		issueTable, _, _, _ := issueops.WispTableRouting(isWisp)
+		return issueops.MergeMetadataInTx(ctx, tx, issueTable, issueID, incoming)
+	})
 }
