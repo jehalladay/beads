@@ -288,6 +288,14 @@ create, update, show, or close operation).`,
 			if !json.Valid([]byte(metadataJSON)) {
 				return HandleErrorRespectJSON("invalid JSON in --metadata: must be valid JSON")
 			}
+			// Reject non-object metadata here too: this live update RunE path
+			// only checked json.Valid, so `bd update --metadata '[9]'` stored an
+			// array/scalar that the metadata consumers then reject, permanently
+			// locking the bead out of all metadata edits. ef2k gated the
+			// gatherUpdateInput path (update_input.go) but not this one (beads-eum2).
+			if !metadataIsJSONObject(metadataJSON) {
+				return HandleErrorRespectJSON(`--metadata must be a JSON object, e.g. {"key":"value"} (arrays and scalars can't be edited by --set-metadata/--unset-metadata)`)
+			}
 			updates["metadata"] = json.RawMessage(metadataJSON)
 		}
 

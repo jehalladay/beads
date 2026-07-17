@@ -253,6 +253,15 @@ var createCmd = &cobra.Command{
 			if !json.Valid([]byte(metadataJSON)) {
 				return HandleError("invalid JSON in --metadata: must be valid JSON")
 			}
+			// Reject non-object metadata here too: this live single-issue create
+			// path only checked json.Valid, so `bd create --metadata '[1,2,3]'`
+			// stored an array/scalar that every metadata consumer
+			// (mergeMetadata/--set-metadata/--unset-metadata) then rejects,
+			// permanently locking the bead out of all metadata edits. ef2k gated
+			// the batch input path (create_input.go) but not this one (beads-eum2).
+			if !metadataIsJSONObject(metadataJSON) {
+				return HandleError(`--metadata must be a JSON object, e.g. {"key":"value"} (arrays and scalars can't be edited by --set-metadata/--unset-metadata)`)
+			}
 			metadata = json.RawMessage(metadataJSON)
 		}
 

@@ -283,6 +283,27 @@ func TestEmbeddedCreate(t *testing.T) {
 		}
 	})
 
+	// beads-eum2: the LIVE single-issue create path (create.go) must reject
+	// non-object --metadata (array/scalar), not just json.Valid it. A non-object
+	// metadata value passes json.Valid but then every metadata edit consumer
+	// (merge/set/unset) rejects it, permanently locking the bead out. ef2k gated
+	// the batch input path; this covers the live path. Deterministic — the guard
+	// fires on argument validation regardless of DB state.
+	t.Run("metadata_live_path_rejects_non_object_eum2", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "mm")
+		for _, bad := range []string{`[1,2,3]`, `42`, `"str"`, `true`, `[]`} {
+			out := bdCreateFail(t, bd, dir, "bad meta "+bad, "--metadata", bad)
+			if !strings.Contains(out, "must be a JSON object") {
+				t.Errorf("create --metadata %q: expected 'must be a JSON object' rejection, got: %s", bad, out)
+			}
+		}
+		// An object (and empty object) must still succeed.
+		ok := bdCreate(t, bd, dir, "good meta", "--metadata", `{"k":"v"}`)
+		if ok.ID == "" {
+			t.Error("create with object --metadata should succeed")
+		}
+	})
+
 	t.Run("assignee", func(t *testing.T) {
 		dir, _, _ := bdInit(t, bd, "--prefix", "as")
 		issue := bdCreate(t, bd, dir, "Assigned issue", "-a", "alice")
