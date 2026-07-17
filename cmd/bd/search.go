@@ -103,6 +103,17 @@ Examples:
 			Limit: limit,
 		}
 
+		// Push the requested sort into SQL so the LIMIT window is selected in
+		// the sorted order, not the default priority order (beads-s4sn). Without
+		// this, `--sort created --limit N` returned the N highest-priority rows
+		// merely displayed in created order, not the N newest. Bare "id" is
+		// Go-side only (empty SQL ORDER BY, see beads-l4ja), so leave it to the
+		// client-side sortIssues below.
+		if sortBy != "" && sortBy != "id" {
+			filter.SortBy = sortBy
+			filter.SortDesc = reverse
+		}
+
 		if status != "" && status != "all" {
 			s := types.Status(status)
 			filter.Status = &s
