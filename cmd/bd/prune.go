@@ -9,6 +9,7 @@ import (
 var pruneCmd = &cobra.Command{
 	Use:     "prune",
 	GroupID: "maint",
+	Args:    maintNoArgs,
 	Short:   "Delete old closed beads to reclaim space and shrink exports",
 	Long: `Permanently delete closed non-ephemeral beads and their associated data.
 
