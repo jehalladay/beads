@@ -1,8 +1,10 @@
 package jira
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
@@ -234,6 +236,24 @@ func truncateSummary(title string) string {
 		keep = 0
 	}
 	return string(runes[:keep]) + marker
+}
+
+// validateJiraLabels fails loud, before any Jira API call, if a label contains
+// internal whitespace. Jira labels are single-token: the server 400-rejects a
+// label with a space/tab/newline, failing the WHOLE issue push with an opaque
+// error. beads labels are only edge-trimmed (utils.NormalizeLabels) so a label
+// like "needs review" is legal locally but unmappable to Jira. There is no
+// lossless transform (space→underscore would drift on pull-back and break
+// dedup), so per beads-xcbd the correct behavior is to reject with a beads-side
+// message naming the offending label, rather than silently drop or transform
+// it. Jira-specific: GitLab labels allow spaces and ADO Tags are "; "-joined.
+func validateJiraLabels(labels []string) error {
+	for _, l := range labels {
+		if strings.IndexFunc(l, unicode.IsSpace) >= 0 {
+			return fmt.Errorf("label %q contains whitespace; Jira rejects it — rename or remove internal spaces before syncing", l)
+		}
+	}
+	return nil
 }
 
 func (m *jiraFieldMapper) IssueToTracker(issue *types.Issue) map[string]interface{} {
