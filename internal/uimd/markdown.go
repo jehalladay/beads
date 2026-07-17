@@ -93,6 +93,12 @@ func stripOSC8Hyperlinks(s string) string {
 				i = end
 				continue
 			}
+			// Unterminated OSC 8 open (no BEL/ST): oscSequenceEnd returned -1.
+			// Strip the malformed remainder rather than emitting the raw ESC
+			// and leaking the dangling sequence — a sanitizer must not leave an
+			// unterminated escape intact (beads-uq8m). The open sequence runs to
+			// end-of-string, so everything from here on is the dangling escape.
+			break
 		}
 		out.WriteByte(s[i])
 		i++
