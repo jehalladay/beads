@@ -86,6 +86,11 @@ func validateLoopSpec(loop *LoopSpec, stepID string) error {
 		return fmt.Errorf("loop %q: count must be positive", stepID)
 	}
 
+	if loop.Count > DefaultMaxLoopIterations {
+		return fmt.Errorf("loop %q: count %d exceeds maximum iterations %d (prevents unbounded expansion)",
+			stepID, loop.Count, DefaultMaxLoopIterations)
+	}
+
 	if loop.Max < 0 {
 		return fmt.Errorf("loop %q: max must be positive", stepID)
 	}
@@ -154,6 +159,10 @@ func expandLoopWithVars(step *Step, vars map[string]string) ([]*Step, error) {
 
 		// Expand body for each value in range
 		count := rangeSpec.End - rangeSpec.Start + 1
+		if count > DefaultMaxLoopIterations {
+			return nil, fmt.Errorf("loop %q: range %q spans %d iterations, exceeding maximum %d (prevents unbounded expansion)",
+				step.ID, step.Loop.Range, count, DefaultMaxLoopIterations)
+		}
 		iterNum := 0
 		for val := rangeSpec.Start; val <= rangeSpec.End; val++ {
 			iterNum++
