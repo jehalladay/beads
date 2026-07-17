@@ -147,7 +147,10 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 	if filter.Unassigned {
 		whereClauses = append(whereClauses, "(assignee IS NULL OR assignee = '')")
 	} else if filter.Assignee != nil {
-		whereClauses = append(whereClauses, "assignee = ?")
+		// Case-insensitive to match the predicate path and the bd list/query
+		// filter path (beads-xl4k): `bd ready --assignee Alice` must find an
+		// issue assigned "alice" the same way `bd list --assignee` does.
+		whereClauses = append(whereClauses, "LOWER(assignee) = LOWER(?)")
 		args = append(args, *filter.Assignee)
 	}
 
@@ -164,9 +167,13 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 		}
 	}
 
+	// Label matching is case-insensitive (LOWER both sides), consistent with the
+	// bd list/query filter + predicate paths (beads-xl4k / beads-hqp8). Without
+	// it a `bd ready --label Bug` misses "bug" and a mixed-case identity label
+	// dodges the default exclusion below.
 	if len(filter.Labels) > 0 {
 		for _, label := range filter.Labels {
-			whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE label = ?)", tables.Labels))
+			whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) = LOWER(?))", tables.Labels))
 			args = append(args, label)
 		}
 	}
@@ -175,24 +182,25 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 	// An explicit `filter.Labels` request for an identity label wins over the
 	// default exclusion (the escape hatch: `bd ready --label gt:agent` still
 	// returns the identity beads), mirroring how an explicit `--type` bypasses
-	// ReadyWorkExcludeTypes.
+	// ReadyWorkExcludeTypes. The escape-hatch match is case-insensitive too so
+	// `--label GT:Agent` still bypasses the exclusion of `gt:agent`.
 	requested := make(map[string]bool, len(filter.Labels))
 	for _, l := range filter.Labels {
-		requested[l] = true
+		requested[strings.ToLower(l)] = true
 	}
 	var excludeLabels []string
 	for _, l := range ReadyWorkExcludeLabels(filter.ExcludeLabels) {
-		if !requested[l] {
+		if !requested[strings.ToLower(l)] {
 			excludeLabels = append(excludeLabels, l)
 		}
 	}
 	if len(excludeLabels) > 0 {
 		placeholders := make([]string, len(excludeLabels))
 		for i, label := range excludeLabels {
-			placeholders[i] = "?"
+			placeholders[i] = "LOWER(?)"
 			args = append(args, label)
 		}
-		whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (SELECT issue_id FROM %s WHERE label IN (%s))", tables.Labels, strings.Join(placeholders, ", ")))
+		whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (SELECT issue_id FROM %s WHERE LOWER(label) IN (%s))", tables.Labels, strings.Join(placeholders, ", ")))
 	}
 
 	// Parent filtering: return all transitive descendants of parentID.
