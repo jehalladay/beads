@@ -37,6 +37,35 @@ func ReadyWorkExcludeTypes(extra []types.IssueType) []types.IssueType {
 	return out
 }
 
+// readyWorkExcludeLabels are the identity/registration label families always
+// hidden from ready work (beads-wqs). gt stamps agent, role, and rig
+// registration beads with these labels regardless of their issue_type, which
+// is heterogeneous in practice (some land as type=task with no discriminating
+// column). Excluding the label catches the whole identity family across every
+// ID prefix (hq-/gt-/gs-/pt-) in one predicate, so a dead polecat/witness/
+// mayor registration never surfaces as claimable "ready" work.
+var readyWorkExcludeLabels = []string{"gt:agent", "gt:role", "gt:rig"}
+
+// ReadyWorkExcludeLabels returns the labels excluded from ready work by
+// default, plus any caller extras (deduped, empty entries dropped). Mirrors
+// ReadyWorkExcludeTypes for the label lever.
+func ReadyWorkExcludeLabels(extra []string) []string {
+	out := make([]string, len(readyWorkExcludeLabels))
+	copy(out, readyWorkExcludeLabels)
+	seen := make(map[string]bool, len(out)+len(extra))
+	for _, l := range out {
+		seen[l] = true
+	}
+	for _, l := range extra {
+		if l == "" || seen[l] {
+			continue
+		}
+		seen[l] = true
+		out = append(out, l)
+	}
+	return out
+}
+
 // ReadyWorkOrder is an ORDER BY fragment plus any args its CASE expressions
 // need (the hybrid policy parameterizes a recency cutoff).
 type ReadyWorkOrder struct {
@@ -141,9 +170,25 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 			args = append(args, label)
 		}
 	}
-	if len(filter.ExcludeLabels) > 0 {
-		placeholders := make([]string, len(filter.ExcludeLabels))
-		for i, label := range filter.ExcludeLabels {
+	// Identity/registration labels (gt:agent/role/rig) are excluded from ready
+	// work by default (beads-wqs), merged with any caller-supplied ExcludeLabels.
+	// An explicit `filter.Labels` request for an identity label wins over the
+	// default exclusion (the escape hatch: `bd ready --label gt:agent` still
+	// returns the identity beads), mirroring how an explicit `--type` bypasses
+	// ReadyWorkExcludeTypes.
+	requested := make(map[string]bool, len(filter.Labels))
+	for _, l := range filter.Labels {
+		requested[l] = true
+	}
+	var excludeLabels []string
+	for _, l := range ReadyWorkExcludeLabels(filter.ExcludeLabels) {
+		if !requested[l] {
+			excludeLabels = append(excludeLabels, l)
+		}
+	}
+	if len(excludeLabels) > 0 {
+		placeholders := make([]string, len(excludeLabels))
+		for i, label := range excludeLabels {
 			placeholders[i] = "?"
 			args = append(args, label)
 		}

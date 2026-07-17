@@ -107,12 +107,112 @@ func TestBuildReadyWorkWhereBatchesIDSets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := strings.Count(where, "id NOT IN ("); got != 2 {
+	// Two batched deferred-child clauses (201 IDs > QueryBatchSize). Count the
+	// ID-list form specifically ("id NOT IN (?...") so the identity-label
+	// subquery ("id NOT IN (SELECT ...") is not miscounted here.
+	if got := strings.Count(where, "id NOT IN (?"); got != 2 {
 		t.Errorf("expected 2 batched NOT IN clauses for %d IDs, got %d", len(ids), got)
 	}
-	wantArgs := len(ids) + len(ReadyWorkExcludeTypes(nil))
+	// The identity-label exclusion adds one more subquery + its label args.
+	if !strings.Contains(where, "id NOT IN (SELECT issue_id FROM labels WHERE label IN (") {
+		t.Errorf("expected identity-label exclusion subquery, where = %q", where)
+	}
+	wantArgs := len(ids) + len(ReadyWorkExcludeTypes(nil)) + len(ReadyWorkExcludeLabels(nil))
 	if len(args) != wantArgs {
 		t.Errorf("args = %d, want %d", len(args), wantArgs)
+	}
+}
+
+func TestReadyWorkExcludeLabels(t *testing.T) {
+	t.Parallel()
+
+	base := ReadyWorkExcludeLabels(nil)
+	seen := make(map[string]bool, len(base))
+	for _, l := range base {
+		if seen[l] {
+			t.Errorf("duplicate label %q in default exclude list", l)
+		}
+		seen[l] = true
+	}
+	for _, want := range []string{"gt:agent", "gt:role", "gt:rig"} {
+		if !seen[want] {
+			t.Errorf("default exclude list missing %q", want)
+		}
+	}
+
+	// Mutating the result must not corrupt the package-level default.
+	base[0] = "mutated"
+	if again := ReadyWorkExcludeLabels(nil); again[0] != "gt:agent" {
+		t.Errorf("ReadyWorkExcludeLabels returned a shared backing slice: got %q", again[0])
+	}
+
+	extended := ReadyWorkExcludeLabels([]string{"custom", "", "gt:agent"})
+	if got, want := len(extended), len(base)+1; got != want {
+		t.Errorf("extras must dedupe and drop empties: len = %d, want %d", got, want)
+	}
+}
+
+func TestBuildReadyWorkWhereAlwaysExcludesIdentityLabels(t *testing.T) {
+	t.Parallel()
+
+	// beads-wqs: even with no caller-supplied ExcludeLabels, ready work must
+	// exclude the gt:agent/role/rig identity family so dead agent-registration
+	// beads never surface as claimable work.
+	where, args, err := BuildReadyWorkWhere(types.WorkFilter{}, IssuesFilterTables, ReadyWorkWhereInputs{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(where, "id NOT IN (SELECT issue_id FROM labels WHERE label IN (") {
+		t.Errorf("ready work must exclude identity labels by default, where = %q", where)
+	}
+	// The last len(ReadyWorkExcludeLabels(nil)) args are the label values.
+	labels := ReadyWorkExcludeLabels(nil)
+	tail := args[len(args)-len(labels):]
+	for i, want := range labels {
+		if got, ok := tail[i].(string); !ok || got != want {
+			t.Errorf("label arg[%d] = %v, want %q", i, tail[i], want)
+		}
+	}
+
+	// Wisp table family must use the wisp_labels table, not labels.
+	wwhere, _, err := BuildReadyWorkWhere(types.WorkFilter{}, WispsFilterTables, ReadyWorkWhereInputs{})
+	if err != nil {
+		t.Fatalf("unexpected error (wisps): %v", err)
+	}
+	if !strings.Contains(wwhere, "SELECT issue_id FROM wisp_labels WHERE label IN (") {
+		t.Errorf("wisp ready work must exclude identity labels via wisp_labels, where = %q", wwhere)
+	}
+}
+
+func TestBuildReadyWorkWhereExplicitIdentityLabelEscapeHatch(t *testing.T) {
+	t.Parallel()
+
+	// beads-wqs escape hatch: an explicit request for an identity label
+	// (bd ready --label gt:agent) must NOT be force-excluded — it wins over the
+	// default exclusion, mirroring how explicit --type bypasses the type filter.
+	where, args, err := BuildReadyWorkWhere(
+		types.WorkFilter{Labels: []string{"gt:agent"}}, IssuesFilterTables, ReadyWorkWhereInputs{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The include clause for gt:agent must be present.
+	if !strings.Contains(where, "id IN (SELECT issue_id FROM labels WHERE label = ?)") {
+		t.Errorf("explicit label must produce an include clause, where = %q", where)
+	}
+	// gt:agent appears exactly once (the include-clause arg), not again in a
+	// NOT IN exclusion — the escape hatch removed it from the exclude set.
+	agentCount := 0
+	for _, a := range args {
+		if s, ok := a.(string); ok && s == "gt:agent" {
+			agentCount++
+		}
+	}
+	if agentCount != 1 {
+		t.Errorf("gt:agent should appear once (include only), got %d occurrences in args %v", agentCount, args)
+	}
+	// The remaining identity labels (gt:role, gt:rig) are still excluded.
+	if !strings.Contains(where, "id NOT IN (SELECT issue_id FROM labels WHERE label IN (?, ?))") {
+		t.Errorf("non-requested identity labels must still be excluded, where = %q", where)
 	}
 }
 
