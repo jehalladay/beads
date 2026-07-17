@@ -2,12 +2,133 @@ package notion
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
+
+// TestClientRetriesIdempotentOn429 verifies that an idempotent GET retries a
+// 429 (rate limit) and succeeds once the server stops rate-limiting. Notion's
+// API is aggressively rate-limited, so this is the common case. Retry-After: 0
+// keeps the test fast (honors the server-mandated delay verbatim).
+func TestClientRetriesIdempotentOn429(t *testing.T) {
+	t.Parallel()
+
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"code":"rate_limited","message":"slow down"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"user-1","name":"Ada"}`)
+	}))
+	defer server.Close()
+
+	client := NewClient("secret-token").WithBaseURL(server.URL)
+	user, err := client.GetCurrentUser(context.Background())
+	if err != nil {
+		t.Fatalf("GetCurrentUser returned error after 429 retry: %v", err)
+	}
+	if user.Name != "Ada" {
+		t.Fatalf("user name = %q, want Ada", user.Name)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("server calls = %d, want 2 (one 429 + one success)", got)
+	}
+}
+
+// TestClientRetriesIdempotentOn5xx verifies an idempotent GET retries a 503.
+func TestClientRetriesIdempotentOn5xx(t *testing.T) {
+	t.Parallel()
+
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"user-1","name":"Ada"}`)
+	}))
+	defer server.Close()
+
+	client := NewClient("secret-token").WithBaseURL(server.URL)
+	if _, err := client.GetCurrentUser(context.Background()); err != nil {
+		t.Fatalf("GetCurrentUser returned error after 503 retry: %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("server calls = %d, want 2", got)
+	}
+}
+
+// TestClientPostRetriesOn429 verifies that a POST create (non-idempotent) STILL
+// retries a 429 — a rate limit is a clean pre-processing rejection, so nothing
+// was written and a retry cannot mint a duplicate page (preserves the merm
+// at-most-once contract while riding out rate limits).
+func TestClientPostRetriesOn429(t *testing.T) {
+	t.Parallel()
+
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"code":"rate_limited","message":"slow down"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"page-1"}`)
+	}))
+	defer server.Close()
+
+	client := NewClient("secret-token").WithBaseURL(server.URL)
+	page, err := client.CreatePage(context.Background(), "ds_123", map[string]interface{}{"Name": "x"})
+	if err != nil {
+		t.Fatalf("CreatePage returned error after 429 retry: %v", err)
+	}
+	if page.ID != "page-1" {
+		t.Fatalf("page id = %q, want page-1", page.ID)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("server calls = %d, want 2 (429 is retryable for POST — clean rejection)", got)
+	}
+}
+
+// TestClientPostDoesNotRetryOn5xx verifies that a POST create does NOT blind-
+// retry a 5xx (the create may have committed before Notion errored). It returns
+// an AmbiguousError so the caller reconciles instead of creating a duplicate.
+func TestClientPostDoesNotRetryOn5xx(t *testing.T) {
+	t.Parallel()
+
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"code":"internal_error","message":"boom"}`)
+	}))
+	defer server.Close()
+
+	client := NewClient("secret-token").WithBaseURL(server.URL)
+	_, err := client.CreatePage(context.Background(), "ds_123", map[string]interface{}{"Name": "x"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var ambiguous *AmbiguousError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("error = %v, want AmbiguousError (POST 5xx must not blind-retry)", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("server calls = %d, want 1 (POST 5xx must NOT retry)", got)
+	}
+}
 
 func TestClientRetrieveDataSourceSetsHeaders(t *testing.T) {
 	t.Parallel()

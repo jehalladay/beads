@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,7 +21,43 @@ const (
 	maxResponseBytes     = 20 * 1024 * 1024
 	maxQueryPages        = 50
 	maxPageSize          = 100
+	// maxRetries is the number of RETRIES after the initial attempt for a
+	// transient failure (rate limit / 5xx). Mirrors jira/gitlab/ado.
+	maxRetries = 3
+	// retryDelay is the base for exponential backoff between retries.
+	retryDelay = time.Second
 )
+
+// AmbiguousError indicates a non-idempotent request (POST/create) that failed
+// with an ambiguous outcome — a transport error, a lost response, or a 5xx that
+// Notion may have emitted AFTER writing the resource. Such requests are NOT
+// retried, because a blind retry of a create can mint a duplicate external page
+// (beads-merm). The caller must treat the create as "may have succeeded" and
+// reconcile rather than assuming it failed. Idempotent methods (GET/PUT/PATCH)
+// are unaffected and keep retrying. A 429 (rate limit) is a clean rejection —
+// nothing was processed — so it stays retryable even for POST.
+type AmbiguousError struct {
+	Method string
+	URL    string
+	// Cause is the underlying transport/status error from the single attempt.
+	Cause error
+}
+
+func (e *AmbiguousError) Error() string {
+	return fmt.Sprintf("notion %s %s failed with an ambiguous outcome (not retried to avoid a duplicate create): %v", e.Method, e.URL, e.Cause)
+}
+
+func (e *AmbiguousError) Unwrap() error { return e.Cause }
+
+// isIdempotentMethod reports whether an HTTP method is safe to retry after an
+// ambiguous failure without risking a duplicate side effect. POST creates a new
+// resource on each call (/pages, /databases), so it is the only non-idempotent
+// method used by this client. The data_sources query is also POST but
+// read-only; treating it as non-idempotent only costs a caller-visible error on
+// an ambiguous 5xx (never a duplicate), which is the safe default.
+func isIdempotentMethod(method string) bool {
+	return method != http.MethodPost
+}
 
 type Client struct {
 	Token         string
@@ -254,50 +292,146 @@ func (c *Client) doRequest(ctx context.Context, method, path string, requestBody
 		httpClient = &http.Client{Timeout: DefaultTimeout}
 	}
 
-	var bodyReader io.Reader
+	var payload []byte
 	if requestBody != nil {
-		payload, err := json.Marshal(requestBody)
+		p, err := json.Marshal(requestBody)
 		if err != nil {
 			return nil, fmt.Errorf("marshal request body: %w", err)
 		}
-		bodyReader = bytes.NewReader(payload)
+		payload = p
 	}
 
 	requestURL := path
 	if !strings.HasPrefix(requestURL, "http://") && !strings.HasPrefix(requestURL, "https://") {
 		requestURL = strings.TrimSuffix(c.BaseURL, "/") + path
 	}
-	req, err := http.NewRequestWithContext(ctx, method, requestURL, bodyReader)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("Notion-Version", c.NotionVersion)
-	req.Header.Set("Accept", "application/json")
-	if requestBody != nil {
-		req.Header.Set("Content-Type", "application/json")
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Rebuild the body reader at the top of the loop so a retry after a
+		// network error does not send an empty body (the reader may be at EOF).
+		var bodyReader io.Reader
+		if payload != nil {
+			bodyReader = bytes.NewReader(payload)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, requestURL, bodyReader)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+		req.Header.Set("Notion-Version", c.NotionVersion)
+		req.Header.Set("Accept", "application/json")
+		if requestBody != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := httpClient.Do(req) //nolint:gosec // G704: URL is constructed from configured Notion API base, not user input
+		if err != nil {
+			lastErr = fmt.Errorf("request failed (attempt %d/%d): %w", attempt+1, maxRetries+1, err)
+			// A transport error on a non-idempotent request (POST/create) is
+			// ambiguous: the server may have processed it before the response
+			// was lost. Do not retry — a blind retry can create a duplicate.
+			if !isIdempotentMethod(method) {
+				return nil, &AmbiguousError{Method: method, URL: requestURL, Cause: lastErr}
+			}
+			if !sleepBeforeRetry(ctx, retryDelay, attempt, "") {
+				return nil, ctx.Err()
+			}
+			continue
+		}
+
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+		_ = resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("read response (attempt %d/%d): %w", attempt+1, maxRetries+1, err)
+			// The server returned a status but we could not read the body. For a
+			// non-idempotent request the create may have committed — treat as
+			// ambiguous rather than retrying into a duplicate.
+			if !isIdempotentMethod(method) {
+				return nil, &AmbiguousError{Method: method, URL: requestURL, Cause: lastErr}
+			}
+			if !sleepBeforeRetry(ctx, retryDelay, attempt, "") {
+				return nil, ctx.Err()
+			}
+			continue
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return body, nil
+		}
+
+		// A 5xx on a non-idempotent request is ambiguous: the create may have
+		// committed before Notion errored. Do not retry — surface an
+		// AmbiguousError so the caller reconciles instead of duplicating. A 429
+		// (rate limit) is a clean rejection (not processed), so it stays
+		// retryable even for POST.
+		isServerError := resp.StatusCode == http.StatusInternalServerError ||
+			resp.StatusCode == http.StatusBadGateway ||
+			resp.StatusCode == http.StatusServiceUnavailable ||
+			resp.StatusCode == http.StatusGatewayTimeout
+		if isServerError && !isIdempotentMethod(method) {
+			return nil, &AmbiguousError{
+				Method: method,
+				URL:    requestURL,
+				Cause:  notionAPIError(resp.StatusCode, body),
+			}
+		}
+
+		// Retry on rate-limiting and server errors with exponential backoff.
+		// Notion's API is aggressively rate-limited (~3 req/s), so 429 is the
+		// normal backpressure signal — respect Retry-After when present.
+		retriable := resp.StatusCode == http.StatusTooManyRequests || isServerError
+		if retriable && attempt < maxRetries {
+			lastErr = fmt.Errorf("transient error %d (attempt %d/%d)", resp.StatusCode, attempt+1, maxRetries+1)
+			if !sleepBeforeRetry(ctx, retryDelay, attempt, resp.Header.Get("Retry-After")) {
+				return nil, ctx.Err()
+			}
+			continue
+		}
+
+		return nil, notionAPIError(resp.StatusCode, body)
 	}
 
-	resp, err := httpClient.Do(req) //nolint:gosec // G704: URL is constructed from configured Notion API base, not user input
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
+	return nil, fmt.Errorf("max retries (%d) exceeded: %w", maxRetries+1, lastErr)
+}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return body, nil
-	}
-
+// notionAPIError builds a descriptive error from a non-2xx Notion response,
+// preferring the structured {code, message} body when present.
+func notionAPIError(statusCode int, body []byte) error {
 	var apiErr struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.Message != "" {
-		return nil, fmt.Errorf("Notion API error %s (%d): %s", apiErr.Code, resp.StatusCode, apiErr.Message)
+		return fmt.Errorf("Notion API error %s (%d): %s", apiErr.Code, statusCode, apiErr.Message)
 	}
-	return nil, fmt.Errorf("Notion API error (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	return fmt.Errorf("Notion API error (%d): %s", statusCode, strings.TrimSpace(string(body)))
+}
+
+// sleepBeforeRetry waits before the next retry attempt. When serverDelay (the
+// Retry-After header) parses to a positive number of seconds it is respected
+// verbatim (no jitter — honor the server-mandated delay); otherwise it uses
+// exponential backoff (retryDelay * 2^attempt) with jitter. Returns false if
+// the context is cancelled while waiting.
+func sleepBeforeRetry(ctx context.Context, base time.Duration, attempt int, serverDelay string) bool {
+	delay := base * time.Duration(1<<uint(attempt))
+	useServerDelay := false
+	if serverDelay != "" {
+		if seconds, err := strconv.Atoi(strings.TrimSpace(serverDelay)); err == nil && seconds >= 0 {
+			delay = time.Duration(seconds) * time.Second
+			useServerDelay = true
+		}
+	}
+	if !useServerDelay {
+		if half := int64(delay / 2); half > 0 {
+			delay += time.Duration(rand.Int64N(half)) //nolint:gosec // G404: jitter for retry backoff does not need crypto rand
+		}
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(delay):
+		return true
+	}
 }
