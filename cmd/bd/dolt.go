@@ -696,6 +696,29 @@ func isLocalHost(host string) bool {
 	return false
 }
 
+// refuseMetadatalessRemoteServer decides whether bd should refuse to open a
+// store rather than silently connect to a shared, non-local Dolt server when
+// the resolved workspace has no metadata.json (beads-h19n).
+//
+// It returns the resolved server host and true when: the workspace has no
+// metadata.json (cfgIsNil), server mode is nonetheless active (from the ambient
+// BEADS_DOLT_* / shared-server env), and the resolved server host is non-local.
+// In that case connecting would read+write the shared production hub under the
+// default database name — the mechanism that once froze the town when a stray
+// operation hit the prod hub (hq-7olqo). A legitimately server-backed workspace
+// always has a metadata.json (bd init writes it), so it is never refused;
+// embedded and local-host paths are likewise unaffected.
+func refuseMetadatalessRemoteServer(cfgIsNil, serverMode bool) (string, bool) {
+	if !cfgIsNil || !serverMode {
+		return "", false
+	}
+	serverHost := configfile.DefaultConfig().GetDoltServerHost()
+	if serverHost == "" || isLocalHost(serverHost) {
+		return serverHost, false
+	}
+	return serverHost, true
+}
+
 // runExternalDoltStatus queries an externally-hosted Dolt server and prints
 // (or returns, for --json) status. Unlike the local path, there is no PID or
 // log file — reachability, version, host/port/database, and TLS mode are the
