@@ -272,6 +272,21 @@ create, update, show, or close operation).`,
 		if historyChanged {
 			updates["no_history"] = false
 		}
+		// Pinned flag (beads-9ynk): --pinned/--no-pinned set the Issue.Pinned
+		// context-marker bool (the prune/purge "skips pinned" protection), which
+		// the storage allowed-fields map already accepts. This is distinct from
+		// status="pinned"; it does not change the lifecycle status.
+		pinnedChanged := cmd.Flags().Changed("pinned")
+		noPinnedChanged := cmd.Flags().Changed("no-pinned")
+		if pinnedChanged && noPinnedChanged {
+			return HandleErrorRespectJSON("cannot specify both --pinned and --no-pinned flags")
+		}
+		if pinnedChanged {
+			updates["pinned"] = true
+		}
+		if noPinnedChanged {
+			updates["pinned"] = false
+		}
 		// Metadata flag (GH#1413)
 		if cmd.Flags().Changed("metadata") {
 			metadataValue, _ := cmd.Flags().GetString("metadata")
@@ -892,6 +907,8 @@ func init() {
 	updateCmd.Flags().Bool("persistent", false, "Mark issue as persistent (promote wisp to regular issue)")
 	updateCmd.Flags().Bool("no-history", false, "Mark issue as no-history (skip Dolt commits, not GC-eligible)")
 	updateCmd.Flags().Bool("history", false, "Clear no-history flag (re-enable Dolt commit history)")
+	updateCmd.Flags().Bool("pinned", false, "Pin issue as a persistent context marker (protected from prune/purge)")
+	updateCmd.Flags().Bool("no-pinned", false, "Clear the pinned context marker")
 	// Metadata flag (GH#1413)
 	updateCmd.Flags().String("metadata", "", "Set custom metadata (JSON string or @file.json to read from file)")
 	// Incremental metadata edits (GH#1406)
