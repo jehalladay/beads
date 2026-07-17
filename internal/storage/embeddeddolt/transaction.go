@@ -129,7 +129,7 @@ func (t *embeddedTransaction) CycleThroughEdges(ctx context.Context, edges [][2]
 
 func (t *embeddedTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
 	t.dirty.MarkDirty("dependencies")
-	return issueops.RemoveDependencyInTx(ctx, t.tx, issueID, dependsOnID)
+	return issueops.RemoveDependencyInTx(ctx, t.tx, issueID, dependsOnID, actor)
 }
 
 func (t *embeddedTransaction) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
