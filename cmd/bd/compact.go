@@ -758,7 +758,7 @@ func runCompactApply(ctx context.Context, store storage.DoltStorage) {
 	}
 
 	commitHash := compact.GetCurrentCommitHash()
-	if err := store.ApplyCompaction(ctx, compactID, compactTier, originalSize, compactedSize, commitHash); err != nil {
+	if err := store.ApplyCompaction(ctx, compactID, compactTier, originalSize, compactedSize, commitHash, actor); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to apply compaction: %v\n", err)
 		os.Exit(1)
 	}

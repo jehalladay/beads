@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Compaction and restore now emit an audit event (beads-ehtw).** The
+  `EventCompacted` event type was defined and re-exported but never emitted:
+  `ApplyCompactionInTx` only updated the issue row, and `RestoreFromSnapshotInTx`
+  (`bd restore --apply`) overwrote an issue's title/description/notes and stepped
+  its compaction level with **no** audit trail — asymmetric with every other
+  content mutation (create/update/close/reopen/label/dependency all emit typed
+  events). Both now emit a typed `EventCompacted` event attributed to the real
+  actor (threaded through `ApplyCompaction`/`RestoreFromSnapshot`), so
+  `bd history` records who compacted/restored an issue and when. Mirrors the
+  dependency add/remove event pattern (beads-1qt9).
+
 - **Month/year relative durations no longer skew on month-end dates
   (beads-aysw).** `ParseCompactDuration` used `time.AddDate` for `m`/`y` units,
   which normalizes an impossible date forward — e.g. `Mar 31 - 1m` became

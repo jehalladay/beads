@@ -86,14 +86,25 @@ func CheckEligibilityInTx(ctx context.Context, tx *sql.Tx, issueID string, tier 
 	return true, "", nil
 }
 
-// ApplyCompactionInTx records a compaction result.
-func ApplyCompactionInTx(ctx context.Context, tx *sql.Tx, issueID string, tier int, originalSize int, commitHash string) error {
+// ApplyCompactionInTx records a compaction result and emits a typed
+// EventCompacted audit event (with the real actor) so the destructive
+// content-overwrite is visible in `bd history` (beads-ehtw). Mirrors the
+// dependency/label add-remove event pattern (beads-1qt9). Compaction targets
+// only real issues (never wisps), so the event routes to the "events" table.
+func ApplyCompactionInTx(ctx context.Context, tx *sql.Tx, issueID string, tier int, originalSize int, commitHash string, actor string) error {
 	now := time.Now().UTC()
 	_, err := tx.ExecContext(ctx,
 		`UPDATE issues SET compaction_level = ?, compacted_at = ?, compacted_at_commit = ?, original_size = ?, updated_at = ? WHERE id = ?`,
 		tier, now, commitHash, originalSize, now, issueID)
 	if err != nil {
 		return fmt.Errorf("apply compaction: %w", err)
+	}
+
+	comment := fmt.Sprintf("Compacted to tier %d (original size %d bytes)", tier, originalSize)
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO events (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)`,
+		NewEventID(), issueID, types.EventCompacted, actor, comment); err != nil {
+		return fmt.Errorf("apply compaction: record event: %w", err)
 	}
 	return nil
 }
@@ -182,7 +193,12 @@ func GetLatestSnapshotInTx(ctx context.Context, tx *sql.Tx, issueID string) (*ty
 // compaction snapshot and steps its compaction level back down by one. It
 // returns the snapshot that was applied, or (nil, nil) when no snapshot exists.
 // The snapshot row is left in place as an audit trail.
-func RestoreFromSnapshotInTx(ctx context.Context, tx *sql.Tx, issueID string) (*types.IssueSnapshot, error) {
+//
+// Restore is a destructive content-overwrite mutation, so it emits an
+// EventCompacted audit event (with the real actor) recording the level change,
+// symmetric with ApplyCompactionInTx and every other content mutation
+// (beads-ehtw). Compaction targets only real issues (never wisps) → "events".
+func RestoreFromSnapshotInTx(ctx context.Context, tx *sql.Tx, issueID string, actor string) (*types.IssueSnapshot, error) {
 	snap, err := GetLatestSnapshotInTx(ctx, tx, issueID)
 	if err != nil {
 		return nil, err
@@ -214,6 +230,13 @@ func RestoreFromSnapshotInTx(ctx context.Context, tx *sql.Tx, issueID string) (*
 	}
 	if err != nil {
 		return nil, fmt.Errorf("restore issue %s: %w", issueID, err)
+	}
+
+	comment := fmt.Sprintf("Restored from snapshot: compaction level %d -> %d", snap.CompactionLevel, newLevel)
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO events (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)`,
+		NewEventID(), issueID, types.EventCompacted, actor, comment); err != nil {
+		return nil, fmt.Errorf("restore issue %s: record event: %w", issueID, err)
 	}
 	return snap, nil
 }

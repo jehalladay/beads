@@ -9,7 +9,9 @@ import (
 // CompactionStore provides issue compaction and tiering operations.
 type CompactionStore interface {
 	CheckEligibility(ctx context.Context, issueID string, tier int) (bool, string, error)
-	ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, compactedSize int, commitHash string) error
+	// ApplyCompaction records a compaction result and emits an EventCompacted
+	// audit event attributed to actor (beads-ehtw).
+	ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, compactedSize int, commitHash string, actor string) error
 	GetTier1Candidates(ctx context.Context) ([]*types.CompactionCandidate, error)
 	GetTier2Candidates(ctx context.Context) ([]*types.CompactionCandidate, error)
 
@@ -22,6 +24,7 @@ type CompactionStore interface {
 	GetCompactionSnapshot(ctx context.Context, issueID string) (*types.IssueSnapshot, error)
 	// RestoreFromSnapshot restores an issue's content from its most recent
 	// snapshot and steps its compaction level back down. Returns the applied
-	// snapshot, or (nil, nil) when none exists.
-	RestoreFromSnapshot(ctx context.Context, issueID string) (*types.IssueSnapshot, error)
+	// snapshot, or (nil, nil) when none exists. Emits an EventCompacted audit
+	// event attributed to actor (beads-ehtw).
+	RestoreFromSnapshot(ctx context.Context, issueID string, actor string) (*types.IssueSnapshot, error)
 }

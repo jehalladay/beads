@@ -37,7 +37,7 @@ type compactableStore interface {
 	GetIssue(ctx context.Context, issueID string) (*types.Issue, error)
 	SnapshotIssue(ctx context.Context, issueID string, tier int) error
 	UpdateIssue(ctx context.Context, issueID string, updates map[string]interface{}, actor string) error
-	ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, compactedSize int, commitHash string) error
+	ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, compactedSize int, commitHash string, actor string) error
 	AddComment(ctx context.Context, issueID, actor, comment string) error
 }
 
@@ -150,7 +150,7 @@ func (c *Compactor) CompactTier1(ctx context.Context, issueID string) error {
 
 	// Record compaction metadata with git commit hash
 	commitHash := GetCurrentCommitHash()
-	if err := c.store.ApplyCompaction(ctx, issueID, 1, originalSize, compactedSize, commitHash); err != nil {
+	if err := c.store.ApplyCompaction(ctx, issueID, 1, originalSize, compactedSize, commitHash, "compactor"); err != nil {
 		return fmt.Errorf("failed to apply compaction metadata: %w", err)
 	}
 

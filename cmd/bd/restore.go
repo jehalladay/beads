@@ -70,7 +70,7 @@ from Dolt version history, which can only be displayed, not applied.`,
 				fmt.Fprintf(os.Stderr, "      version reconstructed from Dolt history.\n")
 				os.Exit(1)
 			}
-			applied, err := store.RestoreFromSnapshot(ctx, issueID)
+			applied, err := store.RestoreFromSnapshot(ctx, issueID, getActor())
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to restore issue: %v\n", err)
 				os.Exit(1)

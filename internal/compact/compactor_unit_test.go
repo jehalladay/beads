@@ -48,7 +48,7 @@ func (s *stubStore) UpdateIssue(ctx context.Context, issueID string, updates map
 	return nil
 }
 
-func (s *stubStore) ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, compactedSize int, commitHash string) error {
+func (s *stubStore) ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, compactedSize int, commitHash string, _ string) error {
 	if s.applyCompactionFn != nil {
 		return s.applyCompactionFn(ctx, issueID, tier, originalSize, compactedSize, commitHash)
 	}
