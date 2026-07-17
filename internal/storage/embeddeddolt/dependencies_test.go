@@ -401,6 +401,40 @@ func TestAddDependency(t *testing.T) {
 		}
 	})
 
+	t.Run("cross_prefix_dependency_visible_in_metadata", func(t *testing.T) {
+		// beads-n49j: a cross-prefix (other-rig) dependency target is intentionally
+		// allowed to skip existence validation, is persisted, and round-trips through
+		// export — but GetDependenciesWithMetadata silently DROPPED it because the
+		// join to the local issues table found no row. The edge must remain visible.
+		te := newTestEnv(t, "xp")
+		ctx := t.Context()
+
+		a := &types.Issue{ID: "xp-a", Title: "A", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+		if err := te.store.CreateIssue(ctx, a, "tester"); err != nil {
+			t.Fatalf("CreateIssue A: %v", err)
+		}
+
+		// xp-a depends on other-xyz, which lives in another rig (not a local issue).
+		dep := &types.Dependency{IssueID: "xp-a", DependsOnID: "other-xyz", Type: types.DepBlocks}
+		if err := te.store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("AddDependency cross-prefix: %v", err)
+		}
+
+		deps, err := te.store.GetDependenciesWithMetadata(ctx, "xp-a")
+		if err != nil {
+			t.Fatalf("GetDependenciesWithMetadata: %v", err)
+		}
+		if len(deps) != 1 {
+			t.Fatalf("cross-prefix dependency dropped from metadata: got %d deps, want 1", len(deps))
+		}
+		if deps[0].ID != "other-xyz" {
+			t.Errorf("dep target ID = %q, want other-xyz", deps[0].ID)
+		}
+		if deps[0].DependencyType != types.DepBlocks {
+			t.Errorf("dep type = %q, want blocks", deps[0].DependencyType)
+		}
+	})
+
 	t.Run("epic_blocks_task_fails", func(t *testing.T) {
 		te := newTestEnv(t, "et")
 		ctx := t.Context()
