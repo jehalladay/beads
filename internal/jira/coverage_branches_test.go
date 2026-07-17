@@ -3,6 +3,7 @@ package jira
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -274,7 +275,11 @@ func TestFetchIssuesJQLVariants(t *testing.T) {
 
 func TestApplyTransitionNoMatchingTransition(t *testing.T) {
 	// GetIssueTransitions returns a transition that does NOT match the desired
-	// status name, so applyTransition logs and returns nil (no TransitionIssue call).
+	// status name. applyTransition is only reached when the current status
+	// already differs from the desired one, so a no-match means the status
+	// change genuinely could not be applied — it must return
+	// ErrNoTransitionAvailable rather than silently succeeding (beads-p9oq),
+	// so the push loop surfaces it instead of reporting a false Update.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/transitions") {
 			w.Header().Set("Content-Type", "application/json")
@@ -288,8 +293,9 @@ func TestApplyTransitionNoMatchingTransition(t *testing.T) {
 	defer srv.Close()
 
 	tr := newTrackerWithServer(srv.URL, "3")
-	if err := tr.applyTransition(context.Background(), "PROJ-1", types.StatusClosed); err != nil {
-		t.Fatalf("applyTransition should return nil when no match, got %v", err)
+	err := tr.applyTransition(context.Background(), "PROJ-1", types.StatusClosed)
+	if !errors.Is(err, ErrNoTransitionAvailable) {
+		t.Fatalf("applyTransition should return ErrNoTransitionAvailable when no match, got %v", err)
 	}
 }
 
