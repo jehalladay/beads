@@ -11,7 +11,10 @@ var ErrLocked = errProcessLocked
 // because another process holds a conflicting lock.
 var ErrLockBusy = errors.New("lock busy: held by another process")
 
-// IsLocked returns true if the error indicates a lock is held by another process.
+// IsLocked returns true if the error indicates a lock is held by another
+// process. It matches BOTH lock-held sentinels: errProcessLocked (from the
+// exclusive-lock path) and ErrLockBusy (from the shared-lock path). Matching
+// only the former silently missed shared-lock contention (beads-43p8).
 func IsLocked(err error) bool {
-	return errors.Is(err, errProcessLocked)
+	return errors.Is(err, errProcessLocked) || errors.Is(err, ErrLockBusy)
 }
