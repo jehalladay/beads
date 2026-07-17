@@ -698,7 +698,7 @@ func TestApplyCompaction(t *testing.T) {
 		t.Fatalf("failed to close issue: %v", err)
 	}
 
-	err := store.ApplyCompaction(ctx, issue.ID, 1, 5000, 1500, "abc123")
+	err := store.ApplyCompaction(ctx, issue.ID, 1, 5000, 1500, "abc123", "tester")
 	if err != nil {
 		t.Fatalf("failed to apply compaction: %v", err)
 	}
@@ -826,7 +826,7 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	if err := store.UpdateIssue(ctx, issue.ID, updates, "compactor"); err != nil {
 		t.Fatalf("overwrite: %v", err)
 	}
-	if err := store.ApplyCompaction(ctx, issue.ID, 1, 100, 7, "deadbeef"); err != nil {
+	if err := store.ApplyCompaction(ctx, issue.ID, 1, 100, 7, "deadbeef", "tester"); err != nil {
 		t.Fatalf("apply compaction: %v", err)
 	}
 
@@ -847,7 +847,7 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	}
 
 	// Restore writes the originals back and clears compaction bookkeeping.
-	applied, err := store.RestoreFromSnapshot(ctx, issue.ID)
+	applied, err := store.RestoreFromSnapshot(ctx, issue.ID, "tester")
 	if err != nil {
 		t.Fatalf("restore: %v", err)
 	}

@@ -47,9 +47,9 @@ func (s *DoltStore) CheckEligibility(ctx context.Context, issueID string, tier i
 }
 
 // ApplyCompaction records a compaction result in the database.
-func (s *DoltStore) ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, _ int, commitHash string) error {
+func (s *DoltStore) ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, _ int, commitHash string, actor string) error {
 	return s.withRetryTx(ctx, func(tx *sql.Tx) error {
-		return issueops.ApplyCompactionInTx(ctx, tx, issueID, tier, originalSize, commitHash)
+		return issueops.ApplyCompactionInTx(ctx, tx, issueID, tier, originalSize, commitHash, actor)
 	})
 }
 
@@ -75,11 +75,11 @@ func (s *DoltStore) GetCompactionSnapshot(ctx context.Context, issueID string) (
 
 // RestoreFromSnapshot restores an issue's content from its most recent snapshot
 // and steps its compaction level back down. See issueops.RestoreFromSnapshotInTx.
-func (s *DoltStore) RestoreFromSnapshot(ctx context.Context, issueID string) (*types.IssueSnapshot, error) {
+func (s *DoltStore) RestoreFromSnapshot(ctx context.Context, issueID string, actor string) (*types.IssueSnapshot, error) {
 	var snap *types.IssueSnapshot
 	err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		snap, err = issueops.RestoreFromSnapshotInTx(ctx, tx, issueID)
+		snap, err = issueops.RestoreFromSnapshotInTx(ctx, tx, issueID, actor)
 		return err
 	})
 	return snap, err

@@ -861,9 +861,9 @@ func (s *EmbeddedDoltStore) CheckEligibility(ctx context.Context, issueID string
 	return eligible, reason, err
 }
 
-func (s *EmbeddedDoltStore) ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, _ int, commitHash string) error {
+func (s *EmbeddedDoltStore) ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, _ int, commitHash string, actor string) error {
 	return s.withConn(ctx, true, func(tx *sql.Tx) error {
-		return issueops.ApplyCompactionInTx(ctx, tx, issueID, tier, originalSize, commitHash)
+		return issueops.ApplyCompactionInTx(ctx, tx, issueID, tier, originalSize, commitHash, actor)
 	})
 }
 
@@ -883,11 +883,11 @@ func (s *EmbeddedDoltStore) GetCompactionSnapshot(ctx context.Context, issueID s
 	return snap, err
 }
 
-func (s *EmbeddedDoltStore) RestoreFromSnapshot(ctx context.Context, issueID string) (*types.IssueSnapshot, error) {
+func (s *EmbeddedDoltStore) RestoreFromSnapshot(ctx context.Context, issueID string, actor string) (*types.IssueSnapshot, error) {
 	var snap *types.IssueSnapshot
 	err := s.withConn(ctx, true, func(tx *sql.Tx) error {
 		var err error
-		snap, err = issueops.RestoreFromSnapshotInTx(ctx, tx, issueID)
+		snap, err = issueops.RestoreFromSnapshotInTx(ctx, tx, issueID, actor)
 		return err
 	})
 	return snap, err

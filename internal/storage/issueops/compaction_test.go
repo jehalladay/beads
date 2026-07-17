@@ -255,7 +255,13 @@ func TestApplyCompactionInTx(t *testing.T) {
 		mock.ExpectExec(`UPDATE issues SET compaction_level`).
 			WithArgs(1, sqlmock.AnyArg(), "abc123", 4096, sqlmock.AnyArg(), "bd-1").
 			WillReturnResult(sqlmock.NewResult(0, 1))
-		if err := ApplyCompactionInTx(context.Background(), tx, "bd-1", 1, 4096, "abc123"); err != nil {
+		// beads-ehtw: a compaction must emit a typed EventCompacted audit event
+		// (with the real actor) so `bd history` records the destructive
+		// content-overwrite — mirrors the dependency/label add-remove pattern.
+		mock.ExpectExec(`INSERT INTO events`).
+			WithArgs(sqlmock.AnyArg(), "bd-1", types.EventCompacted, "compactor", sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		if err := ApplyCompactionInTx(context.Background(), tx, "bd-1", 1, 4096, "abc123", "compactor"); err != nil {
 			t.Fatalf("ApplyCompactionInTx: %v", err)
 		}
 		if err := mock.ExpectationsWereMet(); err != nil {
@@ -268,8 +274,21 @@ func TestApplyCompactionInTx(t *testing.T) {
 		_, mock, tx := beginMockTx(t)
 		mock.ExpectExec(`UPDATE issues SET compaction_level`).
 			WillReturnError(errors.New("update boom"))
-		if err := ApplyCompactionInTx(context.Background(), tx, "bd-2", 1, 0, "x"); err == nil {
+		if err := ApplyCompactionInTx(context.Background(), tx, "bd-2", 1, 0, "x", "compactor"); err == nil {
 			t.Fatal("err = nil, want an update error")
+		}
+	})
+
+	t.Run("event insert error", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectExec(`UPDATE issues SET compaction_level`).
+			WithArgs(1, sqlmock.AnyArg(), "x", 0, sqlmock.AnyArg(), "bd-3").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec(`INSERT INTO events`).
+			WillReturnError(errors.New("event boom"))
+		if err := ApplyCompactionInTx(context.Background(), tx, "bd-3", 1, 0, "x", "compactor"); err == nil {
+			t.Fatal("err = nil, want an event-insert error")
 		}
 	})
 }
@@ -438,7 +457,7 @@ func TestRestoreFromSnapshotInTx(t *testing.T) {
 		mock.ExpectQuery(`FROM compaction_snapshots WHERE issue_id = \?`).
 			WithArgs("bd-0").
 			WillReturnRows(sqlmock.NewRows([]string{"compaction_level", "snapshot_json"}))
-		snap, err := RestoreFromSnapshotInTx(context.Background(), tx, "bd-0")
+		snap, err := RestoreFromSnapshotInTx(context.Background(), tx, "bd-0", "alice")
 		if err != nil || snap != nil {
 			t.Errorf("snap=%v err=%v, want nil/nil", snap, err)
 		}
@@ -449,7 +468,7 @@ func TestRestoreFromSnapshotInTx(t *testing.T) {
 		_, mock, tx := beginMockTx(t)
 		mock.ExpectQuery(`FROM compaction_snapshots WHERE issue_id = \?`).
 			WithArgs("bd-g").WillReturnError(errors.New("boom"))
-		if _, err := RestoreFromSnapshotInTx(context.Background(), tx, "bd-g"); err == nil {
+		if _, err := RestoreFromSnapshotInTx(context.Background(), tx, "bd-g", "alice"); err == nil {
 			t.Fatal("err = nil, want get error")
 		}
 	})
@@ -460,7 +479,12 @@ func TestRestoreFromSnapshotInTx(t *testing.T) {
 		expectSnapshot(mock, "bd-1", 1)
 		mock.ExpectExec(`compaction_level = 0, compacted_at = NULL`).
 			WillReturnResult(sqlmock.NewResult(0, 1))
-		snap, err := RestoreFromSnapshotInTx(context.Background(), tx, "bd-1")
+		// beads-ehtw: restore is a destructive content-overwrite mutation and
+		// must emit an audit event (with the real actor), symmetric with compact.
+		mock.ExpectExec(`INSERT INTO events`).
+			WithArgs(sqlmock.AnyArg(), "bd-1", types.EventCompacted, "alice", sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		snap, err := RestoreFromSnapshotInTx(context.Background(), tx, "bd-1", "alice")
 		if err != nil || snap == nil {
 			t.Fatalf("snap=%v err=%v, want snapshot/nil", snap, err)
 		}
@@ -475,7 +499,10 @@ func TestRestoreFromSnapshotInTx(t *testing.T) {
 		expectSnapshot(mock, "bd-2", 2)
 		mock.ExpectExec(`SET description = \?, design = \?, notes = \?, acceptance_criteria = \?,\s+compaction_level = \?`).
 			WillReturnResult(sqlmock.NewResult(0, 1))
-		snap, err := RestoreFromSnapshotInTx(context.Background(), tx, "bd-2")
+		mock.ExpectExec(`INSERT INTO events`).
+			WithArgs(sqlmock.AnyArg(), "bd-2", types.EventCompacted, "alice", sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		snap, err := RestoreFromSnapshotInTx(context.Background(), tx, "bd-2", "alice")
 		if err != nil || snap == nil {
 			t.Fatalf("snap=%v err=%v, want snapshot/nil", snap, err)
 		}
@@ -489,8 +516,20 @@ func TestRestoreFromSnapshotInTx(t *testing.T) {
 		_, mock, tx := beginMockTx(t)
 		expectSnapshot(mock, "bd-u", 1)
 		mock.ExpectExec(`UPDATE issues`).WillReturnError(errors.New("update boom"))
-		if _, err := RestoreFromSnapshotInTx(context.Background(), tx, "bd-u"); err == nil {
+		if _, err := RestoreFromSnapshotInTx(context.Background(), tx, "bd-u", "alice"); err == nil {
 			t.Fatal("err = nil, want update error")
+		}
+	})
+
+	t.Run("event insert error", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		expectSnapshot(mock, "bd-ev", 1)
+		mock.ExpectExec(`compaction_level = 0, compacted_at = NULL`).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec(`INSERT INTO events`).WillReturnError(errors.New("event boom"))
+		if _, err := RestoreFromSnapshotInTx(context.Background(), tx, "bd-ev", "alice"); err == nil {
+			t.Fatal("err = nil, want event-insert error")
 		}
 	})
 }
