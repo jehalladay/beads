@@ -101,6 +101,9 @@ func processIssueSection(issue *IssueTemplate, section, content string) {
 		issue.Labels = parseLabels(content)
 	case "dependencies", "deps":
 		issue.Dependencies = parseDependencies(content)
+	default:
+		fmt.Fprintf(os.Stderr, "Warning: unrecognized section '### %s' in '%s' ignored (content dropped)\n",
+			section, issue.Title)
 	}
 }
 
