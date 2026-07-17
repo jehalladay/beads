@@ -7,11 +7,31 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/kvkeys"
 )
+
+// safeTableIdentifier matches a bare SQL table identifier (letters, digits,
+// underscores). Table names in this file come from fixed allowlists (the
+// conflict-resolution switch and fkCascadeRepairDeletes), never user input, but
+// they are string-concatenated into SQL executed on a MultiStatements=true
+// connection. assertSafeIdentifier enforces that invariant at every
+// interpolation site so a future edit that widens an allowlist cannot silently
+// introduce a multi-statement injection (beads-s4i, defense-in-depth).
+var safeTableIdentifier = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+// assertSafeIdentifier returns an error if name is not a bare identifier. It is
+// a programming-error guard: the caller's allowlist should already guarantee
+// this, so a failure means the allowlist and this check drifted apart.
+func assertSafeIdentifier(name string) error {
+	if !safeTableIdentifier.MatchString(name) {
+		return fmt.Errorf("refusing to interpolate unsafe SQL identifier %q (not [A-Za-z0-9_]+)", name)
+	}
+	return nil
+}
 
 // memoryConfigKeyPrefix is the config-table key prefix under which `bd remember`
 // stores persistent memories. It is sourced from the shared kvkeys package so it
@@ -297,8 +317,12 @@ func TryAutoResolveMergeConflicts(ctx context.Context, db DBConn) (bool, error) 
 	}
 
 	// Resolve each safe table and stage only that table (GH#2455).
-	// table is from the fixed allowlist above, never user input.
+	// table is from the fixed allowlist above, never user input; the
+	// assertSafeIdentifier guard below enforces that at the interpolation site.
 	for _, table := range resolvable {
+		if err := assertSafeIdentifier(table); err != nil {
+			return false, err
+		}
 		switch table {
 		case "schema_migrations":
 			// Row-wise: keep whichever side recorded a content hash, so the
@@ -632,17 +656,22 @@ func TryRepairFKCascadeViolations(ctx context.Context, db DBConn) (repaired, had
 	}
 
 	for _, t := range tables {
+		// t is from the fixed fkCascadeRepairDeletes allowlist (validated in the
+		// loop above), never user input; re-assert at the interpolation site so a
+		// future allowlist change can't introduce a multi-statement injection.
+		if err := assertSafeIdentifier(t); err != nil {
+			return false, true, err
+		}
 		res, err := db.ExecContext(ctx, fkCascadeRepairDeletes[t])
 		if err != nil {
 			return false, true, fmt.Errorf("cascade-repair %s: %w", t, err)
 		}
 		n, _ := res.RowsAffected()
-		// t is from the fixed fkCascadeRepairDeletes allowlist, never user input.
-		//nolint:gosec // G201/G202: hardcoded table name.
+		//nolint:gosec // G201/G202: identifier asserted safe by assertSafeIdentifier.
 		if _, err := db.ExecContext(ctx, "DELETE FROM dolt_constraint_violations_"+t); err != nil {
 			return false, true, fmt.Errorf("clear %s constraint violations: %w", t, err)
 		}
-		//nolint:gosec // G202: hardcoded table name.
+		//nolint:gosec // G202: identifier asserted safe by assertSafeIdentifier.
 		if _, err := db.ExecContext(ctx, "CALL DOLT_ADD('"+t+"')"); err != nil {
 			return false, true, fmt.Errorf("stage repaired %s: %w", t, err)
 		}
@@ -689,8 +718,12 @@ func constraintViolationTables(ctx context.Context, db DBConn) ([]string, error)
 // cascade repair understands. violation_info is Dolt's JSON descriptor; its
 // ReferencedTable names the FK's parent.
 func violationsAreIssueFKOnly(ctx context.Context, db DBConn, table string) (bool, error) {
-	// table is from the fixed fkCascadeRepairDeletes allowlist, never user input.
-	//nolint:gosec // G202: hardcoded table name.
+	// table is from the fixed fkCascadeRepairDeletes allowlist, never user input;
+	// assert it at the interpolation site (beads-s4i defense-in-depth).
+	if err := assertSafeIdentifier(table); err != nil {
+		return false, err
+	}
+	//nolint:gosec // G202: identifier asserted safe by assertSafeIdentifier.
 	rows, err := db.QueryContext(ctx,
 		"SELECT violation_type, violation_info FROM dolt_constraint_violations_"+table)
 	if err != nil {

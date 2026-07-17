@@ -115,6 +115,15 @@ func buildDSN(dir, database string) string {
 	return "file://" + path + "?" + v.Encode()
 }
 
+// sqlStringLiteral renders s as a single-quoted SQL string literal safe to
+// interpolate into a statement executed on a MultiStatements=true connection
+// (beads-s4i). It escapes backslashes BEFORE quotes: under Dolt's default
+// (NO_BACKSLASH_ESCAPES off) a backslash is an escape char, so a value ending
+// in `\` or containing `\'` would otherwise break out of the literal and let a
+// trailing `; ...` run as a second statement. Backslash-first ordering avoids
+// double-escaping the backslashes introduced by the quote replacement.
 func sqlStringLiteral(s string) string {
-	return "'" + strings.ReplaceAll(strings.TrimSpace(s), "'", "''") + "'"
+	escaped := strings.ReplaceAll(strings.TrimSpace(s), `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, "'", "''")
+	return "'" + escaped + "'"
 }
