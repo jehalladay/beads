@@ -177,6 +177,84 @@ func TestContextAccessorsNonRepo(t *testing.T) {
 	}
 }
 
+// TestGitContextFromEnv covers the parent-env fast path (beads-kpm): when
+// BD_GIT_DIR/BD_GIT_COMMON_DIR/BD_GIT_TOPLEVEL are all set, the git context is
+// built from them WITHOUT spawning `git rev-parse`. The test runs in a plain
+// (non-repo) tempdir, so a real rev-parse would fail — success proves the env
+// path was taken.
+func TestGitContextFromEnv(t *testing.T) {
+	dir := t.TempDir()
+	dir, _ = filepath.EvalSymlinks(dir)
+	chdirTo(t, dir) // not a git repo; a git spawn here would error
+
+	gitDir := filepath.Join(dir, ".git")
+	t.Setenv("BD_GIT_DIR", gitDir)
+	t.Setenv("BD_GIT_COMMON_DIR", gitDir)
+	t.Setenv("BD_GIT_TOPLEVEL", dir)
+	ResetCaches()
+	t.Cleanup(ResetCaches)
+
+	got, err := GetGitDir()
+	if err != nil {
+		t.Fatalf("GetGitDir with env fast path: %v", err)
+	}
+	if got != gitDir {
+		t.Errorf("GetGitDir() = %q, want %q", got, gitDir)
+	}
+	if IsWorktree() {
+		t.Error("IsWorktree() = true, want false when git-dir == common-dir")
+	}
+	if root := GetRepoRoot(); root != dir {
+		t.Errorf("GetRepoRoot() = %q, want %q", root, dir)
+	}
+}
+
+// TestGitContextFromEnvWorktree covers the env fast path deriving isWorktree
+// from a differing git-dir and common-dir, and GetMainRepoRoot resolving to the
+// parent of the common dir.
+func TestGitContextFromEnvWorktree(t *testing.T) {
+	dir := t.TempDir()
+	dir, _ = filepath.EvalSymlinks(dir)
+	chdirTo(t, dir)
+
+	mainRepo := filepath.Join(dir, "main")
+	commonDir := filepath.Join(mainRepo, ".git")
+	wtGitDir := filepath.Join(commonDir, "worktrees", "feature")
+	t.Setenv("BD_GIT_DIR", wtGitDir)
+	t.Setenv("BD_GIT_COMMON_DIR", commonDir)
+	t.Setenv("BD_GIT_TOPLEVEL", filepath.Join(dir, "feature-wt"))
+	ResetCaches()
+	t.Cleanup(ResetCaches)
+
+	if !IsWorktree() {
+		t.Error("IsWorktree() = false, want true when git-dir != common-dir")
+	}
+	mainRoot, err := GetMainRepoRoot()
+	if err != nil {
+		t.Fatalf("GetMainRepoRoot: %v", err)
+	}
+	if mainRoot != mainRepo {
+		t.Errorf("GetMainRepoRoot() = %q, want %q (parent of common dir)", mainRoot, mainRepo)
+	}
+}
+
+// TestGitContextFromEnvPartialIgnored confirms a partial env set (missing one of
+// the three vars) is ignored: the fast path requires all three, otherwise it
+// falls back to spawning git (which errors in this non-repo tempdir).
+func TestGitContextFromEnvPartialIgnored(t *testing.T) {
+	dir := t.TempDir()
+	chdirTo(t, dir)
+
+	t.Setenv("BD_GIT_DIR", filepath.Join(dir, ".git"))
+	// BD_GIT_COMMON_DIR and BD_GIT_TOPLEVEL intentionally unset.
+	ResetCaches()
+	t.Cleanup(ResetCaches)
+
+	if _, err := GetGitDir(); err == nil {
+		t.Error("GetGitDir() error = nil, want fallback-to-git error with a partial env set")
+	}
+}
+
 // TestGetGitHooksDirDefault covers the default hooks-dir branch (no
 // core.hooksPath set): hooks live under the common git dir.
 func TestGetGitHooksDirDefault(t *testing.T) {

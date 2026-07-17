@@ -28,6 +28,14 @@ var (
 // initGitContext populates the gitContext with a single git call.
 // This is called once per process via sync.Once.
 func initGitContext() {
+	// Fast path (beads-kpm): a parent process (e.g. gt on its mail/prime hot
+	// loop) can pass the already-resolved paths via env, letting bd skip the
+	// `git rev-parse` spawn. All three must be present; a partial set falls
+	// through to the git call so we never build a half-resolved context.
+	if initGitContextFromEnv() {
+		return
+	}
+
 	// Get all three values with a single git call
 	cmd := exec.Command("git", "rev-parse", "--git-dir", "--git-common-dir", "--show-toplevel")
 	output, err := cmd.Output()
@@ -76,6 +84,46 @@ func initGitContext() {
 		repoRoot = canonicalized
 	}
 	gitCtx.repoRoot = repoRoot
+}
+
+// initGitContextFromEnv populates gitCtx from BD_GIT_DIR / BD_GIT_COMMON_DIR /
+// BD_GIT_TOPLEVEL when all three are set, mirroring exactly the derivation
+// initGitContext applies to `git rev-parse` output. Returns true when the env
+// fast path was taken (whether it succeeded or recorded an error), false when
+// the env is incomplete so the caller falls back to spawning git.
+func initGitContextFromEnv() bool {
+	gitDir := strings.TrimSpace(os.Getenv("BD_GIT_DIR"))
+	commonDirRaw := strings.TrimSpace(os.Getenv("BD_GIT_COMMON_DIR"))
+	repoRootRaw := strings.TrimSpace(os.Getenv("BD_GIT_TOPLEVEL"))
+	if gitDir == "" || commonDirRaw == "" || repoRootRaw == "" {
+		return false
+	}
+
+	gitCtx.gitDir = gitDir
+
+	absCommon, err := filepath.Abs(commonDirRaw)
+	if err != nil {
+		gitCtx.err = fmt.Errorf("failed to resolve common dir path from env: %w", err)
+		return true
+	}
+	gitCtx.commonDir = absCommon
+
+	absGitDir, err := filepath.Abs(gitDir)
+	if err != nil {
+		gitCtx.err = fmt.Errorf("failed to resolve git dir path from env: %w", err)
+		return true
+	}
+	gitCtx.isWorktree = absGitDir != absCommon
+
+	repoRoot := NormalizePath(repoRootRaw)
+	if resolved, err := filepath.EvalSymlinks(repoRoot); err == nil {
+		repoRoot = resolved
+	}
+	if canonicalized := canonicalizeCase(repoRoot); canonicalized != "" {
+		repoRoot = canonicalized
+	}
+	gitCtx.repoRoot = repoRoot
+	return true
 }
 
 // getGitContext returns the cached git context, initializing it if needed.
