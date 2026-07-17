@@ -101,3 +101,41 @@ func overlayYAMLPrefix(dbPrefix string) string {
 	}
 	return dbPrefix
 }
+
+// resolvePrefixValidation resolves the (authoritative dbPrefix, allowedPrefixes)
+// pair used to validate an explicit --id, honoring BOTH the live DB prefix and
+// a config.yaml issue-prefix (beads-xevo).
+//
+// The live DB prefix (issue_counter) is authoritative — it is the prefix every
+// auto-generated id actually carries — so it stays the dbPrefix and is always
+// accepted. A YAML issue-prefix that DISAGREES with the DB prefix is folded into
+// the allowed-list (union-accept) rather than REPLACING the DB prefix, which is
+// what the old overlayYAMLPrefix did: a stale config.yaml prefix shadowed the DB
+// prefix so `bd create --id <db-prefix>-x` was rejected on the DB's OWN prefix
+// while `--id <yaml-prefix>-x` (a prefix no real bead uses) succeeded — a
+// gen-vs-validation split-brain. Union-accept fixes it without surprising an
+// intentional YAML override (both prefixes work).
+//
+// When the DB prefix is empty (un-inited store) it falls back to the YAML prefix
+// as the dbPrefix, preserving the prior behavior for that case.
+func resolvePrefixValidation(dbPrefix, allowedFromDB string) (string, string) {
+	dbPrefix = strings.TrimSpace(dbPrefix)
+	yamlPrefix := strings.TrimSpace(config.GetString("issue-prefix"))
+
+	// Un-inited store: no authoritative DB prefix, so YAML is all we have.
+	if dbPrefix == "" {
+		return yamlPrefix, allowedFromDB
+	}
+
+	// DB prefix is authoritative. Fold a disagreeing YAML prefix into the
+	// allowed-list so ids matching either are accepted.
+	allowed := allowedFromDB
+	if yamlPrefix != "" && yamlPrefix != dbPrefix {
+		if allowed == "" {
+			allowed = yamlPrefix
+		} else {
+			allowed = allowed + "," + yamlPrefix
+		}
+	}
+	return dbPrefix, allowed
+}

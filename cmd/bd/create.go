@@ -489,13 +489,13 @@ var createCmd = &cobra.Command{
 
 			ctx := createCtx
 
-			var dbPrefix, allowedPrefixes string
-			if yamlPrefix := config.GetString("issue-prefix"); yamlPrefix != "" {
-				dbPrefix = yamlPrefix
-			} else {
-				dbPrefix, _ = store.GetConfig(ctx, "issue_prefix")
-			}
-			allowedPrefixes, _ = store.GetConfig(ctx, "allowed_prefixes")
+			// The live DB prefix (issue_counter) is authoritative — it is what
+			// every auto-generated id carries — so it is always accepted; a
+			// config.yaml issue-prefix that disagrees is folded into the
+			// allowed-list rather than shadowing the DB prefix (beads-xevo).
+			liveDBPrefix, _ := store.GetConfig(ctx, "issue_prefix")
+			allowedFromDB, _ := store.GetConfig(ctx, "allowed_prefixes")
+			dbPrefix, allowedPrefixes := resolvePrefixValidation(liveDBPrefix, allowedFromDB)
 
 			if err := validation.ValidateIDPrefixAllowed(explicitID, dbPrefix, allowedPrefixes, forceCreate); err != nil {
 				return HandleErrorRespectJSON("%v", err)
