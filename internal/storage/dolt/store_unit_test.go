@@ -374,6 +374,25 @@ func TestApplyConfigDefaults_ProductionFallback(t *testing.T) {
 	}
 }
 
+// TestApplyConfigDefaults_ServerPortTakesPrecedence verifies that
+// BEADS_DOLT_SERVER_PORT wins over the legacy BEADS_DOLT_PORT when both are set.
+// This is the precedence applyConfigDefaults (store.go) actually implements
+// (SERVER_PORT read first, legacy only as fallback) and is what makes the
+// ambient crew-shell BEADS_DOLT_SERVER_PORT leak into the other tests — but it
+// was previously untested in its own right (beads-p2z). t.Setenv auto-restores.
+func TestApplyConfigDefaults_ServerPortTakesPrecedence(t *testing.T) {
+	t.Setenv("BEADS_TEST_MODE", "")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "24680")
+	t.Setenv("BEADS_DOLT_PORT", "19999")
+
+	cfg := &Config{}
+	applyConfigDefaults(cfg)
+
+	if cfg.ServerPort != 24680 {
+		t.Errorf("expected BEADS_DOLT_SERVER_PORT=24680 to win over legacy BEADS_DOLT_PORT=19999, got %d", cfg.ServerPort)
+	}
+}
+
 func TestShouldPersistResolvedPortFile(t *testing.T) {
 	t.Run("default runtime port may be persisted", func(t *testing.T) {
 		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
