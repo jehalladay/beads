@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -146,7 +147,11 @@ func databaseNotFoundError(cfg *Config) error {
 	b.WriteString("  bd dolt status             # Show which data directory the server is using")
 
 	if cfg.SyncRemote != "" {
-		fmt.Fprintf(&b, "\n\nTip: sync.remote is configured (%s).\nRun bd bootstrap to recover from the remote or confirm what bootstrap will do with --dry-run.", cfg.SyncRemote)
+		// Redact credentials: this Tip is printed on a common identity/schema
+		// mismatch error, and sync.remote may carry user:token@host or ?token=
+		// — echoing it raw leaks the secret (the enax/lf52 credential-in-error
+		// class). See redactURLForError below (beads-dsib).
+		fmt.Fprintf(&b, "\n\nTip: sync.remote is configured (%s).\nRun bd bootstrap to recover from the remote or confirm what bootstrap will do with --dry-run.", redactURLForError(cfg.SyncRemote))
 	} else {
 		b.WriteString("\n\nTip: If this is an existing project, fresh clone, or shared-server recovery, run bd bootstrap first.\n")
 		b.WriteString("If bootstrap cannot find the expected remote automatically, set sync.remote\nin .beads/config.yaml and re-run bd bootstrap.\n")
@@ -174,4 +179,32 @@ func HasBackupFiles(beadsDir string) bool {
 		}
 	}
 	return false
+}
+
+// redactURLForError strips credentials from a URL for safe inclusion in a
+// user-facing error/tip. Mirrors versioncontrolops.SanitizeURL's logic locally
+// to avoid widening this package's import surface: clears userinfo + query +
+// fragment, redacts wholesale when creds hide in an opaque/path component
+// (url.Parse routes "user:pass@host" with no // authority to an opaque URL with
+// a nil User), and returns a placeholder on parse failure so a malformed but
+// credential-bearing string is never echoed raw (beads-dsib, enax class).
+func redactURLForError(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "<redacted-url>"
+	}
+	seg := parsed.Opaque
+	if seg == "" {
+		seg = parsed.Path
+	}
+	if i := strings.IndexByte(seg, '/'); i >= 0 {
+		seg = seg[:i]
+	}
+	if parsed.Host == "" && strings.Contains(seg, "@") {
+		return "<redacted-url>"
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
 }

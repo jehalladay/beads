@@ -194,6 +194,21 @@ func TestDoltRemoteUseCase_Update(t *testing.T) {
 		}
 	})
 
+	t.Run("add failure REDACTS credentials in the previous URL (beads-dsib)", func(t *testing.T) {
+		const secret = "SUPERSECRETTOKEN"
+		repo := &fakeRemoteRepo{remotes: []Remote{{Name: "origin", URL: "https://user:" + secret + "@github.com/org/repo.git"}}}
+		repo.addErr = errors.New("add-boom")
+		repo.addErrOnce = true
+		uc := NewDoltRemoteUseCase(repo)
+		err := uc.UpdateRemote(ctx, "origin", "new")
+		if err == nil {
+			t.Fatal("expected an error when the new-URL add fails")
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("credential leak: UpdateRemote error echoes the previous URL's secret: %q", err.Error())
+		}
+	})
+
 	t.Run("add failure with no previous URL cannot restore", func(t *testing.T) {
 		// oldURL stays empty (remote not present in list) -> plain add error.
 		repo := &fakeRemoteRepo{}

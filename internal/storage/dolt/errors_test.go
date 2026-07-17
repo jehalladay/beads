@@ -153,6 +153,20 @@ func TestDatabaseNotFoundHint(t *testing.T) {
 		}
 	})
 
+	t.Run("hint REDACTS credentials in sync.remote (beads-dsib)", func(t *testing.T) {
+		cfg := baseCfg
+		cfg.SyncRemote = "https://user:SUPERSECRETTOKEN@doltremoteapi.dolthub.com/myorg/beads?token=QUERYSECRET"
+		err := databaseNotFoundError(&cfg)
+		msg := err.Error()
+		if strings.Contains(msg, "SUPERSECRETTOKEN") || strings.Contains(msg, "QUERYSECRET") {
+			t.Errorf("credential leak: databaseNotFoundError echoes sync.remote secret:\n%s", msg)
+		}
+		// The non-secret host should still appear so the tip stays useful.
+		if !strings.Contains(msg, "doltremoteapi.dolthub.com") {
+			t.Errorf("redaction should preserve the host, got:\n%s", msg)
+		}
+	})
+
 	t.Run("hint detects backup files in beads dir (GH#2327)", func(t *testing.T) {
 		// Create a temp .beads/backup/ with a JSONL file
 		tmpDir := t.TempDir()
