@@ -1057,6 +1057,24 @@ var rootCmd = &cobra.Command{
 				cmdCtx.ServerMode = doltCfg.ServerMode
 			}
 		}
+		// Data-integrity guard (beads-h19n): when no metadata.json was found
+		// in this beadsDir (cfg == nil) but server mode is active against a
+		// NON-LOCAL host, refuse rather than silently reading and writing the
+		// shared production hub under the default database name. This path is
+		// reachable when the isolated dir holds a stray dolt/ or embeddeddolt/
+		// subdir (so FindDatabasePath does not short-circuit) yet has no
+		// metadata.json — a common test-harness/leftover pattern. A legitimately
+		// server-backed workspace always has a metadata.json (bd init writes it).
+		// This is the exact mechanism that froze the town when a stray write hit
+		// the prod hub (hq-7olqo), and mirrors the guard bd init already applies.
+		// Embedded/local-host paths and metadata-backed workspaces are unaffected.
+		if serverHost, refuse := refuseMetadatalessRemoteServer(cfg == nil, doltCfg.ServerMode); refuse {
+			return HandleError(
+				"no beads configuration found in %s, but a non-local Dolt server (%s) is configured via environment.\n"+
+					"  Refusing to silently read/write the shared server under the default database name.\n"+
+					"  Run 'bd init' in this directory to create a workspace, or unset BEADS_DOLT_SERVER_HOST for an isolated embedded database.",
+				beadsDir, serverHost)
+		}
 		// If config parse failed (cfgErr != nil), still default the database
 		// name so the store-open error is about the real problem (the parse
 		// failure warning already printed) rather than a confusing "database
