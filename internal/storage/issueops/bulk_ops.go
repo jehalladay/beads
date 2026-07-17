@@ -228,7 +228,37 @@ func UpdateIssueIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, iss
 	return updateIssueIDInTx(ctx, tx, oldID, newID, issue, actor)
 }
 
+// rowExistsInTable reports whether id exists in the given issue/wisp table.
+// table must be a hardcoded constant ("issues" or "wisps").
+//
+//nolint:gosec // G201: table is a hardcoded constant supplied by the two callers.
+func rowExistsInTable(ctx context.Context, tx *sql.Tx, table, id string) (bool, error) {
+	var probe int
+	err := tx.QueryRowContext(ctx, fmt.Sprintf("SELECT 1 FROM %s WHERE id = ? LIMIT 1", table), id).Scan(&probe)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		if isTableNotExistError(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("check id %s in %s: %w", id, table, err)
+	}
+	return true, nil
+}
+
 func updateIssueIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, issue *types.Issue, actor string) error {
+	// issues and wisps are separate tables with no cross-table uniqueness, so a
+	// rename to a newID that already lives in wisps would mint an issue+wisp
+	// sharing the id — the same-id collision the merge/promote paths then
+	// mishandle (beads-mgsx / uekw / jym1). Reject before touching the row,
+	// mirroring the promote path's guard.
+	if exists, err := rowExistsInTable(ctx, tx, "wisps", newID); err != nil {
+		return err
+	} else if exists {
+		return fmt.Errorf("cannot rename %s to %s: id already exists as a wisp", oldID, newID)
+	}
+
 	now := time.Now().UTC()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE issues
@@ -254,6 +284,15 @@ func updateIssueIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, iss
 }
 
 func updateWispIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, issue *types.Issue, actor string) error {
+	// Symmetric to updateIssueIDInTx: reject renaming a wisp to a newID that
+	// already exists as a permanent issue, so the two tables never end up
+	// sharing an id (beads-mgsx).
+	if exists, err := rowExistsInTable(ctx, tx, "issues", newID); err != nil {
+		return err
+	} else if exists {
+		return fmt.Errorf("cannot rename %s to %s: id already exists as an issue", oldID, newID)
+	}
+
 	now := time.Now().UTC()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE wisps
