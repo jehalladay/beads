@@ -163,6 +163,74 @@ func TestEmbeddedUpdateBatchAutoCommitDoesNotAdvanceHead(t *testing.T) {
 	}
 }
 
+// TestEmbeddedUpdateBatchMetadataJSONContract proves the --json per-item error
+// contract for the metadata merge/edit paths in `bd update <A> <B> ... --json`.
+//
+// When a batch mixes a good issue (A) with one whose metadata edit fails (B has
+// non-object metadata, so applyMetadataEdits/mergeMetadata errors), the failure
+// is a PER-ITEM error: it must go to stderr via reportItemError and the batch
+// must continue (skip B, keep A). It must NOT `return HandleErrorRespectJSON`
+// mid-loop — that writes a per-item error OBJECT to stdout, poisoning the pure
+// JSON success payload that downstream tooling parses, and abandons the rest of
+// the batch (including A's already-computed success output).
+//
+// The observable contract: with --json, stdout stays a valid JSON ARRAY of the
+// successfully-updated issues (A present, B absent); the per-item failure is on
+// stderr, never on stdout. Regression guard for beads-pqma.
+func TestEmbeddedUpdateBatchMetadataJSONContract(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt update tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "bm")
+
+	a := bdCreate(t, bd, dir, "Issue A")
+	b := bdCreate(t, bd, dir, "Issue B")
+
+	// Give B non-object (but valid-JSON) metadata so applyMetadataEdits fails
+	// on B: "existing metadata is not a JSON object". --metadata only checks
+	// json.Valid, so a bare number is accepted here.
+	bdUpdate(t, bd, dir, b.ID, "--metadata", "42")
+
+	// Batch --set-metadata over [A, B] under --json: A succeeds, B fails. The
+	// failure must land on stderr and stdout must remain a valid JSON array
+	// containing A (and not B).
+	cmd := exec.Command(bd, "update", a.ID, b.ID, "--set-metadata", "team=platform", "--json")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, _ := runCommandBuffers(t, cmd)
+
+	out := strings.TrimSpace(stdout.String())
+	// stdout MUST be a JSON array (the success payload), not a JSON error
+	// object — a mid-loop return emits `{"error": ...}` on stdout instead.
+	var updated []map[string]any
+	if err := json.Unmarshal([]byte(out), &updated); err != nil {
+		t.Fatalf("stdout is not a JSON array of updated issues (metadata failure poisoned stdout): %v\nstdout:\n%s\nstderr:\n%s",
+			err, stdout.String(), stderr.String())
+	}
+
+	gotIDs := map[string]bool{}
+	for _, iss := range updated {
+		if id, ok := iss["id"].(string); ok {
+			gotIDs[id] = true
+		}
+	}
+	if !gotIDs[a.ID] {
+		t.Errorf("issue A (%s) missing from --json success payload — B's metadata failure aborted the batch and dropped A's output\nstdout:\n%s\nstderr:\n%s",
+			a.ID, stdout.String(), stderr.String())
+	}
+	if gotIDs[b.ID] {
+		t.Errorf("issue B (%s) appears in the success payload but its metadata edit should have failed\nstdout:\n%s\nstderr:\n%s",
+			b.ID, stdout.String(), stderr.String())
+	}
+	// The per-item failure must be reported on stderr, never stdout.
+	if !strings.Contains(stderr.String(), b.ID) && !strings.Contains(stderr.String(), "metadata") {
+		t.Errorf("expected B's metadata failure on stderr; got none\nstderr:\n%s", stderr.String())
+	}
+}
+
 func TestEmbeddedUpdateRoutedStoreCommitsTargetHead(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt update tests")

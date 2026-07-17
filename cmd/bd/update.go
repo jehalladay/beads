@@ -393,20 +393,30 @@ create, update, show, or close operation).`,
 				regularUpdates["status"] = string(types.StatusOpen)
 			}
 
-			// Handle --metadata: merge with existing metadata instead of replacing
+			// Handle --metadata: merge with existing metadata instead of replacing.
+			// A merge failure is a per-item error: report it and skip this issue
+			// (reportItemError + continue), never `return` out of the batch — a
+			// mid-loop return under --json would poison stdout with a per-item
+			// error object (breaking the pure-JSON contract) and abandon the
+			// remaining items plus earlier successes' output.
 			if newMeta, ok := regularUpdates["metadata"].(json.RawMessage); ok && len(issue.Metadata) > 0 {
 				merged, err := mergeMetadata(issue.Metadata, newMeta)
 				if err != nil {
-					return HandleErrorRespectJSON("metadata merge failed for %s: %v", id, err)
+					reportItemError("metadata merge failed for %s: %v", id, err)
+					closeIfUnmutated(result)
+					continue
 				}
 				regularUpdates["metadata"] = merged
 			}
-			// Handle incremental metadata edits (GH#1406)
+			// Handle incremental metadata edits (GH#1406) — same per-item error
+			// contract as the merge path above.
 			if setMeta, ok := updates["_set_metadata"].([]string); ok {
 				unsetMeta, _ := updates["_unset_metadata"].([]string)
 				merged, err := applyMetadataEdits(issue.Metadata, setMeta, unsetMeta)
 				if err != nil {
-					return HandleErrorRespectJSON("metadata edit failed for %s: %v", id, err)
+					reportItemError("metadata edit failed for %s: %v", id, err)
+					closeIfUnmutated(result)
+					continue
 				}
 				regularUpdates["metadata"] = merged
 			}
