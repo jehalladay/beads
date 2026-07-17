@@ -25,23 +25,38 @@ func newConflictMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 
 func ns(s string) sql.NullString { return sql.NullString{String: s, Valid: true} }
 
-// --- resolveConflictDepTarget (pure) -----------------------------------------
+// --- nullStringsEqual (pure) -------------------------------------------------
 
-func TestResolveConflictDepTarget(t *testing.T) {
+func TestNullStringsEqual(t *testing.T) {
 	t.Parallel()
 	null := sql.NullString{}
 
-	if got, ok := resolveConflictDepTarget(ns("bd-1"), ns("w-9"), ns("ext")); !ok || got != "bd-1" {
-		t.Errorf("issue precedence: got %q,%v want bd-1,true", got, ok)
+	// Both NULL are equal.
+	if !nullStringsEqual(null, null) {
+		t.Error("both-null: want equal")
 	}
-	if got, ok := resolveConflictDepTarget(null, ns("w-9"), ns("ext")); !ok || got != "w-9" {
-		t.Errorf("wisp precedence: got %q,%v want w-9,true", got, ok)
+	// Both non-NULL, same string.
+	if !nullStringsEqual(ns("bd-1"), ns("bd-1")) {
+		t.Error("same value: want equal")
 	}
-	if got, ok := resolveConflictDepTarget(null, null, ns("external:x")); !ok || got != "external:x" {
-		t.Errorf("external precedence: got %q,%v want external:x,true", got, ok)
+	// Both non-NULL, different strings.
+	if nullStringsEqual(ns("bd-1"), ns("bd-2")) {
+		t.Error("different value: want not equal")
 	}
-	if got, ok := resolveConflictDepTarget(null, null, null); ok || got != "" {
-		t.Errorf("all-null: got %q,%v want \"\",false", got, ok)
+	// Validity differs (one NULL, one set) — not equal even if the set side is "".
+	if nullStringsEqual(null, ns("")) {
+		t.Error("null vs empty-set: want not equal (validity differs)")
+	}
+	if nullStringsEqual(ns("x"), null) {
+		t.Error("set vs null: want not equal")
+	}
+	// This is the beads-uekw case the old COALESCE collapse got wrong: the same
+	// value X in DIFFERENT columns must NOT be treated as an unchanged target.
+	// Column-wise comparison catches it — (issue=X) vs (wisp=X) differ per column.
+	ourIssue, ourWisp := ns("X"), null
+	theirIssue, theirWisp := null, ns("X")
+	if nullStringsEqual(ourIssue, theirIssue) || nullStringsEqual(ourWisp, theirWisp) {
+		t.Error("cross-column same value: each column must compare NOT equal")
 	}
 }
 
