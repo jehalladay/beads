@@ -7,6 +7,8 @@
 package tracker
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -50,6 +52,27 @@ type TrackerIssue struct {
 	// Metadata for tracker-specific fields that don't map to core Issue fields.
 	// Stored in Issue.Metadata for round-trip preservation.
 	Metadata map[string]interface{}
+}
+
+// ValidSyncStates are the accepted values for the sync --state filter, in the
+// order they appear in help text and error messages.
+var ValidSyncStates = []string{"open", "closed", "all"}
+
+// ValidateSyncState checks a sync --state filter value against the documented
+// set (open, closed, all). An empty value is accepted and defaults to "all".
+// The check is case-insensitive and trims surrounding whitespace. An unknown
+// value is rejected with an actionable error naming the bad value and listing
+// the valid ones — instead of silently falling through to "match all" and
+// returning a false-broad result with rc=0 (the silent-accept-invalid class,
+// beads-jvx). Mirrors bd's priority/status/type validators.
+func ValidateSyncState(state string) error {
+	switch strings.TrimSpace(strings.ToLower(state)) {
+	case "", "open", "closed", "all":
+		return nil
+	default:
+		return fmt.Errorf("invalid --state %q (expected one of %s)",
+			state, strings.Join(ValidSyncStates, ", "))
+	}
 }
 
 // FetchOptions specifies options for fetching issues from an external tracker.

@@ -435,6 +435,12 @@ func runNotionSync(cmd *cobra.Command, _ []string) error {
 		}
 	}()
 
+	// Reject an invalid --state before any side effects, instead of silently
+	// falling through to "match all" (beads-jvx).
+	if err := tracker.ValidateSyncState(notionSyncState); err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
+
 	cfg := getNotionConfig()
 	auth, err := resolveNotionAuth(cmd.Context())
 	if err != nil {

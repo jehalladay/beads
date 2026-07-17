@@ -226,6 +226,12 @@ func runLinearSync(cmd *cobra.Command, args []string) error {
 	threshold, _ := cmd.Flags().GetDuration("threshold")
 	noWait, _ := cmd.Flags().GetBool("no-wait")
 
+	// Reject an invalid --state before any side effects, instead of silently
+	// falling through to "match all" (beads-jvx).
+	if err := tracker.ValidateSyncState(state); err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
+
 	if pullIfStale {
 		beadsDir := resolveBeadsDirForStaleness()
 		if beadsDir != "" {
