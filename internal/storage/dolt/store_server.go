@@ -287,6 +287,16 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			_ = db.Close()
 			return nil, err
 		}
+		// A read-only open skips initSchema/MigrateUp, so a DB BEHIND this binary
+		// cannot be migrated and would otherwise fail later with cryptic
+		// unknown-column/table errors (bd-578h9.12). Guard it at open like the
+		// embedded OpenReadOnly path does — CheckBehindDrift returns a clean
+		// SchemaBehindError (honoring BD_IGNORE_SCHEMA_SKEW) instead of a
+		// deferred query-time failure (beads-lv85).
+		if err := schema.CheckBehindDrift(ctx, db); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
 	} else {
 		if err := store.initSchema(ctx); err != nil {
 			return nil, fmt.Errorf("failed to initialize schema: %w", err)

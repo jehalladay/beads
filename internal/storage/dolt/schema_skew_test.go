@@ -190,6 +190,64 @@ func TestDoltNew_ReadOnly_ForwardDrift_ReturnsSchemaSkewError(t *testing.T) {
 	}
 }
 
+// TestDoltNew_ReadOnly_BehindDrift_ReturnsSchemaBehindError is the beads-lv85
+// guard: a read-only server open of a DB BEHIND the binary must fail with a
+// *schema.SchemaBehindError (a read-only open can't migrate it, so proceeding
+// would fail later with cryptic unknown-column errors, bd-578h9.12). Before the
+// fix the server RO path only checked forward drift; only the embedded
+// OpenReadOnly checked behind.
+func TestDoltNew_ReadOnly_BehindDrift_ReturnsSchemaBehindError(t *testing.T) {
+	skipIfNoDolt(t)
+	// Strip an inherited BD_IGNORE_SCHEMA_SKEW so this exercises the refuse path.
+	t.Setenv("BD_IGNORE_SCHEMA_SKEW", "")
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	tmpDir := t.TempDir()
+	dbName := uniqueTestDBName(t)
+
+	store, err := New(ctx, &Config{
+		Path:            tmpDir,
+		CommitterName:   "test",
+		CommitterEmail:  "test@example.com",
+		Database:        dbName,
+		CreateIfMissing: true,
+	})
+	if err != nil {
+		t.Fatalf("New (create): %v", err)
+	}
+	defer func() {
+		dropCtx, dropCancel := context.WithTimeout(context.Background(), 5*testTimeout)
+		defer dropCancel()
+		_, _ = store.db.ExecContext(dropCtx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
+		store.Close()
+	}()
+
+	// Make the DB BEHIND the binary: delete the top migration row so
+	// MAX(version) < LatestVersion (simulates a not-yet-fully-migrated DB
+	// opened by a newer binary).
+	if _, err := store.db.ExecContext(ctx,
+		"DELETE FROM schema_migrations WHERE version = ?", schema.LatestVersion(),
+	); err != nil {
+		t.Fatalf("delete top migration: %v", err)
+	}
+
+	// Opening read-only must detect the behind-drift and return SchemaBehindError.
+	roStore, roErr := New(ctx, &Config{
+		Path:     tmpDir,
+		Database: dbName,
+		ReadOnly: true,
+	})
+	if roErr == nil {
+		roStore.Close()
+		t.Fatal("New (read-only) = nil, want error for behind schema drift")
+	}
+	if !schema.IsSchemaBehindError(roErr) {
+		t.Fatalf("error = %T (%v), want error wrapping *schema.SchemaBehindError", roErr, roErr)
+	}
+}
+
 // TestDoltNew_ReadOnly_ForwardDrift_EscapeHatch_Succeeds verifies that
 // BD_IGNORE_SCHEMA_SKEW=1 allows a read-only store to open despite forward drift.
 func TestDoltNew_ReadOnly_ForwardDrift_EscapeHatch_Succeeds(t *testing.T) {
