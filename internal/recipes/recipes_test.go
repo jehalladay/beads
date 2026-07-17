@@ -340,6 +340,33 @@ func TestContentForPath_UnsupportedType(t *testing.T) {
 	}
 }
 
+func TestGetRecipeNameNormalization(t *testing.T) {
+	// GetRecipe lowercases and trims leading/trailing hyphens before lookup.
+	for _, name := range []string{"CURSOR", "-cursor-", "Cursor"} {
+		r, err := GetRecipe(name, "")
+		if err != nil {
+			t.Fatalf("GetRecipe(%q): %v", name, err)
+		}
+		if r.Name != "Cursor IDE" {
+			t.Errorf("GetRecipe(%q): got Name=%q, want 'Cursor IDE'", name, r.Name)
+		}
+	}
+}
+
+func TestSaveUserRecipeMkdirFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Make a plain file where SaveUserRecipe expects to MkdirAll a directory.
+	blocker := filepath.Join(tmpDir, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// beadsDir is under a path component that is a file, so MkdirAll fails.
+	beadsDir := filepath.Join(blocker, "nested")
+	if err := SaveUserRecipe(beadsDir, "myeditor", ".myeditor/rules.md"); err == nil {
+		t.Fatal("SaveUserRecipe should error when the beads dir cannot be created, got nil")
+	}
+}
+
 func containsAll(s string, substrs ...string) bool {
 	for _, sub := range substrs {
 		found := false
