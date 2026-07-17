@@ -52,6 +52,11 @@ func TestCheckSchemaSkew_EqualVersion_NoError(t *testing.T) {
 }
 
 func TestCheckSchemaSkew_OneAhead_ReturnsSchemaSkewError(t *testing.T) {
+	// Neutralize the ambient escape hatch: crew shells run with
+	// BD_IGNORE_SCHEMA_SKEW=1, which would make checkSchemaSkew warn+return nil
+	// and spuriously fail this error-expecting test.
+	t.Setenv("BD_IGNORE_SCHEMA_SKEW", "")
+
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock.New: %v", err)
@@ -82,6 +87,10 @@ func TestCheckSchemaSkew_OneAhead_ReturnsSchemaSkewError(t *testing.T) {
 }
 
 func TestCheckSchemaSkew_ThreeAhead_ReturnsSchemaSkewError(t *testing.T) {
+	// See TestCheckSchemaSkew_OneAhead: neutralize the ambient crew-shell
+	// BD_IGNORE_SCHEMA_SKEW=1 so the error path is actually exercised.
+	t.Setenv("BD_IGNORE_SCHEMA_SKEW", "")
+
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock.New: %v", err)
