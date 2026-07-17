@@ -6,6 +6,21 @@ import (
 	"testing"
 )
 
+// isolateDoltServerEnv clears the Dolt host/port env vars that
+// Config.GetDoltServerHost/GetDoltServerPort read in preference to the struct
+// fields. Tests that set cfg.DoltServerHost/DoltServerPort directly and then
+// call the getters must call this first, or the ambient environment (e.g. a Gas
+// Town crew shell that exports BEADS_DOLT_SERVER_HOST/PORT pointing at the town
+// hub) silently overrides the struct fields and the credentials-file lookup
+// misses the [host:port] section under test. See beads-zv8 (same host/env-state
+// test-hygiene class as beads-aqe/beads-dlc).
+func isolateDoltServerEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("BEADS_DOLT_SERVER_HOST", "")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+	t.Setenv("BEADS_DOLT_PORT", "")
+}
+
 func TestLookupCredentialsPassword(t *testing.T) {
 	// Create a temp credentials file
 	tmpDir := t.TempDir()
@@ -116,6 +131,7 @@ func TestLookupCredentialsPassword_FallsBackToFile(t *testing.T) {
 
 	// Clear BEADS_DOLT_PASSWORD so file lookup kicks in
 	t.Setenv("BEADS_DOLT_PASSWORD", "")
+	isolateDoltServerEnv(t)
 
 	cfg := DefaultConfig()
 	got := cfg.GetDoltServerPassword()
@@ -139,6 +155,7 @@ password=workServerPass
 	}
 	t.Setenv("BEADS_CREDENTIALS_FILE", credFile)
 	t.Setenv("BEADS_DOLT_PASSWORD", "")
+	isolateDoltServerEnv(t)
 
 	// Personal project uses localhost
 	personal := DefaultConfig()
@@ -178,6 +195,7 @@ password=tunnelPass
 	}
 	t.Setenv("BEADS_CREDENTIALS_FILE", credFile)
 	t.Setenv("BEADS_DOLT_PASSWORD", "")
+	isolateDoltServerEnv(t)
 
 	cfg := DefaultConfig()
 	cfg.DoltServerHost = "127.0.0.1"
