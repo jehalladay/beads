@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -284,5 +285,51 @@ func TestImportIssuesCoreArmsTransactionalStaleGuard(t *testing.T) {
 	}
 	if len(store.createOpts) != 1 || store.createOpts[0].RejectStaleUpserts {
 		t.Fatalf("createOpts = %#v, want RejectStaleUpserts disarmed under --allow-stale", store.createOpts)
+	}
+}
+
+// TestImportRejectsWhitespaceCorruptedID covers beads-a2jv: `bd import` must
+// reject an ID with a whitespace-corrupted format (the storage batch path's
+// prefix HasPrefix check would otherwise let "bd-ws1 " through and persist a
+// row unreachable by its clean ID), matching the ValidateIDFormat guard
+// `bd create` already applies. The malformed row must NOT reach the store.
+func TestImportRejectsWhitespaceCorruptedID(t *testing.T) {
+	base := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	store := &fakeImportIssueLookupStore{}
+	incoming := []*types.Issue{
+		{ID: "bd-good", Title: "clean id", UpdatedAt: base},
+		{ID: "bd-ws1 ", Title: "trailing space", UpdatedAt: base}, // corrupted
+	}
+
+	_, err := importIssuesCore(context.Background(), "", store, incoming, ImportOptions{})
+	if err == nil {
+		t.Fatal("importIssuesCore: expected rejection of a whitespace-corrupted ID, got nil")
+	}
+	if !strings.Contains(err.Error(), "bd-ws1 ") {
+		t.Errorf("error %q should name the offending ID", err)
+	}
+	// Teeth: nothing was written — the whole import aborts before the batch
+	// create, so even the clean sibling row must not land.
+	if len(store.created) != 0 {
+		t.Errorf("store received %d issue(s); a rejected import must write NOTHING, got %v",
+			len(store.created), store.created)
+	}
+}
+
+// TestImportAcceptsCleanAndEmptyIDs is the parity negative: well-formed and
+// empty (to-be-generated) IDs pass the a2jv guard untouched.
+func TestImportAcceptsCleanAndEmptyIDs(t *testing.T) {
+	base := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	store := &fakeImportIssueLookupStore{}
+	incoming := []*types.Issue{
+		{ID: "bd-clean", Title: "well formed", UpdatedAt: base},
+		{ID: "", Title: "empty id, generated downstream", UpdatedAt: base},
+		{ID: "bead-me-up-3e9", Title: "hyphenated prefix", UpdatedAt: base},
+	}
+	if _, err := importIssuesCore(context.Background(), "", store, incoming, ImportOptions{}); err != nil {
+		t.Fatalf("importIssuesCore rejected valid IDs: %v", err)
+	}
+	if len(store.created) != len(incoming) {
+		t.Errorf("store received %d issue(s), want %d", len(store.created), len(incoming))
 	}
 }
