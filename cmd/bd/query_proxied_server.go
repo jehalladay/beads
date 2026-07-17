@@ -83,37 +83,33 @@ func runQueryProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 
 	searchFilter := result.Filter
 	searchFilter.Offset = offset
-	if result.RequiresPredicate && limit > 0 {
-		searchFilter.Limit = limit * 3
-		if searchFilter.Limit < 100 {
-			searchFilter.Limit = 100
-		}
-	}
 
 	if jsonOutput {
-		page, err := uw.IssueUseCase().SearchIssuesWithCounts(ctx, "", searchFilter)
-		if err != nil {
-			return HandleErrorRespectJSON("%v", err)
-		}
-		iwc := page.Items
-		truncated := page.HasMore
+		var iwc []*types.IssueWithCounts
+		var truncated bool
 		if result.RequiresPredicate && result.Predicate != nil {
-			filtered := make([]*types.IssueWithCounts, 0, len(iwc))
-			for _, item := range iwc {
-				if item == nil || item.Issue == nil {
-					continue
-				}
-				if result.Predicate(item.Issue) {
-					filtered = append(filtered, item)
-				}
+			// Predicate path: page through ALL candidates (beads-j1sh) so a
+			// selective predicate does not silently under-return, and derive the
+			// truncation hint from TRUE overflow rather than a single window.
+			res, err := collectProxiedPredicateMatchesWithCounts(ctx, uw.IssueUseCase(), searchFilter, sortBy, reverse, result.Predicate)
+			if err != nil {
+				return HandleErrorRespectJSON("%v", err)
 			}
-			iwc = filtered
-			truncated = limit > 0 && len(iwc) > limit
-			if truncated {
+			iwc = res.items
+			sortIssuesWithCounts(iwc, sortBy, reverse)
+			truncated = res.capReached || (limit > 0 && len(iwc) > limit)
+			if limit > 0 && len(iwc) > limit {
 				iwc = iwc[:limit]
 			}
+		} else {
+			page, err := uw.IssueUseCase().SearchIssuesWithCounts(ctx, "", searchFilter)
+			if err != nil {
+				return HandleErrorRespectJSON("%v", err)
+			}
+			iwc = page.Items
+			truncated = page.HasMore
+			sortIssuesWithCounts(iwc, sortBy, reverse)
 		}
-		sortIssuesWithCounts(iwc, sortBy, reverse)
 		if iwc == nil {
 			iwc = []*types.IssueWithCounts{}
 		}
@@ -124,28 +120,28 @@ func runQueryProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 		return nil
 	}
 
-	page, err := uw.IssueUseCase().SearchIssues(ctx, "", searchFilter)
-	if err != nil {
-		return HandleErrorRespectJSON("%v", err)
-	}
-	issues := page.Items
-	truncated := page.HasMore
-
+	var issues []*types.Issue
+	var truncated bool
 	if result.RequiresPredicate && result.Predicate != nil {
-		filtered := make([]*types.Issue, 0, len(issues))
-		for _, issue := range issues {
-			if result.Predicate(issue) {
-				filtered = append(filtered, issue)
-			}
+		res, err := collectProxiedPredicateMatches(ctx, uw.IssueUseCase(), searchFilter, sortBy, reverse, result.Predicate)
+		if err != nil {
+			return HandleErrorRespectJSON("%v", err)
 		}
-		issues = filtered
-		truncated = limit > 0 && len(issues) > limit
-		if truncated {
+		issues = res.items
+		sortIssues(issues, sortBy, reverse)
+		truncated = res.capReached || (limit > 0 && len(issues) > limit)
+		if limit > 0 && len(issues) > limit {
 			issues = issues[:limit]
 		}
+	} else {
+		page, err := uw.IssueUseCase().SearchIssues(ctx, "", searchFilter)
+		if err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
+		issues = page.Items
+		truncated = page.HasMore
+		sortIssues(issues, sortBy, reverse)
 	}
-
-	sortIssues(issues, sortBy, reverse)
 
 	outputQueryResults(issues, queryStr, longFormat)
 	printTruncationHint(truncated, limit)
