@@ -966,6 +966,15 @@ func GetDependenciesWithMetadataInTx(ctx context.Context, tx DBTX, issueID strin
 	for _, d := range deps {
 		issue, ok := issueMap[d.depID]
 		if !ok {
+			// beads-n49j: the target is not a local issue (cross-prefix / external /
+			// not-yet-synced). Such edges are intentionally allowed to skip existence
+			// validation on add and are persisted + round-trip through export, so they
+			// must remain VISIBLE here rather than being silently dropped. Surface a
+			// minimal placeholder carrying the target ID and dependency type.
+			results = append(results, &types.IssueWithDependencyMetadata{
+				Issue:          unresolvedDepTargetIssue(d.depID),
+				DependencyType: types.DependencyType(d.depType),
+			})
 			continue
 		}
 		results = append(results, &types.IssueWithDependencyMetadata{
@@ -974,6 +983,18 @@ func GetDependenciesWithMetadataInTx(ctx context.Context, tx DBTX, issueID strin
 		})
 	}
 	return results, nil
+}
+
+// unresolvedDepTargetIssue builds a minimal placeholder Issue for a dependency
+// whose target is not a local issue (cross-prefix, external, or not-yet-synced).
+// It carries only the ID so the edge stays visible in dependency listings; the
+// title marks it unresolved so callers/users can tell it is not a local row.
+func unresolvedDepTargetIssue(id string) types.Issue {
+	return types.Issue{
+		ID:     id,
+		Title:  "(unresolved: external or cross-prefix)",
+		Status: types.StatusOpen,
+	}
 }
 
 // GetDependentsWithMetadataInTx returns issues that depend on the given issueID
