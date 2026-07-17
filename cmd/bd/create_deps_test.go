@@ -237,6 +237,33 @@ func TestResolvePrefixValidation(t *testing.T) {
 		}
 	})
 
+	// Child-create regression (beads-xevo severity upgrade, dogfooder repro):
+	// `bd create --parent <db-prefixed-parent>` needs NO explicit --id — the
+	// child id `.N` is auto-generated from the DB counter (so it carries the DB
+	// prefix, e.g. "beads-ttrc.1") and then flows through the SAME
+	// resolvePrefixValidation + ValidateIDPrefixAllowed path as an explicit id
+	// (cmd/bd/create.go: parentID!="" sets explicitID=childID before validation).
+	// Under the split-brain (DB prefix "beads", stale YAML "bd"), the pre-fix
+	// overlayYAMLPrefix returned "bd" so the DB's OWN child id was rejected with
+	// "database uses 'bd-' but ID 'beads-ttrc.1' doesn't match" — every child
+	// create failed without --force. Union-accept keeps the DB prefix
+	// authoritative, so the generated child id is accepted with force=false.
+	t.Run("generated child .N id with db prefix accepted under disagreeing yaml (no --force)", func(t *testing.T) {
+		config.ResetForTesting()
+		_ = config.Initialize()
+		config.Set("issue-prefix", "bd") // stale YAML disagrees with the live DB counter
+		t.Cleanup(config.ResetForTesting)
+
+		gotDB, gotAllowed := resolvePrefixValidation("beads", "")
+		// The dogfooder's exact failing id: a first- and deeper-level child id
+		// auto-generated from the "beads" counter. Both must pass without force.
+		for _, childID := range []string{"beads-ttrc.1", "beads-ttrc.2", "beads-ttrc.1.1"} {
+			if err := validationValidate(t, childID, gotDB, gotAllowed); err != nil {
+				t.Errorf("generated child id %q (DB prefix) should be accepted without --force: %v", childID, err)
+			}
+		}
+	})
+
 	t.Run("yaml equal to db is a no-op (not duplicated)", func(t *testing.T) {
 		config.ResetForTesting()
 		_ = config.Initialize()
