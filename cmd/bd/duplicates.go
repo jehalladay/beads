@@ -13,6 +13,7 @@ import (
 
 var duplicatesCmd = &cobra.Command{
 	Use:     "duplicates",
+	Args:    cobra.NoArgs,
 	GroupID: "deps",
 	Short:   "Find and optionally merge duplicate issues",
 	Long: `Find issues with identical content (title, description, design, acceptance criteria).

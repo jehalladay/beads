@@ -1110,6 +1110,7 @@ Examples:
 
 var depCyclesCmd = &cobra.Command{
 	Use:           "cycles",
+	Args:          cobra.NoArgs,
 	Short:         "Detect dependency cycles",
 	SilenceUsage:  true,
 	SilenceErrors: true,
