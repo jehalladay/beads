@@ -321,6 +321,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 }
 var blockedCmd = &cobra.Command{
 	Use:           "blocked",
+	Args:          cobra.NoArgs,
 	Short:         "Show blocked issues",
 	SilenceUsage:  true,
 	SilenceErrors: true,
