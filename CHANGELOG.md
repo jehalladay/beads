@@ -54,6 +54,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retry, and a `429` rate limit (a clean rejection) still retries even for
   `POST`. (Notion's client already had no retry loop; linear already dedups
   via an idempotency marker.)
+- **`bd search --limit N` no longer returns up to 2N rows or ignores the sort
+  across the issues/wisps merge (beads-4t1m).** When both the durable issues
+  table and the ephemeral wisps table matched, each half was queried with its
+  own `LIMIT N` and the two result sets were concatenated without re-sorting or
+  re-truncating — so the store's `SearchIssues` could return up to `2N` rows in
+  `[issues…]++[wisps…]` order rather than the requested global sort order.
+  `bd list` happened to mask this (it re-sorts and re-truncates client-side) but
+  `bd search` did not, silently exceeding `--limit`. The merge now re-sorts by
+  the requested key and truncates to the limit, matching the `--counts` path.
 
 ## [1.1.0-rc.1] - 2026-06-23
 

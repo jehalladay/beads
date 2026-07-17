@@ -3,6 +3,7 @@ package issueops
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/storage/sqlbuild"
@@ -72,10 +73,33 @@ func SearchIssuesInTx(ctx context.Context, tx DBTX, query string, filter types.I
 				}
 			}
 			results = append(filtered, wispResults...)
+			// The two halves were each ORDER BY'd and LIMIT'd independently, so
+			// the concatenation is [issues sorted]++[wisps sorted] and up to
+			// 2*Limit long. Re-sort the merged set by the requested order and
+			// re-apply Limit so the store honors both its SortBy and Limit
+			// contract (beads-4t1m). Mirrors finishSearchIssuesWithCounts, which
+			// already does this for the WithCounts sibling path.
+			results = sortAndLimitMergedIssues(results, filter)
 		}
 	}
 
 	return results, nil
+}
+
+// sortAndLimitMergedIssues re-orders the merged issues+wisps slice by the
+// filter's sort key and truncates it to filter.Limit. It must order rows the
+// same way sqlbuild.OrderBy orders each per-table query; otherwise the Limit
+// cut keeps a different row set than the union of the two SQL queries selected.
+func sortAndLimitMergedIssues(issues []*types.Issue, filter types.IssueFilter) []*types.Issue {
+	if len(issues) > 1 {
+		sort.SliceStable(issues, func(i, j int) bool {
+			return sqlbuild.Less(issues[i], issues[j], filter.SortBy, filter.SortDesc)
+		})
+	}
+	if filter.Limit > 0 && len(issues) > filter.Limit {
+		return issues[:filter.Limit]
+	}
+	return issues
 }
 
 // searchTableInTx runs a filtered search against a specific table set (issues or wisps).
