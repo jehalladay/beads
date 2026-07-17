@@ -95,6 +95,27 @@ Examples:
 
 var forceGitTracked bool
 
+// showSecrets is the opt-in escape hatch for `config list`/`show`/`get`
+// (beads-3q1n). By default those surfaces redact secret-key VALUES so they are
+// never dumped to a terminal / CI log / pipe; --show-secrets prints them raw
+// for a deliberate "show me everything" read-back. It never affects the value
+// actually stored.
+var showSecrets bool
+
+// redactUnlessShown returns the redacted rendering of a config value unless the
+// caller passed --show-secrets, in which case the raw value is returned. It is
+// the single gate for every bulk/incidental display site: config list, config
+// show, config set/set-many echo, and the env-override warnings. The single-key
+// `config get` deliberately does NOT use this — it is raw by default (an
+// explicit retrieval escape hatch) and accepts --show-secrets only for flag
+// consistency (a no-op there).
+func redactUnlessShown(key, value string) string {
+	if showSecrets {
+		return value
+	}
+	return config.RedactSecretValue(key, value)
+}
+
 var configSetCmd = &cobra.Command{
 	Use:           "set <key> <value>",
 	Short:         "Set a configuration value",
@@ -141,6 +162,12 @@ var configSetCmd = &cobra.Command{
 			return HandleError("%v", err)
 		}
 
+		// displayValue is the redacted rendering used in every echo (text +
+		// JSON) so `bd config set X.token SECRET` no longer prints the secret to
+		// the terminal / CI logs (beads-3q1n). The real value is still written.
+		// --show-secrets opts back into the raw echo.
+		displayValue := redactUnlessShown(key, value)
+
 		if !forceGitTracked {
 			if err := config.CheckSecretKeyGitSafety(key); err != nil {
 				return HandleError("%v", err)
@@ -163,13 +190,13 @@ var configSetCmd = &cobra.Command{
 			if jsonOutput {
 				if err := outputJSON(map[string]interface{}{
 					"key":      key,
-					"value":    value,
+					"value":    displayValue,
 					"location": location,
 				}); err != nil {
 					return err
 				}
 			} else {
-				fmt.Printf("Set %s = %s (in %s)\n", key, value, location)
+				fmt.Printf("Set %s = %s (in %s)\n", key, displayValue, location)
 			}
 			printConfigSideEffects(checkConfigSetSideEffects(key, value))
 			return nil
@@ -224,12 +251,12 @@ var configSetCmd = &cobra.Command{
 		if jsonOutput {
 			if err := outputJSON(map[string]string{
 				"key":   key,
-				"value": value,
+				"value": displayValue,
 			}); err != nil {
 				return err
 			}
 		} else {
-			fmt.Printf("Set %s = %s\n", key, value)
+			fmt.Printf("Set %s = %s\n", key, displayValue)
 		}
 		printConfigSideEffects(checkConfigSetSideEffects(key, value))
 		return nil
@@ -374,32 +401,40 @@ var configListCmd = &cobra.Command{
 		}
 
 		ctx := rootCtx
-		config, err := store.GetAllConfig(ctx)
+		cfgMap, err := store.GetAllConfig(ctx)
 		if err != nil {
 			return HandleError("listing config: %v", err)
 		}
 
-		if jsonOutput {
-			return outputJSON(config)
+		// Redact secret values before any display (text or JSON) so
+		// api_key/token/password/secret keys are never printed in cleartext
+		// (beads-3q1n). --show-secrets opts back into raw; config get remains the
+		// explicit single-value retrieval escape hatch.
+		for k, v := range cfgMap {
+			cfgMap[k] = redactUnlessShown(k, v)
 		}
 
-		if len(config) == 0 {
+		if jsonOutput {
+			return outputJSON(cfgMap)
+		}
+
+		if len(cfgMap) == 0 {
 			fmt.Println("No configuration set")
 			return nil
 		}
 
-		keys := make([]string, 0, len(config))
-		for k := range config {
+		keys := make([]string, 0, len(cfgMap))
+		for k := range cfgMap {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 
 		fmt.Println("\nConfiguration:")
 		for _, k := range keys {
-			fmt.Printf("  %s = %s\n", k, config[k])
+			fmt.Printf("  %s = %s\n", k, cfgMap[k])
 		}
 
-		showConfigYAMLOverrides(config)
+		showConfigYAMLOverrides(cfgMap)
 		return nil
 	},
 }
@@ -416,7 +451,8 @@ func showConfigYAMLOverrides(dbConfig map[string]string) {
 		if envName := config.EnvVarName(key); envName != "" {
 			envValue := os.Getenv(envName)
 			if envValue != dbValue {
-				envWarnings = append(envWarnings, fmt.Sprintf("  %s: DB has %q, but env %s=%q takes precedence", key, dbValue, envName, envValue))
+				envWarnings = append(envWarnings, fmt.Sprintf("  %s: DB has %q, but env %s=%q takes precedence",
+					key, redactUnlessShown(key, dbValue), envName, redactUnlessShown(key, envValue)))
 			}
 		}
 	}
@@ -441,7 +477,7 @@ func showConfigYAMLOverrides(dbConfig map[string]string) {
 		}
 		val := config.GetString(key)
 		if val != "" {
-			yamlOverrides = append(yamlOverrides, fmt.Sprintf("  %s = %s", key, val))
+			yamlOverrides = append(yamlOverrides, fmt.Sprintf("  %s = %s", key, redactUnlessShown(key, val)))
 		}
 	}
 
@@ -453,7 +489,8 @@ func showConfigYAMLOverrides(dbConfig map[string]string) {
 		if envName := config.EnvVarName(key); envName != "" {
 			src := config.GetValueSource(key)
 			if src == config.SourceEnvVar {
-				envWarnings = append(envWarnings, fmt.Sprintf("  %s: env %s=%q overrides config", key, envName, os.Getenv(envName)))
+				envWarnings = append(envWarnings, fmt.Sprintf("  %s: env %s=%q overrides config",
+					key, envName, redactUnlessShown(key, os.Getenv(envName))))
 			}
 		}
 	}
@@ -848,7 +885,7 @@ Examples:
 				}
 				results = append(results, map[string]string{
 					"key":      p.key,
-					"value":    p.value,
+					"value":    redactUnlessShown(p.key, p.value),
 					"location": location,
 				})
 			}
@@ -865,7 +902,7 @@ Examples:
 				} else if p.key == "beads.role" {
 					location = " (in git config)"
 				}
-				fmt.Printf("Set %s = %s%s\n", p.key, p.value, location)
+				fmt.Printf("Set %s = %s%s\n", p.key, redactUnlessShown(p.key, p.value), location)
 			}
 		}
 		return nil
@@ -1011,6 +1048,14 @@ func levenshteinDistance(a, b string) int {
 func init() {
 	configSetCmd.Flags().BoolVar(&forceGitTracked, "force-git-tracked", false, "Allow writing secret keys to git-tracked config files (use with caution)")
 	configSetManyCmd.Flags().BoolVar(&forceGitTracked, "force-git-tracked", false, "Allow writing secret keys to git-tracked config files (use with caution)")
+
+	// --show-secrets is the opt-in escape hatch that disables secret-value
+	// redaction on the display surfaces (beads-3q1n). Registered on list/get; the
+	// set/set-many echo and config show honor it via the same showSecrets var.
+	configListCmd.Flags().BoolVar(&showSecrets, "show-secrets", false, "Show secret-key values (api_key/token/password) in cleartext instead of redacting them")
+	configGetCmd.Flags().BoolVar(&showSecrets, "show-secrets", false, "Show secret-key values in cleartext (config get is already raw by default; accepted for consistency)")
+	configSetCmd.Flags().BoolVar(&showSecrets, "show-secrets", false, "Echo the secret-key value in cleartext instead of redacting it")
+	configSetManyCmd.Flags().BoolVar(&showSecrets, "show-secrets", false, "Echo secret-key values in cleartext instead of redacting them")
 
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configSetManyCmd)

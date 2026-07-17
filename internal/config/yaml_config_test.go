@@ -725,6 +725,37 @@ func TestIsSecretKey(t *testing.T) {
 	}
 }
 
+func TestRedactSecretValue(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+		want  string
+	}{
+		{"secret token redacted", "github.token", "ghp_supersecret", RedactedSecretPlaceholder},
+		{"secret api_key redacted", "linear.api_key", "lin_abc123", RedactedSecretPlaceholder},
+		{"secret password redacted", "custom.password", "hunter2", RedactedSecretPlaceholder},
+		{"empty secret passed through", "github.token", "", ""},
+		{"non-secret value unchanged", "routing.mode", "auto", "auto"},
+		{"non-secret empty unchanged", "sync.remote", "", ""},
+		// The placeholder is fixed-length regardless of the secret's length.
+		{"redaction hides length", "github.token", "x", RedactedSecretPlaceholder},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := RedactSecretValue(tt.key, tt.value)
+			if got != tt.want {
+				t.Errorf("RedactSecretValue(%q, %q) = %q, want %q", tt.key, tt.value, got, tt.want)
+			}
+			// A secret's real value must never appear in the redacted output.
+			if IsSecretKey(tt.key) && tt.value != "" && got == tt.value {
+				t.Errorf("RedactSecretValue leaked the secret value %q for key %q", tt.value, tt.key)
+			}
+		})
+	}
+}
+
 func TestSecretKeyEnvVarHint(t *testing.T) {
 	tests := []struct {
 		key      string
