@@ -19,7 +19,7 @@ import (
 //
 // conn must be a single database connection (not a pooled *sql.DB) since the
 // stored procedures rely on session-scoped state (current branch, working set).
-func Flatten(ctx context.Context, conn DBConn) error {
+func Flatten(ctx context.Context, conn DBConn) (retErr error) {
 	// Find the initial commit hash (oldest ancestor).
 	var initialHash string
 	if err := conn.QueryRowContext(ctx,
@@ -46,12 +46,36 @@ func Flatten(ctx context.Context, conn DBConn) error {
 		return nil
 	}
 
+	// A prior flatten that failed mid-way can leave the temp branch behind;
+	// since "create temp branch" below has no --force, that stale branch would
+	// wedge every future flatten with "branch already exists". Best-effort
+	// pre-delete clears it (mirrors the Compact recipe's cleanup). Ignore the
+	// error: on the normal path there is no such branch.
+	_, _ = conn.ExecContext(ctx, "CALL DOLT_BRANCH('-D', 'flatten-tmp')")
+
+	// Best-effort cleanup: if any step fails after creating the temp branch,
+	// return to main and delete the temp branch so the session isn't left on
+	// flatten-tmp and a re-run isn't blocked by the leftover branch. Matches the
+	// defer in versioncontrolops.Compact (beads-wmup — Flatten previously had no
+	// such cleanup and self-wedged on retry).
+	branchCreated := false
+	defer func() {
+		if retErr != nil && branchCreated {
+			_, _ = conn.ExecContext(ctx, "CALL DOLT_CHECKOUT('main')")
+			_, _ = conn.ExecContext(ctx, "CALL DOLT_BRANCH('-D', 'flatten-tmp')")
+		}
+	}()
+
+	if err := execSQL("create temp branch", "CALL DOLT_BRANCH('flatten-tmp')"); err != nil {
+		return err
+	}
+	branchCreated = true
+
 	steps := []struct {
 		name  string
 		query string
 		args  []interface{}
 	}{
-		{"create temp branch", "CALL DOLT_BRANCH('flatten-tmp')", nil},
 		{"checkout temp branch", "CALL DOLT_CHECKOUT('flatten-tmp')", nil},
 		{"soft reset to initial", "CALL DOLT_RESET('--soft', ?)", []interface{}{initialHash}},
 		{"commit flattened snapshot", "CALL DOLT_COMMIT('-Am', 'flatten: squash all history into single commit')", nil},

@@ -119,6 +119,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the true original. `SnapshotIssueInTx` now skips archiving when a snapshot
   already exists for the issue at that tier, so the first (genuine) snapshot
   always wins.
+- **`bd flatten` no longer self-wedges after a failed run (beads-wmup).** If a
+  history flatten failed partway, it left the temporary `flatten-tmp` branch
+  behind (and could strand the session on it); because the branch-create step
+  had no pre-delete, every subsequent flatten then failed with "branch already
+  exists". Flatten now best-effort deletes any stale `flatten-tmp` before it
+  starts and, on a mid-run error, returns to `main` and removes the temp branch
+  — matching the cleanup the compaction path already had.
 
 ## [1.1.0-rc.1] - 2026-06-23
 
