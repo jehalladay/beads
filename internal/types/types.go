@@ -1324,6 +1324,11 @@ type IssueFilter struct {
 	// Type exclusion (for hiding internal types like gates)
 	ExcludeTypes []IssueType // Exclude issues with these types
 
+	// Priority exclusion (mirrors ExcludeStatus/ExcludeTypes so a bare
+	// `priority!=N` query is expressible in filter-only mode, not just via the
+	// predicate path — beads-sgp3)
+	ExcludePriority []int // Exclude issues with these priorities
+
 	// Time-based scheduling filters (GH#820)
 	Deferred    bool       // Filter issues that are scheduled later: defer_until set OR status is deferred
 	DeferAfter  *time.Time // Filter issues with defer_until > this time

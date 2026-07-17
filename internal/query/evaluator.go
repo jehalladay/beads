@@ -263,8 +263,10 @@ func (e *Evaluator) applyPriorityFilter(comp *ComparisonNode, filter *types.Issu
 	case OpEquals:
 		filter.Priority = &priority
 	case OpNotEquals:
-		// For != we need predicate filtering
-		return fmt.Errorf("priority != requires predicate filtering")
+		// Mirror status!=/type!= (ExcludeStatus/ExcludeTypes): record the
+		// exclusion so a bare `priority!=N` works in filter-only mode instead
+		// of hard-erroring (beads-sgp3).
+		filter.ExcludePriority = append(filter.ExcludePriority, priority)
 	case OpLess:
 		// priority < X means PriorityMax = X-1
 		max := priority - 1

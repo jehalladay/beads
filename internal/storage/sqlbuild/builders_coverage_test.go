@@ -73,6 +73,7 @@ func TestBuildIssueFilterClauses_ScalarFilters(t *testing.T) {
 		Priority:            intPtr(2),
 		PriorityMin:         intPtr(1),
 		PriorityMax:         intPtr(3),
+		ExcludePriority:     []int{4}, // beads-sgp3: priority NOT IN clause
 	}
 	where, args, err := BuildIssueFilterClauses("", f, IssuesFilterTables)
 	if err != nil {
@@ -83,6 +84,7 @@ func TestBuildIssueFilterClauses_ScalarFilters(t *testing.T) {
 		"LOWER(external_ref) LIKE ?", "status = ?", "status IN (?,?)",
 		"status NOT IN (?)", "issue_type = ?", "issue_type NOT IN (?)",
 		"assignee = ?", "priority = ?", "priority >= ?", "priority <= ?",
+		"priority NOT IN (?)",
 	} {
 		if !hasClause(where, want) {
 			t.Errorf("missing clause %q in %v", want, where)
