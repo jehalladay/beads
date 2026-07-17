@@ -85,7 +85,20 @@ func GenerateHashID(prefix, title, description, creator string, timestamp time.T
 	case 8:
 		numBytes = 5 // 5 bytes = 40 bits ≈ 7.73 base36 chars
 	default:
-		numBytes = 3 // default to 3 chars
+		// length > 8 (reachable via an unclamped max_hash_length config): scale
+		// the byte width with the length instead of the old flat 3 bytes, which
+		// gave only 24 bits of entropy and zero-padded the id — silently
+		// defeating the adaptive-length birthday-paradox collision math
+		// (beads-ioci). ceil(length * log2(36) / 8) bytes fills the 36^length
+		// space; cap at len(hash) so we never over-slice. length < 3 is handled
+		// upstream (EncodeBase36 returns "" for length <= 0; beads-722j).
+		numBytes = (length*6462 + 9999) / 10000 // ≈ ceil(length * log2(36)/8 bytes)
+		if numBytes > len(hash) {
+			numBytes = len(hash)
+		}
+		if numBytes < 1 {
+			numBytes = 3
+		}
 	}
 
 	shortHash := EncodeBase36(hash[:numBytes], length)
