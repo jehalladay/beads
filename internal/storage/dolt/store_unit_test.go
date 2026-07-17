@@ -215,6 +215,11 @@ func TestGetAdaptiveIDLength_QueryError(t *testing.T) {
 // BEADS_DOLT_PORT is not set, preventing accidental connections to
 // the production server while allowing tests to handle connection errors.
 func TestApplyConfigDefaults_TestModeUseSentinelPort(t *testing.T) {
+	// applyConfigDefaults reads BEADS_DOLT_SERVER_PORT with higher precedence than
+	// the legacy BEADS_DOLT_PORT this test manages. Crew shells run with
+	// BEADS_DOLT_SERVER_PORT=3307 injected by gt, which would otherwise win and
+	// break the legacy/no-port paths under test. Neutralize it (t.Setenv restores).
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 	// Save and restore env vars.
 	origTestMode := os.Getenv("BEADS_TEST_MODE")
 	origPort := os.Getenv("BEADS_DOLT_PORT")
@@ -241,6 +246,9 @@ func TestApplyConfigDefaults_TestModeUseSentinelPort(t *testing.T) {
 // TestApplyConfigDefaults_TestModeWithPort verifies that applyConfigDefaults
 // does NOT panic when BEADS_TEST_MODE=1 and BEADS_DOLT_PORT is properly set.
 func TestApplyConfigDefaults_TestModeWithPort(t *testing.T) {
+	// See TestApplyConfigDefaults_TestModeUseSentinelPort: neutralize the ambient
+	// crew-shell BEADS_DOLT_SERVER_PORT so the legacy BEADS_DOLT_PORT path is exercised.
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 	origTestMode := os.Getenv("BEADS_TEST_MODE")
 	origPort := os.Getenv("BEADS_DOLT_PORT")
 	defer func() {
@@ -268,6 +276,9 @@ func TestApplyConfigDefaults_TestModeWithPort(t *testing.T) {
 // This is the fix for Clown Show #14: The orchestrator's beads module injects
 // BEADS_DOLT_PORT=3307 from metadata.json, bypassing the test mode guard.
 func TestApplyConfigDefaults_TestModeBlocksProdPort(t *testing.T) {
+	// See TestApplyConfigDefaults_TestModeUseSentinelPort: neutralize the ambient
+	// crew-shell BEADS_DOLT_SERVER_PORT so the legacy BEADS_DOLT_PORT path is exercised.
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 	origTestMode := os.Getenv("BEADS_TEST_MODE")
 	origPort := os.Getenv("BEADS_DOLT_PORT")
 	defer func() {
@@ -299,6 +310,9 @@ func TestApplyConfigDefaults_TestModeBlocksProdPort(t *testing.T) {
 // This is the fix for hq-27t (test pollution): callers like the orchestrator set
 // BEADS_DOLT_PORT to route bd to a test server instead of production.
 func TestApplyConfigDefaults_EnvOverridesConfig(t *testing.T) {
+	// See TestApplyConfigDefaults_TestModeUseSentinelPort: neutralize the ambient
+	// crew-shell BEADS_DOLT_SERVER_PORT so the legacy BEADS_DOLT_PORT path is exercised.
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 	origTestMode := os.Getenv("BEADS_TEST_MODE")
 	origPort := os.Getenv("BEADS_DOLT_PORT")
 	defer func() {
@@ -331,6 +345,9 @@ func TestApplyConfigDefaults_EnvOverridesConfig(t *testing.T) {
 // BEADS_TEST_MODE and no env port, ServerPort stays 0 (ephemeral).
 // Auto-start (EnsureRunning) will allocate the port at connection time.
 func TestApplyConfigDefaults_ProductionFallback(t *testing.T) {
+	// See TestApplyConfigDefaults_TestModeUseSentinelPort: neutralize the ambient
+	// crew-shell BEADS_DOLT_SERVER_PORT so the no-env-port fallback is exercised.
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 	origTestMode := os.Getenv("BEADS_TEST_MODE")
 	origPort := os.Getenv("BEADS_DOLT_PORT")
 	defer func() {
