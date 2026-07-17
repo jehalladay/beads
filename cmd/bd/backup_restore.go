@@ -95,8 +95,18 @@ func runBackupRestore(ctx context.Context, s storage.DoltStorage, dir string, fo
 	// metadata.json to match the restored database so the identity check
 	// doesn't reject subsequent connections.
 	if force {
+		// This sync is REQUIRED, not cosmetic: the force-restore overwrote the
+		// DB with the backup's _project_id, and store_server.go fail-CLOSES
+		// ("PROJECT IDENTITY MISMATCH — refusing to connect") when the served
+		// _project_id differs from metadata.json. If we swallow a sync failure
+		// as a warning, the restore reports success but leaves a DB that then
+		// refuses ALL subsequent connections — the _project_id freeze class.
+		// Fail loudly instead so the operator can re-run the sync rather than
+		// discover a frozen DB later (beads-ujx6).
 		if err := syncProjectIDFromDB(ctx, s); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to sync project ID after restore: %v\n", err)
+			return fmt.Errorf("restore succeeded but failed to sync project ID to metadata.json: %w\n"+
+				"The database now carries the backup's project identity; connections will be refused until metadata.json matches. "+
+				"Re-run the restore, or fix the sync failure above, before using this workspace", err)
 		}
 	}
 
