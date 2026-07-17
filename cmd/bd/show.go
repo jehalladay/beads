@@ -113,6 +113,22 @@ var showCmd = &cobra.Command{
 		// Direct mode - use routed resolution for cross-repo lookups
 		allDetails := []interface{}{}
 		foundCount := 0
+		// Per-item errors: under --json, reportItemError writes a JSON object to
+		// stderr (beads-fg6, for PARTIAL success where stdout carries the found
+		// array). But when EVERY id fails, the terminal path also writes a JSON
+		// error object to stdout, so a `2>&1` consumer got TWO objects and
+		// json.load failed (beads-92tz). So under --json we DEFER per-item errors
+		// and flush them to stderr only if at least one issue was found (partial
+		// success); when nothing is found, the single terminal stdout object is
+		// the sole error and stderr stays clean. Non-JSON prints immediately.
+		var deferredItemErrors []string
+		reportShowItemError := func(format string, a ...interface{}) {
+			if jsonOutput {
+				deferredItemErrors = append(deferredItemErrors, fmt.Sprintf(format, a...))
+				return
+			}
+			reportItemError(format, a...)
+		}
 		for idx, id := range args {
 			// Resolve and get issue with routing (e.g., gt-xyz routes to another rig)
 			result, err := resolveAndGetIssueWithRouting(ctx, store, id)
@@ -120,14 +136,14 @@ var showCmd = &cobra.Command{
 				if result != nil {
 					result.Close()
 				}
-				reportItemError("Error fetching %s: %v", id, err)
+				reportShowItemError("Error fetching %s: %v", id, err)
 				continue
 			}
 			if result == nil || result.Issue == nil {
 				if result != nil {
 					result.Close()
 				}
-				reportItemError("Issue %s not found", id)
+				reportShowItemError("Issue %s not found", id)
 				continue
 			}
 			issue := result.Issue
@@ -414,10 +430,18 @@ var showCmd = &cobra.Command{
 
 		if jsonOutput {
 			if len(allDetails) > 0 {
+				// Partial success: stdout carries the found array; flush any
+				// per-item failures to stderr as JSON objects (fg6 contract).
+				for _, msg := range deferredItemErrors {
+					reportItemError("%s", msg)
+				}
 				if jerr := outputJSON(allDetails); jerr != nil {
 					return jerr
 				}
 			} else {
+				// Nothing found: the single stdout JSON error object is the sole
+				// error output; stderr stays clean so a 2>&1 consumer gets exactly
+				// one JSON object (beads-92tz).
 				return HandleErrorRespectJSON("no issues found matching the provided IDs")
 			}
 		} else if foundCount > 0 {

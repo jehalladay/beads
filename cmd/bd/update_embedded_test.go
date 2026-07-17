@@ -177,6 +177,41 @@ func TestEmbeddedUpdateBatchAutoCommitDoesNotAdvanceHead(t *testing.T) {
 // The observable contract: with --json, stdout stays a valid JSON ARRAY of the
 // successfully-updated issues (A present, B absent); the per-item failure is on
 // stderr, never on stdout. Regression guard for beads-pqma.
+// TestEmbeddedUpdateAllFailedJSONSingleObject proves beads-92tz for update:
+// `bd update <nonexistent> --status open --json` must emit EXACTLY ONE JSON
+// error object across both streams — on stdout, stderr clean — so a 2>&1
+// consumer can json.load it. Previously the per-item reportItemError put a JSON
+// object on stderr AND the terminal put one on stdout = two objects.
+func TestEmbeddedUpdateAllFailedJSONSingleObject(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt update tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "ua")
+
+	cmd := exec.Command(bd, "update", "ua-nope-aaa", "--status", "open", "--json")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err == nil {
+		t.Errorf("expected non-zero exit for all-nonexistent update, got success\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+	}
+	out := strings.TrimSpace(stdout.String())
+	var obj map[string]any
+	if jerr := json.Unmarshal([]byte(out), &obj); jerr != nil {
+		t.Fatalf("stdout is not a single JSON object: %v\nstdout:\n%s", jerr, out)
+	}
+	if _, ok := obj["error"]; !ok {
+		t.Errorf("expected an \"error\" field on stdout, got: %s", out)
+	}
+	errStr := strings.TrimSpace(stderr.String())
+	if errStr != "" && json.Valid([]byte(errStr)) {
+		t.Errorf("stderr must be clean of a competing JSON error object on all-failed --json (beads-92tz); got:\n%s", errStr)
+	}
+}
+
 func TestEmbeddedUpdateBatchMetadataJSONContract(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt update tests")
