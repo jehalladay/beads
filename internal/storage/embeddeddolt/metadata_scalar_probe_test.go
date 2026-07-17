@@ -114,3 +114,54 @@ func TestMetadataFieldsOnObjectAndNullMetadata(t *testing.T) {
 		t.Errorf("expected both keep and add on object-metadata row; got %s", afterObj)
 	}
 }
+
+// TestMetadataFieldsOnJSONNullMetadata is the regression guard for beads-57f5,
+// the JSON-null hole in the kkqu guard.
+//
+// A row whose metadata column holds the JSON *null literal* (distinct from SQL
+// NULL and from '{}') is reachable: metadataIsJSONObject("null") returns true,
+// so `bd create/update --metadata null` is accepted at input, and JSONMetadata
+// binds "null" verbatim. In ApplyMetadataKeyEditsInTx the non-object guard
+// EXPLICITLY carves out "null" (trimmed != "null"), and the base expression
+// COALESCE(metadata,'{}') only substitutes SQL NULL — NOT a JSON-null literal.
+// Dolt's JSON_SET(json'null', '$.k', v) returns json'null' unchanged, so the
+// per-key SET silently NO-OPPED: the UPDATE succeeded but wrote nothing — the
+// exact kkqu silent-write-loss class, one carve-out down.
+//
+// TEETH: revert the NULLIF(metadata, json'null') normalization in
+// ApplyMetadataKeyEditsInTx and this test goes RED — the set returns nil with
+// metadata still == null (the silent no-op).
+func TestMetadataFieldsOnJSONNullMetadata(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt tests")
+	}
+	ctx := context.Background()
+	te := newTestEnv(t, "jn")
+
+	const created = "jn-jsonnull"
+	issue := &types.Issue{ID: created, Title: "json-null meta", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeBug}
+	if err := te.store.CreateIssue(ctx, issue, "tester"); err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+
+	// Seed the JSON null LITERAL directly (mirrors `--metadata null` verbatim
+	// bind / a legacy row), distinct from SQL NULL which COALESCE already fixes.
+	te.exec(t, ctx, "UPDATE issues SET metadata = CAST('null' AS JSON) WHERE id = ?", created)
+
+	// Per-key SET must actually land (not silently no-op) on a JSON-null row —
+	// json'null' is treated as an empty object, same as SQL NULL / '{}'.
+	if err := te.store.UpdateMetadataFields(ctx, created,
+		map[string]json.RawMessage{"team": json.RawMessage(`"platform"`)}, nil, "tester"); err != nil {
+		t.Fatalf("set on json-null metadata row should succeed: %v", err)
+	}
+	var after string
+	te.queryScalar(t, ctx, "SELECT metadata FROM issues WHERE id = ?", []any{created}, &after)
+	if !strings.Contains(after, `"team"`) || !strings.Contains(after, `"platform"`) {
+		t.Fatalf("expected key team=platform to land on json-null-metadata row (silent no-op = the 57f5 bug); got %s", after)
+	}
+
+	// UNSET on a JSON-null row is a clean no-op key-removal (also must not error).
+	if uerr := te.store.UpdateMetadataFields(ctx, created, nil, []string{"team"}, "tester"); uerr != nil {
+		t.Errorf("unset on json-null-normalized metadata row should succeed: %v", uerr)
+	}
+}

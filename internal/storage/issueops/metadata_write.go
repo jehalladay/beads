@@ -64,7 +64,16 @@ func ApplyMetadataKeyEditsInTx(ctx context.Context, tx DBTX, table, id string, s
 		}
 	}
 
-	expr := "COALESCE(metadata, '{}')"
+	// Base doc must normalize BOTH SQL NULL and the JSON *null literal* to an
+	// empty object before JSON_SET/JSON_REMOVE. A plain COALESCE(metadata,'{}')
+	// only substitutes SQL NULL — a column holding json'null' (reachable via
+	// `--metadata null`, which metadataIsJSONObject tolerates and JSONMetadata
+	// binds verbatim, or a legacy row) slips past both the "null" carve-out in
+	// the guard above AND COALESCE, and JSON_SET(json'null', ...) returns
+	// json'null' unchanged → the UPDATE silently loses the write (beads-57f5,
+	// the JSON-null hole in the kkqu scalar guard). NULLIF turns json'null' back
+	// into SQL NULL so the COALESCE default applies uniformly.
+	expr := "COALESCE(NULLIF(metadata, CAST('null' AS JSON)), CAST('{}' AS JSON))"
 	var args []interface{}
 
 	if len(sets) > 0 {
