@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -72,6 +73,33 @@ func TestEmbeddedReopen(t *testing.T) {
 		}
 		if got2.Status != types.StatusOpen {
 			t.Errorf("issue2: expected open, got %s", got2.Status)
+		}
+	})
+
+	// All requested IDs fail under --json: stdout must carry a parseable JSON
+	// error object, not be empty (beads-2q0n / beads-fg6 / beads-tx70). A bare
+	// SilentExit leaves --json consumers with exit 1 + empty stdout. reopen
+	// resolves per-item INSIDE the batch loop, so a nonexistent id sets
+	// hasError and reaches the terminal all-failed path (unlike close, whose
+	// resolve fails earlier).
+	t.Run("reopen_all_failed_json_emits_stdout_error", func(t *testing.T) {
+		cmd := exec.Command(bd, "reopen", "ro-nope-aaa", "ro-nope-bbb", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Errorf("expected non-zero exit when all IDs fail, got success\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+		}
+		out := strings.TrimSpace(stdout.String())
+		if out == "" {
+			t.Fatalf("stdout is empty on all-failed --json reopen — must emit a JSON error object (beads-2q0n)\nstderr:\n%s", stderr.String())
+		}
+		var obj map[string]any
+		if jerr := json.Unmarshal([]byte(out), &obj); jerr != nil {
+			t.Fatalf("stdout is not a JSON object on all-failed --json reopen: %v\nstdout:\n%s", jerr, out)
+		}
+		if _, ok := obj["error"]; !ok {
+			t.Errorf("expected an \"error\" field in the all-failed --json stdout object, got: %s", out)
 		}
 	})
 
