@@ -1612,3 +1612,61 @@ func TestBondRefUnmarshalJSON(t *testing.T) {
 		})
 	}
 }
+
+// TestValidWorkTypes verifies the user-facing built-in work-type list matches
+// the types documented by `bd types` and excludes internal-only types.
+func TestValidWorkTypes(t *testing.T) {
+	got := ValidWorkTypes()
+	want := []IssueType{
+		TypeTask, TypeBug, TypeFeature, TypeChore,
+		TypeEpic, TypeDecision, TypeSpike, TypeStory, TypeMilestone,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ValidWorkTypes() returned %d types, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("ValidWorkTypes()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	// Internal-only types must NOT be advertised as valid work types.
+	for _, internal := range []IssueType{TypeMolecule, TypeGate, TypeMessage} {
+		for _, w := range got {
+			if w == internal {
+				t.Errorf("ValidWorkTypes() must not include internal type %q", internal)
+			}
+		}
+	}
+}
+
+// TestValidWorkTypesString verifies the human-readable comma-joined list.
+func TestValidWorkTypesString(t *testing.T) {
+	s := ValidWorkTypesString()
+	if s != "task, bug, feature, chore, epic, decision, spike, story, milestone" {
+		t.Errorf("ValidWorkTypesString() = %q", s)
+	}
+}
+
+// TestValidateWithCustom_InvalidTypeListsValidTypes verifies the invalid-type
+// error names the offending value AND lists the valid types (beads-4fh: it used
+// to only say "invalid issue type: frobnicate" with no hint).
+func TestValidateWithCustom_InvalidTypeListsValidTypes(t *testing.T) {
+	issue := Issue{
+		ID:        "test-1",
+		Title:     "Test",
+		Status:    StatusOpen,
+		Priority:  2,
+		IssueType: IssueType("frobnicate"),
+	}
+	err := issue.ValidateWithCustom(nil, nil)
+	if err == nil {
+		t.Fatal("expected error for invalid issue type")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "frobnicate") {
+		t.Errorf("error should name the invalid value; got: %s", msg)
+	}
+	if !strings.Contains(msg, "task") || !strings.Contains(msg, "bug") {
+		t.Errorf("error should list valid types; got: %s", msg)
+	}
+}

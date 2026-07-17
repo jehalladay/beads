@@ -35,7 +35,7 @@ func ParseIssueType(content string) (types.IssueType, error) {
 
 	// Use the canonical IsValid() from types package
 	if !issueType.IsValid() {
-		return types.TypeTask, fmt.Errorf("invalid issue type: %s", content)
+		return types.TypeTask, fmt.Errorf("invalid issue type %q (valid types: %s; custom types require types.custom config, see 'bd types')", content, types.ValidWorkTypesString())
 	}
 
 	return issueType, nil

@@ -232,7 +232,7 @@ func (i *Issue) ValidateWithCustom(customStatuses, customTypes []string) error {
 		return fmt.Errorf("invalid status: %s", i.Status)
 	}
 	if !i.IssueType.IsValidWithCustom(customTypes) {
-		return fmt.Errorf("invalid issue type: %s", i.IssueType)
+		return fmt.Errorf("invalid issue type %q (valid types: %s; custom types require types.custom config, see 'bd types')", string(i.IssueType), ValidWorkTypesString())
 	}
 	if i.EstimatedMinutes != nil && *i.EstimatedMinutes < 0 {
 		return fmt.Errorf("estimated_minutes cannot be negative")
@@ -556,6 +556,26 @@ func (t IssueType) IsValid() bool {
 		return true
 	}
 	return false
+}
+
+// ValidWorkTypes returns the user-facing built-in work types, in the same
+// order as `bd types`. Internal-only types (molecule, gate, message, event)
+// are intentionally excluded — they are not meant to be set by users.
+func ValidWorkTypes() []IssueType {
+	return []IssueType{
+		TypeTask, TypeBug, TypeFeature, TypeChore,
+		TypeEpic, TypeDecision, TypeSpike, TypeStory, TypeMilestone,
+	}
+}
+
+// ValidWorkTypesString returns the built-in work types as a comma-separated
+// list for error messages and hints (e.g. "task, bug, feature, ...").
+func ValidWorkTypesString() string {
+	parts := make([]string, len(ValidWorkTypes()))
+	for i, t := range ValidWorkTypes() {
+		parts[i] = string(t)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // IsBuiltIn returns true for core work types and system-internal types
