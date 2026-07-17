@@ -22,6 +22,10 @@ const (
 
 var ensureFileBeforeCreateHook func(string)
 
+// randRead is the entropy source for newID, injectable in tests to exercise the
+// (practically unreachable) read-failure branch.
+var randRead = rand.Read
+
 // Entry is a generic append-only audit event. It is intentionally flexible:
 // use Kind + typed fields for common cases, and Extra for everything else.
 type Entry struct {
@@ -160,7 +164,7 @@ func LogFieldChange(issueID, field, oldValue, newValue, actor, reason string) {
 func newID() (string, error) {
 	// 16 bytes (128-bit) of entropy — birthday probability for 8000 IDs is ~9e-32.
 	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	if _, err := randRead(b[:]); err != nil {
 		return "", fmt.Errorf("failed to generate id: %w", err)
 	}
 	return idPrefix + hex.EncodeToString(b[:]), nil
