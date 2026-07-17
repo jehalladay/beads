@@ -52,6 +52,12 @@ func TestFromGitURL(t *testing.T) {
 		// A colon-less path with no recognized scheme falls through to a bare
 		// git+ prefix.
 		{"fallback bare prefix", "some/local/path", "git+some/local/path"},
+		// beads-0l14: non-@ host:x forms are NOT SCP git URLs — they must NOT be
+		// mangled into git+ssh:// (matching Normalize, which leaves them alone).
+		// They fall through to a bare git+ prefix, agreeing with isSCPStyleGitURL.
+		{"host:port not mangled", "localhost:8080", "git+localhost:8080"},
+		{"host:port/path not mangled", "myhost:1234/db", "git+myhost:1234/db"},
+		{"windows drive-relative not mangled", "C:relative", "git+C:relative"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
