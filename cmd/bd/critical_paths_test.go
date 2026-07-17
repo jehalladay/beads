@@ -93,8 +93,16 @@ func TestBurnWisps(t *testing.T) {
 		}
 	})
 
-	t.Run("InvalidIDsContinue", func(t *testing.T) {
-		// Create one valid wisp
+	t.Run("InvalidIDsAbortAtomic", func(t *testing.T) {
+		// burnWisps is atomic (mol_burn.go: "deletes all wisp issues
+		// atomically within a single transaction. If any delete fails, the
+		// entire operation is rolled back to prevent partial deletion"). A
+		// batch containing a nonexistent ID must abort the whole transaction,
+		// return the error, and delete NOTHING — even the valid IDs that were
+		// processed before the failure. The invalid ID is placed LAST so a
+		// non-atomic (continue-past / commit-what-succeeded) implementation
+		// would leave the earlier valid wisp deleted; the rollback is what
+		// keeps it present.
 		wisp := &types.Issue{
 			Title:     "Valid wisp",
 			Status:    types.StatusOpen,
@@ -107,15 +115,18 @@ func TestBurnWisps(t *testing.T) {
 			t.Fatalf("Failed to create wisp: %v", err)
 		}
 
-		// Mix valid and invalid IDs — burnWisps should continue past failures
-		result, err := burnWisps(ctx, s, []string{"nonexistent-id", wisp.ID})
-		if err != nil {
-			t.Fatalf("burnWisps failed: %v", err)
+		result, err := burnWisps(ctx, s, []string{wisp.ID, "nonexistent-id"})
+		if err == nil {
+			t.Fatal("burnWisps: expected an error on a batch with a nonexistent ID, got nil")
+		}
+		if result != nil {
+			t.Errorf("burnWisps: expected nil result on abort, got %+v", result)
 		}
 
-		// The valid wisp should still be deleted even though the first ID failed
-		if result.DeletedCount < 1 {
-			t.Errorf("DeletedCount = %d, want at least 1", result.DeletedCount)
+		// Teeth: the valid wisp processed before the failure must survive the
+		// rollback (nothing partially deleted).
+		if _, err := s.GetIssue(ctx, wisp.ID); err != nil {
+			t.Errorf("valid wisp %s was deleted despite the atomic rollback: %v", wisp.ID, err)
 		}
 	})
 }
