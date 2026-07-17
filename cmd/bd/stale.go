@@ -12,6 +12,7 @@ import (
 
 var staleCmd = &cobra.Command{
 	Use:     "stale",
+	Args:    cobra.NoArgs,
 	GroupID: "views",
 	Short:   "Show stale issues (not updated recently)",
 	Long: `Show issues that haven't been updated recently and may need attention.

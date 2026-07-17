@@ -18,6 +18,7 @@ import (
 
 var exportCmd = &cobra.Command{
 	Use:   "export",
+	Args:  cobra.NoArgs,
 	Short: "Export issues to JSONL format",
 	Long: `Export all issues to JSONL (newline-delimited JSON) format.
 

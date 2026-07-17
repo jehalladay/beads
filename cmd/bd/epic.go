@@ -81,6 +81,7 @@ var epicStatusCmd = &cobra.Command{
 }
 var closeEligibleEpicsCmd = &cobra.Command{
 	Use:           "close-eligible",
+	Args:          cobra.NoArgs,
 	Short:         "Close epics where all children are complete",
 	SilenceUsage:  true,
 	SilenceErrors: true,

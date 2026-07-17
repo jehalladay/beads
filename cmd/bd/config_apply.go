@@ -35,6 +35,7 @@ const (
 
 var configApplyCmd = &cobra.Command{
 	Use:   "apply",
+	Args:  cobra.NoArgs,
 	Short: "Reconcile system state to match configuration",
 	Long: `Reconcile actual system state to match declared configuration.
 

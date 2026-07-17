@@ -26,6 +26,7 @@ import (
 
 var findDuplicatesCmd = &cobra.Command{
 	Use:     "find-duplicates",
+	Args:    cobra.NoArgs,
 	Aliases: []string{"find-dups"},
 	GroupID: "views",
 	Short:   "Find semantically similar issues using text analysis or AI",
