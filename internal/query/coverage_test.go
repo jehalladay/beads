@@ -275,10 +275,13 @@ func TestFilterOnlyFields(t *testing.T) {
 			},
 		},
 		{
-			name:  "created less-eq duration sets end of day",
+			// beads-76y9: <= day-snaps to the exclusive next-day-midnight upper
+			// bound (dayEnd), consistent with = and the date-literal operators.
+			name:  "created less-eq duration sets day end (exclusive next-midnight)",
 			query: "created<=7d",
 			expectFilter: func(f *types.IssueFilter) bool {
-				return f.CreatedBefore != nil && f.CreatedBefore.Hour() == 23
+				return f.CreatedBefore != nil &&
+					f.CreatedBefore.Hour() == 0 && f.CreatedBefore.Minute() == 0 && f.CreatedBefore.Second() == 0
 			},
 		},
 		{
@@ -296,10 +299,12 @@ func TestFilterOnlyFields(t *testing.T) {
 			},
 		},
 		{
-			name:  "updated less-eq duration",
+			// beads-76y9: <= day-snaps to the exclusive next-day-midnight bound.
+			name:  "updated less-eq duration sets day end (exclusive next-midnight)",
 			query: "updated<=7d",
 			expectFilter: func(f *types.IssueFilter) bool {
-				return f.UpdatedBefore != nil && f.UpdatedBefore.Hour() == 23
+				return f.UpdatedBefore != nil &&
+					f.UpdatedBefore.Hour() == 0 && f.UpdatedBefore.Minute() == 0 && f.UpdatedBefore.Second() == 0
 			},
 		},
 		{

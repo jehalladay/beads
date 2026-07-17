@@ -367,10 +367,12 @@ func TestEvaluatorSimpleQueries(t *testing.T) {
 			name:  "updated greater than duration",
 			query: "updated>7d",
 			expectFilter: func(f *types.IssueFilter) bool {
-				// 7d ago from now
+				// beads-76y9: > day-snaps to dayEnd — the exclusive upper bound
+				// (next midnight) of the 7-days-ago day, so "strictly after that
+				// day". That is one day past the 7d-ago date's midnight.
 				expected := now.AddDate(0, 0, -7)
-				return f.UpdatedAfter != nil && f.UpdatedAfter.Year() == expected.Year() &&
-					f.UpdatedAfter.Month() == expected.Month() && f.UpdatedAfter.Day() == expected.Day()
+				expectedDayEnd := time.Date(expected.Year(), expected.Month(), expected.Day(), 0, 0, 0, 0, expected.Location()).Add(24 * time.Hour)
+				return f.UpdatedAfter != nil && f.UpdatedAfter.Equal(expectedDayEnd)
 			},
 		},
 		{
