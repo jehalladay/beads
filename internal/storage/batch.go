@@ -53,4 +53,13 @@ type BatchCreateOptions struct {
 	// them as skipped rather than created. May fire more than once per issue
 	// if the enclosing transaction retries; callers should dedup by ID.
 	OnStaleRejected func(issueID string)
+	// SkipCrossTableIDCollisionCheck disables the issue<->wisp cross-table
+	// existence guard in InsertIssueIfNew. issues and wisps are separate tables
+	// with no cross-table uniqueness, so InsertIssueIfNew normally rejects
+	// inserting into one table an id that already lives in the other (the
+	// xaxe/uekw/jym1/mgsx same-id collision family, beads-tnv9). Promote is the
+	// one legitimate caller that inserts into `issues` an id that still exists
+	// as a wisp (the wisp row is deleted later in the same transaction), so it
+	// sets this to opt out; it carries its own cross-table guard beforehand.
+	SkipCrossTableIDCollisionCheck bool
 }

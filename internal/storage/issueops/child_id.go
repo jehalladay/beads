@@ -23,29 +23,46 @@ func GetNextChildIDTx(ctx context.Context, tx *sql.Tx, parentID string) (string,
 		return "", fmt.Errorf("get next child ID: read counter: %w", err)
 	}
 
-	//nolint:gosec // G201: issueTable is one of two hardcoded constants.
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-		SELECT id FROM %s
-		WHERE id LIKE CONCAT(?, '.%%')
-		  AND id NOT LIKE CONCAT(?, '.%%.%%')
-	`, issueTable), parentID, parentID)
-	if err != nil {
-		return "", fmt.Errorf("get next child ID: query existing children: %w", err)
+	// Scan BOTH the parent's own table and the sibling table for existing
+	// children. issues and wisps have no cross-table uniqueness, so scanning
+	// only issueTable let the mint return parent.N while parent.N already lived
+	// in the OTHER table (e.g. an orphaned wisp child left by promote), minting
+	// a same-id issue+wisp collision (beads-tnv9, xaxe family). Bumping past a
+	// cross-table child keeps the mint fail-safe; InsertIssueIfNew is the hard
+	// fail-closed guard.
+	siblingTable := "wisps"
+	if issueTable == "wisps" {
+		siblingTable = "issues"
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return "", fmt.Errorf("get next child ID: scan child row: %w", err)
+	for _, table := range []string{issueTable, siblingTable} {
+		//nolint:gosec // G201: table is one of the hardcoded constants above.
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+			SELECT id FROM %s
+			WHERE id LIKE CONCAT(?, '.%%')
+			  AND id NOT LIKE CONCAT(?, '.%%.%%')
+		`, table), parentID, parentID)
+		if err != nil {
+			if isTableNotExistError(err) {
+				continue
+			}
+			return "", fmt.Errorf("get next child ID: query existing children: %w", err)
 		}
-		_, childNum, ok := ParseHierarchicalID(id)
-		if ok && childNum > lastChild {
-			lastChild = childNum
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return "", fmt.Errorf("get next child ID: scan child row: %w", err)
+			}
+			_, childNum, ok := ParseHierarchicalID(id)
+			if ok && childNum > lastChild {
+				lastChild = childNum
+			}
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("get next child ID: iterate children: %w", err)
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return "", fmt.Errorf("get next child ID: iterate children: %w", err)
+		}
+		rows.Close()
 	}
 
 	nextChild := lastChild + 1
