@@ -333,3 +333,54 @@ func TestValidateCloseReason(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateTemplateNormalizesType asserts the template rule engine warns on
+// a non-canonical issue type (alias / mixed-case) identically to its canonical
+// form. The import ingestion path stores IssueType verbatim (SetDefaults, no
+// Normalize), so without a Normalize() at the RequiredSections lookup a stored
+// "enhancement"/"BUG" would miss the canonical-only switch, fall to default and
+// make lint silently pass an issue it should warn on (beads-pw8k).
+func TestValidateTemplateNormalizesType(t *testing.T) {
+	bodyNoSections := "Just a plain description with no template sections."
+	tests := []struct {
+		name     string
+		typ      types.IssueType
+		wantWarn bool
+	}{
+		{"canonical feature", types.TypeFeature, true},
+		{"alias enhancement (=feature)", types.IssueType("enhancement"), true},
+		{"alias feat (=feature)", types.IssueType("feat"), true},
+		{"canonical bug", types.TypeBug, true},
+		{"mixed-case BUG (=bug)", types.IssueType("BUG"), true},
+		{"mixed-case EPIC (=epic)", types.IssueType("EPIC"), true},
+		{"alias adr (=decision)", types.IssueType("adr"), true},
+		{"canonical chore (no sections)", types.TypeChore, false},
+		{"custom type (no sections)", types.IssueType("mytype"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateTemplate(tt.typ, bodyNoSections)
+			if (err != nil) != tt.wantWarn {
+				t.Errorf("ValidateTemplate(%q, no-sections) warn=%v, want %v (normalizes to %q)",
+					tt.typ, err != nil, tt.wantWarn, tt.typ.Normalize())
+			}
+		})
+	}
+}
+
+// TestLintIssueNormalizesType is the LintIssue-level teeth: an alias-typed issue
+// with no sections and no AcceptanceCriteria field must warn like its canonical
+// form (beads-pw8k).
+func TestLintIssueNormalizesType(t *testing.T) {
+	iss := &types.Issue{ID: "bd-x", Title: "t", IssueType: types.IssueType("enhancement"),
+		Description: "no sections here"}
+	if err := LintIssue(iss); err == nil {
+		t.Fatalf("LintIssue: alias type 'enhancement' with no sections should warn (canonical feature warns), got nil")
+	}
+	// A dedicated AcceptanceCriteria field still satisfies the requirement for
+	// the normalized feature type — no spurious warning.
+	iss.AcceptanceCriteria = "must pass CI"
+	if err := LintIssue(iss); err != nil {
+		t.Errorf("LintIssue: alias 'enhancement' with AcceptanceCriteria field should pass, got %v", err)
+	}
+}
