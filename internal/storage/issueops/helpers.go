@@ -70,6 +70,17 @@ var issueUpsertColumns = []string{
 	// guard (bd-hj85c) applies to them too. updated_at MUST stay last (it is the
 	// stale-guard comparison column).
 	"owner", "pinned", "mol_type", "work_type",
+	// spec_id/due_at/defer_until/await_*/waiters/no_history/ephemeral/wisp_type/
+	// is_template are ALSO user-settable (bd create/update --spec-id/--due/
+	// --defer/--await-id, wisp routing) and written on fresh INSERT but were
+	// likewise omitted from the UPSERT set, so re-importing an edited existing
+	// issue silently dropped their updates too — the same lost-update class as
+	// kalv, just more fields (beads-lbez, the systematic column-diff map).
+	// Compaction-managed (compaction_level/compacted_at/...) and event-only
+	// (event_kind/actor/target/payload/timeout_ns) columns are deliberately NOT
+	// added here: they are system/type-managed, not user-round-tripped edits.
+	"spec_id", "due_at", "defer_until", "await_type", "await_id", "waiters",
+	"no_history", "ephemeral", "wisp_type", "is_template",
 	"updated_at",
 }
 

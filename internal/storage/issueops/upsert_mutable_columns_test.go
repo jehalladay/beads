@@ -23,6 +23,13 @@ func TestUpsertCoversMutableFields(t *testing.T) {
 		// The beads-kalv gap: these are written on INSERT + exported but were
 		// missing from the UPSERT set.
 		"owner", "pinned", "mol_type", "work_type",
+		// The beads-lbez expansion: the remaining user-settable fields the
+		// column-diff map found still missing from the UPSERT set (INSERT-only).
+		// spec_id (--spec-id), due_at (--due), defer_until (--defer),
+		// await_type/await_id (gate fields), waiters, no_history/ephemeral/
+		// wisp_type (wisp routing), is_template.
+		"spec_id", "due_at", "defer_until", "await_type", "await_id", "waiters",
+		"no_history", "ephemeral", "wisp_type", "is_template",
 	}
 
 	have := make(map[string]bool, len(issueUpsertColumns))
