@@ -1069,14 +1069,22 @@ func (e *Engine) doPush(ctx context.Context, opts SyncOptions, skipIDs, forceIDs
 				continue
 			}
 
-			// Update local issue with external ref
+			// Update local issue with external ref. The external CreateIssue
+			// already succeeded, so a failure to persist the ref locally leaves an
+			// ORPHANED external issue: the next sync sees an empty external_ref,
+			// decides willCreate=true, and creates a DUPLICATE (beads-2cis). The
+			// external API call can't be made atomic with the local write, so the
+			// mitigation is to retry the local persist — the common cause is a
+			// transient local-DB error (serialization/lock/blip), which a short
+			// bounded retry clears, eliminating the orphan in the overwhelming
+			// majority of cases. A persistent failure still surfaces (Errors++ +
+			// warn) so the operator can reconcile the broken link.
 			ref := e.Tracker.BuildExternalRef(created)
 			updates := map[string]interface{}{"external_ref": ref}
-			if err := e.Store.UpdateIssue(ctx, issue.ID, updates, e.Actor); err != nil {
-				e.warn("Failed to update external_ref for %s: %v", issue.ID, err)
+			if perr := e.persistExternalRefWithRetry(ctx, issue.ID, updates); perr != nil {
+				e.warn("Failed to persist external_ref for %s after retries — external issue %s is orphaned; a later sync may duplicate it until the link is reconciled: %v",
+					issue.ID, ref, perr)
 				stats.Errors++
-				// Note: issue WAS created externally, so we still count Created
-				// but also flag the error so the user knows the link is broken
 			}
 			stats.Created++
 		} else if !opts.CreateOnly || forceIDs[issue.ID] {
@@ -1132,6 +1140,36 @@ func (e *Engine) doPush(ctx context.Context, opts SyncOptions, skipIDs, forceIDs
 		attribute.Int("sync.errors", stats.Errors),
 	)
 	return stats, nil
+}
+
+// externalRefPersistRetries bounds how many times doPush retries the local
+// external_ref write after a successful external CreateIssue (beads-2cis). Kept
+// small: the goal is to ride out a transient local-DB blip, not to block a sync.
+const externalRefPersistRetries = 3
+
+// persistExternalRefWithRetry writes the external_ref onto the just-created local
+// issue, retrying a bounded number of times on failure. The external issue
+// already exists, so eliminating a transient-failure orphan here prevents the
+// next sync from creating a duplicate (beads-2cis). Returns the last error if
+// all attempts fail (the caller surfaces it); returns nil as soon as one
+// succeeds. Respects ctx cancellation between attempts.
+func (e *Engine) persistExternalRefWithRetry(ctx context.Context, issueID string, updates map[string]interface{}) error {
+	var lastErr error
+	for attempt := 0; attempt < externalRefPersistRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt) * 50 * time.Millisecond):
+			}
+		}
+		if err := e.Store.UpdateIssue(ctx, issueID, updates, e.Actor); err != nil {
+			lastErr = err
+			continue
+		}
+		return nil
+	}
+	return lastErr
 }
 
 func (e *Engine) collectBatchPushIssues(issues []*types.Issue, opts SyncOptions, descendantSet, skipIDs, forceIDs map[string]bool) ([]*types.Issue, int) {
