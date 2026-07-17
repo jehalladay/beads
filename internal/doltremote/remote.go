@@ -56,7 +56,13 @@ func FromGitURL(url string) string {
 	if isWindowsDrivePath(url) {
 		return "git+" + url
 	}
-	if idx := strings.Index(url, ":"); idx > 0 && !strings.Contains(url[:idx], "/") {
+	// Only convert genuine SCP-style git URLs (user@host:path). Gate on the same
+	// isSCPStyleGitURL predicate Normalize uses (which requires '@'), so the two
+	// helpers agree: without this, FromGitURL mangled host:port ("localhost:8080"
+	// → "git+ssh://localhost/8080") and Windows drive-relative ("C:relative")
+	// strings that Normalize correctly leaves alone (beads-0l14).
+	if isSCPStyleGitURL(url) {
+		idx := strings.Index(url, ":")
 		return "git+ssh://" + url[:idx] + "/" + url[idx+1:]
 	}
 	return "git+" + url
