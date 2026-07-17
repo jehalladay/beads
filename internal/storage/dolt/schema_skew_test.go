@@ -13,12 +13,40 @@ import (
 // TestCheckForwardDrift_ForwardDrift_ReturnsSchemaSkewError verifies that
 // CheckForwardDrift returns a *schema.SchemaSkewError when the DB is one
 // migration ahead of the binary.
+//
+// Uses a dedicated database rather than setupTestStore: this test calls
+// t.Setenv to strip an inherited BD_IGNORE_SCHEMA_SKEW (town seats set it during
+// the live v54/v53 skew), and Go forbids t.Setenv in a parallel test while
+// setupTestStore marks the test parallel (same constraint as
+// TestCheckForwardDrift_EscapeHatch_ReturnsNil). Without the strip this test
+// FAILS in a BD_IGNORE_SCHEMA_SKEW=1 seat (the hatch downgrades the error to a
+// warning) — beads-0j3h.
 func TestCheckForwardDrift_ForwardDrift_ReturnsSchemaSkewError(t *testing.T) {
-	store, cleanup := setupTestStore(t)
-	defer cleanup()
+	skipIfNoDolt(t)
+	t.Setenv("BD_IGNORE_SCHEMA_SKEW", "")
 
 	ctx, cancel := testContext(t)
 	defer cancel()
+
+	tmpDir := t.TempDir()
+	dbName := uniqueTestDBName(t)
+
+	store, err := New(ctx, &Config{
+		Path:            tmpDir,
+		CommitterName:   "test",
+		CommitterEmail:  "test@example.com",
+		Database:        dbName,
+		CreateIfMissing: true,
+	})
+	if err != nil {
+		t.Fatalf("New (create): %v", err)
+	}
+	defer func() {
+		dropCtx, dropCancel := context.WithTimeout(context.Background(), 5*testTimeout)
+		defer dropCancel()
+		_, _ = store.db.ExecContext(dropCtx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
+		store.Close()
+	}()
 
 	if _, err := store.db.ExecContext(ctx,
 		"INSERT INTO schema_migrations (version) VALUES (?)",
@@ -27,7 +55,7 @@ func TestCheckForwardDrift_ForwardDrift_ReturnsSchemaSkewError(t *testing.T) {
 		t.Fatalf("insert future migration: %v", err)
 	}
 
-	err := schema.CheckForwardDrift(ctx, store.db)
+	err = schema.CheckForwardDrift(ctx, store.db)
 	if err == nil {
 		t.Fatal("CheckForwardDrift = nil, want error when DB is ahead of binary")
 	}
@@ -109,6 +137,10 @@ func TestCheckForwardDrift_EscapeHatch_ReturnsNil(t *testing.T) {
 // migration ahead of the binary must fail with a *schema.SchemaSkewError.
 func TestDoltNew_ReadOnly_ForwardDrift_ReturnsSchemaSkewError(t *testing.T) {
 	skipIfNoDolt(t)
+	// Strip an inherited BD_IGNORE_SCHEMA_SKEW (town seats set it during the live
+	// v54/v53 skew) so this test exercises the non-escape-hatch refuse path even
+	// when run from such a seat (beads-0j3h).
+	t.Setenv("BD_IGNORE_SCHEMA_SKEW", "")
 
 	ctx, cancel := testContext(t)
 	defer cancel()
