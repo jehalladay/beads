@@ -220,14 +220,20 @@ func TestEmbeddedMergeAndSettleRefusesUnknownTable(t *testing.T) {
 
 // TestEmbeddedMergeAndSettleMetadataConflict is the embedded-engine
 // counterpart of TestPullAutoResolveMetadataConflicts (GH#2466): a
-// metadata-only merge conflict is auto-resolved with "theirs".
+// metadata-only merge conflict on a CONVERGENT key is auto-resolved with
+// "theirs". It uses last_import_time — the sole surviving convergent metadata
+// key after migrations 0030/0036 moved the churn-prone keys (incl.
+// dolt_auto_push_*) out of the committed metadata table — so the beads-ka1n
+// gate (metadataConflictsAreConvergent) permits the --theirs resolution. The
+// non-convergent identity-key path is exercised by
+// TestEmbeddedMergeAndSettleMetadataIdentityConflictRefuses below.
 func TestEmbeddedMergeAndSettleMetadataConflict(t *testing.T) {
 	te := newTestEnv(t, "metasettle")
 	ctx := t.Context()
 	conn := openSettleConn(t, ctx, te)
 
 	if _, err := conn.ExecContext(ctx,
-		"INSERT INTO metadata (`key`, value) VALUES ('dolt_auto_push_commit', 'aaa')"); err != nil {
+		"INSERT INTO metadata (`key`, value) VALUES ('last_import_time', '2026-01-01T00:00:00Z')"); err != nil {
 		t.Fatalf("insert metadata on main: %v", err)
 	}
 	if _, err := conn.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'local metadata')"); err != nil {
@@ -242,7 +248,7 @@ func TestEmbeddedMergeAndSettleMetadataConflict(t *testing.T) {
 		t.Fatalf("checkout peer: %v", err)
 	}
 	if _, err := conn.ExecContext(ctx,
-		"INSERT INTO metadata (`key`, value) VALUES ('dolt_auto_push_commit', 'bbb')"); err != nil {
+		"INSERT INTO metadata (`key`, value) VALUES ('last_import_time', '2026-02-02T00:00:00Z')"); err != nil {
 		t.Fatalf("insert metadata on peer: %v", err)
 	}
 	if _, err := conn.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'peer metadata')"); err != nil {
@@ -258,11 +264,65 @@ func TestEmbeddedMergeAndSettleMetadataConflict(t *testing.T) {
 
 	var value string
 	if err := conn.QueryRowContext(ctx,
-		"SELECT value FROM metadata WHERE `key` = 'dolt_auto_push_commit'").Scan(&value); err != nil {
+		"SELECT value FROM metadata WHERE `key` = 'last_import_time'").Scan(&value); err != nil {
 		t.Fatalf("read resolved metadata: %v", err)
 	}
-	if value != "bbb" {
-		t.Errorf("expected metadata value 'bbb' (theirs), got %q", value)
+	if value != "2026-02-02T00:00:00Z" {
+		t.Errorf("expected metadata value '2026-02-02T00:00:00Z' (theirs), got %q", value)
+	}
+}
+
+// TestEmbeddedMergeAndSettleMetadataIdentityConflictRefuses is the
+// embedded-engine teeth for beads-ka1n: a metadata conflict on a
+// non-convergent identity key (_project_id) is a genuine clone-identity split,
+// so MergeAndSettle must REFUSE to auto-resolve it (surfacing
+// MergeConflictsError and restoring the working set) rather than silently
+// taking --theirs and overwriting this clone's identity. This is the exact
+// class as the beadstest _project_id town-freeze in CLAUDE.md.
+func TestEmbeddedMergeAndSettleMetadataIdentityConflictRefuses(t *testing.T) {
+	te := newTestEnv(t, "metaidentity")
+	ctx := t.Context()
+	conn := openSettleConn(t, ctx, te)
+
+	if _, err := conn.ExecContext(ctx,
+		"INSERT INTO metadata (`key`, value) VALUES ('_project_id', 'ours-project')"); err != nil {
+		t.Fatalf("insert metadata on main: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'local identity')"); err != nil {
+		t.Fatalf("commit on main: %v", err)
+	}
+
+	if _, err := conn.ExecContext(ctx, "CALL DOLT_BRANCH('metaidpeer', 'HEAD~1')"); err != nil {
+		t.Fatalf("create peer branch: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, "CALL DOLT_CHECKOUT('metaidpeer')"); err != nil {
+		t.Fatalf("checkout peer: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx,
+		"INSERT INTO metadata (`key`, value) VALUES ('_project_id', 'theirs-project')"); err != nil {
+		t.Fatalf("insert metadata on peer: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'peer identity')"); err != nil {
+		t.Fatalf("commit on peer: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, "CALL DOLT_CHECKOUT('main')"); err != nil {
+		t.Fatalf("checkout main: %v", err)
+	}
+
+	err := versioncontrolops.MergeAndSettle(ctx, conn, "metaidpeer")
+	var mce *versioncontrolops.MergeConflictsError
+	if !errors.As(err, &mce) {
+		t.Fatalf("want MergeConflictsError for identity-key metadata conflict, got: %v", err)
+	}
+
+	// The refusal must NOT have silently overwritten our identity with theirs.
+	var value string
+	if err := conn.QueryRowContext(ctx,
+		"SELECT value FROM metadata WHERE `key` = '_project_id'").Scan(&value); err != nil {
+		t.Fatalf("read _project_id after refused merge: %v", err)
+	}
+	if value != "ours-project" {
+		t.Errorf("refused merge overwrote local identity: _project_id = %q, want %q", value, "ours-project")
 	}
 }
 
