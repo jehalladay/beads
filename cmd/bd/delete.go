@@ -73,25 +73,25 @@ Force: Delete and orphan dependents
 		if fromFile != "" {
 			fileIDs, err := readIssueIDsFromFile(fromFile)
 			if err != nil {
-				return HandleError("reading file: %v", err)
+				return HandleErrorRespectJSON("reading file: %v", err)
 			}
 			issueIDs = append(issueIDs, fileIDs...)
 		}
 		if len(issueIDs) == 0 {
 			_ = cmd.Usage()
-			return HandleError("no issue IDs provided")
+			return HandleErrorRespectJSON("no issue IDs provided")
 		}
 		issueIDs = uniqueStrings(issueIDs)
 
 		if store == nil {
 			if err := ensureStoreActive(); err != nil {
-				return HandleError("%v", err)
+				return HandleErrorRespectJSON("%v", err)
 			}
 		}
 
 		if len(issueIDs) > 1 || cascade {
 			if err := deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput, false); err != nil {
-				return HandleError("%v", err)
+				return HandleErrorRespectJSON("%v", err)
 			}
 			return nil
 		}
@@ -102,9 +102,9 @@ Force: Delete and orphan dependents
 		routedResult, err := resolveAndGetIssueForMutation(ctx, store, issueID)
 		if err != nil {
 			if isNotFoundErr(err) {
-				return HandleError("issue %s not found", issueID)
+				return HandleErrorRespectJSON("issue %s not found", issueID)
 			}
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 		defer routedResult.Close()
 		issue := routedResult.Issue
@@ -113,21 +113,21 @@ Force: Delete and orphan dependents
 		connectedIssues := make(map[string]*types.Issue)
 		deps, err := activeStore.GetDependencies(ctx, issueID)
 		if err != nil {
-			return HandleError("getting dependencies: %v", err)
+			return HandleErrorRespectJSON("getting dependencies: %v", err)
 		}
 		for _, dep := range deps {
 			connectedIssues[dep.ID] = dep
 		}
 		dependents, err := activeStore.GetDependents(ctx, issueID)
 		if err != nil {
-			return HandleError("getting dependents: %v", err)
+			return HandleErrorRespectJSON("getting dependents: %v", err)
 		}
 		for _, dependent := range dependents {
 			connectedIssues[dependent.ID] = dependent
 		}
 		depRecords, err := activeStore.GetDependencyRecords(ctx, issueID)
 		if err != nil {
-			return HandleError("getting dependency records: %v", err)
+			return HandleErrorRespectJSON("getting dependency records: %v", err)
 		}
 		// Build the regex pattern for matching issue IDs (handles hyphenated IDs properly)
 		// Pattern: (^|non-word-char)(issueID)($|non-word-char) where word-char includes hyphen
@@ -211,7 +211,7 @@ Force: Delete and orphan dependents
 			return nil
 		})
 		if deleteErr != nil {
-			return HandleError("deleting issue: %v", deleteErr)
+			return HandleErrorRespectJSON("deleting issue: %v", deleteErr)
 		}
 
 		commandDidWrite.Store(true)
