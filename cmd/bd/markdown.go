@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/validation"
@@ -390,7 +391,20 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) error {
 		issues = append(issues, issue)
 	}
 
-	if err := store.CreateIssues(ctx, issues, actor); err != nil {
+	// Use the bulk create-with-options path so skipped dependencies (empty or
+	// nonexistent targets) surface a warning instead of being dropped silently
+	// (beads-r2lq). NOTE: this INTENTIONALLY aligns markdown import to the other
+	// bulk-import paths (JSONL import, repo-sync, doctor-migrate) which all use
+	// CreateIssuesWithFullOptions and therefore do NOT fire per-issue on_create /
+	// dependency hooks. Markdown was the lone bulk path firing them; not firing
+	// hooks here is the consistent behavior for a bulk operation, not a
+	// regression — do not "restore" store.CreateIssues to re-enable hooks.
+	createOpts := storage.BatchCreateOptions{
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			WarnError("skipped dependency %s -> %s: %s", issueID, dependsOnID, reason)
+		},
+	}
+	if err := store.CreateIssuesWithFullOptions(ctx, issues, actor, createOpts); err != nil {
 		return HandleError("creating issues from markdown: %v", err)
 	}
 	commitMsg := fmt.Sprintf("bd: create %d issue(s) from %s", len(templates), filepath)
