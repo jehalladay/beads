@@ -49,6 +49,59 @@ func validatePriorityUpdate(updates map[string]interface{}) error {
 	return nil
 }
 
+// validateTitleUpdate enforces the title invariants Issue.Validate applies on
+// create (non-empty, <=500 chars) at the shared update write path. The CLI
+// update command guards these (cmd/bd/update.go), but the batch, graph-apply,
+// proxied-server, and programmatic store.UpdateIssue paths build the updates map
+// directly and would otherwise write an empty or >500-char title, silently
+// violating Issue.Validate (beads-25k6). A missing "title" key is a no-op.
+func validateTitleUpdate(updates map[string]interface{}) error {
+	raw, ok := updates["title"]
+	if !ok {
+		return nil
+	}
+	title, ok := raw.(string)
+	if !ok {
+		return fmt.Errorf("invalid title %v (expected a string, got %T)", raw, raw)
+	}
+	if len(title) == 0 {
+		return fmt.Errorf("title is required")
+	}
+	if len(title) > 500 {
+		return fmt.Errorf("title must be 500 characters or less (got %d)", len(title))
+	}
+	return nil
+}
+
+// validateEstimatedMinutesUpdate enforces the estimated_minutes >= 0 invariant
+// from Issue.Validate at the shared update path (beads-25k6). Accepts the
+// int/int64/float64 shapes callers/JSON decoders deliver; a non-integral float
+// is rejected rather than truncated. A missing key is a no-op.
+func validateEstimatedMinutesUpdate(updates map[string]interface{}) error {
+	raw, ok := updates["estimated_minutes"]
+	if !ok || raw == nil {
+		return nil
+	}
+	var m int
+	switch v := raw.(type) {
+	case int:
+		m = v
+	case int64:
+		m = int(v)
+	case float64:
+		if v != float64(int(v)) {
+			return fmt.Errorf("invalid estimated_minutes %v (expected an integer)", v)
+		}
+		m = int(v)
+	default:
+		return fmt.Errorf("invalid estimated_minutes %v (expected an integer, got %T)", raw, raw)
+	}
+	if m < 0 {
+		return fmt.Errorf("estimated_minutes cannot be negative")
+	}
+	return nil
+}
+
 // IsAllowedUpdateField checks if a field name is valid for issue updates.
 func IsAllowedUpdateField(key string) bool {
 	allowed := map[string]bool{
@@ -183,6 +236,16 @@ func updateIssueInTx(ctx context.Context, tx DBTX, id string, updates map[string
 	// route through validation.ValidatePriority, so this shared guard keeps the
 	// 0-4 invariant that Issue.Validate enforces on create.
 	if err := validatePriorityUpdate(updates); err != nil {
+		return nil, err
+	}
+	// Same rationale as priority: title (required, <=500) and estimated_minutes
+	// (>=0) are Issue.Validate invariants the CLI guards but the batch/graph-
+	// apply/proxied/programmatic paths bypass — enforce them at the shared core
+	// so create and update converge on one gate (beads-25k6).
+	if err := validateTitleUpdate(updates); err != nil {
+		return nil, err
+	}
+	if err := validateEstimatedMinutesUpdate(updates); err != nil {
 		return nil, err
 	}
 
