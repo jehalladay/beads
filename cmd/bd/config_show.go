@@ -75,6 +75,7 @@ Examples:
 
 func init() {
 	configShowCmd.Flags().String("source", "", "Filter by source (e.g., config.yaml, env, default, metadata, database, git)")
+	configShowCmd.Flags().BoolVar(&showSecrets, "show-secrets", false, "Show secret-key values (api_key/token/password) in cleartext instead of redacting them")
 	configCmd.AddCommand(configShowCmd)
 }
 
@@ -93,6 +94,15 @@ func collectConfigEntries() []configEntry {
 
 	// 4. Git config (beads.role)
 	entries = append(entries, collectGitConfigEntries()...)
+
+	// Redact secret values at the single collection chokepoint so every
+	// display path (text via printConfigEntries AND the --json output, which
+	// serializes these entries directly) is covered (beads-3q1n). --show-secrets
+	// opts back into raw; config get is the explicit single-value escape hatch
+	// and is redacted separately.
+	for i := range entries {
+		entries[i].Value = redactUnlessShown(entries[i].Key, entries[i].Value)
+	}
 
 	// Sort by key for stable output
 	sort.Slice(entries, func(i, j int) bool {

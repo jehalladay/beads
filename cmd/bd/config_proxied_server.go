@@ -38,13 +38,14 @@ func runConfigSetProxiedServer(ctx context.Context, key, value string) {
 		FatalErrorRespectJSON("failed to commit: %v", err)
 	}
 
+	displayValue := redactUnlessShown(key, value)
 	if jsonOutput {
 		_ = outputJSON(map[string]string{
 			"key":   key,
-			"value": value,
+			"value": displayValue,
 		})
 	} else {
-		fmt.Printf("Set %s = %s\n", key, value)
+		fmt.Printf("Set %s = %s\n", key, displayValue)
 	}
 	printConfigSideEffects(checkConfigSetSideEffects(key, value))
 }
@@ -79,6 +80,12 @@ func runConfigListProxiedServer(ctx context.Context) {
 	cfg, err := uw.ConfigUseCase().GetAllConfig(ctx)
 	if err != nil {
 		FatalErrorRespectJSON("Error listing config: %v", err)
+	}
+
+	// Redact secret values before any display (text or JSON) — beads-3q1n.
+	// --show-secrets opts back into raw.
+	for k, v := range cfg {
+		cfg[k] = redactUnlessShown(k, v)
 	}
 
 	if jsonOutput {
