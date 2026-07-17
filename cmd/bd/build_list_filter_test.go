@@ -426,3 +426,41 @@ func TestBuildListFilter_AssigneeTrimmed(t *testing.T) {
 		t.Errorf("whitespace-only assignee set Assignee = %q, want no filter", *fw.Assignee)
 	}
 }
+
+// beads-7wrj: `bd list --status OPEN` (mixed-case canonical status) HARD-ERRORED
+// while `bd query status=OPEN` normalized + matched — divergent UX for identical
+// intent. buildListFilter must case-fold built-in statuses (mirroring the type
+// side, beads-xsdh) so the flag path accepts mixed case like the query lang.
+func TestBuildListFilter_StatusCaseFold_Single(t *testing.T) {
+	f, err := buildListFilter(listInput{status: "OPEN"}, baseCfg())
+	if err != nil {
+		t.Fatalf("--status OPEN should case-fold to open, got err %v", err)
+	}
+	if f.Status == nil || *f.Status != types.StatusOpen {
+		t.Fatalf("Status = %v, want open", f.Status)
+	}
+}
+
+func TestBuildListFilter_StatusCaseFold_Multi(t *testing.T) {
+	f, err := buildListFilter(listInput{status: "OPEN,In_Progress"}, baseCfg())
+	if err != nil {
+		t.Fatalf("multi-status mixed case should case-fold, got err %v", err)
+	}
+	if len(f.Statuses) != 2 || f.Statuses[0] != types.StatusOpen || f.Statuses[1] != types.StatusInProgress {
+		t.Errorf("Statuses = %v, want [open in_progress]", f.Statuses)
+	}
+}
+
+// Teeth: a custom status is compared case-sensitively (IsValidWithCustom), so a
+// case-folding fix must NOT lowercase a custom status out of validity. A
+// mixed-case custom status registered verbatim must still resolve to itself.
+func TestBuildListFilter_StatusCaseFold_CustomPreservesCase(t *testing.T) {
+	cfg := listFilterConfig{customStatuses: []types.CustomStatus{{Name: "Triage", Category: types.CategoryActive}}}
+	f, err := buildListFilter(listInput{status: "Triage"}, cfg)
+	if err != nil {
+		t.Fatalf("mixed-case custom status should stay valid: %v", err)
+	}
+	if f.Status == nil || *f.Status != types.Status("Triage") {
+		t.Fatalf("Status = %v, want Triage (unchanged)", f.Status)
+	}
+}

@@ -131,14 +131,17 @@ func buildListFilter(in listInput, cfg listFilterConfig) (types.IssueFilter, err
 		names := cfg.customStatusNames()
 		statusParts := strings.Split(in.status, ",")
 		if len(statusParts) == 1 {
-			s := types.Status(strings.TrimSpace(statusParts[0]))
+			// Normalize case for built-in statuses so `--status OPEN` matches the
+			// `bd query status=OPEN` behavior; custom statuses round-trip
+			// unchanged (compared case-sensitively by IsValidWithCustom). beads-7wrj.
+			s := types.Status(strings.TrimSpace(statusParts[0])).Normalize()
 			if !s.IsValidWithCustom(names) {
 				return filter, fmt.Errorf("invalid status %q (valid: %s)", in.status, validStatusList(names))
 			}
 			filter.Status = &s
 		} else {
 			for _, part := range statusParts {
-				s := types.Status(strings.TrimSpace(part))
+				s := types.Status(strings.TrimSpace(part)).Normalize()
 				if !s.IsValidWithCustom(names) {
 					return filter, fmt.Errorf("invalid status %q in multi-status filter (valid: %s)", strings.TrimSpace(part), validStatusList(names))
 				}

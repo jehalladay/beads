@@ -380,6 +380,19 @@ func (s Status) IsValid() bool {
 	return false
 }
 
+// Normalize folds the case of built-in status names so the `bd list --status`
+// flag path accepts mixed case ("OPEN", "In_Progress") like the `bd query
+// status=` language, which lowercases first (beads-7wrj). It only folds when the
+// lowercased form is a built-in, so a legitimately mixed-case custom status
+// (compared case-sensitively by IsValidWithCustom) round-trips unchanged. This
+// mirrors IssueType.Normalize (beads-xsdh) for the status axis.
+func (s Status) Normalize() Status {
+	if lowered := Status(strings.ToLower(string(s))); lowered.IsValid() {
+		return lowered
+	}
+	return s
+}
+
 // IsValidWithCustom checks if the status is valid, including custom statuses.
 // Custom statuses are user-defined via bd config set status.custom "status1,status2,..."
 func (s Status) IsValidWithCustom(customStatuses []string) bool {
