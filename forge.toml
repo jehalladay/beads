@@ -1,13 +1,27 @@
 # forge.toml — Forge package manifest for beads (bd).
 #
-# This file registers beads in the ReactiveCLI Forge workspace so that
+# This file registers beads in the Forge workspace so that
 # `forge build/test/lint/check` resolve a real target. See AGENT_INSTRUCTIONS.md
 # and the Makefile for the authoritative build contract.
 #
 # SCOPE (beads-r06.1 / A1): declare the package + backend so `forge` resolves
-# beads. The mapping of forge's build/test/lint/check onto the real
-# gms_pure_go + version-stamped-ldflags build (so `forge build` == `make build`)
-# lands in beads-r06.2 / A2 via [build.commands] below.
+# beads. beads-r06.2 (A2) maps forge's build/test/lint/check onto the real
+# gms_pure_go + version-stamped-ldflags build (so `forge build` == the canonical
+# gate) via [build.commands] below — ACTIVE as of the forge>=0.2.1 pin.
+#
+# ⚠️ REQUIRES forge >= 0.2.1 (tag v0.2.1, commit 75857ff).
+# The go backend honors [build.commands] overrides only as of forge 0.2.1
+# (FB-series command_runner.py: go_backend routes every verb through
+# run_command + run_custom, consulting ctx.command_overrides and
+# ctx.default_timeout; emit ERROR -> typer.Exit(1) so a failed override fails
+# the build). On forge 0.2.0 the go backend SILENTLY ignores [build.commands]
+# and runs a bare `go build ./...` (beads-2hk) — so an older forge would run an
+# un-gated build. This is NOT a merge-safety regression: the canonical gate
+# (scripts/ci/forge-gate.sh) is enforced independently by the git pre-push hook
+# and CI, both of which shell out to that script directly (not via forge). The
+# forge>=0.2.1 pin is what makes `forge build` ALSO be that same gate.
+# Forge has no enforced min-version manifest field, so this requirement is
+# documented here and locked behaviorally by scripts/forge_gate_test.go.
 
 [package]
 name = "beads"
@@ -20,61 +34,33 @@ description = "bd — dependency-aware issue tracker backed by Dolt (github.com/
 backend = "go"
 
 # [build.commands] — map forge's verbs onto the real beads build contract
-# (BUILD_TAGS=gms_pure_go, CGO_ENABLED=1, version-stamped ldflags) via the
-# Makefile so CI == forge.
+# (BUILD_TAGS=gms_pure_go, CGO_ENABLED=1, version-stamped ldflags) so
+# CI == forge == local by construction. Requires forge >= 0.2.1 (see header).
 #
-# OWNERSHIP (shared table; keep keys non-overlapping):
-#   - build/test/lint/check  → beads-r06.2 (A2), adds its keys here
-#   - release/package        → beads-r06.7 (this): the release + cross-compile
-#     path. `release` runs the version-stamped host-platform release build
+# OWNERSHIP (shared table; keys are non-overlapping):
+#   - build/test/lint/check  → beads-r06.2 (A2)
+#   - release/package        → beads-r06.7: the release + cross-compile path.
+#     `release`/`package` run the version-stamped host-platform release build
 #     (`make release-build`); the full cross-platform matrix is cut by
 #     GoReleaser + the goreleaser-macos CI job in .github/workflows/release.yml.
-#
-# ⚠️ ACTIVATION BLOCKER (beads-2hk): forge 0.2.0's go backend does NOT honor
-# [build.commands] overrides (go_backend.py reads only its hardcoded default
-# dict; unlike the python/typescript/electron backends it never consults
-# ctx.command_overrides and has no run_custom). So `forge release` today still
-# runs the default `go build ./...` and ignores the mapping below. These entries
-# are the FINAL contract; they go live once the forge go-backend override patch
-# (staged at /fsx/ubuntu/shared/forge-go-backend-patch/) lands and forge is
-# pinned, OR r06.2 switches this package to backend=python (as the gt-fork
-# forge.toml does). Until then, run the release build directly: `make
-# release-build`. The regression guards in scripts/release_forge_test.go lock
-# this contract regardless of activation state.
-
 [build.commands]
-# --- beads-r06.7: release + cross-compile path ---
+# --- beads-r06.2 (A2): build/test/lint/check → the canonical gate ------------
+# `forge build` IS scripts/ci/forge-gate.sh — the single source of truth for the
+# "forge build GREEN" gate (CGO_ENABLED=1, -tags gms_pure_go, version-stamped
+# ldflags, pure-Go compile, cross-compile). It asserts the emitted binary is the
+# *tagged* build, so a bare `go build ./...` (no tags/ldflags) cannot masquerade
+# as green. The git pre-push hook and CI invoke this SAME script, so there is no
+# drift. Cold build (~175s) + pure-Go + cross-compile can exceed the 300s
+# default, so give it explicit headroom via the table form (forge 0.2.1 honors a
+# per-command timeout).
+build = { command = "scripts/ci/forge-gate.sh", timeout = 600 }
+test  = "make test"
+lint  = "make ci-pr-lint"
+check = "go vet -tags gms_pure_go ./..."
+
+# --- beads-r06.7: release + cross-compile path -------------------------------
 # Version-stamped host-platform release build (mirrors GoReleaser ldflags).
 release = "make release-build"
 # Package == the release build artifact; the distributable archives are
 # assembled by GoReleaser in CI.
 package = "make release-build"
-
-# --- forge-green gate wiring (A3 / beads-r06.3) ---------------------------
-# The canonical gate lives in scripts/ci/forge-gate.sh (BUILD_TAGS=gms_pure_go,
-# CGO_ENABLED=1, version-stamped ldflags, cross-compile). git pre-push and CI
-# both invoke that SAME script, so CI == forge with no drift.
-#
-# INTERIM (now): forge 0.2.0's go backend ignores [build.commands] overrides
-# (beads-2hk) and its [build.hooks] run under a hardcoded 120s subprocess
-# timeout (cli/commands/build.py:137). A cold full beads build (~175s) does not
-# fit that window, so `forge build` cannot yet BE the full gate. We wire a fast
-# `pre_build` hook (--fast: build + ldflags-stamp assert, fits 120s warm) so
-# `forge build` still exercises the real canonical build and rejects a bare
-# untagged build; the FULL gate (pure-Go + cross-compile) is enforced by
-# pre-push + CI.
-[build.hooks]
-pre_build = "scripts/ci/forge-gate.sh --fast"
-
-# FINAL (once beads-2hk forge patch lands + forge is pinned >= that version):
-# replace the interim hook with a real command override so `forge build` runs
-# the identical gate and bare `go build ./...` is rejected outright:
-#
-#   [build.commands]
-#   build = "scripts/ci/forge-gate.sh"
-#   test  = "make test"
-#   lint  = "make ci-pr-lint"
-#   check = "go vet -tags gms_pure_go ./..."
-#
-# The gate logic stays in scripts/ci/forge-gate.sh either way, so this swap is a
-# no-behavior-drift config change. Tracked by beads-r06.2 (A2) + beads-2hk.
