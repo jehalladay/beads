@@ -594,6 +594,22 @@ create, update, show, or close operation).`,
 	},
 }
 
+// metadataIsJSONObject reports whether raw is a JSON object (or empty/null,
+// which the metadata consumers treat as an empty object). Arrays and scalars
+// are rejected: they pass json.Valid but every metadata edit path
+// (mergeMetadata / applyMetadataEdits / --set-metadata) unmarshals into
+// map[string]json.RawMessage and hard-errors on a non-object, permanently
+// locking the bead out of all metadata edits (beads-ef2k). Gating at the
+// --metadata input sites keeps a non-object from ever being stored.
+func metadataIsJSONObject(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "null" {
+		return true // empty/null == empty object, tolerated by all consumers
+	}
+	var obj map[string]json.RawMessage
+	return json.Unmarshal([]byte(trimmed), &obj) == nil
+}
+
 // mergeMetadata merges new metadata JSON into existing metadata.
 // Keys from newMeta overwrite keys in existing; keys only in existing are preserved.
 func mergeMetadata(existing, newMeta json.RawMessage) (json.RawMessage, error) {
