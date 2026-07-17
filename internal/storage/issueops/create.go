@@ -744,6 +744,32 @@ func PersistDependenciesWithOptionsResult(ctx context.Context, tx *sql.Tx, issue
 			}
 			if rowsAffected > 0 {
 				result.markChanged(depTable)
+			} else {
+				// rowsAffected==0 means the ON DUPLICATE KEY UPDATE type=type
+				// no-op'd: a row already exists at this PK. depid.New keys on the
+				// FLATTENED (issue_id, target-string) with no target-kind marker,
+				// so an issue-target and a wisp-target that share the same id
+				// string derive the SAME PK (beads-xaxe, root of uekw/jym1). If the
+				// existing row holds the target in a DIFFERENT typed column than
+				// this edge's kind, the two are genuinely distinct edges colliding
+				// on one PK — silently keeping only the first would drop this one.
+				// Surface it as a skipped dependency instead of a silent collapse.
+				//nolint:gosec // G201: depTable + kind.Column() are hardcoded/enumerated, no user input.
+				var existsSameKind int
+				probeErr := tx.QueryRowContext(ctx, fmt.Sprintf(
+					"SELECT 1 FROM %s WHERE id = ? AND %s = ?", depTable, kind.Column()),
+					depid.New(dep.IssueID, dep.DependsOnID), dep.DependsOnID).Scan(&existsSameKind)
+				switch {
+				case probeErr == sql.ErrNoRows:
+					// PK exists but not in this kind's column → cross-kind collision.
+					recordSkippedDependency(opts, dep,
+						"dependency-id collision: an edge with a different target kind (issue vs wisp vs external) already occupies this deterministic id")
+				case probeErr != nil:
+					return result, fmt.Errorf("failed to probe dependency collision for %s -> %s: %w", dep.IssueID, dep.DependsOnID, probeErr)
+				}
+				// probeErr==nil: same-kind idempotent re-import (the edge already
+				// exists with the same target column) — a legitimate no-op, not a
+				// collision; leave it unmarked.
 			}
 		}
 	}
