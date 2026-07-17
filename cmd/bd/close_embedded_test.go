@@ -464,6 +464,42 @@ func TestEmbeddedClose(t *testing.T) {
 		}
 	})
 
+	// All requested IDs RESOLVE but every one is guard-rejected (here: blocked
+	// by an open blocker, closed without --force) under --json. This reaches
+	// the batch-loop's terminal "nothing closed" path (closedCount==0), which
+	// must emit a parseable JSON error object on stdout — not a bare SilentExit
+	// that leaves exit 1 + empty stdout (beads-tx70 / beads-fg6). A nonexistent
+	// ID would fail EARLIER at resolveCloseTargets and never reach this path, so
+	// the blockers are essential to exercise the real bug.
+	t.Run("close_all_failed_json_emits_stdout_error", func(t *testing.T) {
+		blocker := bdCreate(t, bd, dir, "open blocker", "--type", "task")
+		blocked1 := bdCreate(t, bd, dir, "blocked one", "--type", "task")
+		blocked2 := bdCreate(t, bd, dir, "blocked two", "--type", "task")
+		bdDep(t, bd, dir, "add", blocked1.ID, "--blocked-by", blocker.ID)
+		bdDep(t, bd, dir, "add", blocked2.ID, "--blocked-by", blocker.ID)
+
+		// Close both blocked issues (no --force): both are guard-rejected, so
+		// closedCount==0 and the terminal all-failed path fires.
+		cmd := exec.Command(bd, "close", blocked1.ID, blocked2.ID, "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Errorf("expected non-zero exit when all IDs are guard-rejected, got success\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+		}
+		out := strings.TrimSpace(stdout.String())
+		if out == "" {
+			t.Fatalf("stdout is empty on all-failed --json close — must emit a JSON error object (beads-tx70)\nstderr:\n%s", stderr.String())
+		}
+		var obj map[string]any
+		if jerr := json.Unmarshal([]byte(out), &obj); jerr != nil {
+			t.Fatalf("stdout is not a JSON object on all-failed --json close: %v\nstdout:\n%s", jerr, out)
+		}
+		if _, ok := obj["error"]; !ok {
+			t.Errorf("expected an \"error\" field in the all-failed --json stdout object, got: %s", out)
+		}
+	})
+
 	t.Run("done_alias", func(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "Done alias test", "--type", "task")
 		cmd := exec.Command(bd, "done", issue.ID)

@@ -302,9 +302,17 @@ the flags appear in the command line.`,
 		// Exit non-zero only when nothing was closed AND nothing was an
 		// idempotent already-closed no-op. Already-closed inputs keep rc=0
 		// (idempotent close is fine — beads-dr3); genuine failures (guard
-		// rejections, errors, nonexistent ids) still trip SilentExit.
+		// rejections, errors, nonexistent ids) still trip a non-zero exit.
 		totalAttempted := len(resolvedIDs)
 		if totalAttempted > 0 && closedCount == 0 && alreadyClosedCount == 0 {
+			// Every requested ID failed (per-item errors already reported to
+			// stderr). Under --json, stdout is still empty here, so emit a
+			// stdout JSON error object to keep the failure parseable
+			// (beads-fg6, matching the update batch path) instead of a bare
+			// silent exit that leaves --json consumers with empty stdout.
+			if jsonOutput {
+				return HandleErrorRespectJSON("no issues closed matching the provided IDs")
+			}
 			return SilentExit()
 		}
 		return nil
