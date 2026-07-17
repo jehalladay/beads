@@ -26,6 +26,10 @@ var (
 	qAbort      = regexp.QuoteMeta("CALL DOLT_MERGE('--abort')")
 	qHardReset  = regexp.QuoteMeta("CALL DOLT_RESET('--hard')")
 	qCommit     = regexp.QuoteMeta("CALL DOLT_COMMIT")
+	// beads-ka1n: the metadata gate + supersession-notice queries that now run
+	// between the conflicts scan and the --theirs resolve on the metadata table.
+	qMetaConflicts = regexp.QuoteMeta("SELECT our_key, their_key FROM dolt_conflicts_metadata")
+	qMetaKeys      = regexp.QuoteMeta("SELECT COALESCE(our_key, their_key) FROM dolt_conflicts_metadata")
 )
 
 func TestMergeConflictsError(t *testing.T) {
@@ -182,6 +186,39 @@ func TestSettleMerge_UnresolvedConflictsReturnMergeConflictsError(t *testing.T) 
 	}
 }
 
+// TestSettleMerge_MetadataIdentityConflictRefuses is the beads-ka1n integration
+// teeth-check: a metadata conflict on an IDENTITY key (_project_id) must NOT be
+// auto-resolved with --theirs. The gate makes TryAutoResolveMergeConflicts
+// decline (resolved=false), so SettleMerge captures the conflict and returns a
+// MergeConflictsError for the operator instead of silently taking the remote's
+// project identity (the town-freeze class in CLAUDE.md). Without the gate the
+// resolver would fire DOLT_CONFLICTS_RESOLVE('--theirs','metadata') and this
+// test's expectations (no resolve exec) would be violated.
+func TestSettleMerge_MetadataIdentityConflictRefuses(t *testing.T) {
+	t.Parallel()
+	db, mock := newConflictMock(t)
+
+	// 1) TryAutoResolveMergeConflicts: a metadata conflict is present...
+	mock.ExpectQuery(qConflicts).
+		WillReturnRows(sqlmock.NewRows([]string{"table", "num_conflicts"}).AddRow("metadata", 1))
+	// ...but the gate sees an identity key → returns false, resolves NOTHING.
+	mock.ExpectQuery(qMetaConflicts).
+		WillReturnRows(sqlmock.NewRows([]string{"our_key", "their_key"}).AddRow("_project_id", "_project_id"))
+	// !resolved → GetConflicts captures the conflict before the abort.
+	mock.ExpectQuery(qConflicts).
+		WillReturnRows(sqlmock.NewRows([]string{"table", "num_conflicts"}).AddRow("metadata", 1))
+	mock.ExpectExec(qAbort).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err := SettleMerge(context.Background(), db, nil, true)
+	var mce *MergeConflictsError
+	if !errors.As(err, &mce) {
+		t.Fatalf("expected *MergeConflictsError (identity conflict must NOT auto-resolve), got %T: %v", err, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet: %v", err)
+	}
+}
+
 func TestSettleMerge_ResolvedConflictsCommit(t *testing.T) {
 	t.Parallel()
 	db, mock := newConflictMock(t)
@@ -191,7 +228,12 @@ func TestSettleMerge_ResolvedConflictsCommit(t *testing.T) {
 	// 1) TryAutoResolveMergeConflicts: a metadata conflict is auto-resolvable.
 	mock.ExpectQuery(qConflicts).
 		WillReturnRows(sqlmock.NewRows([]string{"table", "num_conflicts"}).AddRow("metadata", 1))
-	// resolve + stage the metadata table → resolved=true.
+	// metadataConflictsAreConvergent gate (beads-ka1n): a convergent key passes.
+	mock.ExpectQuery(qMetaConflicts).
+		WillReturnRows(sqlmock.NewRows([]string{"our_key", "their_key"}).AddRow("last_import_time", "last_import_time"))
+	// resolvedMetadataConflictKeys notice query, then resolve + stage → resolved=true.
+	mock.ExpectQuery(qMetaKeys).
+		WillReturnRows(sqlmock.NewRows([]string{"k"}).AddRow("last_import_time"))
 	mock.ExpectExec(qResolveMeta).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(qAddMeta).WillReturnResult(sqlmock.NewResult(0, 0))
 	// 2) resolved=true skips the GetConflicts path.
@@ -216,6 +258,11 @@ func TestSettleMerge_ResolvedButCommitFailsAborts(t *testing.T) {
 
 	mock.ExpectQuery(qConflicts).
 		WillReturnRows(sqlmock.NewRows([]string{"table", "num_conflicts"}).AddRow("metadata", 1))
+	// metadataConflictsAreConvergent gate + resolvedMetadataConflictKeys notice (beads-ka1n).
+	mock.ExpectQuery(qMetaConflicts).
+		WillReturnRows(sqlmock.NewRows([]string{"our_key", "their_key"}).AddRow("last_import_time", "last_import_time"))
+	mock.ExpectQuery(qMetaKeys).
+		WillReturnRows(sqlmock.NewRows([]string{"k"}).AddRow("last_import_time"))
 	mock.ExpectExec(qResolveMeta).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(qAddMeta).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(qViolations).WillReturnRows(sqlmock.NewRows([]string{"table"}))
