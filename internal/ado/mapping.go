@@ -47,25 +47,17 @@ func (m *adoFieldMapper) IssueToBeads(ti *tracker.TrackerIssue) *tracker.IssueCo
 		issue.Status = types.StatusBlocked
 	}
 
-	// Restore original beads priority from tracker metadata when the mapping
-	// is lossy (beads 3 and 4 both map to ADO 4).
-	if ti.Metadata != nil {
+	// Restore the exact beads priority when the ADO mapping is lossy (beads 3 and
+	// 4 both map to ADO priority 4). The value round-trips as a beads:priority:N
+	// tag (see IssueToTracker) — the beads_priority metadata channel used to hold
+	// it but was never sent to ADO, so the tag is the only reliable source on pull.
+	if p, ok := priorityFromTags(allTags); ok {
+		issue.Priority = p
+	} else if ti.Metadata != nil {
+		// Backwards-compat: honor a beads_priority carried in tracker metadata if
+		// some caller still supplies it (e.g. a synthesized TrackerIssue).
 		if bp, ok := ti.Metadata["beads_priority"]; ok {
-			var p int
-			var valid bool
-			switch v := bp.(type) {
-			case string:
-				if n, err := strconv.Atoi(v); err == nil {
-					p, valid = n, true
-				}
-			case float64:
-				p, valid = int(v), true
-			case json.Number:
-				if n, err := v.Int64(); err == nil {
-					p, valid = int(n), true
-				}
-			}
-			if valid && p >= 0 && p <= 4 {
+			if p, valid := parseBeadsPriorityValue(bp); valid {
 				issue.Priority = p
 			}
 		}
@@ -117,12 +109,23 @@ func (m *adoFieldMapper) IssueToTracker(issue *types.Issue) map[string]interface
 	if issue.Status == types.StatusBlocked {
 		tags = append(tags, "beads:blocked")
 	}
+	// Preserve the exact beads priority via a tag for lossy mappings (beads 3 and
+	// 4 both map to ADO priority 4). Tags survive the ADO round-trip through
+	// FieldTags, unlike issue.Metadata which is never sent to ADO — so this tag
+	// is the channel that actually lets IssueToBeads recover the original
+	// priority on a real pull. (The metadata copy below is kept for callers that
+	// synthesize a TrackerIssue with beads_priority, and as a local record.)
+	if issue.Priority == 3 || issue.Priority == 4 {
+		tags = append(tags, beadsPriorityTag(issue.Priority))
+	}
 	if len(tags) > 0 {
 		fields[FieldTags] = buildTagString(tags)
 	}
 
-	// Store original beads priority in metadata for lossy mappings
-	// (beads 3 and 4 both map to ADO priority 4).
+	// Store original beads priority in metadata for lossy mappings (beads 3 and 4
+	// both map to ADO priority 4). This does NOT reach ADO (see the tag above),
+	// but preserves the value for synthesized-TrackerIssue callers and keeps the
+	// local issue.Metadata record.
 	if issue.Priority == 3 || issue.Priority == 4 {
 		var meta map[string]interface{}
 		if len(issue.Metadata) > 0 {
@@ -272,4 +275,53 @@ func hasBeadsTag(tagStr, tag string) bool {
 		}
 	}
 	return false
+}
+
+// beadsPriorityTagPrefix is the marker for the round-trip priority tag.
+const beadsPriorityTagPrefix = "beads:priority:"
+
+// beadsPriorityTag builds the tag that preserves an exact beads priority through
+// the ADO round-trip (e.g. priority 4 → "beads:priority:4"). Used only for the
+// lossy priorities (3 and 4) that both collapse to ADO priority 4.
+func beadsPriorityTag(priority int) string {
+	return beadsPriorityTagPrefix + strconv.Itoa(priority)
+}
+
+// priorityFromTags recovers the exact beads priority from a beads:priority:N tag,
+// if present and valid (0-4). Returns ok=false when no such tag exists.
+func priorityFromTags(tags []string) (int, bool) {
+	for _, t := range tags {
+		if !strings.HasPrefix(t, beadsPriorityTagPrefix) {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimPrefix(t, beadsPriorityTagPrefix))
+		if err != nil || n < 0 || n > 4 {
+			return 0, false
+		}
+		return n, true
+	}
+	return 0, false
+}
+
+// parseBeadsPriorityValue coerces a beads_priority value carried in tracker
+// metadata (string, float64, or json.Number) into a validated priority (0-4).
+func parseBeadsPriorityValue(bp interface{}) (int, bool) {
+	var p int
+	var valid bool
+	switch v := bp.(type) {
+	case string:
+		if n, err := strconv.Atoi(v); err == nil {
+			p, valid = n, true
+		}
+	case float64:
+		p, valid = int(v), true
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			p, valid = int(n), true
+		}
+	}
+	if valid && p >= 0 && p <= 4 {
+		return p, true
+	}
+	return 0, false
 }
