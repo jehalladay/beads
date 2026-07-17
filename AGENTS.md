@@ -85,6 +85,7 @@ echo 'Updated text' | bd update <id> --description=-
 
 ## Testing Commands (No Ambiguity)
 
+- **⚠️ Refresh a non-coding workspace before any build/test/forge probe.** Roles that don't land code (dogfooder, PM, scout) never fetch/rebase, so their checkout silently drifts thousands of commits behind `origin/main` — then `forge build`/`make test` fail against *stale* source (e.g. a stale `forge.toml` missing the landed `gms_pure_go` override → false ICU errors) and you file a phantom bug. Before probing a suspected build/test/forge issue, sync (a non-coding workspace has no local commits to lose): `git fetch origin main && git reset --hard origin/main`. Coding crew stay current automatically (they land through the refinery). Always verify a suspected build/forge bug against fresh `origin/main` before filing.
 - **Build workflow**: beads work is **agentic-tdd** (tests-first, shell-first, race tier on concurrency changes). See [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md#agentic-tdd-the-required-builder-workflow).
 - Default local test command: `make test` (or `./scripts/test.sh`).
 - Race detector tier: `make test-race` (or `./scripts/test.sh --race`) — required before landing concurrency/storage/pool changes.
