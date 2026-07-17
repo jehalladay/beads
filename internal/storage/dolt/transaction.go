@@ -749,7 +749,7 @@ func (t *doltTransaction) RemoveDependency(ctx context.Context, issueID, depends
 	if t.isActiveWisp(ctx, issueID) {
 		table = "wisp_dependencies"
 	}
-	if err := issueops.RemoveDependencyInTx(ctx, t.txFor(table), issueID, dependsOnID); err != nil {
+	if err := issueops.RemoveDependencyInTx(ctx, t.txFor(table), issueID, dependsOnID, actor); err != nil {
 		return wrapExecError("remove dependency in tx", err)
 	}
 	t.dirty.MarkDirty(table)

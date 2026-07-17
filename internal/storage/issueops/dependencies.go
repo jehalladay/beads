@@ -753,10 +753,12 @@ func checkRenameTargetCollision(ctx context.Context, tx *sql.Tx, table, typedCol
 
 // RemoveDependencyInTx removes a dependency between two issues within an
 // existing transaction. Automatically routes to wisp_dependencies if the
-// source issue is an active wisp.
+// source issue is an active wisp. The audit event is credited to actor,
+// mirroring AddDependencyInTx (beads-gmiu — previously hardcoded "system",
+// so `bd history` mis-attributed every dependency removal).
 //
 //nolint:gosec // G201: depTable from WispTableRouting (hardcoded constants)
-func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID string) error {
+func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID, actor string) error {
 	isWisp := IsActiveWispInTx(ctx, tx, issueID)
 	_, _, _, depTable := WispTableRouting(isWisp)
 
@@ -788,7 +790,7 @@ func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID 
 	depRemoveComment := fmt.Sprintf("Removed dependency: %s -> %s (%s)", issueID, dependsOnID, depType)
 	//nolint:gosec // G201: removeEventTable is a hardcoded constant ("events" or "wisp_events").
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)`, removeEventTable),
-		NewEventID(), issueID, types.EventDependencyRemoved, "system", depRemoveComment); err != nil {
+		NewEventID(), issueID, types.EventDependencyRemoved, actor, depRemoveComment); err != nil {
 		return fmt.Errorf("remove dependency: record event: %w", err)
 	}
 
