@@ -289,18 +289,35 @@ func (e *Evaluator) applyPriorityFilter(comp *ComparisonNode, filter *types.Issu
 	return nil
 }
 
+// normalizeAndValidateType is the single canonical transform for a `type=`
+// query value, shared by every type-comparison site: applyTypeFilter (EQ/NEQ
+// filter mode), applyNot (NOT type=, filter mode), and buildTypePredicate (OR/
+// predicate mode). It lowercases, maps the documented aliases
+// (enhancement->feature, adr->decision, ...) via Normalize(), then validates
+// against the built-in work types plus any configured custom types.
+//
+// Consolidating here fixes beads-123i: buildTypePredicate and applyNot
+// previously did strings.ToLower ONLY (no Normalize, no validation), so the same
+// `type=<alias>` value gave a context-dependent result (matched in AND/bare
+// filter mode, silently dropped in OR predicate mode) and a typo'd type was a
+// silent false-empty rc=0 in predicate/NOT mode instead of the "invalid type"
+// error the filter path already returned (the beads-shux regression, never
+// mirrored to the twin paths).
+func (e *Evaluator) normalizeAndValidateType(value string) (types.IssueType, error) {
+	issueType := types.IssueType(strings.ToLower(value)).Normalize()
+	if !issueType.IsValidWithCustom(e.customTypes) {
+		return "", fmt.Errorf("invalid type: %s (expected one of %s)", value, types.ValidWorkTypesString())
+	}
+	return issueType, nil
+}
+
 func (e *Evaluator) applyTypeFilter(comp *ComparisonNode, filter *types.IssueFilter) error {
 	if comp.Op != OpEquals && comp.Op != OpNotEquals {
 		return fmt.Errorf("type only supports = and != operators")
 	}
-	// Normalize documented aliases (enhancement->feature, adr->decision, ...)
-	// then validate against the built-in work types plus any configured custom
-	// types. Without this, a typo'd type silently matched nothing and returned
-	// a false-empty rc=0 result — matching the status/priority sibling
-	// validators (beads-shux).
-	issueType := types.IssueType(strings.ToLower(comp.Value)).Normalize()
-	if !issueType.IsValidWithCustom(e.customTypes) {
-		return fmt.Errorf("invalid type: %s (expected one of %s)", comp.Value, types.ValidWorkTypesString())
+	issueType, err := e.normalizeAndValidateType(comp.Value)
+	if err != nil {
+		return err
 	}
 	if comp.Op == OpEquals {
 		filter.IssueType = &issueType
@@ -651,7 +668,10 @@ func (e *Evaluator) applyNot(not *NotNode, filter *types.IssueFilter) error {
 		if comp.Op != OpEquals {
 			return fmt.Errorf("NOT type only supports = operator")
 		}
-		issueType := types.IssueType(strings.ToLower(comp.Value))
+		issueType, err := e.normalizeAndValidateType(comp.Value)
+		if err != nil {
+			return err
+		}
 		filter.ExcludeTypes = append(filter.ExcludeTypes, issueType)
 		return nil
 	default:
@@ -831,7 +851,10 @@ func (e *Evaluator) buildPriorityPredicate(comp *ComparisonNode) (func(*types.Is
 }
 
 func (e *Evaluator) buildTypePredicate(comp *ComparisonNode) (func(*types.Issue) bool, error) {
-	issueType := types.IssueType(strings.ToLower(comp.Value))
+	issueType, err := e.normalizeAndValidateType(comp.Value)
+	if err != nil {
+		return nil, err
+	}
 	switch comp.Op {
 	case OpEquals:
 		return func(i *types.Issue) bool { return i.IssueType == issueType }, nil
