@@ -44,5 +44,6 @@ ci_time "golangci-lint ratchet (new violations only)" -- \
         --config "$REPO_ROOT/.golangci-ratchet.yml" \
         --new-from-merge-base "$RATCHET_BASE" \
         --timeout=5m \
+        --allow-serial-runners \
         --build-tags=gms_pure_go \
         ./...
