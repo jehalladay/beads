@@ -153,12 +153,60 @@ func NaturalCompareIDs(a, b string) int {
 			}
 			continue
 		}
+		// If BOTH segments are all-digit but at least one overflows int64
+		// (≥~19 digits), Atoi fails and a plain lexical compare mis-orders them
+		// ("10000000000000000000" < "9" lexically, but 10^19 > 9). Compare such
+		// segments numerically-by-magnitude without overflow (beads-e01e).
+		if isAllDigits(sa[i]) && isAllDigits(sb[i]) {
+			if c := compareNumericStrings(sa[i], sb[i]); c != 0 {
+				return c
+			}
+			continue
+		}
 		if sa[i] < sb[i] {
 			return -1
 		}
 		return 1
 	}
 	return len(sa) - len(sb)
+}
+
+// isAllDigits reports whether s is non-empty and composed solely of ASCII
+// digits — i.e. a non-negative integer literal (possibly with leading zeros or
+// too many digits for int64).
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// compareNumericStrings compares two all-digit strings by numeric magnitude
+// without int64 overflow: strip leading zeros, then the longer remaining string
+// is the larger number; equal lengths compare lexically (valid once
+// leading-zero-normalized). Returns -1, 0, or 1. Callers guarantee both inputs
+// pass isAllDigits.
+func compareNumericStrings(a, b string) int {
+	a = strings.TrimLeft(a, "0")
+	b = strings.TrimLeft(b, "0")
+	if len(a) != len(b) {
+		if len(a) < len(b) {
+			return -1
+		}
+		return 1
+	}
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
 }
 
 // splitIDSegments splits an ID into segments by "." and "-" separators.
