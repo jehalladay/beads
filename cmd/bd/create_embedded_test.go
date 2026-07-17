@@ -218,6 +218,32 @@ func TestEmbeddedCreate(t *testing.T) {
 		}
 	})
 
+	// A validation failure under --json must emit a parseable JSON error object
+	// on stdout (HandleErrorRespectJSON), matching update.go/close.go — not
+	// plain text to stderr with empty stdout (beads-hqm0). Uses an invalid
+	// priority as a deterministic validation error.
+	t.Run("validation_error_json_emits_stdout_error", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "ve")
+		cmd := exec.Command(bd, "create", "Bad priority", "--priority", "not-a-priority", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Errorf("expected non-zero exit on invalid --priority, got success\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+		}
+		out := strings.TrimSpace(stdout.String())
+		if out == "" {
+			t.Fatalf("stdout is empty on a --json create validation error — must emit a JSON error object (beads-hqm0)\nstderr:\n%s", stderr.String())
+		}
+		var obj map[string]any
+		if jerr := json.Unmarshal([]byte(out), &obj); jerr != nil {
+			t.Fatalf("stdout is not a JSON object on --json create validation error: %v\nstdout:\n%s", jerr, out)
+		}
+		if _, ok := obj["error"]; !ok {
+			t.Errorf("expected an \"error\" field in the --json validation-error stdout object, got: %s", out)
+		}
+	})
+
 	t.Run("silent", func(t *testing.T) {
 		dir, _, _ := bdInit(t, bd, "--prefix", "sl")
 		id := bdCreateSilent(t, bd, dir, "Silent issue")
