@@ -44,19 +44,26 @@ func TestStripOSC8Hyperlinks_STTerminated(t *testing.T) {
 }
 
 // TestStripOSC8Hyperlinks_Unterminated covers the branch where an OSC 8 open
-// sequence never terminates: oscSequenceEnd returns -1, so stripOSC8Hyperlinks
-// must fall through and copy the opening bytes verbatim rather than dropping
-// the tail of the string.
+// sequence never terminates: oscSequenceEnd returns -1. A sanitizer must NOT
+// leave the dangling sequence — including its raw ESC — intact (beads-uq8m).
+// So the malformed remainder is stripped to end-of-string while text BEFORE
+// the open sequence is preserved. (This corrects the earlier beads-2zqt
+// coverage test, which asserted the buggy copy-through behavior.)
 func TestStripOSC8Hyperlinks_Unterminated(t *testing.T) {
 	// No BEL and no ST after the OSC 8 open — dangling sequence.
 	in := "keep\x1b]8;;https://example.com/no-terminator"
 	got := stripOSC8Hyperlinks(in)
-	// The literal bytes are preserved (nothing is silently truncated).
+	// Text before the dangling open sequence is preserved.
 	if !strings.Contains(got, "keep") {
 		t.Fatalf("expected leading text preserved, got %q", got)
 	}
-	if !strings.Contains(got, "no-terminator") {
-		t.Fatalf("expected dangling OSC 8 bytes copied through, got %q", got)
+	// The raw ESC must be gone — a leaked unterminated escape is the defect.
+	if strings.ContainsRune(got, '\x1b') {
+		t.Fatalf("expected dangling OSC 8 (incl. raw ESC) stripped, got %q", got)
+	}
+	// The malformed OSC 8 open marker must not survive.
+	if strings.Contains(got, "]8;") {
+		t.Fatalf("expected malformed OSC 8 open stripped, got %q", got)
 	}
 }
 
