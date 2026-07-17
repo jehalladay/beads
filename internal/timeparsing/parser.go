@@ -182,11 +182,17 @@ func ParseRelativeTime(s string, now time.Time) (time.Time, error) {
 	// Layer 2: Absolute formats (must be checked before NLP to avoid misinterpretation)
 	// NLP parser can incorrectly parse "2025-02-01" as a time, so we check date formats first.
 
-	// Try date-only format (YYYY-MM-DD)
+	// Try date-only format (YYYY-MM-DD). A string matching dateOnlyRe is
+	// UNAMBIGUOUSLY a date attempt, so a parse failure (e.g. month>12 or day>31,
+	// "2025-13-45"/"2025-02-30") must be a hard error — NOT a fall-through to the
+	// NLP layer, which would misread the trailing digits as a time-of-today and
+	// silently return a nonsense-but-plausible deadline (beads-atue).
 	if dateOnlyRe.MatchString(s) {
-		if t, err := time.ParseInLocation("2006-01-02", s, time.Local); err == nil {
-			return t, nil
+		t, err := time.ParseInLocation("2006-01-02", s, time.Local)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("invalid date %q: %w", s, err)
 		}
+		return t, nil
 	}
 
 	// Try RFC3339 format (2025-01-15T10:00:00Z)
