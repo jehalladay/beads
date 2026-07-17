@@ -543,6 +543,24 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 		activeStore = routedStore
 	}
 
+	// beads-n8lv: validate the parent id exists BEFORE any output branch, so a
+	// nonexistent parent errors uniformly across text, --json, and --flat.
+	// Previously only the pretty/tree path (getHierarchicalChildren) checked
+	// this, so `--json` and `--flat` silently returned an empty result on a bad
+	// parent id — a JSON consumer could not tell "bad parent id" from "valid
+	// parent, no children". A valid parent with no children still returns the
+	// empty result (exit 0); only a missing parent is an error. Skipped for
+	// --ready, matching the existing pretty-path guard.
+	if in.parentID != "" && !in.readyFlag {
+		parentIssue, perr := activeStore.GetIssue(ctx, in.parentID)
+		if perr != nil {
+			return HandleErrorRespectJSON("error checking parent issue: %v", perr)
+		}
+		if parentIssue == nil {
+			return HandleErrorRespectJSON("parent issue '%s' not found", in.parentID)
+		}
+	}
+
 	if in.watchMode {
 		watchIssues(ctx, activeStore, filter, in.readyFlag, in.parentID, in.sortBy, in.reverse, in.effectiveLimit)
 		return nil
