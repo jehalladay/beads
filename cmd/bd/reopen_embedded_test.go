@@ -129,6 +129,26 @@ func TestEmbeddedReopen(t *testing.T) {
 		}
 	})
 
+	t.Run("reopen_in_progress_is_noop", func(t *testing.T) {
+		// reopen only applies to closed issues: reopening an in_progress bead
+		// must NOT silently revert it to open (beads-net1). It should be a
+		// no-op with a clear "not closed" message and leave status unchanged.
+		issue := bdCreate(t, bd, dir, "In progress reopen", "--type", "task")
+		bdUpdate(t, bd, dir, issue.ID, "--status", "in_progress")
+		before := bdShow(t, bd, dir, issue.ID)
+		if before.Status != types.StatusInProgress {
+			t.Fatalf("expected in_progress before reopen, got %s", before.Status)
+		}
+		out := bdReopen(t, bd, dir, issue.ID)
+		if strings.Contains(out, "Reopened") {
+			t.Errorf("reopen of an in_progress issue should not report 'Reopened': %s", out)
+		}
+		got := bdShow(t, bd, dir, issue.ID)
+		if got.Status != types.StatusInProgress {
+			t.Errorf("expected status unchanged (in_progress) after reopen of non-closed issue, got %s", got.Status)
+		}
+	})
+
 	t.Run("reopen_clears_defer_until", func(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "Deferred reopen", "--type", "task", "--defer", "2030-01-01")
 		bdClose(t, bd, dir, issue.ID)
