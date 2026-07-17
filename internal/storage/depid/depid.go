@@ -31,8 +31,15 @@ import "github.com/google/uuid"
 var Namespace = uuid.MustParse("bdd74eb9-a20a-554a-985b-54b8f3e64d8b")
 
 // sep separates the two key components. It is ASCII Unit Separator (0x1f), which
-// cannot occur in an issue id or a dependency target, so the encoding is
-// unambiguous (no (issueID, target) pair can collide with another).
+// cannot occur in an issue id or a dependency target, so distinct
+// (issueID, target-STRING) pairs never collide.
+//
+// Caveat: the key is column-AGNOSTIC — target is the resolved target string, not
+// the typed column it came from. So an issue-target and a wisp-target that share
+// the same id string derive the SAME id. Auto-gen namespacing (wisp ids carry a
+// "-wisp-" infix) keeps that impossible for minted ids, but callers that compare
+// or merge these edges must distinguish the target COLUMN, not just this id —
+// see dependencyConflictsAreAuditOnly in versioncontrolops (beads-uekw).
 const sep = "\x1f"
 
 // New returns the deterministic CHAR(36) primary key for the dependency edge
