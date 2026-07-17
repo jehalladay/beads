@@ -67,6 +67,77 @@ func TestGetIssueHistory(t *testing.T) {
 	}
 }
 
+// TestGetIssueHistory_OnlyModifyingCommits verifies that history returns only
+// commits that actually CHANGED the issue — not every commit in which the row
+// merely exists. dolt_history_issues yields one row per commit the PK is present
+// in, so unrelated commits (that touch OTHER issues) must not appear as spurious
+// history entries with the wrong committer. (beads-2gr)
+func TestGetIssueHistory_OnlyModifyingCommits(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create the target issue and commit it (change #1).
+	target := &types.Issue{
+		ID:        "hist-target",
+		Title:     "Target",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, target, "alice"); err != nil {
+		t.Fatalf("failed to create target: %v", err)
+	}
+	if err := store.Commit(ctx, "create target"); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	// Make 3 UNRELATED commits that do NOT touch the target issue.
+	for i := 0; i < 3; i++ {
+		other := &types.Issue{
+			ID:        "hist-other-" + string(rune('a'+i)),
+			Title:     "Other",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		}
+		if err := store.CreateIssue(ctx, other, "bob"); err != nil {
+			t.Fatalf("failed to create other %d: %v", i, err)
+		}
+		if err := store.Commit(ctx, "unrelated commit"); err != nil {
+			t.Fatalf("failed to commit unrelated %d: %v", i, err)
+		}
+	}
+
+	// Update the target once more (change #2).
+	if err := store.UpdateIssue(ctx, target.ID, map[string]interface{}{
+		"title": "Target v2",
+	}, "alice"); err != nil {
+		t.Fatalf("failed to update target: %v", err)
+	}
+	if err := store.Commit(ctx, "update target"); err != nil {
+		t.Fatalf("failed to commit update: %v", err)
+	}
+
+	history, err := store.getIssueHistory(ctx, target.ID)
+	if err != nil {
+		t.Fatalf("getIssueHistory failed: %v", err)
+	}
+
+	// The target changed in exactly 2 commits (create + update). The 3 unrelated
+	// commits must NOT appear. Before the beads-2gr fix this returns 5 (one row
+	// per commit the row exists in).
+	if len(history) != 2 {
+		var titles []string
+		for _, h := range history {
+			titles = append(titles, h.Issue.Title)
+		}
+		t.Errorf("expected 2 modifying-commit entries, got %d (titles: %v) — unrelated commits leaked into history", len(history), titles)
+	}
+}
+
 func TestGetIssueHistory_NonExistent(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
