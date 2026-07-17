@@ -4,11 +4,26 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"sort"
+	"sync"
 
 	"github.com/steveyegge/beads/internal/storage/sqlbuild"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// searchCountsSafetyCap bounds an unbounded (filter.Limit==0) count-projection
+// search. Loading every matching IssueWithCounts (with labels + reverse-dep
+// counts) into memory is the same OOM class that grew one bd-list process to
+// 128GB RSS (hq-lcu9o / beads-kbw); the c6b8d90e0 fix bounded dep-hydration to
+// displayed issues but not this row load. Callers that pass Limit==0 (bd list
+// --all, broad searches) are hard-capped here instead. The value matches the
+// existing recursive-traversal caps (maxRecursiveResults, FindWispDependents).
+const searchCountsSafetyCap = 10000
+
+// searchCountsTruncationWarnOnce ensures the "results truncated" warning is
+// emitted at most once per process, so a broad search does not spam stderr.
+var searchCountsTruncationWarnOnce sync.Once
 
 func SearchIssuesWithCountsInTx(ctx context.Context, tx *sql.Tx, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error) {
 	wispDepsExist, err := optionalTableExistsInTx(ctx, tx, "wisp_dependencies")
@@ -108,6 +123,12 @@ func runFilterSearchQueryInTx(ctx context.Context, tx *sql.Tx, query string, fil
 	limitSQL := ""
 	if filter.Limit > 0 {
 		limitSQL = fmt.Sprintf("LIMIT %d", filter.Limit)
+	} else {
+		// filter.Limit==0 means "unbounded" to the caller, but an empty SQL
+		// LIMIT loads every matching row into memory (OOM class hq-lcu9o).
+		// Cap each source query at the safety cap + 1 so the merge can detect
+		// truncation and warn, while memory stays bounded by the cap.
+		limitSQL = fmt.Sprintf("LIMIT %d", searchCountsSafetyCap+1)
 	}
 	orderBy := sqlbuild.OrderBy(filter.SortBy, filter.SortDesc, "i")
 	return runSearchQueryInTx(ctx, tx, tables, whereSQL, orderBy, limitSQL, args, includeWispReverseDeps, filter.SkipLabels)
@@ -147,8 +168,22 @@ func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, wh
 
 func finishSearchIssuesWithCounts(items []*types.IssueWithCounts, filter types.IssueFilter) []*types.IssueWithCounts {
 	sortSearchIssuesWithCounts(items, filter.SortBy, filter.SortDesc)
-	if filter.Limit > 0 && len(items) > filter.Limit {
-		return items[:filter.Limit]
+	if filter.Limit > 0 {
+		if len(items) > filter.Limit {
+			return items[:filter.Limit]
+		}
+		return items
+	}
+	// Unbounded caller (Limit==0): enforce the memory safety cap on the merged
+	// set. runFilterSearchQueryInTx caps each source query at cap+1, so a
+	// result of length > cap means real truncation — warn once and trim.
+	if len(items) > searchCountsSafetyCap {
+		searchCountsTruncationWarnOnce.Do(func() {
+			fmt.Fprintf(os.Stderr,
+				"Warning: results truncated at %d rows (safety cap); use --limit N to page or narrow the query\n",
+				searchCountsSafetyCap)
+		})
+		return items[:searchCountsSafetyCap]
 	}
 	return items
 }

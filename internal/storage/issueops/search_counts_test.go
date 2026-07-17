@@ -2,6 +2,7 @@ package issueops
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -31,6 +32,57 @@ func TestSearchIssuesWithCountsAppliesLimitToEachSourceQuery(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+// Regression for beads-heq: an unbounded (filter.Limit==0) count-projection
+// search must NOT emit an empty LIMIT — it would load every matching row (with
+// labels + reverse-dep counts) into memory and OOM the host on a large rig
+// (same class as hq-lcu9o). Each source query must be hard-capped at
+// searchCountsSafetyCap+1 so truncation is detectable.
+func TestSearchIssuesWithCountsBoundsUnboundedSearch(t *testing.T) {
+	t.Parallel()
+
+	_, mock, tx := beginMockTx(t)
+	mock.ExpectQuery(`SELECT 1 FROM wisp_dependencies LIMIT 1`).
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	mock.ExpectQuery(fmt.Sprintf(`(?s)FROM issues i.*LIMIT %d`, searchCountsSafetyCap+1)).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(`SELECT 1 FROM wisps LIMIT 1`).
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	mock.ExpectQuery(fmt.Sprintf(`(?s)FROM wisps i.*LIMIT %d`, searchCountsSafetyCap+1)).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	if _, err := SearchIssuesWithCountsInTx(context.Background(), tx, "", types.IssueFilter{}); err != nil {
+		t.Fatalf("SearchIssuesWithCountsInTx: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+// Regression for beads-heq: when an unbounded search's merged result exceeds
+// the safety cap, finishSearchIssuesWithCounts must trim to the cap (bounding
+// the returned slice) rather than returning every row.
+func TestFinishSearchIssuesWithCountsEnforcesSafetyCap(t *testing.T) {
+	t.Parallel()
+
+	items := make([]*types.IssueWithCounts, searchCountsSafetyCap+5)
+	for i := range items {
+		items[i] = &types.IssueWithCounts{Issue: &types.Issue{ID: fmt.Sprintf("bd-%d", i)}}
+	}
+
+	// Limit==0 (unbounded caller): the merged set is trimmed to the cap.
+	got := finishSearchIssuesWithCounts(items, types.IssueFilter{})
+	if len(got) != searchCountsSafetyCap {
+		t.Fatalf("unbounded search returned %d rows, want cap %d", len(got), searchCountsSafetyCap)
+	}
+
+	// A merged set at or under the cap is returned untouched.
+	small := items[:3]
+	got = finishSearchIssuesWithCounts(small, types.IssueFilter{})
+	if len(got) != 3 {
+		t.Fatalf("under-cap unbounded search returned %d rows, want 3", len(got))
 	}
 }
 
