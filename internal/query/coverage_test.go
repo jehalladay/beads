@@ -344,9 +344,9 @@ func TestFilterErrorCases(t *testing.T) {
 		"priority<0",         // matches nothing
 		"priority>4",         // matches nothing
 		"type<bug",           // type only = / !=
-		"assignee!=x",        // assignee only =
+		"assignee<x",         // assignee: only =/!= (!= now routes to predicate, see TestNeqRouting)
 		"label>x",            // label only =
-		"title!=x",           // title only =
+		"title>x",            // title: only =/!= (!= now routes to predicate)
 		"description<x",      // desc only =
 		"notes<x",            // notes only =
 		"id<x",               // id only =
