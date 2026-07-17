@@ -401,10 +401,23 @@ func createBlockedRecomputeIDs(issues []*types.Issue) ([]string, []string) {
 	return issueIDs, wispIDs
 }
 
+// issueLabel returns a human-readable identifier for an issue in error
+// messages: its ID when assigned, otherwise its quoted title, so a validation
+// failure before ID assignment doesn't produce a bare "issue :" fragment.
+func issueLabel(issue *types.Issue) string {
+	if issue.ID != "" {
+		return issue.ID
+	}
+	if issue.Title != "" {
+		return fmt.Sprintf("%q", issue.Title)
+	}
+	return "(unnamed)"
+}
+
 // PrepareIssueForInsert normalizes timestamps, validates, and computes the content hash.
 func PrepareIssueForInsert(issue *types.Issue, customStatuses, customTypes []string) error {
 	if err := ValidateMetadataIfConfigured(issue.Metadata); err != nil {
-		return fmt.Errorf("metadata validation failed for issue %s: %w", issue.ID, err)
+		return fmt.Errorf("metadata validation failed for issue %s: %w", issueLabel(issue), err)
 	}
 
 	// Normalize timestamps to UTC, defaulting to now.
@@ -431,7 +444,7 @@ func PrepareIssueForInsert(issue *types.Issue, customStatuses, customTypes []str
 	}
 
 	if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
-		return fmt.Errorf("validation failed for issue %s: %w", issue.ID, err)
+		return fmt.Errorf("validation failed for issue %s: %w", issueLabel(issue), err)
 	}
 	if issue.ContentHash == "" {
 		issue.ContentHash = issue.ComputeContentHash()
