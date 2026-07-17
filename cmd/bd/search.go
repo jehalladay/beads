@@ -58,7 +58,7 @@ Examples:
 			if err := cmd.Help(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error displaying help: %v\n", err)
 			}
-			return HandleError("search query is required")
+			return HandleErrorRespectJSON("search query is required")
 		}
 
 		// Get filter flags
@@ -157,42 +157,42 @@ Examples:
 		if createdAfter != "" {
 			t, err := parseTimeFlag(createdAfter)
 			if err != nil {
-				return HandleError("parsing --created-after: %v", err)
+				return HandleErrorRespectJSON("parsing --created-after: %v", err)
 			}
 			filter.CreatedAfter = &t
 		}
 		if createdBefore != "" {
 			t, err := parseTimeFlag(createdBefore)
 			if err != nil {
-				return HandleError("parsing --created-before: %v", err)
+				return HandleErrorRespectJSON("parsing --created-before: %v", err)
 			}
 			filter.CreatedBefore = &t
 		}
 		if updatedAfter != "" {
 			t, err := parseTimeFlag(updatedAfter)
 			if err != nil {
-				return HandleError("parsing --updated-after: %v", err)
+				return HandleErrorRespectJSON("parsing --updated-after: %v", err)
 			}
 			filter.UpdatedAfter = &t
 		}
 		if updatedBefore != "" {
 			t, err := parseTimeFlag(updatedBefore)
 			if err != nil {
-				return HandleError("parsing --updated-before: %v", err)
+				return HandleErrorRespectJSON("parsing --updated-before: %v", err)
 			}
 			filter.UpdatedBefore = &t
 		}
 		if closedAfter != "" {
 			t, err := parseTimeFlag(closedAfter)
 			if err != nil {
-				return HandleError("parsing --closed-after: %v", err)
+				return HandleErrorRespectJSON("parsing --closed-after: %v", err)
 			}
 			filter.ClosedAfter = &t
 		}
 		if closedBefore != "" {
 			t, err := parseTimeFlag(closedBefore)
 			if err != nil {
-				return HandleError("parsing --closed-before: %v", err)
+				return HandleErrorRespectJSON("parsing --closed-before: %v", err)
 			}
 			filter.ClosedBefore = &t
 		}
@@ -200,14 +200,14 @@ Examples:
 		if cmd.Flags().Changed("priority-min") {
 			priorityMin, err := validation.ValidatePriority(priorityMinStr)
 			if err != nil {
-				return HandleError("parsing --priority-min: %v", err)
+				return HandleErrorRespectJSON("parsing --priority-min: %v", err)
 			}
 			filter.PriorityMin = &priorityMin
 		}
 		if cmd.Flags().Changed("priority-max") {
 			priorityMax, err := validation.ValidatePriority(priorityMaxStr)
 			if err != nil {
-				return HandleError("parsing --priority-max: %v", err)
+				return HandleErrorRespectJSON("parsing --priority-max: %v", err)
 			}
 			filter.PriorityMax = &priorityMax
 		}
@@ -218,10 +218,10 @@ Examples:
 			for _, mf := range metadataFieldFlags {
 				k, v, ok := strings.Cut(mf, "=")
 				if !ok || k == "" {
-					return HandleError("invalid --metadata-field: expected key=value, got %q", mf)
+					return HandleErrorRespectJSON("invalid --metadata-field: expected key=value, got %q", mf)
 				}
 				if err := storage.ValidateMetadataKey(k); err != nil {
-					return HandleError("invalid --metadata-field key: %v", err)
+					return HandleErrorRespectJSON("invalid --metadata-field key: %v", err)
 				}
 				filter.MetadataFields[k] = v
 			}
@@ -229,7 +229,7 @@ Examples:
 		hasMetadataKey, _ := cmd.Flags().GetString("has-metadata-key")
 		if hasMetadataKey != "" {
 			if err := storage.ValidateMetadataKey(hasMetadataKey); err != nil {
-				return HandleError("invalid --has-metadata-key: %v", err)
+				return HandleErrorRespectJSON("invalid --has-metadata-key: %v", err)
 			}
 			filter.HasMetadataKey = hasMetadataKey
 		}
@@ -238,7 +238,7 @@ Examples:
 
 		issues, err := store.SearchIssues(ctx, query, filter)
 		if err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		// Apply sorting
