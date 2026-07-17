@@ -501,9 +501,11 @@ func TestFilteredPushExcludesWisp(t *testing.T) {
 
 	// Create an ephemeral issue directly in the issues table (simulates the
 	// edge case where an ephemeral issue leaks into committed data).
+	// description/design/acceptance_criteria/notes are TEXT NOT NULL with no
+	// default (migrations/0001), so a raw INSERT must supply them (beads-v3rq).
 	_, err := store.db.ExecContext(ctx, `INSERT INTO issues
-		(id, title, issue_type, status, priority, ephemeral, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`,
+		(id, title, description, design, acceptance_criteria, notes, issue_type, status, priority, ephemeral, created_at, updated_at)
+		VALUES (?, ?, '', '', '', '', ?, ?, ?, 1, NOW(), NOW())`,
 		"fed-filter-wisp", "Leaked wisp", "task", "open", 1)
 	if err != nil {
 		t.Fatalf("insert ephemeral issue: %v", err)
@@ -571,9 +573,11 @@ func TestFilteredPushOptOut(t *testing.T) {
 	defer cancel()
 
 	// Create an ephemeral issue in the committed issues table.
+	// description/design/acceptance_criteria/notes are TEXT NOT NULL with no
+	// default (migrations/0001), so a raw INSERT must supply them (beads-v3rq).
 	_, err := store.db.ExecContext(ctx, `INSERT INTO issues
-		(id, title, issue_type, status, priority, ephemeral, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`,
+		(id, title, description, design, acceptance_criteria, notes, issue_type, status, priority, ephemeral, created_at, updated_at)
+		VALUES (?, ?, '', '', '', '', ?, ?, ?, 1, NOW(), NOW())`,
 		"fed-optout-wisp", "Wisp for opt-out test", "task", "open", 1)
 	if err != nil {
 		t.Fatalf("insert ephemeral issue: %v", err)
