@@ -3,13 +3,13 @@ package query
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 // QueryResult contains the result of evaluating a query.
@@ -255,12 +255,14 @@ func (e *Evaluator) applyStatusFilter(comp *ComparisonNode, filter *types.IssueF
 }
 
 func (e *Evaluator) applyPriorityFilter(comp *ComparisonNode, filter *types.IssueFilter) error {
-	priority, err := strconv.Atoi(comp.Value)
-	if err != nil {
+	// Route through validation.ParsePriority so the query language accepts the
+	// P-prefix form ("priority=P2") the `--priority` flag already accepts and the
+	// docs advertise ("0-4 or P0-P4") — the flag-vs-query divergence (beads-nl0d),
+	// same class as the status/type case-fold (beads-7wrj). ParsePriority folds
+	// the P-strip AND the 0-4 range check, returning -1 for anything invalid.
+	priority := validation.ParsePriority(comp.Value)
+	if priority < 0 {
 		return fmt.Errorf("invalid priority value: %s", comp.Value)
-	}
-	if priority < 0 || priority > 4 {
-		return fmt.Errorf("priority must be between 0 and 4")
 	}
 
 	switch comp.Op {
@@ -870,16 +872,13 @@ func (e *Evaluator) buildStatusPredicate(comp *ComparisonNode) (func(*types.Issu
 }
 
 func (e *Evaluator) buildPriorityPredicate(comp *ComparisonNode) (func(*types.Issue) bool, error) {
-	priority, err := strconv.Atoi(comp.Value)
-	if err != nil {
+	// Keep the predicate path in lockstep with applyPriorityFilter (beads-pqrn:
+	// != now routes here). Both route through validation.ParsePriority so the
+	// P-prefix form is accepted identically regardless of which path a
+	// comparison takes, and the 0-4 range guard stays folded in (beads-nl0d).
+	priority := validation.ParsePriority(comp.Value)
+	if priority < 0 {
 		return nil, fmt.Errorf("invalid priority: %s", comp.Value)
-	}
-	// Keep the predicate path's range validation in lockstep with
-	// applyPriorityFilter (0-4) so an out-of-range priority errors the same way
-	// regardless of which path a comparison takes (beads-pqrn: != now routes
-	// here, so this used to be enforced only on the filter path).
-	if priority < 0 || priority > 4 {
-		return nil, fmt.Errorf("priority must be between 0 and 4")
 	}
 	switch comp.Op {
 	case OpEquals:
