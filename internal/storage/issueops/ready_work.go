@@ -284,13 +284,36 @@ func readyWorkExcludeTypes(extra []types.IssueType) []types.IssueType {
 	return sqlbuild.ReadyWorkExcludeTypes(extra)
 }
 
+// readyWorkExcludeLabels returns the identity/registration labels
+// (gt:agent/role/rig) excluded from ready work by default (beads-wqs), merged
+// with any caller-supplied ExcludeLabels, MINUS any label the caller explicitly
+// requested via filter.Labels. This mirrors sqlbuild.BuildReadyWorkWhere so the
+// wisp ready-work path applies the identity-label exclusion the same way the
+// issues query does — otherwise a NoHistory identity wisp (a dead
+// agent/role/rig registration that landed in the wisps table) wrongly surfaces
+// as claimable ready work. The explicit-Labels escape hatch preserves
+// `bd ready --label gt:agent`.
+func readyWorkExcludeLabels(filter types.WorkFilter) []string {
+	requested := make(map[string]bool, len(filter.Labels))
+	for _, l := range filter.Labels {
+		requested[l] = true
+	}
+	var out []string
+	for _, l := range sqlbuild.ReadyWorkExcludeLabels(filter.ExcludeLabels) {
+		if !requested[l] {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 func readyWorkWispIssueFilter(filter types.WorkFilter) types.IssueFilter {
 	pinnedFalse := false
 	wispFilter := types.IssueFilter{
 		Priority:       filter.Priority,
 		Labels:         filter.Labels,
 		LabelsAny:      filter.LabelsAny,
-		ExcludeLabels:  filter.ExcludeLabels,
+		ExcludeLabels:  readyWorkExcludeLabels(filter),
 		Limit:          filter.Limit,
 		MolType:        filter.MolType,
 		WispType:       filter.WispType,
