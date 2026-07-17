@@ -101,6 +101,17 @@ func MergeSlotAcquireImpl(ctx context.Context, s Storage, holder, actor string, 
 			result.Holder = meta.Holder
 
 			if slot.Status != types.StatusOpen {
+				// Reentrant acquire by the current holder is an idempotent
+				// no-op — it already holds the slot, so it must NOT be queued
+				// behind itself (the wait dedup guard below only checks the
+				// waiters list, not the holder). Reachable when a crashed or
+				// retried merge driver re-runs acquire without knowing it still
+				// holds the slot.
+				if meta.Holder == holder {
+					result.Acquired = true
+					result.Holder = holder
+					return nil
+				}
 				// Slot is held.
 				if wait {
 					alreadyWaiting := false
@@ -126,8 +137,10 @@ func MergeSlotAcquireImpl(ctx context.Context, s Storage, holder, actor string, 
 				return nil
 			}
 
-			// Slot is available — acquire it atomically.
-			newMeta := slotMeta{Holder: holder, Waiters: meta.Waiters}
+			// Slot is available — acquire it atomically. Remove the acquirer
+			// from the waiters queue: a waiter that polls and then wins the
+			// now-open slot must not remain listed as waiting on itself.
+			newMeta := slotMeta{Holder: holder, Waiters: removeWaiter(meta.Waiters, holder)}
 			metaStr, err := encodeSlotMeta(newMeta)
 			if err != nil {
 				return fmt.Errorf("failed to encode slot metadata: %w", err)
@@ -172,7 +185,11 @@ func MergeSlotReleaseImpl(ctx context.Context, s Storage, holder, actor string) 
 				return nil
 			}
 
-			newMeta := slotMeta{Waiters: meta.Waiters}
+			// Clear the holder. Also prune the released holder from the
+			// waiters queue defensively: it must never be simultaneously the
+			// (now-cleared) holder and a waiter, and a stale entry would give
+			// bogus Position/queue-depth signals.
+			newMeta := slotMeta{Waiters: removeWaiter(meta.Waiters, meta.Holder)}
 			metaStr, err := encodeSlotMeta(newMeta)
 			if err != nil {
 				return fmt.Errorf("failed to encode slot metadata: %w", err)
@@ -183,6 +200,25 @@ func MergeSlotReleaseImpl(ctx context.Context, s Storage, holder, actor string) 
 			}, actor)
 		},
 	)
+}
+
+// removeWaiter returns a copy of waiters with every occurrence of name
+// removed, preserving the order of the remaining entries (FIFO stability).
+// Returns nil when nothing remains so the JSON omitempty tag drops the field.
+func removeWaiter(waiters []string, name string) []string {
+	if len(waiters) == 0 {
+		return waiters
+	}
+	out := make([]string, 0, len(waiters))
+	for _, w := range waiters {
+		if w != name {
+			out = append(out, w)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // parseSlotMeta extracts the holder and waiters from an issue's Metadata field.
