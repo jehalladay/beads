@@ -1907,6 +1907,97 @@ func TestTxSearchIssues_ByLabelCaseInsensitive(t *testing.T) {
 	}
 }
 
+// TestTxSearchIssues_MissingFiltersParity gives beads-u9zr teeth: the
+// in-transaction SearchIssues (doltTransaction.SearchIssues) must honor the 5
+// filter fields it previously dropped silently — Statuses (multi-status IN),
+// ExcludePriority (priority NOT IN), ExcludeLabels (id NOT IN label subquery),
+// and StartedAfter/StartedBefore (started_at range) — matching the live
+// sqlbuild/filter.go path. Each sub-case is designed so a DROPPED clause returns
+// an OVER-BROAD set (test RED); the mirrored clause narrows it correctly (GREEN).
+// MUST exercise the transaction path (store.SearchIssues delegates to the
+// already-complete sqlbuild builder = no teeth here). Teeth verified: remove any
+// one clause from transaction.go -> the matching sub-case fails.
+func TestTxSearchIssues_MissingFiltersParity(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Two open issues + one closed, with distinct priorities and labels.
+	mk := func(id string, pri int, labels ...string) {
+		iss := &types.Issue{ID: id, Title: id, Status: types.StatusOpen, Priority: pri, IssueType: types.TypeTask}
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+		for _, l := range labels {
+			if err := store.AddLabel(ctx, id, l, "tester"); err != nil {
+				t.Fatalf("AddLabel %s/%s: %v", id, l, err)
+			}
+		}
+	}
+	mk("uz-a", 1, "keep")
+	mk("uz-b", 2, "drop")
+	mk("uz-closed", 3)
+	if err := store.UpdateIssue(ctx, "uz-closed", map[string]interface{}{"status": string(types.StatusClosed)}, "tester"); err != nil {
+		t.Fatalf("close uz-closed: %v", err)
+	}
+
+	search := func(name string, f types.IssueFilter) []*types.Issue {
+		var res []*types.Issue
+		if err := store.RunInTransaction(ctx, name, func(tx storage.Transaction) error {
+			r, err := tx.SearchIssues(ctx, "", f)
+			res = r
+			return err
+		}); err != nil {
+			t.Fatalf("%s: tx.SearchIssues error: %v", name, err)
+		}
+		return res
+	}
+	has := func(res []*types.Issue, id string) bool {
+		for _, r := range res {
+			if r.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Statuses (multi-status IN): open-only must EXCLUDE the closed issue.
+	// Dropped clause -> uz-closed leaks in (RED).
+	st := types.StatusOpen
+	if r := search("u9zr statuses", types.IssueFilter{Statuses: []types.Status{st}}); has(r, "uz-closed") {
+		t.Fatalf("Statuses=[open]: uz-closed leaked into results (clause dropped, beads-u9zr): %d results", len(r))
+	}
+
+	// ExcludePriority: excluding P2 must drop uz-b. Dropped clause -> uz-b leaks (RED).
+	p2 := 2
+	if r := search("u9zr exclude-priority", types.IssueFilter{ExcludePriority: []int{p2}}); has(r, "uz-b") {
+		t.Fatalf("ExcludePriority=[2]: uz-b leaked into results (clause dropped, beads-u9zr): %d results", len(r))
+	}
+
+	// ExcludeLabels: excluding "drop" must remove uz-b, keep uz-a. Dropped clause -> uz-b leaks (RED).
+	rEx := search("u9zr exclude-labels", types.IssueFilter{ExcludeLabels: []string{"drop"}})
+	if has(rEx, "uz-b") {
+		t.Fatalf("ExcludeLabels=[drop]: uz-b leaked (clause dropped, beads-u9zr): %d results", len(rEx))
+	}
+	if !has(rEx, "uz-a") {
+		t.Fatalf("ExcludeLabels=[drop]: uz-a wrongly removed (should be kept, beads-u9zr)")
+	}
+
+	// StartedAfter: uz-a/uz-b were never started (started_at NULL), so a future
+	// StartedAfter bound must return NONE of them. Dropped clause -> they leak (RED).
+	future := time.Now().UTC().Add(24 * time.Hour)
+	if r := search("u9zr started-after", types.IssueFilter{StartedAfter: &future}); has(r, "uz-a") || has(r, "uz-b") {
+		t.Fatalf("StartedAfter(future): unstarted issues leaked (clause dropped, beads-u9zr): %d results", len(r))
+	}
+	// StartedBefore: same NULL started_at -> a past bound must also exclude them.
+	past := time.Now().UTC().Add(-24 * time.Hour)
+	if r := search("u9zr started-before", types.IssueFilter{StartedBefore: &past}); has(r, "uz-a") || has(r, "uz-b") {
+		t.Fatalf("StartedBefore(past): unstarted issues leaked (clause dropped, beads-u9zr): %d results", len(r))
+	}
+}
+
 // TestSearchIssues_ByExternalRef verifies two things:
 //  1. A free-text query like "BE-1521" (which looksLikeIssueID returns true for)
 //     matches an issue whose external_ref contains that string.
