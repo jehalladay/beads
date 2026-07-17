@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -142,6 +144,27 @@ SEE ALSO:
 			issueIDs[i] = issue.ID
 		}
 
+		// Cascade in cleanup must stay within the closed-only contract:
+		// cleanup deletes CLOSED cruft, so a cascade must never reach an OPEN
+		// (or pinned) dependent. The storage-layer cascade has no status
+		// filter (correct for `bd delete <id> --cascade`, wrong here), so we
+		// pre-expand to the closed-only dependent closure ourselves and hand
+		// deleteBatch an explicit set with cascade disabled. (beads-9r3f)
+		if cascade {
+			expanded, skippedOpen, err := expandClosedOnlyCascade(ctx, store, issueIDs)
+			if err != nil {
+				return HandleError("expanding cascade set: %v", err)
+			}
+			issueIDs = expanded
+			if len(skippedOpen) > 0 && !jsonOutput {
+				fmt.Printf("Skipping %d non-closed dependent(s) that cascade would otherwise delete "+
+					"(cleanup only removes closed issues; use 'bd delete --cascade' to delete open dependents deliberately)\n",
+					len(skippedOpen))
+			}
+			// The set is now the exact closed-only closure; delete it verbatim.
+			cascade = false
+		}
+
 		if !force && !dryRun {
 			issueType := "closed"
 			if wispOnly {
@@ -173,6 +196,58 @@ SEE ALSO:
 		}
 		return nil
 	},
+}
+
+// expandClosedOnlyCascade computes the recursive dependent closure of seedIDs
+// (which cleanup guarantees are closed, non-pinned) but retains ONLY dependents
+// that are themselves closed and not pinned. This keeps `bd admin cleanup
+// --cascade` within cleanup's closed-only contract: it never deletes an open or
+// pinned issue, even one that depends on a closed issue. Returns the expanded
+// closed-only ID set and the list of skipped (open/pinned) dependent IDs.
+//
+// Contrast `bd delete <id> --cascade`, whose storage-layer cascade deliberately
+// deletes ALL dependents regardless of status — that path is unchanged. (beads-9r3f)
+func expandClosedOnlyCascade(ctx context.Context, s storage.DoltStorage, seedIDs []string) (expanded []string, skippedOpen []string, err error) {
+	inSet := make(map[string]bool, len(seedIDs))
+	for _, id := range seedIDs {
+		inSet[id] = true
+	}
+	skipped := make(map[string]bool)
+
+	queue := append([]string{}, seedIDs...)
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+
+		dependents, derr := s.GetDependents(ctx, id)
+		if derr != nil {
+			return nil, nil, fmt.Errorf("get dependents of %s: %w", id, derr)
+		}
+		for _, dep := range dependents {
+			if inSet[dep.ID] || skipped[dep.ID] {
+				continue
+			}
+			// Only cascade INTO closed, non-pinned dependents. An open (or
+			// pinned) dependent is live/protected work — cleanup must not
+			// touch it, and we must not traverse through it either.
+			if dep.Status != types.StatusClosed || dep.Pinned {
+				skipped[dep.ID] = true
+				continue
+			}
+			inSet[dep.ID] = true
+			queue = append(queue, dep.ID)
+		}
+	}
+
+	expanded = make([]string, 0, len(inSet))
+	for id := range inSet {
+		expanded = append(expanded, id)
+	}
+	skippedOpen = make([]string, 0, len(skipped))
+	for id := range skipped {
+		skippedOpen = append(skippedOpen, id)
+	}
+	return expanded, skippedOpen, nil
 }
 
 func init() {
