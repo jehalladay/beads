@@ -51,3 +51,42 @@ func TestBuildDSN_WithDatabase(t *testing.T) {
 		t.Errorf("DSN should contain database=mydb; got %q", dsn)
 	}
 }
+
+func TestSQLStringLiteral(t *testing.T) {
+	// beads-s4i: sqlStringLiteral wraps a value as a SQL string literal used in
+	// SET @@<db>_head_ref = <literal> on a connection with MultiStatements=true.
+	// It must neutralize BOTH the single-quote and the backslash: under Dolt's
+	// default (NO_BACKSLASH_ESCAPES off) a lone backslash is an escape char, so
+	// escaping only quotes lets a value like `main\'` render as `'main\''` where
+	// `\'` is a literal quote — the next `'` closes the string and any trailing
+	// `; ...` executes as a second statement.
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain", "main", "'main'"},
+		{"single_quote", "a'b", "'a''b'"},
+		{"backslash", `a\b`, `'a\\b'`},
+		{"trailing_backslash", `main\`, `'main\\'`},
+		{"quote_breakout_attempt", `main\' ; DROP DATABASE x -- `, `'main\\'' ; DROP DATABASE x --'`},
+		{"backslash_then_quote", `\'`, `'\\'''`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sqlStringLiteral(tc.in)
+			if got != tc.want {
+				t.Errorf("sqlStringLiteral(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			// Structural invariant: after removing every escaped pair (\\ and
+			// ''), no bare single-quote may remain inside the body — that is
+			// what would let an attacker close the literal early.
+			body := got[1 : len(got)-1] // strip the wrapping quotes
+			stripped := strings.ReplaceAll(body, `\\`, "")
+			stripped = strings.ReplaceAll(stripped, "''", "")
+			if strings.ContainsAny(stripped, `'\`) {
+				t.Errorf("literal body has an unescaped ' or \\ after removing escaped pairs: %q (from %q)", body, tc.in)
+			}
+		})
+	}
+}
