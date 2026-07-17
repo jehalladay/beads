@@ -114,7 +114,7 @@ func TestBuildReadyWorkWhereBatchesIDSets(t *testing.T) {
 		t.Errorf("expected 2 batched NOT IN clauses for %d IDs, got %d", len(ids), got)
 	}
 	// The identity-label exclusion adds one more subquery + its label args.
-	if !strings.Contains(where, "id NOT IN (SELECT issue_id FROM labels WHERE label IN (") {
+	if !strings.Contains(where, "id NOT IN (SELECT issue_id FROM labels WHERE LOWER(label) IN (") {
 		t.Errorf("expected identity-label exclusion subquery, where = %q", where)
 	}
 	wantArgs := len(ids) + len(ReadyWorkExcludeTypes(nil)) + len(ReadyWorkExcludeLabels(nil))
@@ -162,7 +162,7 @@ func TestBuildReadyWorkWhereAlwaysExcludesIdentityLabels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(where, "id NOT IN (SELECT issue_id FROM labels WHERE label IN (") {
+	if !strings.Contains(where, "id NOT IN (SELECT issue_id FROM labels WHERE LOWER(label) IN (") {
 		t.Errorf("ready work must exclude identity labels by default, where = %q", where)
 	}
 	// The last len(ReadyWorkExcludeLabels(nil)) args are the label values.
@@ -179,7 +179,7 @@ func TestBuildReadyWorkWhereAlwaysExcludesIdentityLabels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error (wisps): %v", err)
 	}
-	if !strings.Contains(wwhere, "SELECT issue_id FROM wisp_labels WHERE label IN (") {
+	if !strings.Contains(wwhere, "SELECT issue_id FROM wisp_labels WHERE LOWER(label) IN (") {
 		t.Errorf("wisp ready work must exclude identity labels via wisp_labels, where = %q", wwhere)
 	}
 }
@@ -196,7 +196,7 @@ func TestBuildReadyWorkWhereExplicitIdentityLabelEscapeHatch(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// The include clause for gt:agent must be present.
-	if !strings.Contains(where, "id IN (SELECT issue_id FROM labels WHERE label = ?)") {
+	if !strings.Contains(where, "id IN (SELECT issue_id FROM labels WHERE LOWER(label) = LOWER(?))") {
 		t.Errorf("explicit label must produce an include clause, where = %q", where)
 	}
 	// gt:agent appears exactly once (the include-clause arg), not again in a
@@ -211,7 +211,7 @@ func TestBuildReadyWorkWhereExplicitIdentityLabelEscapeHatch(t *testing.T) {
 		t.Errorf("gt:agent should appear once (include only), got %d occurrences in args %v", agentCount, args)
 	}
 	// The remaining identity labels (gt:role, gt:rig) are still excluded.
-	if !strings.Contains(where, "id NOT IN (SELECT issue_id FROM labels WHERE label IN (?, ?))") {
+	if !strings.Contains(where, "id NOT IN (SELECT issue_id FROM labels WHERE LOWER(label) IN (LOWER(?), LOWER(?)))") {
 		t.Errorf("non-requested identity labels must still be excluded, where = %q", where)
 	}
 }
