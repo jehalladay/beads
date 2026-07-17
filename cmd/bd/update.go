@@ -284,9 +284,9 @@ create, update, show, or close operation).`,
 			} else {
 				metadataJSON = metadataValue
 			}
-			// Validate JSON
-			if !json.Valid([]byte(metadataJSON)) {
-				return HandleErrorRespectJSON("invalid JSON in --metadata: must be valid JSON")
+			// Validate JSON is a top-level object (beads-ef2k)
+			if err := validateMetadataObject(metadataJSON); err != nil {
+				return HandleErrorRespectJSON("%v", err)
 			}
 			updates["metadata"] = json.RawMessage(metadataJSON)
 		}
@@ -582,6 +582,25 @@ create, update, show, or close operation).`,
 		}
 		return nil
 	},
+}
+
+// validateMetadataObject checks that the given --metadata JSON is a top-level
+// JSON object. json.Valid alone is not enough: every metadata consumer
+// (mergeMetadata, applyMetadataEdits, --set-metadata/--unset-metadata) unmarshals
+// into map[string]json.RawMessage and hard-errors on a non-object, so a bead
+// created/updated with an array or scalar --metadata value is permanently locked
+// out of all metadata edit paths (beads-ef2k). Rejecting non-objects at input
+// keeps create/update symmetric with the object-only edit paths and the
+// documented model ("Arbitrary JSON object preserved verbatim").
+func validateMetadataObject(metadataJSON string) error {
+	if !json.Valid([]byte(metadataJSON)) {
+		return fmt.Errorf("invalid JSON in --metadata: must be valid JSON")
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(metadataJSON), &obj); err != nil {
+		return fmt.Errorf(`--metadata must be a JSON object, e.g. {"key":"value"}`)
+	}
+	return nil
 }
 
 // mergeMetadata merges new metadata JSON into existing metadata.

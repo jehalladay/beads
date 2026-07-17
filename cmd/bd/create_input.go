@@ -235,8 +235,8 @@ func gatherCreateInput(cmd *cobra.Command, args []string) (createInput, error) {
 		} else {
 			metadataJSON = metadataValue
 		}
-		if !json.Valid([]byte(metadataJSON)) {
-			return in, HandleError("invalid JSON in --metadata: must be valid JSON")
+		if err := validateMetadataObject(metadataJSON); err != nil {
+			return in, HandleError("%v", err)
 		}
 		in.metadata = json.RawMessage(metadataJSON)
 		in.metadataSet = true

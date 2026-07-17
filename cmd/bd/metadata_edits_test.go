@@ -325,3 +325,40 @@ func TestToJSONValue(t *testing.T) {
 		})
 	}
 }
+
+// beads-ef2k: --metadata must be a top-level JSON object. json.Valid alone let
+// arrays/scalars through, which then lock the bead out of every object-only
+// metadata edit path (mergeMetadata/applyMetadataEdits/--set-metadata).
+func TestValidateMetadataObject(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"object", `{"key":"value"}`, false},
+		{"empty object", `{}`, false},
+		{"nested object", `{"a":{"b":1},"c":[1,2]}`, false},
+		{"array", `[1,2,3]`, true},
+		{"empty array", `[]`, true},
+		{"number", `42`, true},
+		{"string", `"hello"`, true},
+		{"bool", `true`, true},
+		// null unmarshals to a nil map (no error) and every consumer already
+		// treats "null" as "no metadata", so it does not lock the bead out.
+		{"null", `null`, false},
+		{"invalid json", `not-json`, true},
+		{"trailing garbage", `{"a":1}extra`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateMetadataObject(tt.input)
+			if tt.wantErr && err == nil {
+				t.Errorf("validateMetadataObject(%q) = nil, want error", tt.input)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("validateMetadataObject(%q) = %v, want nil", tt.input, err)
+			}
+		})
+	}
+}

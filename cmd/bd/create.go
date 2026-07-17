@@ -250,8 +250,8 @@ var createCmd = &cobra.Command{
 			} else {
 				metadataJSON = metadataValue
 			}
-			if !json.Valid([]byte(metadataJSON)) {
-				return HandleError("invalid JSON in --metadata: must be valid JSON")
+			if err := validateMetadataObject(metadataJSON); err != nil {
+				return HandleError("%v", err)
 			}
 			metadata = json.RawMessage(metadataJSON)
 		}
