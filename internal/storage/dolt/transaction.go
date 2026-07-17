@@ -434,24 +434,28 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 		whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (SELECT DISTINCT issue_id FROM %s)", labelTable))
 	}
 
-	// Label filtering (AND)
+	// Label filtering (AND). Case-insensitive to match the sibling read-filter
+	// paths (sqlbuild/filter.go:163 beads-hqp8, ready.go:176 beads-xl4k): the
+	// label column's collation is case-SENSITIVE, so `label = ?` diverged from
+	// every other label read filter (beads-3px4). LOWER(?) is applied to the
+	// bound value too so callers pass the label verbatim. DELETEs stay exact.
 	if len(filter.Labels) > 0 {
 		for _, label := range filter.Labels {
 			//nolint:gosec // G201: labelTable is hardcoded to "labels" or "wisp_labels"
-			whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE label = ?)", labelTable))
+			whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) = LOWER(?))", labelTable))
 			args = append(args, label)
 		}
 	}
 
-	// Label filtering (OR)
+	// Label filtering (OR). Same case-insensitive parity as the AND clause above.
 	if len(filter.LabelsAny) > 0 {
 		placeholders := make([]string, len(filter.LabelsAny))
 		for i, label := range filter.LabelsAny {
-			placeholders[i] = "?"
+			placeholders[i] = "LOWER(?)"
 			args = append(args, label)
 		}
 		//nolint:gosec // G201: labelTable is hardcoded to "labels" or "wisp_labels"
-		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE label IN (%s))", labelTable, strings.Join(placeholders, ", ")))
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) IN (%s))", labelTable, strings.Join(placeholders, ", ")))
 	}
 
 	// ID filtering

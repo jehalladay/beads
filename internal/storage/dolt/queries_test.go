@@ -1846,6 +1846,67 @@ func TestTxSearchIssues_ByAssigneeCaseInsensitive(t *testing.T) {
 	}
 }
 
+// TestTxSearchIssues_ByLabelCaseInsensitive gives the widened beads-3px4 teeth:
+// the in-transaction SearchIssues (doltTransaction.SearchIssues) must filter
+// LABELS case-INSENSITIVELY too — both the AND path (filter.Labels) and the OR
+// path (filter.LabelsAny) — matching sqlbuild/filter.go:163/173 (beads-hqp8) and
+// ready.go:176 (beads-xl4k). Same rationale as the assignee case above: this
+// MUST exercise the transaction path (store.SearchIssues delegates to the
+// already-fixed sqlbuild builder = no teeth here), and the label column is
+// case-sensitive under its collation, so a plain `label = ?` / `label IN (...)`
+// is RED (0 results for "Bug" vs stored "bug"); LOWER(label)=LOWER(?) is GREEN.
+// Verified: revert the fix -> this test fails.
+func TestTxSearchIssues_ByLabelCaseInsensitive(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	issue := &types.Issue{
+		ID:        "tx-label-ci",
+		Title:     "Labeled lowercase bug",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+		t.Fatalf("failed to create issue: %v", err)
+	}
+	if err := store.AddLabel(ctx, issue.ID, "bug", "tester"); err != nil {
+		t.Fatalf("AddLabel bug: %v", err)
+	}
+
+	for _, q := range []string{"Bug", "BUG", "bug"} {
+		label := q
+		// AND path (filter.Labels).
+		var andResults []*types.Issue
+		if err := store.RunInTransaction(ctx, "beads-3px4 label AND test", func(tx storage.Transaction) error {
+			r, err := tx.SearchIssues(ctx, "", types.IssueFilter{Labels: []string{label}})
+			andResults = r
+			return err
+		}); err != nil {
+			t.Fatalf("tx.SearchIssues(Labels=[%q]): unexpected error: %v", q, err)
+		}
+		if len(andResults) != 1 || andResults[0].ID != issue.ID {
+			t.Fatalf("tx.SearchIssues(Labels=[%q]): got %d results, want 1 (case-insensitive parity, beads-3px4)", q, len(andResults))
+		}
+
+		// OR path (filter.LabelsAny).
+		var orResults []*types.Issue
+		if err := store.RunInTransaction(ctx, "beads-3px4 label OR test", func(tx storage.Transaction) error {
+			r, err := tx.SearchIssues(ctx, "", types.IssueFilter{LabelsAny: []string{label}})
+			orResults = r
+			return err
+		}); err != nil {
+			t.Fatalf("tx.SearchIssues(LabelsAny=[%q]): unexpected error: %v", q, err)
+		}
+		if len(orResults) != 1 || orResults[0].ID != issue.ID {
+			t.Fatalf("tx.SearchIssues(LabelsAny=[%q]): got %d results, want 1 (case-insensitive parity, beads-3px4)", q, len(orResults))
+		}
+	}
+}
+
 // TestSearchIssues_ByExternalRef verifies two things:
 //  1. A free-text query like "BE-1521" (which looksLikeIssueID returns true for)
 //     matches an issue whose external_ref contains that string.
