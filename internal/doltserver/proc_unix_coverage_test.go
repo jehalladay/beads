@@ -124,6 +124,13 @@ func TestGracefulStop_SIGKILLAfterTimeout(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Error("child not reaped after SIGKILL escalation")
 	}
+
+	// bd-jvki: gracefulStop must only return nil once the process is actually
+	// dead — it now polls after SIGKILL rather than sleeping a fixed 100ms and
+	// returning nil unconditionally. So a nil return implies the PID is gone.
+	if isProcessAlive(pid) {
+		t.Error("gracefulStop returned nil but the process is still alive (verify-death contract violated)")
+	}
 }
 
 // TestGracefulStop_BogusPID covers FindProcess/Signal on a PID that maps to no

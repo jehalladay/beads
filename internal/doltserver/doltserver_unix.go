@@ -146,8 +146,21 @@ func gracefulStop(pid int, timeout time.Duration) error {
 		}
 	}
 
-	// Still running — force kill
+	// Still running — force kill, then VERIFY death before reporting success.
+	// SIGKILL cannot be caught but is not instantaneous: a process in an
+	// uninterruptible sleep (D state — e.g. a dolt sql-server mid-fsync on a
+	// slow/contended /fsx mount) does not die until its syscall returns, which
+	// can exceed a fixed sleep. Returning nil unconditionally lets callers
+	// (StopWithForce/IsRunning) wipe the PID/port tracking of a process that is
+	// still alive and still holding its port. Mirror the SIGTERM poll above and
+	// only return success once the process is actually gone (bd-jvki).
 	_ = process.Signal(syscall.SIGKILL)
-	time.Sleep(100 * time.Millisecond)
-	return nil
+	killDeadline := time.Now().Add(timeout)
+	for time.Now().Before(killDeadline) {
+		time.Sleep(100 * time.Millisecond)
+		if !isProcessAlive(pid) {
+			return nil // confirmed dead
+		}
+	}
+	return fmt.Errorf("process %d still alive %s after SIGKILL (likely uninterruptible I/O); not confirming death", pid, timeout)
 }
