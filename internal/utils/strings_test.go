@@ -184,6 +184,19 @@ func TestNormalizeIssueType(t *testing.T) {
 			input:    "decision",
 			expected: "decision",
 		},
+		// beads-9k6o: these aliases used to be handled ONLY by the create-path
+		// normalizer (IssueType.Normalize), not this filter-path one, so
+		// `bd create -t investigation` stored "spike" but `bd list -t investigation`
+		// missed it. Now that both share types.IssueTypeAliases, the filter path
+		// expands them identically.
+		{name: "investigation folds to spike (9k6o)", input: "investigation", expected: "spike"},
+		{name: "timebox folds to spike (9k6o)", input: "timebox", expected: "spike"},
+		{name: "user-story folds to story (9k6o)", input: "user-story", expected: "story"},
+		{name: "user_story folds to story (9k6o)", input: "user_story", expected: "story"},
+		{name: "ms folds to milestone (9k6o)", input: "ms", expected: "milestone"},
+		// Canonical built-in names now fold case-insensitively on the filter
+		// path too (beads-xsdh consistency).
+		{name: "uppercase BUG folds (xsdh)", input: "BUG", expected: "bug"},
 	}
 
 	for _, tt := range tests {

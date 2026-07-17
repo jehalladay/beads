@@ -1,25 +1,24 @@
 package utils
 
-import "strings"
+import (
+	"strings"
 
-// issueTypeAliases maps shorthand type names to canonical types
-var issueTypeAliases = map[string]string{
-	"mr":          "merge-request",
-	"feat":        "feature",
-	"mol":         "molecule",
-	"enhancement": "feature",
-	"dec":         "decision",
-	"adr":         "decision",
-}
+	"github.com/steveyegge/beads/internal/types"
+)
 
-// NormalizeIssueType expands type aliases to their canonical forms.
-// For example: "mr" -> "merge-request", "feat" -> "feature", "mol" -> "molecule"
-// Returns the input unchanged if it's not an alias.
+// NormalizeIssueType expands type aliases to their canonical forms on the
+// list/ready/update-filter path. It delegates to the SINGLE canonical alias
+// table (types.IssueTypeAliases via IssueType.Normalize) so the filter path and
+// the create path can never diverge again: previously this map and
+// IssueType.Normalize had DISJOINT aliases, so `bd create -t investigation`
+// stored "spike" while `bd list -t investigation` looked for "investigation"
+// and silently missed it (beads-9k6o).
+//
+// For example: "mr" -> "merge-request", "feat" -> "feature", "mol" -> "molecule",
+// "investigation" -> "spike". Returns the input unchanged if it's neither an
+// alias nor a canonical built-in.
 func NormalizeIssueType(t string) string {
-	if canonical, ok := issueTypeAliases[strings.ToLower(t)]; ok {
-		return canonical
-	}
-	return t
+	return string(types.IssueType(t).Normalize())
 }
 
 // NormalizeLabels trims whitespace, removes empty strings, and deduplicates labels

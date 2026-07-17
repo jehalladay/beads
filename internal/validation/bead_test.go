@@ -226,9 +226,10 @@ func TestParseIssueType(t *testing.T) {
 		{"event type", "event", types.TypeTask, true, "invalid issue type"},
 		{"message type", "message", types.TypeMessage, false, ""},
 
-		// Case sensitivity (function is case-sensitive)
-		{"uppercase bug", "BUG", types.TypeTask, true, "invalid issue type"},
-		{"mixed case feature", "FeAtUrE", types.TypeTask, true, "invalid issue type"},
+		// Case insensitivity: canonical built-in names normalize case-insensitively,
+		// consistent with aliases (beads-xsdh). "BUG" -> bug, "FeAtUrE" -> feature.
+		{"uppercase bug", "BUG", types.TypeBug, false, ""},
+		{"mixed case feature", "FeAtUrE", types.TypeFeature, false, ""},
 
 		// With whitespace
 		{"bug with spaces", "  bug  ", types.TypeBug, false, ""},
