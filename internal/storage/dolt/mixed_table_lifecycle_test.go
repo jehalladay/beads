@@ -252,6 +252,69 @@ func TestPromoteFromEphemeralRejectsCrossTypedTargetCollision(t *testing.T) {
 	}
 }
 
+// TestPromoteFromEphemeralRejectsIDCollisionWithPermanentIssue verifies that
+// promoting a wisp whose id already exists as a permanent issue is REJECTED
+// rather than silently destroying the wisp (beads-jym1). issues and wisps are
+// separate tables with no cross-table uniqueness, so the same id string can
+// live in both (e.g. via explicit/imported/carried ids). Without the guard,
+// promote would INSERT ... ON DUPLICATE KEY UPDATE over the pre-existing issue
+// (noop), bleed the wisp's aux-data into that unrelated issue, delete the wisp,
+// and return success — silent data loss.
+func TestPromoteFromEphemeralRejectsIDCollisionWithPermanentIssue(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Pre-existing permanent issue with distinctive data.
+	createPerm(t, ctx, store, "jym1-collide")
+	if _, err := store.db.ExecContext(ctx,
+		`UPDATE issues SET title = ?, priority = ? WHERE id = ?`,
+		"ORIGINAL PERMANENT ISSUE", 0, "jym1-collide"); err != nil {
+		t.Fatalf("seed distinctive perm issue: %v", err)
+	}
+
+	// A wisp sharing the same id string (separate table) with a distinctive label.
+	createWisp(t, ctx, store, "jym1-collide")
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO wisp_labels (issue_id, label) VALUES (?, ?)`,
+		"jym1-collide", "WISP-ONLY-LABEL"); err != nil {
+		t.Fatalf("seed wisp label: %v", err)
+	}
+
+	// Promote must REJECT: the id already exists as a permanent issue.
+	err := store.PromoteFromEphemeral(ctx, "jym1-collide", "tester")
+	if err == nil || !strings.Contains(err.Error(), "already exists as a permanent issue") {
+		t.Fatalf("PromoteFromEphemeral error = %v, want 'already exists as a permanent issue' rejection", err)
+	}
+
+	// The pre-existing issue must be untouched.
+	var title string
+	var priority int
+	if e := store.db.QueryRowContext(ctx,
+		`SELECT title, priority FROM issues WHERE id = ?`, "jym1-collide").Scan(&title, &priority); e != nil {
+		t.Fatalf("read issues row: %v", e)
+	}
+	if title != "ORIGINAL PERMANENT ISSUE" || priority != 0 {
+		t.Errorf("pre-existing issue mutated by rejected promote: title=%q priority=%d", title, priority)
+	}
+
+	// The wisp must be preserved (not deleted).
+	assertRowCountForIssue(t, store, "wisps", "jym1-collide", 1)
+
+	// The wisp's label must NOT have bled into the pre-existing issue.
+	var bledLabel int
+	if e := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM labels WHERE issue_id = ? AND label = ?`,
+		"jym1-collide", "WISP-ONLY-LABEL").Scan(&bledLabel); e != nil {
+		t.Fatalf("read labels: %v", e)
+	}
+	if bledLabel != 0 {
+		t.Errorf("wisp label bled into the pre-existing issue (count=%d); promote must reject before copying aux-data", bledLabel)
+	}
+}
+
 func TestPromoteFromEphemeralRemovesCopiedOutboundWispDependencies(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
