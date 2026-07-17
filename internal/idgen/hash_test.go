@@ -16,6 +16,35 @@ func TestEncodeBase36NonPositiveLength(t *testing.T) {
 	}
 }
 
+// TestGenerateHashIDLongLengthHasEntropy is the beads-ioci guard: for lengths
+// > 8 (reachable via an unclamped max_hash_length config), the hash body must
+// carry entropy proportional to the length, not the flat 24-bit `default:
+// numBytes=3` that zero-pads the ID (making a length-10 id like "bd-000009ni53"
+// — only ~5 significant chars, defeating the adaptive-length collision math).
+func TestGenerateHashIDLongLengthHasEntropy(t *testing.T) {
+	ts := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	for _, length := range []int{9, 10, 12} {
+		// The leading char of the hash body must VARY across inputs. With only
+		// 24 bits of entropy padded to `length` chars, the top chars are stuck
+		// at '0' for essentially all inputs; real entropy varies them.
+		leadingChars := map[byte]bool{}
+		for nonce := 0; nonce < 500; nonce++ {
+			id := GenerateHashID("bd", "title", "desc", "creator", ts, length, nonce)
+			body := id[len("bd-"):]
+			if len(body) != length {
+				t.Fatalf("length=%d: body %q len=%d, want %d", length, body, len(body), length)
+			}
+			leadingChars[body[0]] = true
+		}
+		// With genuine entropy the leading char takes many distinct values across
+		// 500 inputs. The buggy 24-bit-padded path pins it to '0' (1 value).
+		if len(leadingChars) < 2 {
+			t.Errorf("length=%d: leading hash char took %d distinct values across 500 inputs "+
+				"(want many) — the id is zero-padded low-entropy (beads-ioci)", length, len(leadingChars))
+		}
+	}
+}
+
 func TestGenerateHashIDNonPositiveLengthDoesNotPanic(t *testing.T) {
 	// Reachable from a corrupt min_hash_length config → ComputeAdaptiveLength
 	// returns a negative length → GenerateHashID. Must not crash bd create.
