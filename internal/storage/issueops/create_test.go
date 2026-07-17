@@ -498,3 +498,56 @@ func TestIssueLabel(t *testing.T) {
 		t.Errorf("empty -> %q, want (unnamed)", got)
 	}
 }
+
+// TestPersistDependenciesReportsEmptyTargetWithActionableReason verifies that a
+// dependency edge whose depends_on_id is empty (e.g. hand-authored JSONL that
+// used the top-level "id" field instead of "depends_on_id") is skipped with a
+// reason that names the missing field, rather than the misleading empty
+// "source -> : target not found" (beads-p96v). The guard must short-circuit
+// BEFORE any target lookup, so no SQL is issued for the empty-target edge.
+func TestPersistDependenciesReportsEmptyTargetWithActionableReason(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+	issue := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "", // missing depends_on_id
+			Type:        types.DepBlocks,
+		}},
+	}
+	var skipped []string
+
+	// No mock.ExpectQuery: the empty-target guard must fire before any lookup.
+
+	result, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{issue}, "tester", storage.BatchCreateOptions{
+		SkipDependencyValidationErrors: true,
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			skipped = append(skipped, issueID+" -> "+dependsOnID+": "+reason)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = %v, want nil", err)
+	}
+	if len(result.ChangedTables) != 0 {
+		t.Fatalf("ChangedTables = %#v, want none", result.ChangedTables)
+	}
+	if len(skipped) != 1 {
+		t.Fatalf("skipped = %#v, want exactly one skipped edge", skipped)
+	}
+	if !strings.Contains(skipped[0], "depends_on_id") {
+		t.Errorf("skipped reason should name the missing depends_on_id field; got: %s", skipped[0])
+	}
+	if strings.Contains(skipped[0], "target not found") {
+		t.Errorf("empty-target skip should NOT reuse the misleading 'target not found' reason; got: %s", skipped[0])
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}

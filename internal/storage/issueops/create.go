@@ -725,6 +725,19 @@ func PersistDependenciesWithOptionsResult(ctx context.Context, tx *sql.Tx, issue
 				dep.IssueID = issue.ID
 			}
 
+			// A dependency edge with no target (e.g. hand-authored JSONL that
+			// used the top-level "id" field instead of the dependency schema's
+			// "depends_on_id") would otherwise hit the target lookup with an
+			// empty id and be reported as the misleading "-> : target not
+			// found". Name the real cause instead (beads-p96v).
+			if dep.DependsOnID == "" {
+				if opts.SkipDependencyValidationErrors {
+					recordSkippedDependency(opts, dep, "missing 'depends_on_id' in dependency entry")
+					continue
+				}
+				return result, fmt.Errorf("dependency for %s is missing 'depends_on_id'", dep.IssueID)
+			}
+
 			kind := ClassifyDepTarget(ctx, tx, dep, false)
 
 			if kind != DepTargetExternal {
