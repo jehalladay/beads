@@ -63,6 +63,48 @@ func TestProxiedServerUpdate(t *testing.T) {
 		}
 	})
 
+	t.Run("audit_logs_field_changes", func(t *testing.T) {
+		// beads-jffu: the proxied UPDATE path must emit the GC-survivable
+		// audit-file field-change trail for status/assignee/priority, mirroring
+		// the CLI update path and the proxied close/reopen handlers. Before the
+		// fix, proxied update alone dropped this trail.
+		p := bdProxiedInit(t, bd, "uau")
+		issue := bdProxiedCreate(t, bd, p.dir, "Audit me")
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID,
+			"--status", "in_progress",
+			"--assignee", "alice",
+			"-p", "0")
+
+		auditPath := filepath.Join(p.beadsDir, "interactions.jsonl")
+		data, err := os.ReadFile(auditPath)
+		if err != nil {
+			t.Fatalf("proxied update wrote no audit trail (beads-jffu): %v", err)
+		}
+		seen := map[string]bool{}
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			if line == "" {
+				continue
+			}
+			var e struct {
+				Kind  string         `json:"kind"`
+				Extra map[string]any `json:"extra"`
+			}
+			if err := json.Unmarshal([]byte(line), &e); err != nil {
+				t.Fatalf("bad audit line %q: %v", line, err)
+			}
+			if e.Kind == "field_change" {
+				if f, ok := e.Extra["field"].(string); ok {
+					seen[f] = true
+				}
+			}
+		}
+		for _, want := range []string{"status", "assignee", "priority"} {
+			if !seen[want] {
+				t.Errorf("proxied update dropped audit field_change for %q (beads-jffu); saw %v", want, seen)
+			}
+		}
+	})
+
 	t.Run("claim_sets_assignee_and_in_progress", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "uc")
 		issue := bdProxiedCreate(t, bd, p.dir, "To claim")
