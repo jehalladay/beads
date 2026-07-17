@@ -124,8 +124,10 @@ Examples:
 			priority, _ := cmd.Flags().GetInt("priority")
 			filter.Priority = &priority
 		}
-		if assignee != "" {
-			filter.Assignee = &assignee
+		// beads-sabd: trim read-side assignee (write side trims via llzt
+		// @7f1b7dae5; read never trimmed -> padded value silently matched nothing).
+		if a := strings.TrimSpace(assignee); a != "" {
+			filter.Assignee = &a
 		}
 		if issueType != "" {
 			t := types.IssueType(issueType)

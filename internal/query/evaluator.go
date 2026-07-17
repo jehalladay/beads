@@ -337,10 +337,16 @@ func (e *Evaluator) applyAssigneeFilter(comp *ComparisonNode, filter *types.Issu
 	if comp.Op != OpEquals {
 		return fmt.Errorf("assignee only supports = operator")
 	}
-	if comp.Value == "" || strings.ToLower(comp.Value) == "none" || strings.ToLower(comp.Value) == "null" {
+	// beads-sabd: trim before matching. The write side trims stored assignees
+	// (llzt @7f1b7dae5) and this leg matches only case-insensitively
+	// (LOWER(assignee)=LOWER(?)), never trimming, so a padded query value like
+	// `assignee = "  alice  "` silently matched nothing. Trim before the
+	// none/null sentinel check so `assignee = "  none  "` still means unassigned.
+	value := strings.TrimSpace(comp.Value)
+	if value == "" || strings.ToLower(value) == "none" || strings.ToLower(value) == "null" {
 		filter.NoAssignee = true
 	} else {
-		filter.Assignee = &comp.Value
+		filter.Assignee = &value
 	}
 	return nil
 }
@@ -914,7 +920,11 @@ func (e *Evaluator) buildTypePredicate(comp *ComparisonNode) (func(*types.Issue)
 }
 
 func (e *Evaluator) buildAssigneePredicate(comp *ComparisonNode) (func(*types.Issue) bool, error) {
-	value := comp.Value
+	// beads-sabd: trim the query value so a padded `assignee = "  alice  "`
+	// matches the trimmed stored assignee (write side trims via llzt
+	// @7f1b7dae5; EqualFold folds case but never trimmed). Trim before the
+	// none/null sentinel check so `assignee = "  none  "` still means unassigned.
+	value := strings.TrimSpace(comp.Value)
 	isNone := value == "" || strings.ToLower(value) == "none" || strings.ToLower(value) == "null"
 	switch comp.Op {
 	case OpEquals:

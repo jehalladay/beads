@@ -161,8 +161,11 @@ func buildListFilter(in listInput, cfg listFilterConfig) (types.IssueFilter, err
 		p := in.priority
 		filter.Priority = &p
 	}
-	if in.assignee != "" {
-		a := in.assignee
+	// beads-sabd: trim the read-side assignee filter (write side trims via
+	// llzt @7f1b7dae5; read matches case-insensitively but never trimmed, so
+	// a padded value silently matched nothing). Guard on the TRIMMED value so a
+	// whitespace-only flag doesn't collapse to an empty-assignee filter.
+	if a := strings.TrimSpace(in.assignee); a != "" {
 		filter.Assignee = &a
 	}
 	if in.issueType != "" {

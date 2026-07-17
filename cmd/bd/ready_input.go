@@ -47,6 +47,9 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 		in.offset = offset
 	}
 	assignee, _ := cmd.Flags().GetString("assignee")
+	// beads-sabd: trim read-side assignee (write side trims via llzt @7f1b7dae5;
+	// read never trimmed -> padded value silently matched nothing). Mirrors ready.go.
+	assignee = strings.TrimSpace(assignee)
 	unassigned, _ := cmd.Flags().GetBool("unassigned")
 	sortPolicy, _ := cmd.Flags().GetString("sort")
 	labels, _ := cmd.Flags().GetStringSlice("label")

@@ -399,3 +399,30 @@ func TestBuildListFilter_AllFlagKeepsPinnedNil(t *testing.T) {
 		t.Errorf("--all ExcludeStatus = %v, want empty", f.ExcludeStatus)
 	}
 }
+
+// TestBuildListFilter_AssigneeTrimmed pins beads-sabd: the read-side assignee
+// filter must be trimmed to match the trimmed stored value (write side trims
+// via llzt @7f1b7dae5; read matches only case-insensitively). A padded flag
+// value must build Filter.Assignee = "alice", not "  alice  " (which would be
+// unmatchable), and a whitespace-only value must not set an (empty) assignee
+// filter at all.
+func TestBuildListFilter_AssigneeTrimmed(t *testing.T) {
+	f, err := buildListFilter(listInput{assignee: "  alice  "}, baseCfg())
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if f.Assignee == nil {
+		t.Fatal("Assignee filter is nil; padded assignee was dropped")
+	}
+	if got := *f.Assignee; got != "alice" {
+		t.Errorf("Assignee = %q, want %q (untrimmed -> unmatchable vs trimmed stored value)", got, "alice")
+	}
+
+	fw, err := buildListFilter(listInput{assignee: "   "}, baseCfg())
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if fw.Assignee != nil {
+		t.Errorf("whitespace-only assignee set Assignee = %q, want no filter", *fw.Assignee)
+	}
+}
