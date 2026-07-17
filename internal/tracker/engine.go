@@ -611,7 +611,12 @@ func (e *Engine) doPull(ctx context.Context, opts SyncOptions, allowOverwriteIDs
 				}
 				return syncIssueLabels(ctx, tx, existing.ID, conv.Issue.Labels, e.Actor)
 			}); err != nil {
+				// A failed local write must be counted, not swallowed: matching
+				// the fetch-failure branch, so the sync doesn't report
+				// Success/Errors=0 while silently dropping the pulled change
+				// (beads-y26i).
 				e.warn("Failed to update %s: %v", existing.ID, err)
+				stats.Errors++
 				continue
 			}
 			stats.Updated++
@@ -625,7 +630,10 @@ func (e *Engine) doPull(ctx context.Context, opts SyncOptions, allowOverwriteIDs
 				conv.Issue.Metadata = raw
 			}
 			if err := e.Store.CreateIssue(ctx, conv.Issue, e.Actor); err != nil {
+				// Count the failed create so it is surfaced rather than silently
+				// dropped (beads-y26i), matching the fetch-failure branch.
 				e.warn("Failed to create issue for %s: %v", extIssue.Identifier, err)
+				stats.Errors++
 				continue
 			}
 			stats.Created++
