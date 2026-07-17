@@ -122,6 +122,105 @@ func TestTryAutoResolveMergeConflicts_DependencyAuditOnly(t *testing.T) {
 	}
 }
 
+// TestTryAutoResolveMergeConflicts_DependencyMetadataConflictLeftAlone is the
+// beads-fosi guard on the real-merge path: a same-edge conflict (identical
+// id/issue/target/type) that differs only in the metadata column is a SEMANTIC
+// conflict (WaitsForMeta gate / AttestsMeta), not audit-only, so the resolver
+// must leave it for the operator rather than silently taking --theirs and
+// dropping the local gate/attestation value.
+func TestTryAutoResolveMergeConflicts_DependencyMetadataConflictLeftAlone(t *testing.T) {
+	store, peerBranch := setupDependencyMergeConflictWithMetadata(t,
+		`{"gate":"all-children"}`, `{"gate":"any-children"}`)
+	ctx, cancel := testContext(t)
+	defer cancel()
+	db := store.db
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, "SET @@dolt_allow_commit_conflicts = 1"); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("allow commit conflicts: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, "CALL DOLT_MERGE(?)", peerBranch); err != nil {
+		t.Logf("merge returned: %v", err)
+	}
+
+	resolved, err := store.tryAutoResolveMergeConflicts(ctx, tx)
+	_ = tx.Rollback()
+	if err != nil {
+		t.Fatalf("resolver error: %v", err)
+	}
+	if resolved {
+		t.Error("expected a differing-metadata dependency conflict to be left unresolved (semantic, not audit-only)")
+	}
+}
+
+// setupDependencyMergeConflictWithMetadata mirrors setupDependencyMergeConflict
+// but seeds the SAME edge (same id/issue/target/type) with a different metadata
+// JSON on each branch, so the only conflicting column is the semantic metadata
+// (beads-fosi).
+func setupDependencyMergeConflictWithMetadata(t *testing.T, ourMeta, theirMeta string) (*DoltStore, string) {
+	t.Helper()
+	store, cleanup := setupTestStore(t)
+	t.Cleanup(cleanup)
+
+	ctx, cancel := testContext(t)
+	t.Cleanup(cancel)
+
+	db := store.db
+	var currentBranch string
+	if err := db.QueryRowContext(ctx, "SELECT active_branch()").Scan(&currentBranch); err != nil {
+		t.Fatalf("get current branch: %v", err)
+	}
+
+	for _, id := range []string{"depm-x", "depm-y"} {
+		if _, err := db.ExecContext(ctx,
+			"INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, status, priority, issue_type) VALUES (?, ?, '', '', '', '', 'open', 2, 'task')",
+			id, id); err != nil {
+			t.Fatalf("seed issue %s: %v", id, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'seed issues')"); err != nil {
+		t.Fatalf("commit seed issues: %v", err)
+	}
+
+	edgeID := depid.New("depm-x", "depm-y")
+	insert := func(meta string) {
+		if _, err := db.ExecContext(ctx,
+			"INSERT INTO dependencies (id, issue_id, depends_on_issue_id, type, created_at, created_by, metadata) VALUES (?, 'depm-x', 'depm-y', 'blocks', NOW(), 'alice', ?)",
+			edgeID, meta); err != nil {
+			t.Fatalf("insert edge (meta=%s): %v", meta, err)
+		}
+	}
+
+	insert(ourMeta)
+	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'edge on current')"); err != nil {
+		t.Fatalf("commit edge on current: %v", err)
+	}
+
+	peerBranch := currentBranch + "_peer_meta"
+	if _, err := db.ExecContext(ctx, "CALL DOLT_BRANCH(?, 'HEAD~1')", peerBranch); err != nil {
+		t.Fatalf("create peer branch: %v", err)
+	}
+	t.Cleanup(func() {
+		db.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", currentBranch)
+		db.ExecContext(ctx, "CALL DOLT_BRANCH('-D', ?)", peerBranch)
+	})
+	if _, err := db.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", peerBranch); err != nil {
+		t.Fatalf("checkout peer branch: %v", err)
+	}
+	insert(theirMeta)
+	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'edge on peer')"); err != nil {
+		t.Fatalf("commit edge on peer: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", currentBranch); err != nil {
+		t.Fatalf("checkout current branch: %v", err)
+	}
+	return store, peerBranch
+}
+
 // TestTryAutoResolveMergeConflicts_DependencyTypeConflictLeftAlone verifies that
 // a same-edge dependency conflict where the type differs is NOT auto-resolved —
 // it is a real semantic conflict left for the operator.

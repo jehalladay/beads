@@ -417,7 +417,7 @@ func CommitResolvedConflicts(ctx context.Context, db DBConn) error {
 
 // dependencyConflictsAreAuditOnly reports whether every conflicted row in the
 // dependencies table is the SAME logical edge on both sides that differs only in
-// audit columns (created_at/created_by/metadata/thread_id) — the only class safe to
+// the genuine audit columns (created_at/created_by) — the only class safe to
 // auto-resolve with --theirs.
 //
 // It does NOT trust the primary key as proof of a shared edge. With deterministic
@@ -428,6 +428,15 @@ func CommitResolvedConflicts(ctx context.Context, db DBConn) error {
 // target — matches on both sides, and that the type matches, before declaring the
 // conflict audit-only. It returns false if any conflicted row differs in identity or
 // type, or was deleted on one side (an add/delete conflict).
+//
+// metadata and thread_id are NOT audit columns even though they can change
+// without an edge's identity changing: metadata carries semantic edge state
+// (WaitsForMeta fanout-gate config, AttestsMeta skill attestations) and
+// thread_id groups conversation edges, so a same-edge conflict that differs in
+// either is a real semantic conflict — taking --theirs would silently drop the
+// local gate/attestation/thread value (the beads-ka1n silent-supersession class,
+// on the dependencies table). Compare them too, so only a created_at/created_by
+// difference is declared audit-only (beads-fosi).
 func dependencyConflictsAreAuditOnly(ctx context.Context, db DBConn) (bool, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT our_id, their_id,
@@ -435,12 +444,23 @@ func dependencyConflictsAreAuditOnly(ctx context.Context, db DBConn) (bool, erro
 		       our_depends_on_issue_id, their_depends_on_issue_id,
 		       our_depends_on_wisp_id, their_depends_on_wisp_id,
 		       our_depends_on_external, their_depends_on_external,
-		       our_type, their_type
+		       our_type, their_type,
+		       our_metadata, their_metadata,
+		       our_thread_id, their_thread_id
 		FROM dolt_conflicts_dependencies`)
 	if err != nil {
 		return false, fmt.Errorf("query dependency conflicts: %w", err)
 	}
 	defer rows.Close()
+
+	// nullEq reports whether two nullable columns hold the same value (both NULL,
+	// or both non-NULL with equal strings).
+	nullEq := func(a, b sql.NullString) bool {
+		if a.Valid != b.Valid {
+			return false
+		}
+		return !a.Valid || a.String == b.String
+	}
 
 	for rows.Next() {
 		var (
@@ -450,10 +470,13 @@ func dependencyConflictsAreAuditOnly(ctx context.Context, db DBConn) (bool, erro
 			ourDepWisp, theirDepWisp   sql.NullString
 			ourDepExt, theirDepExt     sql.NullString
 			ourType, theirType         sql.NullString
+			ourMeta, theirMeta         sql.NullString
+			ourThread, theirThread     sql.NullString
 		)
 		if err := rows.Scan(&ourID, &theirID, &ourIssue, &theirIssue,
 			&ourDepIssue, &theirDepIssue, &ourDepWisp, &theirDepWisp,
-			&ourDepExt, &theirDepExt, &ourType, &theirType); err != nil {
+			&ourDepExt, &theirDepExt, &ourType, &theirType,
+			&ourMeta, &theirMeta, &ourThread, &theirThread); err != nil {
 			return false, fmt.Errorf("scan dependency conflict: %w", err)
 		}
 		// One side deleted the edge (add/delete conflict): leave for the operator.
@@ -471,8 +494,15 @@ func dependencyConflictsAreAuditOnly(ctx context.Context, db DBConn) (bool, erro
 		if ourOK != theirOK || ourTarget != theirTarget {
 			return false, nil
 		}
-		// A differing type is the only remaining way this is a real semantic conflict.
+		// A differing type is a real semantic conflict.
 		if ourType.Valid != theirType.Valid || ourType.String != theirType.String {
+			return false, nil
+		}
+		// metadata (WaitsForMeta gate / AttestsMeta) and thread_id are semantic
+		// edge state, not audit columns — a same-edge conflict that differs in
+		// either is a real conflict; auto-resolving with --theirs would silently
+		// drop the local value (beads-fosi).
+		if !nullEq(ourMeta, theirMeta) || !nullEq(ourThread, theirThread) {
 			return false, nil
 		}
 	}
