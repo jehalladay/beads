@@ -31,6 +31,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exclusion columns); it now routes an unsupported `!=` to predicate evaluation
   (as it already did for `owner`), so the comparison matches the documented
   behavior. Priority range validation (0–4) is enforced on both paths.
+- **SCM sync: empty local description no longer wipes the external issue body
+  (beads-fmb9).** On push-update, github, gitlab, linear, and notion sent the
+  description unconditionally, so a local issue with an empty description
+  overwrote (blanked) a non-empty body on the external issue. They now omit
+  the description/body field when the local description is empty, matching
+  jira's existing guard — the external body is preserved.
+- **SCM sync: duplicate external issues on ambiguous create failures
+  (beads-merm).** The github, gitlab, and jira clients retried the create
+  `POST` on transport errors and 5xx responses without a method guard. When
+  the server wrote the issue but the response was lost (timeout, or a 5xx
+  emitted after the row was written), the retry minted a duplicate. Create
+  `POST`s are now sent at most once on such ambiguous outcomes and return a
+  typed `AmbiguousError`; idempotent methods (GET/PUT/PATCH/DELETE) still
+  retry, and a `429` rate limit (a clean rejection) still retries even for
+  `POST`. (Notion's client already had no retry loop; linear already dedups
+  via an idempotency marker.)
 
 ## [1.1.0-rc.1] - 2026-06-23
 

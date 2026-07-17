@@ -14,6 +14,34 @@ import (
 	"time"
 )
 
+// AmbiguousError indicates a non-idempotent request (POST/create) that failed
+// with an ambiguous outcome — a transport error, a lost response, or a 5xx
+// that GitLab may have emitted AFTER writing the resource. Such requests are
+// NOT retried, because a blind retry of a create can mint a duplicate external
+// issue (beads-merm). The caller must treat the create as "may have
+// succeeded" and reconcile rather than assuming it failed. Idempotent methods
+// (GET/PUT/DELETE) are unaffected and keep retrying.
+type AmbiguousError struct {
+	Method string
+	URL    string
+	// Cause is the underlying transport/status error from the single attempt.
+	Cause error
+}
+
+func (e *AmbiguousError) Error() string {
+	return fmt.Sprintf("gitlab %s %s failed with an ambiguous outcome (not retried to avoid a duplicate create): %v", e.Method, e.URL, e.Cause)
+}
+
+func (e *AmbiguousError) Unwrap() error { return e.Cause }
+
+// isIdempotentMethod reports whether an HTTP method is safe to retry after an
+// ambiguous failure without risking a duplicate side effect. POST creates a
+// new resource on each call, so it is the only non-idempotent method used by
+// this client.
+func isIdempotentMethod(method string) bool {
+	return method != http.MethodPost
+}
+
 // NewClient creates a new GitLab client with the given token, base URL, and project ID.
 func NewClient(token, baseURL, projectID string) *Client {
 	return &Client{
@@ -131,6 +159,12 @@ func (c *Client) doRequest(ctx context.Context, method, urlStr string, body inte
 		resp, err := c.HTTPClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("request failed (attempt %d/%d): %w", attempt+1, MaxRetries+1, err)
+			// A transport error on a non-idempotent request (POST/create) is
+			// ambiguous: the server may have processed it before the response
+			// was lost. Do not retry — a blind retry can create a duplicate.
+			if !isIdempotentMethod(method) {
+				return nil, nil, &AmbiguousError{Method: method, URL: urlStr, Cause: lastErr}
+			}
 			continue
 		}
 
@@ -140,6 +174,12 @@ func (c *Client) doRequest(ctx context.Context, method, urlStr string, body inte
 		_ = resp.Body.Close() // Best effort: HTTP body close; connection may be reused regardless
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response (attempt %d/%d): %w", attempt+1, MaxRetries+1, err)
+			// The server returned a status but we could not read the body. For
+			// a non-idempotent request the create may have committed — treat as
+			// ambiguous rather than retrying into a duplicate.
+			if !isIdempotentMethod(method) {
+				return nil, nil, &AmbiguousError{Method: method, URL: urlStr, Cause: lastErr}
+			}
 			continue
 		}
 
@@ -147,12 +187,25 @@ func (c *Client) doRequest(ctx context.Context, method, urlStr string, body inte
 			return respBody, resp.Header, nil
 		}
 
-		// Retry on rate-limiting and server errors with exponential backoff.
-		retriable := resp.StatusCode == http.StatusTooManyRequests ||
-			resp.StatusCode == http.StatusInternalServerError ||
+		// A 5xx on a non-idempotent request is ambiguous: the create may have
+		// committed before GitLab errored. Do not retry — surface an
+		// AmbiguousError so the caller reconciles instead of duplicating. A 429
+		// (rate limit) is a clean rejection (not processed), so it stays
+		// retryable even for POST.
+		isServerError := resp.StatusCode == http.StatusInternalServerError ||
 			resp.StatusCode == http.StatusBadGateway ||
 			resp.StatusCode == http.StatusServiceUnavailable ||
 			resp.StatusCode == http.StatusGatewayTimeout
+		if isServerError && !isIdempotentMethod(method) {
+			return nil, nil, &AmbiguousError{
+				Method: method,
+				URL:    urlStr,
+				Cause:  fmt.Errorf("transient error %d: %s", resp.StatusCode, string(respBody)),
+			}
+		}
+
+		// Retry on rate-limiting and server errors with exponential backoff.
+		retriable := resp.StatusCode == http.StatusTooManyRequests || isServerError
 
 		if retriable {
 			delay := RetryDelay * time.Duration(1<<attempt)
