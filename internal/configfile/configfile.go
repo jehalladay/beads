@@ -298,19 +298,30 @@ func (c *Config) GetDoltServerHost() string {
 // (where the port is an OS-assigned ephemeral port).
 // Kept for backward compatibility with external consumers.
 //
+// parseEnvPort parses an env-var port value, returning (port, true) only for a
+// valid TCP port in [1,65535]. A non-numeric OR out-of-range value returns
+// (0, false) so the caller falls through to the next source, rather than
+// dialing a bogus port. The [1,65535] bound mirrors ExternalDoltConfig.Validate
+// (beads-114t) — previously a parsed-but-out-of-range value (e.g. "-5", "0",
+// "99999") was returned verbatim, and "0" additionally skipped the valid
+// struct/default fallback.
+func parseEnvPort(v string) (int, bool) {
+	port, err := strconv.Atoi(v)
+	if err != nil || port < 1 || port > 65535 {
+		return 0, false
+	}
+	return port, true
+}
+
 // GetDoltServerPort returns the Dolt server port.
 // Checks BEADS_DOLT_SERVER_PORT env var first, then BEADS_DOLT_PORT (orchestrator sets this),
 // then config, then default.
 func (c *Config) GetDoltServerPort() int {
-	if p := os.Getenv("BEADS_DOLT_SERVER_PORT"); p != "" {
-		if port, err := strconv.Atoi(p); err == nil {
-			return port
-		}
+	if port, ok := parseEnvPort(os.Getenv("BEADS_DOLT_SERVER_PORT")); ok {
+		return port
 	}
-	if p := os.Getenv("BEADS_DOLT_PORT"); p != "" {
-		if port, err := strconv.Atoi(p); err == nil {
-			return port
-		}
+	if port, ok := parseEnvPort(os.Getenv("BEADS_DOLT_PORT")); ok {
+		return port
 	}
 	if c.DoltServerPort > 0 {
 		return c.DoltServerPort
@@ -418,10 +429,8 @@ func (c *Config) GetDoltDataDir() string {
 // GetDoltRemotesAPIPort returns the Dolt remotesapi port used for federation.
 // Checks BEADS_DOLT_REMOTESAPI_PORT env var first, then config, then default (8080).
 func (c *Config) GetDoltRemotesAPIPort() int {
-	if p := os.Getenv("BEADS_DOLT_REMOTESAPI_PORT"); p != "" {
-		if port, err := strconv.Atoi(p); err == nil {
-			return port
-		}
+	if port, ok := parseEnvPort(os.Getenv("BEADS_DOLT_REMOTESAPI_PORT")); ok {
+		return port
 	}
 	if c.DoltRemotesAPIPort > 0 {
 		return c.DoltRemotesAPIPort
