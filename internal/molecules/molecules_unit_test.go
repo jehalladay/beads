@@ -322,6 +322,87 @@ func TestLoadAll_LoadErrorIsLoggedNotFatal(t *testing.T) {
 	}
 }
 
+func TestLoadAll_UserCreateError_LoggedNotFatal(t *testing.T) {
+	// A user-level catalog whose batch-create fails must be logged and omitted
+	// from Sources without failing LoadAll (the user-path error branch).
+	t.Setenv("GT_ROOT", "") // no town catalog
+
+	home := t.TempDir()
+	writeProjectMolecules(t, home, `{"id":"mol-user","title":"User","issue_type":"molecule","status":"open"}`)
+	t.Setenv("HOME", home)
+
+	store := newFakeStore()
+	store.createErr = errors.New("user create boom")
+	l := NewLoader(store)
+
+	result, err := l.LoadAll(context.Background(), "")
+	if err != nil {
+		t.Fatalf("LoadAll returned error, want nil (load errors are non-fatal): %v", err)
+	}
+	if result.Loaded != 0 {
+		t.Errorf("Loaded = %d, want 0 when the store rejects the user batch", result.Loaded)
+	}
+	if len(result.Sources) != 0 {
+		t.Errorf("Sources = %v, want empty (failed user source not recorded)", result.Sources)
+	}
+}
+
+func TestLoadAll_ProjectCreateError_LoggedNotFatal(t *testing.T) {
+	// A project-level catalog whose batch-create fails must be logged and
+	// omitted from Sources without failing LoadAll (the project-path error branch).
+	t.Setenv("GT_ROOT", "")
+	t.Setenv("HOME", t.TempDir()) // no user catalog
+
+	beadsDir := writeProjectMolecules(t, t.TempDir(),
+		`{"id":"mol-proj","title":"Proj","issue_type":"molecule","status":"open"}`)
+
+	store := newFakeStore()
+	store.createErr = errors.New("project create boom")
+	l := NewLoader(store)
+
+	result, err := l.LoadAll(context.Background(), beadsDir)
+	if err != nil {
+		t.Fatalf("LoadAll returned error, want nil (load errors are non-fatal): %v", err)
+	}
+	if result.Loaded != 0 {
+		t.Errorf("Loaded = %d, want 0 when the store rejects the project batch", result.Loaded)
+	}
+	if len(result.Sources) != 0 {
+		t.Errorf("Sources = %v, want empty (failed project source not recorded)", result.Sources)
+	}
+}
+
+func TestLoadMoleculesFromFile_OpenError(t *testing.T) {
+	// A file that exists but cannot be opened (no read permission) must return
+	// a wrapped open error, not the nil/nil no-such-file result. Skipped when
+	// running as root, where permission bits are ignored.
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits are ignored when running as root")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, MoleculeFileName)
+	if err := os.WriteFile(path, []byte(`{"id":"mol-x"}`), 0000); err != nil {
+		t.Fatalf("write unreadable file: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0600) }) // let TempDir cleanup remove it
+
+	mols, err := loadMoleculesFromFile(path)
+	if err == nil {
+		t.Fatal("loadMoleculesFromFile = nil error, want wrapped open error for unreadable file")
+	}
+	if mols != nil {
+		t.Errorf("molecules = %v, want nil on open error", mols)
+	}
+}
+
+func TestGetUserMoleculesPath_NoHome(t *testing.T) {
+	// With HOME unset, os.UserHomeDir errors and getUserMoleculesPath returns "".
+	t.Setenv("HOME", "")
+	if got := getUserMoleculesPath(); got != "" {
+		t.Errorf("getUserMoleculesPath() = %q, want \"\" when HOME is unset", got)
+	}
+}
+
 func TestLoadAll_UserEqualsTown_NotDoubleLoaded(t *testing.T) {
 	// When HOME and GT_ROOT resolve the same catalog path, LoadAll must not
 	// load it twice (the userPath != townPath guard).
