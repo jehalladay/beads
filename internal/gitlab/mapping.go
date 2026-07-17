@@ -42,6 +42,33 @@ func estimateFromLabels(labels []string) (int, bool) {
 	return 0, false
 }
 
+// maxTitleLength is GitLab's server-side cap on an issue title. GitLab
+// 400-rejects a create/update whose title exceeds 255 characters, while a
+// local beads title may be up to 500 (see types Validate). beads-h266.
+const maxTitleLength = 255
+
+// truncateTitle caps a title at GitLab's maxTitleLength, appending an ellipsis
+// marker so the truncation is visible on the GitLab side (beads-h266). The
+// PUSHED copy is truncated while the local beads title is left untouched.
+// Rune-aware so a multi-byte character is never split. Mirrors the ADO
+// System.Title guard (beads-z5ys) and the notion richtext cap (ux45) —
+// the reusable SCM per-field-cap class.
+func truncateTitle(title string) string {
+	// GitLab counts characters (runes), not bytes; a title whose rune count
+	// already fits is fine even if its byte length overflows from multi-byte
+	// runes.
+	if len([]rune(title)) <= maxTitleLength {
+		return title
+	}
+	const marker = "..."
+	runes := []rune(title)
+	keep := maxTitleLength - len([]rune(marker))
+	if keep < 0 {
+		keep = 0
+	}
+	return string(runes[:keep]) + marker
+}
+
 // MappingConfig configures how GitLab fields map to beads fields.
 type MappingConfig struct {
 	PriorityMap  map[string]int    // priority label value → beads priority (0-4)
@@ -188,7 +215,7 @@ func GitLabIssueToBeads(gl *Issue, config *MappingConfig) *IssueConversion {
 // BeadsIssueToGitLabFields converts a beads Issue to GitLab API update fields.
 func BeadsIssueToGitLabFields(issue *types.Issue, config *MappingConfig) map[string]interface{} {
 	fields := map[string]interface{}{
-		"title": issue.Title,
+		"title": truncateTitle(issue.Title),
 	}
 
 	// Omit an empty description so a local issue with no body does not

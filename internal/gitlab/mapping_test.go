@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -482,6 +483,52 @@ func TestGitLabEstimateFallbackToWeight(t *testing.T) {
 	back := GitLabIssueToBeads(gl, config)
 	if back.Issue.EstimatedMinutes == nil || *back.Issue.EstimatedMinutes != 180 {
 		t.Errorf("EstimatedMinutes = %v, want 180 (fallback to Weight*60)", back.Issue.EstimatedMinutes)
+	}
+}
+
+// TestGitLabTitleTruncation verifies a beads title longer than GitLab's 255-char
+// cap is truncated (with an ellipsis marker) on the pushed fields, while a title
+// within the cap is passed through unchanged (beads-h266).
+func TestGitLabTitleTruncation(t *testing.T) {
+	config := DefaultMappingConfig()
+
+	// A title within the cap must pass through byte-for-byte.
+	short := "Short title within the GitLab cap"
+	fields := BeadsIssueToGitLabFields(&types.Issue{Title: short}, config)
+	if fields["title"] != short {
+		t.Errorf("short title = %q, want unchanged %q", fields["title"], short)
+	}
+
+	// A 300-char title (legal locally, max 500) must be truncated to <=255.
+	long := strings.Repeat("a", 300)
+	fields = BeadsIssueToGitLabFields(&types.Issue{Title: long}, config)
+	got, ok := fields["title"].(string)
+	if !ok {
+		t.Fatalf("fields[\"title\"] is not a string: %T", fields["title"])
+	}
+	if runeLen := len([]rune(got)); runeLen > maxTitleLength {
+		t.Errorf("truncated title rune length = %d, want <= %d", runeLen, maxTitleLength)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Errorf("truncated title should end with ellipsis marker, got %q", got)
+	}
+
+	// Rune-aware: a multi-byte title over the cap must not split a rune.
+	multibyte := strings.Repeat("世", 300) // each rune is 3 bytes
+	fields = BeadsIssueToGitLabFields(&types.Issue{Title: multibyte}, config)
+	got, _ = fields["title"].(string)
+	if runeLen := len([]rune(got)); runeLen > maxTitleLength {
+		t.Errorf("multibyte truncated title rune length = %d, want <= %d", runeLen, maxTitleLength)
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("multibyte truncation produced invalid UTF-8: %q", got)
+	}
+
+	// A title exactly at the cap must pass through unchanged.
+	exact := strings.Repeat("b", maxTitleLength)
+	fields = BeadsIssueToGitLabFields(&types.Issue{Title: exact}, config)
+	if fields["title"] != exact {
+		t.Errorf("exact-cap title should pass through unchanged")
 	}
 }
 
