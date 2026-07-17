@@ -256,6 +256,29 @@ func TestValidateRemoteURLWithPatterns(t *testing.T) {
 	}
 }
 
+// TestValidateRemoteURLWithPatternsRedactsCredentials is the beads-lf52
+// regression guard: the pattern-mismatch error must NOT echo embedded
+// credentials. This error surfaces in `bd config`/doctor validation output, so
+// a federation.remote configured with user:token@host or ?token=... would leak
+// the secret verbatim (the enax/sh85/v7zc credential-in-error class).
+func TestValidateRemoteURLWithPatternsRedactsCredentials(t *testing.T) {
+	const secret = "SUPERSECRETTOKEN"
+	cases := []string{
+		"https://user:" + secret + "@github.com/org/repo.git",
+		"https://github.com/org/repo.git?token=" + secret,
+		"https://" + secret + "@github.com/org/repo.git",
+	}
+	for _, url := range cases {
+		err := ValidateRemoteURLWithPatterns(url, []string{"dolthub://myorg/*"})
+		if err == nil {
+			t.Fatalf("%q: expected a pattern-mismatch error", url)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("credential leak: error for %q echoes the secret: %q", url, err.Error())
+		}
+	}
+}
+
 func TestCacheKey(t *testing.T) {
 	// Deterministic
 	k1 := CacheKey("dolthub://org/backend")

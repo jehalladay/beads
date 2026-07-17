@@ -230,7 +230,48 @@ func ValidateRemoteURLWithPatterns(rawURL string, patterns []string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("remote URL %q does not match any allowed pattern", rawURL)
+	// Redact before echoing: this error surfaces in `bd config`/doctor
+	// validation output, and a federation.remote configured with embedded
+	// credentials (user:token@host or ?token=) would otherwise print the secret
+	// verbatim — the same credential-in-error leak class as beads-enax/sh85/v7zc,
+	// which those fixes closed on the clone/bootstrap paths but not here (beads-lf52).
+	return fmt.Errorf("remote URL %q does not match any allowed pattern", redactURLForError(rawURL))
+}
+
+// redactURLForError strips credentials from a URL for safe inclusion in an
+// error message. Mirrors versioncontrolops.SanitizeURL's logic without adding a
+// cross-package dependency: url.Parse routes "user:pass@host/path" (no //
+// authority) to an OPAQUE URL with a nil User, so clearing parsed.User alone
+// leaves the secret intact — redact wholesale when there is no proper Host but
+// userinfo precedes the first path separator. Also clears query/fragment
+// (?token=...) and returns a placeholder on parse failure so a malformed but
+// credential-bearing string is never echoed raw.
+func redactURLForError(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "<redacted-url>"
+	}
+	if parsed.Host == "" && strings.Contains(firstPathSegment(parsed.Opaque, parsed.Path), "@") {
+		return "<redacted-url>"
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+// firstPathSegment returns the portion of the first non-empty of opaque/path
+// before the first '/', used to detect "userinfo@authority" credentials that
+// url.Parse left in the opaque/path component rather than parsed.User.
+func firstPathSegment(opaque, path string) string {
+	s := opaque
+	if s == "" {
+		s = path
+	}
+	if i := strings.IndexByte(s, '/'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func sortedSchemes() []string {
