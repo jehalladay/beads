@@ -15,6 +15,13 @@ func TestNaturalCompareIDs(t *testing.T) {
 		{"bd-A.1", "bd-B.1", -1}, // alpha prefix
 		{"bd-1.1", "bd-1.2", -1},
 		{"bd-1.9", "bd-1.10", -1}, // 9 < 10
+		// beads-e01e: a segment ≥19-20 digits overflows Atoi; must still
+		// compare by numeric magnitude, not lexically ("1000..." < "9").
+		{"bd-10000000000000000000", "bd-9", 1},   // 10^19 > 9 (was -1 lexically)
+		{"bd-9", "bd-10000000000000000000", -1},  // symmetric
+		{"bd-12345678901234567890", "bd-12345678901234567891", -1}, // both overflow, differ last digit
+		{"bd-99999999999999999999", "bd-100000000000000000000", -1}, // 20 vs 21 digits
+		{"bd-007", "bd-10", -1}, // leading-zero small still < 10 (7 < 10)
 	}
 	for _, tt := range tests {
 		got := NaturalCompareIDs(tt.a, tt.b)
