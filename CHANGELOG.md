@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd query` accepts unquoted values that start with a digit then contain
+  letters (beads-0vxw).** A value like `id=123abc`, `title=2fa`, or
+  `assignee=7eng` previously failed to parse (`unexpected token "abc"`) because
+  the lexer read the leading digits as a number and left the trailing letters
+  dangling; the same greedy split turned `7days` into a duration `7d` plus a
+  stray `ays`. The lexer now re-reads such a run as a single identifier value.
+  Numbers, durations (`7d`, `30m`), and date literals (`2026-01-15`) are
+  unchanged — only a digit-run immediately followed by a letter/underscore is
+  affected.
+
+### Fixed
+
 - **`bd query` date operators are now consistent (beads-76y9).** The `<`, `>`,
   and `>=` operators on date fields (`created`, `updated`, `closed`, `started`)
   previously compared against the raw parsed instant while `=` and `<=` snapped

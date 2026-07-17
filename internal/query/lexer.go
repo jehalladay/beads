@@ -266,6 +266,14 @@ func (l *Lexer) readNumberOrDuration(startPos int) (Token, error) {
 
 	// Check for duration suffix
 	if r != 0 && isDurationSuffix(r) {
+		// A duration suffix immediately followed by more identifier characters
+		// (e.g. "7days") is not a duration — the whole run is an unquoted ident
+		// value. Re-lex from the start as an identifier (beads-0vxw).
+		if isIdentContinuationRune(l.peek()) {
+			l.pos = startPos
+			l.width = 0
+			return l.readIdent(startPos)
+		}
 		sb.WriteRune(r)
 		return Token{Type: TokenDuration, Value: sb.String(), Pos: startPos}, nil
 	}
@@ -275,7 +283,29 @@ func (l *Lexer) readNumberOrDuration(startPos int) (Token, error) {
 		l.backup()
 	}
 
+	// A digit run immediately followed by identifier characters (e.g. "123abc",
+	// "2fa", "7eng") is an unquoted identifier value, not a number with trailing
+	// junk. Previously the number token was emitted and the letters were left to
+	// the parser, which errored "unexpected token" (beads-0vxw). Re-lex the whole
+	// span from the start as an identifier. Only a letter/underscore triggers
+	// this — a following '-'/'.'/':' /'/' keeps the number token so date/version
+	// tokenization and "priority>1 AND ..." are unchanged.
+	if isIdentContinuationRune(l.peek()) {
+		l.pos = startPos
+		l.width = 0
+		return l.readIdent(startPos)
+	}
+
 	return Token{Type: TokenNumber, Value: sb.String(), Pos: startPos}, nil
+}
+
+// isIdentContinuationRune reports whether r would extend a numeric token into an
+// unquoted identifier value: a letter or underscore. It deliberately excludes
+// '-', '.', ':' and '/' (which isIdentChar allows) so that a number followed by
+// those — dates ("2026-01-15"), versions, address separators — keeps splitting
+// into separate tokens exactly as before (beads-0vxw).
+func isIdentContinuationRune(r rune) bool {
+	return unicode.IsLetter(r) || r == '_'
 }
 
 // readIdent reads an identifier or keyword.
