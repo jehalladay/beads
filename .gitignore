@@ -142,3 +142,8 @@ bd_test
 # Forge local build cache / logs (forge build writes .forge/logs). The forge
 # manifest (forge.toml) is tracked; its runtime cache is not (beads-r06.3).
 .forge/
+
+# gt harness scratch dirs — created in every crew workspace; not tracked
+# (they otherwise show as untracked and get swept into 'git add -A') (beads-hetm)
+.gttmp/
+.claude/commands/
