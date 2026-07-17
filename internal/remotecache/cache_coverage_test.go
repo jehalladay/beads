@@ -121,25 +121,72 @@ func TestAcquireLock_SucceedsAndReleases(t *testing.T) {
 	c.releaseLock(f2)
 }
 
-func TestAcquireLock_StaleLockCleanedUp(t *testing.T) {
+// TestAcquireLock_UnheldLeftoverFileIsAcquirable verifies that a leftover lock
+// file with no live flock holder (e.g. from a crashed process) is immediately
+// acquirable regardless of its mtime — flock is released by the OS on process
+// death, so the try-lock succeeds without any mtime-based removal (beads-vw2m).
+func TestAcquireLock_UnheldLeftoverFileIsAcquirable(t *testing.T) {
 	c := &Cache{Dir: t.TempDir()}
 	if err := os.MkdirAll(c.entryDir(testRemoteURL), 0o755); err != nil {
 		t.Fatalf("mkdir entry: %v", err)
 	}
 	lp := c.lockPath(testRemoteURL)
-	if err := os.WriteFile(lp, []byte("stale"), 0o600); err != nil {
-		t.Fatalf("seed stale lock: %v", err)
+	if err := os.WriteFile(lp, []byte("leftover"), 0o600); err != nil {
+		t.Fatalf("seed leftover lock: %v", err)
 	}
-	// Backdate the lock file well beyond staleLockAge so acquireLock removes it.
-	old := time.Now().Add(-2 * staleLockAge)
+	// Backdate the lock file far into the past. Under the old mtime-based
+	// cleanup this triggered a remove; now it is irrelevant — no one holds the
+	// flock, so the try-lock acquires it directly.
+	old := time.Now().Add(-24 * time.Hour)
 	if err := os.Chtimes(lp, old, old); err != nil {
 		t.Fatalf("chtimes: %v", err)
 	}
 	f, err := c.acquireLock(context.Background(), testRemoteURL)
 	if err != nil {
-		t.Fatalf("acquireLock over stale lock failed: %v", err)
+		t.Fatalf("acquireLock over unheld leftover lock failed: %v", err)
 	}
 	c.releaseLock(f)
+}
+
+// TestAcquireLock_HeldLockNotStolenDespiteOldMtime is the beads-vw2m regression:
+// a HELD lock whose file mtime is old (a long-running clone/pull does not
+// refresh the mtime) must NOT be stealable by a second acquirer. The old
+// mtime-based cleanup unlinked the held lock file, letting the second acquirer
+// create+lock a new inode and run concurrently — corrupting the cache entry.
+func TestAcquireLock_HeldLockNotStolenDespiteOldMtime(t *testing.T) {
+	c := &Cache{Dir: t.TempDir()}
+	if err := os.MkdirAll(c.entryDir(testRemoteURL), 0o755); err != nil {
+		t.Fatalf("mkdir entry: %v", err)
+	}
+	held, err := c.acquireLock(context.Background(), testRemoteURL)
+	if err != nil {
+		t.Fatalf("first acquire failed: %v", err)
+	}
+	defer c.releaseLock(held)
+
+	// Simulate a long-running holder: backdate the lock file's mtime well past
+	// the old 5-minute staleness window while the lock is still held.
+	lp := c.lockPath(testRemoteURL)
+	old := time.Now().Add(-24 * time.Hour)
+	if err := os.Chtimes(lp, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	// A second acquire must NOT succeed (the held flock still guards the entry).
+	// Use a cancelled context so we exercise the contended path without waiting
+	// out the 2-minute deadline.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if f, err := c.acquireLock(ctx, testRemoteURL); err == nil {
+		c.releaseLock(f)
+		t.Fatal("second acquire stole a still-held lock with an old mtime — split-lock regression (beads-vw2m)")
+	}
+
+	// The lock file must still exist (never unlinked) so the holder's flock
+	// remains meaningful.
+	if _, statErr := os.Stat(lp); statErr != nil {
+		t.Fatalf("held lock file was removed: %v", statErr)
+	}
 }
 
 func TestAcquireLock_TimesOutWhenHeld(t *testing.T) {
