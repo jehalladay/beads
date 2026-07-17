@@ -85,7 +85,12 @@ func maybeNewCircuitBreaker(host string, port int, database string) *circuitBrea
 // circuitBreakerDir is the dedicated directory for circuit breaker state files.
 // Using a subdirectory avoids scanning all of /tmp (which may contain millions
 // of entries) when cleaning up stale breaker files on startup.
-const circuitBreakerDir = "/tmp/beads-circuit"
+//
+// It is a var (not a const) solely so tests can redirect breaker state to an
+// isolated t.TempDir() — the shared /tmp path is process-global and leaks state
+// across concurrent or prior test runs on the same host (beads-bal). Production
+// code never reassigns it.
+var circuitBreakerDir = "/tmp/beads-circuit"
 
 // newCircuitBreaker creates a circuit breaker for the given Dolt server
 // host:port:database. The database name is included in the file path so each

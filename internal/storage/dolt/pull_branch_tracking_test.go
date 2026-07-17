@@ -118,6 +118,12 @@ func TestPullWithAutoResolve_BranchTrackingFallbackSuccess(t *testing.T) {
 
 func runDoltCmdForBranchTracking(t *testing.T, dir string, args ...string) {
 	t.Helper()
+	// These tests shell out to the real `dolt` CLI to build a remote fixture.
+	// On hosts without dolt on PATH (e.g. the beads refinery host, where dolt
+	// lives only on the /fsx cluster nodes) skip rather than fail (beads-bal).
+	if _, err := exec.LookPath("dolt"); err != nil {
+		t.Skip("dolt CLI not in PATH; skipping branch-tracking fallback test")
+	}
 	cmd := exec.Command("dolt", args...)
 	cmd.Dir = dir
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -127,6 +133,9 @@ func runDoltCmdForBranchTracking(t *testing.T, dir string, args ...string) {
 
 func runDoltSQLForBranchTracking(t *testing.T, dir, query string) {
 	t.Helper()
+	if _, err := exec.LookPath("dolt"); err != nil {
+		t.Skip("dolt CLI not in PATH; skipping branch-tracking fallback test")
+	}
 	cmd := exec.Command("dolt", "sql", "-q", query)
 	cmd.Dir = dir
 	if output, err := cmd.CombinedOutput(); err != nil {
