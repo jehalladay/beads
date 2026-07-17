@@ -15,9 +15,27 @@ var (
 	compactDoltDays   int
 )
 
+// compactDoltNoArgs rejects positional arguments for the top-level `bd compact`
+// (Dolt history squash). The command is configured entirely via flags
+// (--days/--force/--dry-run) and reads no args[], so historically
+// `bd compact somebead --force` silently discarded "somebead" and squashed ALL
+// old Dolt history with rc=0 (beads-jg5e). Make the mistake loud and point at
+// the flags.
+func compactDoltNoArgs(_ *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return fmt.Errorf("bd compact does not accept positional arguments; it operates on the whole database and is configured via flags such as --days/--force (see bd compact --help). Got unexpected argument %q", args[0])
+}
+
 var compactDoltCmd = &cobra.Command{
 	Use:     "compact",
 	GroupID: "maint",
+	// compact is flag-driven (its RunE reads no args[]) and irreversibly
+	// squashes Dolt history. A stray positional was silently discarded, so
+	// `bd compact somebead --force` squashed ALL old history instead of
+	// erroring (beads-jg5e). Reject positionals loudly.
+	Args:    compactDoltNoArgs,
 	Short:   "Squash old Dolt commits to reduce history size",
 	Long: `Squash Dolt commits older than N days into a single commit.
 
