@@ -356,29 +356,57 @@ func (e *Evaluator) applyNotesFilter(comp *ComparisonNode, filter *types.IssueFi
 	return nil
 }
 
+// dateComparisonBounds maps a comparison operator against a date to the
+// (after, before) time bounds, snapping every operator to the parsed value's
+// day so all operators share one granularity (beads-76y9). The whole-day
+// window is [dayStart, dayEnd) where dayEnd is the next day's midnight — the
+// exclusive upper bound the SQL layer applies as `col < before`.
+//
+//	<  -> before = dayStart  (strictly before the day)
+//	<= -> before = dayEnd    (through the end of the day)
+//	=  -> after = dayStart, before = dayEnd (the whole day)
+//	>  -> after = dayEnd     (strictly after the day)
+//	>= -> after = dayStart   (the day onward)
+//
+// ok is false for an operator the field does not support (the caller errors).
+// supportsEquals is false for fields (closed/started) that historically had no
+// = branch, preserving that behavior.
+func dateComparisonBounds(t time.Time, op ComparisonOp, supportsEquals bool) (after, before *time.Time, ok bool) {
+	dayStart := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	dayEnd := dayStart.Add(24 * time.Hour)
+	switch op {
+	case OpEquals:
+		if !supportsEquals {
+			return nil, nil, false
+		}
+		return &dayStart, &dayEnd, true
+	case OpGreater:
+		return &dayEnd, nil, true
+	case OpGreaterEq:
+		return &dayStart, nil, true
+	case OpLess:
+		return nil, &dayStart, true
+	case OpLessEq:
+		return nil, &dayEnd, true
+	default:
+		return nil, nil, false
+	}
+}
+
 func (e *Evaluator) applyCreatedFilter(comp *ComparisonNode, filter *types.IssueFilter) error {
 	t, err := e.parseTimeValue(comp)
 	if err != nil {
 		return fmt.Errorf("invalid created time: %w", err)
 	}
-	switch comp.Op {
-	case OpEquals:
-		// For equals, set both before and after to bracket the day
-		dayStart := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
-		dayEnd := dayStart.Add(24 * time.Hour)
-		filter.CreatedAfter = &dayStart
-		filter.CreatedBefore = &dayEnd
-	case OpGreater:
-		filter.CreatedAfter = &t
-	case OpGreaterEq:
-		filter.CreatedAfter = &t
-	case OpLess:
-		filter.CreatedBefore = &t
-	case OpLessEq:
-		endOfDay := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, t.Location())
-		filter.CreatedBefore = &endOfDay
-	default:
+	after, before, ok := dateComparisonBounds(t, comp.Op, true)
+	if !ok {
 		return fmt.Errorf("created does not support %s operator", comp.Op.String())
+	}
+	if after != nil {
+		filter.CreatedAfter = after
+	}
+	if before != nil {
+		filter.CreatedBefore = before
 	}
 	return nil
 }
@@ -388,23 +416,15 @@ func (e *Evaluator) applyUpdatedFilter(comp *ComparisonNode, filter *types.Issue
 	if err != nil {
 		return fmt.Errorf("invalid updated time: %w", err)
 	}
-	switch comp.Op {
-	case OpEquals:
-		dayStart := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
-		dayEnd := dayStart.Add(24 * time.Hour)
-		filter.UpdatedAfter = &dayStart
-		filter.UpdatedBefore = &dayEnd
-	case OpGreater:
-		filter.UpdatedAfter = &t
-	case OpGreaterEq:
-		filter.UpdatedAfter = &t
-	case OpLess:
-		filter.UpdatedBefore = &t
-	case OpLessEq:
-		endOfDay := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, t.Location())
-		filter.UpdatedBefore = &endOfDay
-	default:
+	after, before, ok := dateComparisonBounds(t, comp.Op, true)
+	if !ok {
 		return fmt.Errorf("updated does not support %s operator", comp.Op.String())
+	}
+	if after != nil {
+		filter.UpdatedAfter = after
+	}
+	if before != nil {
+		filter.UpdatedBefore = before
 	}
 	return nil
 }
@@ -414,18 +434,16 @@ func (e *Evaluator) applyClosedFilter(comp *ComparisonNode, filter *types.IssueF
 	if err != nil {
 		return fmt.Errorf("invalid closed time: %w", err)
 	}
-	switch comp.Op {
-	case OpGreater:
-		filter.ClosedAfter = &t
-	case OpGreaterEq:
-		filter.ClosedAfter = &t
-	case OpLess:
-		filter.ClosedBefore = &t
-	case OpLessEq:
-		endOfDay := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, t.Location())
-		filter.ClosedBefore = &endOfDay
-	default:
+	// closed/started have no = branch (historically unsupported); keep that.
+	after, before, ok := dateComparisonBounds(t, comp.Op, false)
+	if !ok {
 		return fmt.Errorf("closed does not support %s operator", comp.Op.String())
+	}
+	if after != nil {
+		filter.ClosedAfter = after
+	}
+	if before != nil {
+		filter.ClosedBefore = before
 	}
 	return nil
 }
@@ -435,18 +453,15 @@ func (e *Evaluator) applyStartedFilter(comp *ComparisonNode, filter *types.Issue
 	if err != nil {
 		return fmt.Errorf("invalid started time: %w", err)
 	}
-	switch comp.Op {
-	case OpGreater:
-		filter.StartedAfter = &t
-	case OpGreaterEq:
-		filter.StartedAfter = &t
-	case OpLess:
-		filter.StartedBefore = &t
-	case OpLessEq:
-		endOfDay := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, t.Location())
-		filter.StartedBefore = &endOfDay
-	default:
+	after, before, ok := dateComparisonBounds(t, comp.Op, false)
+	if !ok {
 		return fmt.Errorf("started does not support %s operator", comp.Op.String())
+	}
+	if after != nil {
+		filter.StartedAfter = after
+	}
+	if before != nil {
+		filter.StartedBefore = before
 	}
 	return nil
 }

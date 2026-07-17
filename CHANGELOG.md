@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`bd query` date operators are now consistent (beads-76y9).** The `<`, `>`,
+  and `>=` operators on date fields (`created`, `updated`, `closed`, `started`)
+  previously compared against the raw parsed instant while `=` and `<=` snapped
+  to day granularity, so `created<7d` returned a different (smaller) result set
+  than `created<=7d`, and `created>DATE` was indistinguishable from
+  `created>=DATE`. All operators now snap to the value's day, matching the
+  already-documented `=`/`<=` behavior:
+  `<` → start of day, `<=` → end of day (exclusive next-midnight),
+  `=` → the whole day, `>` → after the day (next-midnight), `>=` → the day
+  onward. **User-visible:** `>` and `>=` now differ, and `<`/`<=` queries near a
+  day boundary may match a slightly different set than before. Applies to both
+  date literals (`2026-01-15`) and relative durations (`7d`).
+
 ## [1.1.0-rc.1] - 2026-06-23
 
 ### Upgrade Notes
