@@ -86,6 +86,74 @@ func TestRigIssueIsPersistentButHiddenFromReady(t *testing.T) {
 	}
 }
 
+// TestGetReadyWork_ExcludesIdentityLabeledWisp verifies that a wisp carrying an
+// identity/registration label (gt:agent/role/rig) is hidden from ready work,
+// matching the issues query. The default label exclusion (beads-wqs) was
+// applied to the issues query and the db-stack's wisp UNION arm, but the
+// issueops (DoltStore/embedded) wisp ready path omitted it — so a dead
+// agent/role/rig registration wisp wrongly surfaced as claimable ready work.
+func TestGetReadyWork_ExcludesIdentityLabeledWisp(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// A NoHistory wisp (ephemeral=0, so it DOES reach default ready work) carrying
+	// an agent-identity label — the exact shape gt stamps on a dead
+	// polecat/witness/mayor registration bead that lands in the wisps table.
+	wisp := &types.Issue{
+		ID:        "rw-agent-wisp",
+		Title:     "dead agent registration",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		NoHistory: true,
+	}
+	if err := store.CreateIssue(ctx, wisp, "tester"); err != nil {
+		t.Fatalf("CreateIssue wisp: %v", err)
+	}
+	if err := store.AddLabel(ctx, wisp.ID, "gt:agent", "tester"); err != nil {
+		t.Fatalf("AddLabel gt:agent: %v", err)
+	}
+
+	// Sanity: it really is in the wisps table.
+	var wispRows int
+	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM wisps WHERE id = ?", wisp.ID).Scan(&wispRows); err != nil {
+		t.Fatalf("count wisp rows: %v", err)
+	}
+	if wispRows != 1 {
+		t.Fatalf("wisp rows = %d, want 1", wispRows)
+	}
+
+	work, err := store.GetReadyWork(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatalf("GetReadyWork: %v", err)
+	}
+	for _, item := range work {
+		if item.ID == wisp.ID {
+			t.Fatalf("identity-labeled wisp appeared in ready work: %v", issueIDs(work))
+		}
+	}
+
+	// Escape hatch: an explicit --label gt:agent request must still surface it,
+	// mirroring the issues-query behavior (explicit Labels wins over the default
+	// exclusion).
+	explicit, err := store.GetReadyWork(ctx, types.WorkFilter{Labels: []string{"gt:agent"}})
+	if err != nil {
+		t.Fatalf("GetReadyWork with explicit label: %v", err)
+	}
+	found := false
+	for _, item := range explicit {
+		if item.ID == wisp.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("explicit --label gt:agent must surface the identity wisp, got %v", issueIDs(explicit))
+	}
+}
+
 func TestGetReadyWork_ExcludesClosedIssues(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
