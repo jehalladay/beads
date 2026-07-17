@@ -829,10 +829,13 @@ const (
 )
 
 // IsValid checks if the dependency type value is valid.
-// Accepts any non-empty string up to 50 characters.
+// Accepts any non-empty string up to 32 characters — the width of the
+// dependencies.type VARCHAR(32) column (0002_create_dependencies.up.sql).
+// Longer values were never storable: they passed the old <=50 bound then
+// failed at insert with a raw "too large for column" error (beads-25mb).
 // Use IsWellKnown() to check if it's a built-in type.
 func (d DependencyType) IsValid() bool {
-	return len(d) > 0 && len(d) <= 50
+	return len(d) > 0 && len(d) <= 32
 }
 
 // WellKnownDependencyTypes returns the built-in dependency types accepted by
