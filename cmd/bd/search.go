@@ -132,7 +132,7 @@ Examples:
 		}
 
 		if issueType != "" {
-			t := types.IssueType(issueType)
+			t := issueTypeFilterValue(issueType)
 			filter.IssueType = &t
 		}
 

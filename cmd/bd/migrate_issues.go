@@ -257,7 +257,7 @@ func findCandidateIssues(ctx context.Context, s storage.DoltStorage, p migrateIs
 
 	// Filter by type
 	if p.issueType != "" && p.issueType != "all" {
-		issueType := types.IssueType(p.issueType)
+		issueType := issueTypeFilterValue(p.issueType)
 		filter.IssueType = &issueType
 	}
 

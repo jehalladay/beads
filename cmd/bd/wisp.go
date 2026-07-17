@@ -406,7 +406,7 @@ func runWispList(cmd *cobra.Command, args []string) error {
 		Limit:     5000,
 	}
 	if typeFilter != "" {
-		it := types.IssueType(typeFilter)
+		it := issueTypeFilterValue(typeFilter)
 		filter.IssueType = &it
 	}
 	issues, err := store.SearchIssues(ctx, "", filter)
