@@ -167,7 +167,24 @@ func TestEmbeddedShow(t *testing.T) {
 		_, _ = store.AddIssueComment(t.Context(), issue.ID, "tester", "A comment")
 		store.Close() // release flock before subprocess
 
-		// Comments are count-only by default; --include-comments streams them.
+		// beads-p5k: comment bodies are included in --json by DEFAULT (no flag),
+		// matching the text `bd show` and the comment_count it reports.
+		m := bdShowDetails(t, bd, dir, issue.ID)
+		if cc, ok := m["comment_count"]; ok {
+			if cc != float64(1) {
+				t.Errorf("expected comment_count=1, got %v", cc)
+			}
+		}
+		comments, _ := m["comments"].([]interface{})
+		if len(comments) == 0 {
+			t.Fatal("expected comment bodies in default JSON output (no --include-comments)")
+		}
+		body, _ := comments[0].(map[string]interface{})
+		if body["text"] != "A comment" {
+			t.Errorf("expected comment text 'A comment', got %v", body["text"])
+		}
+
+		// --include-comments remains accepted (deprecated no-op) for compat.
 		out, err := bdRunWithFlockRetry(t, bd, dir, "show", issue.ID, "--json", "--include-comments")
 		if err != nil {
 			t.Fatalf("bd show --include-comments failed: %v\n%s", err, out)
@@ -176,18 +193,17 @@ func TestEmbeddedShow(t *testing.T) {
 		if start := strings.IndexAny(s, "[{"); start >= 0 {
 			s = s[start:]
 		}
-		var m map[string]interface{}
+		var m2 map[string]interface{}
 		if strings.HasPrefix(s, "[") {
 			var arr []map[string]interface{}
 			if jerr := json.Unmarshal([]byte(s), &arr); jerr != nil || len(arr) == 0 {
 				t.Fatalf("parse show JSON array: %v\n%s", jerr, s)
 			}
-			m = arr[0]
-		} else if jerr := json.Unmarshal([]byte(s), &m); jerr != nil {
+			m2 = arr[0]
+		} else if jerr := json.Unmarshal([]byte(s), &m2); jerr != nil {
 			t.Fatalf("parse show JSON: %v\n%s", jerr, s)
 		}
-		comments, _ := m["comments"].([]interface{})
-		if len(comments) == 0 {
+		if c2, _ := m2["comments"].([]interface{}); len(c2) == 0 {
 			t.Error("expected comments in JSON output with --include-comments")
 		}
 	})

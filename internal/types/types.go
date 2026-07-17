@@ -776,8 +776,9 @@ type IssueDetails struct {
 	Parent       *string                        `json:"parent,omitempty"`
 
 	// Cardinality fields — emitted by default (count-only mode).
-	// Slice fields (Dependents, Comments) are nil when count-only is active.
-	// Use --include-dependents / --include-comments to populate the slices.
+	// Dependents is nil unless --include-dependents streams it (be-4d36f2 hub
+	// fan-out perf). Comments are always populated when present (beads-p5k), so
+	// CommentCount and the Comments slice agree.
 	DependentCount  *int64 `json:"dependent_count,omitempty"`
 	DependencyCount *int64 `json:"dependency_count,omitempty"`
 	CommentCount    *int64 `json:"comment_count,omitempty"`

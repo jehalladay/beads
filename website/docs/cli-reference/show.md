@@ -25,7 +25,7 @@ bd show [id...] [--id=<id>...] [--current] [flags]
       --children             Show only the children of this issue
       --current              Show the currently active issue (in-progress, hooked, or last touched)
       --id stringArray       Issue ID (use for IDs that look like flags, e.g., --id=gt--xyz)
-      --include-comments     Stream full comment bodies in JSON output (--json only; may be slow on issues with many comments)
+      --include-comments     Deprecated no-op: comment bodies are always included in JSON output (--json only)
       --include-dependents   Stream full dependent issues in JSON output (--json only; may be slow on hub beads)
       --local-time           Show timestamps in local time instead of UTC
       --long                 Show all available fields (extended metadata, agent identity, gate fields, etc.)

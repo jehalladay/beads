@@ -18,10 +18,19 @@ bd label [flags]
 
 ### bd label add
 
-Add a label to one or more issues
+Add labels to issues. The trailing positional label form (bd label add &lt;id&gt; &lt;label&gt;)
+is preserved; the repeatable --label flag adds N labels in ONE process/transaction
+(bd label add &lt;id&gt; --label a --label b --label c), which keeps batch labeling to a
+single commit instead of one exec per label.
 
 ```
 bd label add [issue-id...] [label] [flags]
+```
+
+**Flags:**
+
+```
+      --label strings   Label to add (repeatable; adds all labels in one transaction)
 ```
 
 ### bd label list

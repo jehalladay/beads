@@ -26,7 +26,7 @@ Reference for bd Latest. Generated from `bd help --all`.
   - [bd gate resolve](#bd-gate-resolve) — Manually resolve (close) a gate
   - [bd gate show](#bd-gate-show) — Show a gate issue
 - [bd label](#bd-label) — Manage issue labels
-  - [bd label add](#bd-label-add) — Add a label to one or more issues
+  - [bd label add](#bd-label-add) — Add one or more labels to one or more issues
   - [bd label list](#bd-label-list) — List labels for an issue
   - [bd label list-all](#bd-label-list-all) — List all unique labels in the database
   - [bd label propagate](#bd-label-propagate) — Propagate a label from a parent issue to all its children
@@ -823,10 +823,19 @@ bd label
 
 #### bd label add
 
-Add a label to one or more issues
+Add labels to issues. The trailing positional label form (bd label add &lt;id&gt; &lt;label&gt;)
+is preserved; the repeatable --label flag adds N labels in ONE process/transaction
+(bd label add &lt;id&gt; --label a --label b --label c), which keeps batch labeling to a
+single commit instead of one exec per label.
 
 ```
-bd label add [issue-id...] [label]
+bd label add [issue-id...] [label] [flags]
+```
+
+**Flags:**
+
+```
+      --label strings   Label to add (repeatable; adds all labels in one transaction)
 ```
 
 #### bd label list
@@ -1338,7 +1347,7 @@ bd show [id...] [--id=<id>...] [--current] [flags]
       --children             Show only the children of this issue
       --current              Show the currently active issue (in-progress, hooked, or last touched)
       --id stringArray       Issue ID (use for IDs that look like flags, e.g., --id=gt--xyz)
-      --include-comments     Stream full comment bodies in JSON output (--json only; may be slow on issues with many comments)
+      --include-comments     Deprecated no-op: comment bodies are always included in JSON output (--json only)
       --include-dependents   Stream full dependent issues in JSON output (--json only; may be slow on hub beads)
       --local-time           Show timestamps in local time instead of UTC
       --long                 Show all available fields (extended metadata, agent identity, gate fields, etc.)
