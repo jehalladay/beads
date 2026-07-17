@@ -703,7 +703,7 @@ func printBootstrapRemoteBehindGuidance(w io.Writer, e *schema.RemoteMigrateGate
 		unit = "migration"
 	}
 	fmt.Fprintf(w, "\nThe database cloned from %s needs %d schema %s (v%d -> v%d).\n",
-		syncRemote, e.Pending, unit, e.CurrentVersion, e.LatestVersion)
+		redactURLCredentials(syncRemote), e.Pending, unit, e.CurrentVersion, e.LatestVersion)
 	fmt.Fprint(w,
 		"  bd will not migrate it automatically: migrating clones independently forks\n"+
 			"  the schema so `bd dolt pull` can no longer merge (#4259).\n"+

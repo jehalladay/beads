@@ -893,14 +893,14 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 					}
 					syncFromRemote = false
 				} else {
-					fmt.Fprintf(os.Stderr, "Error: failed to clone remote %q: %v\n", syncURL, err)
+					fmt.Fprintf(os.Stderr, "Error: failed to clone remote %q: %v\n", redactURLCredentials(syncURL), err)
 					fmt.Fprintf(os.Stderr, "Hint: verify the URL is reachable and any credentials are valid, or omit --remote to initialize a fresh local database.\n")
 					return &exitError{Code: 1}
 				}
 			} else {
 				bootstrappedFromRemote = true
 				if !quiet {
-					fmt.Printf("  %s Bootstrapped from remote: %s\n", ui.RenderPass("✓"), syncURL)
+					fmt.Printf("  %s Bootstrapped from remote: %s\n", ui.RenderPass("✓"), redactURLCredentials(syncURL))
 				}
 			}
 		}
@@ -2338,7 +2338,7 @@ func handleRemoteSafetyDecision(decision RemoteSafetyDecision, prefix, syncURL, 
 		if decision.Reason == "authorized-divergence" && term.IsTerminal(int(os.Stdin.Fd())) && destroyToken == "" && !*confirmed {
 			expected := FormatDestroyToken(prefix)
 			fmt.Fprintf(os.Stderr, "\n%s You are about to discard the remote's Dolt history.\n\n", ui.RenderWarn("WARNING:"))
-			fmt.Fprintf(os.Stderr, "  Remote: %s\n", syncURL)
+			fmt.Fprintf(os.Stderr, "  Remote: %s\n", redactURLCredentials(syncURL))
 			fmt.Fprintf(os.Stderr, "  Type %q to confirm: ", expected)
 			scanner := bufio.NewScanner(os.Stdin)
 			scanner.Scan()
@@ -2366,7 +2366,7 @@ func configureInitDoltRemote(ctx context.Context, store storage.DoltStorage, syn
 		return
 	}
 	if !quiet {
-		fmt.Printf("  %s Configured Dolt remote: origin → %s\n", ui.RenderPass("✓"), syncURL)
+		fmt.Printf("  %s Configured Dolt remote: origin → %s\n", ui.RenderPass("✓"), redactURLCredentials(syncURL))
 	}
 }
 
@@ -2376,7 +2376,7 @@ func printInitNoDoltRemoteWarning() {
 	fmt.Fprintln(os.Stderr, "  not cross-machine sync or the source of truth.")
 	if originURL, err := gitOriginGetURL(); err == nil && originURL != "" {
 		fmt.Fprintln(os.Stderr, "  To use your git origin for durable sync, run:")
-		fmt.Fprintf(os.Stderr, "    %s\n", ui.RenderAccent("bd dolt remote add origin "+normalizeRemoteURL(originURL)))
+		fmt.Fprintf(os.Stderr, "    %s\n", ui.RenderAccent("bd dolt remote add origin "+redactURLCredentials(normalizeRemoteURL(originURL))))
 		fmt.Fprintf(os.Stderr, "    %s\n\n", ui.RenderAccent("bd dolt push"))
 		return
 	}
