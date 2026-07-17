@@ -200,9 +200,18 @@ func ManageClosedAt(oldIssue *types.Issue, updates map[string]interface{}, setCl
 	}
 
 	if newStatus == string(types.StatusClosed) {
-		now := time.Now().UTC()
-		setClauses = append(setClauses, "closed_at = ?")
-		args = append(args, now)
+		// Preserve an existing closed_at on a re-close of an already-closed
+		// issue — symmetric with ManageStartedAt's started_at preservation.
+		// Without this guard, `bd update --status closed` on an already-closed
+		// issue silently overwrote the original close timestamp with now
+		// (beads-b1l7). (CloseIssueInTx already early-returns on AlreadyClosed;
+		// this closes the plain-update-path hole.) When already closed, leave
+		// closed_at untouched — do NOT fall through to the reopen-clear branch.
+		if oldIssue.ClosedAt == nil {
+			now := time.Now().UTC()
+			setClauses = append(setClauses, "closed_at = ?")
+			args = append(args, now)
+		}
 	} else if oldIssue.Status == types.StatusClosed {
 		setClauses = append(setClauses, "closed_at = ?", "close_reason = ?")
 		args = append(args, nil, "")
