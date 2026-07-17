@@ -8,6 +8,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -164,6 +165,21 @@ type Storage interface {
 	SlotSet(ctx context.Context, issueID, key, value, actor string) error
 	SlotGet(ctx context.Context, issueID, key string) (string, error)
 	SlotClear(ctx context.Context, issueID, key, actor string) error
+
+	// UpdateMetadataFields applies per-key metadata edits atomically at the
+	// server (JSON_SET / JSON_REMOVE in one statement), so concurrent edits to
+	// DIFFERENT keys on the same issue both survive instead of the second
+	// client-rebuilt blob clobbering the first (beads-fnp6). `sets` maps keys to
+	// already-JSON-encoded values; `unsets` lists keys to remove.
+	UpdateMetadataFields(ctx context.Context, issueID string, sets map[string]json.RawMessage, unsets []string, actor string) error
+
+	// MergeMetadataWithCAS merges `incoming` (a JSON object; shallow top-level
+	// keys overwrite) into the issue's metadata as a server-side read-merge-write
+	// in one serializable transaction with commit-time-conflict retry, so two
+	// concurrent --metadata merges don't clobber each other (beads-fnp6). Unlike
+	// UpdateMetadataFields, keys are arbitrary (not restricted to JSON_SET-path
+	// charset), matching --metadata's prior permissiveness.
+	MergeMetadataWithCAS(ctx context.Context, issueID string, incoming json.RawMessage, actor string) error
 
 	// Lifecycle
 	Close() error
