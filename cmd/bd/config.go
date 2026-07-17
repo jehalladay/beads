@@ -797,6 +797,21 @@ Examples:
 		}
 
 		for _, p := range pairs {
+			// Reject lifecycle-owned keys (issue_prefix), same as 'config set'
+			// (beads-9v32). Without this, 'set-many issue_prefix=foo' writes a
+			// DB key that 'bd create' never reads — a write that looks
+			// successful but is silently invisible.
+			if msg, rejected := rejectProtectedConfigKey(p.key); rejected {
+				fmt.Fprintln(os.Stderr, msg)
+				return SilentExit()
+			}
+			// Type-validate bool/int keys, same as 'config set' (beads-9v32).
+			// Without this, set-many silently stored garbage in typed keys
+			// (e.g. backup.enabled=maybe), which the consumer's GetBool reads
+			// as false — the setting silently doesn't take effect.
+			if err := validateConfigValueType(p.key, p.value); err != nil {
+				return HandleError("%v", err)
+			}
 			if p.key == "beads.role" {
 				validRoles := map[string]bool{"maintainer": true, "contributor": true}
 				if !validRoles[p.value] {
