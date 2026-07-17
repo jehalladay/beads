@@ -68,10 +68,14 @@ Examples:
 
 		_, err := utils.ResolvePartialIDs(ctx, store, args)
 		if err != nil {
-			return HandleError("%v", err)
+			// Respect --json: an unresolvable ID must emit a stdout JSON error
+			// object (beads-0l4c), not plain text to stderr, so --json consumers
+			// can parse the failure instead of seeing empty stdout + exit 1.
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		deferredIssues := []*types.Issue{}
+		deferredCount := 0
 
 		if store == nil {
 			return HandleErrorWithHint("database not initialized", diagHint())
@@ -111,6 +115,7 @@ Examples:
 				fmt.Fprintf(os.Stderr, "Error deferring %s: %v\n", fullID, err)
 				continue
 			}
+			deferredCount++
 
 			if jsonOutput {
 				issue, _ := store.GetIssue(ctx, fullID)
@@ -128,8 +133,22 @@ Examples:
 			}
 		}
 
-		if len(args) > 0 {
+		if deferredCount > 0 {
 			commandDidWrite.Store(true)
+		}
+
+		// Every requested ID failed (per-item errors already printed to
+		// stderr): exit non-zero so callers/scripts don't read false success.
+		// Under --json, stdout is still empty here, so emit a stdout JSON error
+		// object to keep the failure parseable (beads-fg6, matching the update
+		// and close batch paths) instead of a bare silent exit. Partial success
+		// (deferredCount>0) keeps rc=0 and its JSON array above, mirroring
+		// update/close batch semantics.
+		if len(args) > 0 && deferredCount == 0 {
+			if jsonOutput {
+				return HandleErrorRespectJSON("no issues deferred matching the provided IDs")
+			}
+			return SilentExit()
 		}
 		return nil
 	},
