@@ -56,6 +56,77 @@ func (r *dependencySQLRepositoryImpl) pickDepTargetColumn(ctx context.Context, d
 	}
 }
 
+// validateDepGraphInvariants enforces the source/target existence and
+// cross-type blocking (GH#1495) invariants that the direct path
+// (issueops.AddDependencyInTx) applies, so proxied-server dep-add cannot land
+// an edge the direct/embedded path would reject (beads-kzmq). External and
+// wisp targets follow the same handling as the direct path: existence is
+// checked for issue-typed endpoints; external refs are skipped.
+func (r *dependencySQLRepositoryImpl) validateDepGraphInvariants(ctx context.Context, dep *types.Dependency, opts domain.DepInsertOpts) error {
+	// The issue/wisp entity table is "wisps" for wisp sources, "issues" otherwise.
+	sourceEntity := "issues"
+	if opts.UseWispsTable {
+		sourceEntity = "wisps"
+	}
+
+	var sourceType string
+	//nolint:gosec // G201: sourceEntity is one of two hardcoded constants
+	err := r.runner.QueryRowContext(ctx,
+		fmt.Sprintf("SELECT issue_type FROM %s WHERE id = ?", sourceEntity),
+		dep.IssueID,
+	).Scan(&sourceType)
+	switch {
+	case err == nil:
+	case errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("db: DependencySQLRepository.Insert: issue %s not found", dep.IssueID)
+	default:
+		return fmt.Errorf("db: DependencySQLRepository.Insert: check source existence: %w", err)
+	}
+
+	// Target existence + type: external refs have no local row (skip, like the
+	// direct path). Otherwise the target lives in issues or wisps.
+	var targetType string
+	if !strings.HasPrefix(dep.DependsOnID, "external:") {
+		targetEntity := "issues"
+		var probe int
+		wispErr := r.runner.QueryRowContext(ctx, "SELECT 1 FROM wisps WHERE id = ? LIMIT 1", dep.DependsOnID).Scan(&probe)
+		switch {
+		case wispErr == nil:
+			targetEntity = "wisps"
+		case errors.Is(wispErr, sql.ErrNoRows), dberrors.IsTableNotExist(wispErr):
+			targetEntity = "issues"
+		default:
+			return fmt.Errorf("db: DependencySQLRepository.Insert: classify target %s: %w", dep.DependsOnID, wispErr)
+		}
+		//nolint:gosec // G201: targetEntity is one of two hardcoded constants
+		tErr := r.runner.QueryRowContext(ctx,
+			fmt.Sprintf("SELECT issue_type FROM %s WHERE id = ?", targetEntity),
+			dep.DependsOnID,
+		).Scan(&targetType)
+		switch {
+		case tErr == nil:
+		case errors.Is(tErr, sql.ErrNoRows):
+			return fmt.Errorf("db: DependencySQLRepository.Insert: issue %s not found", dep.DependsOnID)
+		default:
+			return fmt.Errorf("db: DependencySQLRepository.Insert: check target existence: %w", tErr)
+		}
+	}
+
+	// Cross-type blocking (GH#1495): a blocks edge with exactly one epic
+	// endpoint is rejected — tasks block tasks, epics block epics.
+	if dep.Type == types.DepBlocks && targetType != "" {
+		sourceIsEpic := sourceType == string(types.TypeEpic)
+		targetIsEpic := targetType == string(types.TypeEpic)
+		if sourceIsEpic != targetIsEpic {
+			if sourceIsEpic {
+				return fmt.Errorf("db: DependencySQLRepository.Insert: epics can only block other epics, not tasks")
+			}
+			return fmt.Errorf("db: DependencySQLRepository.Insert: tasks can only block other tasks, not epics")
+		}
+	}
+	return nil
+}
+
 func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dependency, actor string, opts domain.DepInsertOpts) error {
 	if dep == nil {
 		return errors.New("db: DependencySQLRepository.Insert: dep must not be nil")
@@ -100,6 +171,15 @@ func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dep
 	case errors.Is(err, sql.ErrNoRows):
 	default:
 		return fmt.Errorf("db: DependencySQLRepository.Insert: check existing: %w", err)
+	}
+
+	// Graph-integrity validation shared with the direct path
+	// (issueops.AddDependencyInTx): source/target existence + cross-type
+	// blocking (GH#1495). Without this, proxied-server dep-add accepted edges
+	// the direct/embedded path rejects — a task-blocks-epic edge, or an edge to
+	// a non-existent source/target (beads-kzmq).
+	if err := r.validateDepGraphInvariants(ctx, dep, opts); err != nil {
+		return err
 	}
 
 	targetCol, err := r.pickDepTargetColumn(ctx, dep.DependsOnID)
