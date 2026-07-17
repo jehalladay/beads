@@ -45,6 +45,15 @@ func isRetryableError(err error) bool {
 	if schema.IsMigrationLockError(err) {
 		return true
 	}
+	// Serialization failures (1213 deadlock / 1205 lock-wait-timeout) guarantee a
+	// server-side rollback, so the operation is safe to replay. The withRetryTx
+	// write path already retries these; RunInTransaction->withRetry must agree, or
+	// a concurrent conflict on a multi-step transaction (e.g. the merge-slot
+	// acquire, which has no FOR UPDATE and relies on commit-time conflict
+	// detection) fails hard here instead of retrying (beads-ynj8).
+	if isSerializationError(err) {
+		return true
+	}
 	errStr := strings.ToLower(err.Error())
 	// MySQL driver transient errors
 	if strings.Contains(errStr, "driver: bad connection") {
