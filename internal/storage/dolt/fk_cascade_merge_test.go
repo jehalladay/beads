@@ -282,15 +282,21 @@ func TestFKCascadeRepairWithAutoResolvableConflicts(t *testing.T) {
 
 	// Seed the metadata row both branches will rewrite. It lands in
 	// seedFKCascadeDivergence's "seed issues" commit, the branches' common base.
+	// The key must be a CONVERGENT metadata key (beads-ka1n: only last_import_time
+	// remains on the convergentMetadataKeys allowlist) — a non-convergent key
+	// would now correctly refuse to auto-resolve and abort the merge, which is a
+	// different contract than this combined-settle test intends to exercise.
+	const metaKey = "last_import_time"
+	const oursVal, theirsVal = "2026-01-01T00:00:00Z", "2026-02-02T00:00:00Z"
 	if _, err := db.ExecContext(ctx,
-		"REPLACE INTO metadata (`key`, value) VALUES ('bd578h914-key', 'base')"); err != nil {
+		"REPLACE INTO metadata (`key`, value) VALUES (?, '2025-01-01T00:00:00Z')", metaKey); err != nil {
 		t.Fatalf("seed metadata row: %v", err)
 	}
 	peerBranch := seedFKCascadeDivergence(ctx, t, db, tc)
 
 	// Diverge the metadata row on both branches on top of the FK divergence.
 	if _, err := db.ExecContext(ctx,
-		"UPDATE metadata SET value = 'ours' WHERE `key` = 'bd578h914-key'"); err != nil {
+		"UPDATE metadata SET value = ? WHERE `key` = ?", oursVal, metaKey); err != nil {
 		t.Fatalf("update metadata on current: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'metadata ours')"); err != nil {
@@ -300,7 +306,7 @@ func TestFKCascadeRepairWithAutoResolvableConflicts(t *testing.T) {
 		t.Fatalf("checkout peer: %v", err)
 	}
 	if _, err := db.ExecContext(ctx,
-		"UPDATE metadata SET value = 'theirs' WHERE `key` = 'bd578h914-key'"); err != nil {
+		"UPDATE metadata SET value = ? WHERE `key` = ?", theirsVal, metaKey); err != nil {
 		t.Fatalf("update metadata on peer: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'metadata theirs')"); err != nil {
@@ -316,11 +322,11 @@ func TestFKCascadeRepairWithAutoResolvableConflicts(t *testing.T) {
 
 	var metaVal string
 	if err := db.QueryRowContext(ctx,
-		"SELECT value FROM metadata WHERE `key` = 'bd578h914-key'").Scan(&metaVal); err != nil {
+		"SELECT value FROM metadata WHERE `key` = ?", metaKey).Scan(&metaVal); err != nil {
 		t.Fatalf("read metadata row: %v", err)
 	}
-	if metaVal != "theirs" {
-		t.Errorf("metadata conflict resolved to %q, want %q (--theirs)", metaVal, "theirs")
+	if metaVal != theirsVal {
+		t.Errorf("metadata conflict resolved to %q, want %q (--theirs)", metaVal, theirsVal)
 	}
 	var orphans int
 	if err := db.QueryRowContext(ctx, fmt.Sprintf(tc.orphanQuery, tc.name)).Scan(&orphans); err != nil {
