@@ -1855,3 +1855,16 @@ func TestBulkDepAddCycleGateRollsBack(t *testing.T) {
 		t.Fatalf("cycle edge was committed despite gate: %#v", deps)
 	}
 }
+
+func TestFormatTreeNodeNoANSIWhenColorDisabled(t *testing.T) {
+	node := &types.TreeNode{
+		Issue: types.Issue{ID: "BD-1", Title: "Root", Status: types.StatusOpen, Priority: 1},
+		Depth: 0,
+	}
+	for _, blocked := range []bool{true, false} {
+		got := formatTreeNode(node, blocked)
+		if strings.ContainsRune(got, '\x1b') {
+			t.Errorf("blocked=%v: output contains ANSI escape: %q", blocked, got)
+		}
+	}
+}
