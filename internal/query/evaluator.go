@@ -666,6 +666,14 @@ func (e *Evaluator) applyNot(not *NotNode, filter *types.IssueFilter) error {
 			return fmt.Errorf("NOT status only supports = operator")
 		}
 		status := types.Status(strings.ToLower(comp.Value))
+		// Validate, mirroring applyStatusFilter + the NOT type leg below
+		// (beads-lm2z): without this an invalid status was appended to
+		// ExcludeStatus, so `NOT status=typo` excluded nothing → matched
+		// EVERYTHING silently (rc=0) instead of erroring. Same validation-
+		// divergence class as beads-bi4g (predicate leg) and beads-123i (type).
+		if !status.IsValid() {
+			return fmt.Errorf("invalid status: %s", comp.Value)
+		}
 		filter.ExcludeStatus = append(filter.ExcludeStatus, status)
 		return nil
 	case "type":
@@ -1084,14 +1092,26 @@ func (e *Evaluator) compareTime(op ComparisonOp, actual, target time.Time) bool 
 		return !(actual.Year() == target.Year() &&
 			actual.Month() == target.Month() &&
 			actual.Day() == target.Day())
-	case OpLess:
-		return actual.Before(target)
-	case OpLessEq:
-		return actual.Before(target) || actual.Equal(target)
-	case OpGreater:
-		return actual.After(target)
-	case OpGreaterEq:
-		return actual.After(target) || actual.Equal(target)
+	case OpLess, OpLessEq, OpGreater, OpGreaterEq:
+		// Day-snap the ordered operators to match the filter leg
+		// (dateComparisonBounds, beads-76y9) so a query returns the same set
+		// regardless of whether it takes the SQL-filter path or the in-memory
+		// predicate path (OR / owner= / non-status != force the predicate).
+		// Before beads-7a4t this compared the raw parsed instant (midnight of
+		// the target's day), so a same-day issue was classified differently by
+		// query shape. Apply the exact bounds SQL applies: `actual > after`
+		// (strict) AND `actual < before` (strict), matching sqlbuild/filter.go.
+		after, before, ok := dateComparisonBounds(target, op, true)
+		if !ok {
+			return false
+		}
+		if after != nil && !actual.After(*after) {
+			return false
+		}
+		if before != nil && !actual.Before(*before) {
+			return false
+		}
+		return true
 	default:
 		return false
 	}
