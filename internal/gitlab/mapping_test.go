@@ -2,6 +2,8 @@
 package gitlab
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -395,6 +397,91 @@ func TestBeadsIssueToGitLabFields(t *testing.T) {
 	// Verify weight from estimate
 	if fields["weight"] != 5 {
 		t.Errorf("fields[\"weight\"] = %v, want 5", fields["weight"])
+	}
+}
+
+// TestGitLabEstimateRoundTrip verifies that an exact EstimatedMinutes survives a
+// beads→GitLab→beads round-trip via the bd:estimate:<minutes> marker label,
+// including the sub-hour and non-hour-multiple cases that GitLab's coarse
+// integer Weight field silently loses (beads-kw6l).
+func TestGitLabEstimateRoundTrip(t *testing.T) {
+	config := DefaultMappingConfig()
+
+	cases := []int{45, 90, 150, 1, 59, 300}
+	for _, minutes := range cases {
+		minutes := minutes
+		t.Run(strconv.Itoa(minutes), func(t *testing.T) {
+			est := minutes
+			beadsIssue := &types.Issue{
+				Title:            "Estimate round-trip",
+				EstimatedMinutes: &est,
+			}
+
+			fields := BeadsIssueToGitLabFields(beadsIssue, config)
+
+			// Push must emit the exact-minutes marker label alongside weight.
+			labels, ok := fields["labels"].([]string)
+			if !ok {
+				t.Fatalf("fields[\"labels\"] is not []string, got %T", fields["labels"])
+			}
+			wantMarker := "bd:estimate:" + strconv.Itoa(minutes)
+			found := false
+			for _, l := range labels {
+				if l == wantMarker {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("push labels missing %q, got %v", wantMarker, labels)
+			}
+
+			// Simulate the GitLab representation on the way back: Weight is the
+			// coarse (lossy) native value; the marker carries the exact minutes.
+			gl := &Issue{
+				IID:    1,
+				Title:  "Estimate round-trip",
+				State:  "opened",
+				Weight: minutes / 60, // what GitLab natively stores (lossy)
+				Labels: labels,
+			}
+
+			back := GitLabIssueToBeads(gl, config)
+			if back == nil || back.Issue == nil {
+				t.Fatal("GitLabIssueToBeads returned nil")
+			}
+			if back.Issue.EstimatedMinutes == nil {
+				t.Fatalf("EstimatedMinutes lost on round-trip for %d min", minutes)
+			}
+			if *back.Issue.EstimatedMinutes != minutes {
+				t.Errorf("round-trip EstimatedMinutes = %d, want %d (marker must win over lossy Weight)",
+					*back.Issue.EstimatedMinutes, minutes)
+			}
+
+			// The marker must NOT leak into the user-facing label set.
+			for _, l := range back.Issue.Labels {
+				if strings.HasPrefix(l, "bd:estimate:") {
+					t.Errorf("bd:estimate marker leaked into user labels: %v", back.Issue.Labels)
+				}
+			}
+		})
+	}
+}
+
+// TestGitLabEstimateFallbackToWeight verifies a GitLab-native issue with no
+// bd:estimate marker still derives the estimate from Weight (backward compat).
+func TestGitLabEstimateFallbackToWeight(t *testing.T) {
+	config := DefaultMappingConfig()
+
+	gl := &Issue{
+		IID:    2,
+		Title:  "Native GitLab issue",
+		State:  "opened",
+		Weight: 3,
+		Labels: []string{"type::bug"},
+	}
+	back := GitLabIssueToBeads(gl, config)
+	if back.Issue.EstimatedMinutes == nil || *back.Issue.EstimatedMinutes != 180 {
+		t.Errorf("EstimatedMinutes = %v, want 180 (fallback to Weight*60)", back.Issue.EstimatedMinutes)
 	}
 }
 
