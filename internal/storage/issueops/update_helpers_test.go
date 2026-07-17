@@ -131,6 +131,20 @@ func TestManageClosedAt(t *testing.T) {
 		}
 	})
 
+	t.Run("re-closing an already-closed issue preserves closed_at", func(t *testing.T) {
+		t.Parallel()
+		// beads-b1l7: `bd update --status closed` on an already-closed issue
+		// must NOT overwrite the original close timestamp (symmetric with
+		// ManageStartedAt preserving started_at). Expect no closed_at clause.
+		existing := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+		old := &types.Issue{Status: types.StatusClosed, ClosedAt: &existing}
+		updates := map[string]interface{}{"status": string(types.StatusClosed)}
+		clauses, args := ManageClosedAt(old, updates, nil, nil)
+		if len(clauses) != 0 || len(args) != 0 {
+			t.Fatalf("re-close of already-closed must leave closed_at untouched, got clauses=%v args=%v", clauses, args)
+		}
+	})
+
 	t.Run("reopening a closed issue clears closed_at and reason", func(t *testing.T) {
 		t.Parallel()
 		old := &types.Issue{Status: types.StatusClosed}
