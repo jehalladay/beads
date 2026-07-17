@@ -30,6 +30,16 @@ build_skip_pattern() {
 
 # Default values
 TIMEOUT="${TEST_TIMEOUT:-3m}"
+# Track whether the timeout was set explicitly (env or -timeout flag). The race
+# tier bumps an UNSET default (see below) but must never override an explicit
+# caller choice. (beads-367)
+TIMEOUT_EXPLICIT=""
+[[ -n "${TEST_TIMEOUT:-}" ]] && TIMEOUT_EXPLICIT="1"
+# Default timeout for the race tier when the caller did not set one. Race
+# instrumentation slows tests ~7-10x, so the 3m default produces FALSE "panic:
+# test timed out" failures on subprocess/Dolt-backed tests. CI's full race run
+# uses 30m (.github/workflows/nightly.yml); match that. (beads-367)
+RACE_TIMEOUT="${TEST_RACE_TIMEOUT:-30m}"
 GO_TEST_PKG_PARALLEL="${GO_TEST_PKG_PARALLEL:-4}"
 GO_TEST_PARALLEL="${GO_TEST_PARALLEL:-4}"
 SKIP_PATTERN=$(build_skip_pattern)
@@ -52,6 +62,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         -timeout)
             TIMEOUT="$2"
+            TIMEOUT_EXPLICIT="1"
             shift 2
             ;;
         -race|--race)
@@ -131,6 +142,13 @@ if [[ "${BEADS_TEST_SHARED_SERVER:-}" == "1" && -z "${BEADS_DOLT_PORT:-}" ]]; th
             rm -rf "$SHARED_DOLT_DIR"
         fi
     fi
+fi
+
+# Race tier bumps an unset timeout so instrumented subprocess/Dolt-backed tests
+# don't hit a FALSE "panic: test timed out" (race is ~7-10x slower). An explicit
+# -timeout / TEST_TIMEOUT always wins. (beads-367)
+if [[ -n "$RACE" && -z "$TIMEOUT_EXPLICIT" ]]; then
+    TIMEOUT="$RACE_TIMEOUT"
 fi
 
 # Build go test command
