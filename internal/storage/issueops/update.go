@@ -49,12 +49,11 @@ func validatePriorityUpdate(updates map[string]interface{}) error {
 	return nil
 }
 
-// validateTitleUpdate enforces the title invariants Issue.Validate applies on
-// create (non-empty, <=500 chars) at the shared update write path. The CLI
-// update command guards these (cmd/bd/update.go), but the batch, graph-apply,
-// proxied-server, and programmatic store.UpdateIssue paths build the updates map
-// directly and would otherwise write an empty or >500-char title, silently
-// violating Issue.Validate (beads-25k6). A missing "title" key is a no-op.
+// validateTitleUpdate enforces the title invariant (required, <=500 chars) and
+// rejects a non-string value on the shared update path. Handed off from
+// beads-25k6 (eng_6) and folded into the 2p6x umbrella: this catches bad INPUT
+// TYPES (e.g. title:42) before the SQL layer silently coerces them, complementing
+// finalizeUpdatedIssueInTx which validates the merged persisted result.
 func validateTitleUpdate(updates map[string]interface{}) error {
 	raw, ok := updates["title"]
 	if !ok {
@@ -73,10 +72,10 @@ func validateTitleUpdate(updates map[string]interface{}) error {
 	return nil
 }
 
-// validateEstimatedMinutesUpdate enforces the estimated_minutes >= 0 invariant
-// from Issue.Validate at the shared update path (beads-25k6). Accepts the
-// int/int64/float64 shapes callers/JSON decoders deliver; a non-integral float
-// is rejected rather than truncated. A missing key is a no-op.
+// validateEstimatedMinutesUpdate enforces estimated_minutes >= 0 and rejects a
+// non-integer value on the shared update path (beads-25k6, eng_6 → 2p6x). Like
+// validatePriorityUpdate it normalizes int/int64/float64 and rejects a
+// non-integral float rather than silently truncating (2.5 -> 2). nil clears it.
 func validateEstimatedMinutesUpdate(updates map[string]interface{}) error {
 	raw, ok := updates["estimated_minutes"]
 	if !ok || raw == nil {
@@ -100,6 +99,68 @@ func validateEstimatedMinutesUpdate(updates map[string]interface{}) error {
 		return fmt.Errorf("estimated_minutes cannot be negative")
 	}
 	return nil
+}
+
+// finalizeUpdatedIssueInTx re-runs the create-path finalization on the merged
+// post-update issue: full Issue.ValidateWithCustom (title/priority/status/type/
+// estimated_minutes/closed_at/metadata invariants) + content_hash recompute.
+// It re-reads inside the transaction so it sees the exact persisted state
+// (including auto-managed closed_at/started_at/pinned). A validation failure
+// returns an error, which rolls back the caller's transaction (beads-2p6x).
+func finalizeUpdatedIssueInTx(ctx context.Context, tx DBTX, issueTable, id string) error {
+	updated, err := GetIssueInTx(ctx, tx, id)
+	if err != nil {
+		return fmt.Errorf("failed to re-read issue for finalization: %w", err)
+	}
+	if updated == nil {
+		return nil // nothing persisted (e.g. no-op); leave as-is
+	}
+
+	statuses, customTypes, err := ResolveCustomConfigInTx(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("failed to resolve custom config for update validation: %w", err)
+	}
+	customStatuses := make([]string, len(statuses))
+	for i, s := range statuses {
+		customStatuses[i] = s.Name
+	}
+	if err := updated.ValidateWithCustom(customStatuses, customTypes); err != nil {
+		return fmt.Errorf("update would violate issue invariants: %w", err)
+	}
+	// Metadata must be a JSON OBJECT, not just valid JSON (beads-lsbu).
+	// ValidateWithCustom only checks json.Valid, so an array/scalar ("[1,2]",
+	// "42") slips past it — but every metadata edit path (applyMetadataEdits/
+	// mergeMetadata) unmarshals into map[string]json.RawMessage and hard-errors
+	// on a non-object, permanently locking the issue out of future edits. Reject
+	// it here so a non-object never lands via the shared write path.
+	if len(updated.Metadata) > 0 && !metadataIsJSONObjectRaw(updated.Metadata) {
+		return fmt.Errorf("update would violate issue invariants: metadata must be a JSON object (arrays and scalars can't be edited by --set-metadata/--unset-metadata)")
+	}
+
+	// Recompute the content hash from the post-update content so it stays a
+	// faithful cross-clone content fingerprint after edits.
+	newHash := updated.ComputeContentHash()
+	if newHash != updated.ContentHash {
+		//nolint:gosec // G201: issueTable is a WispTableRouting constant
+		if _, err := tx.ExecContext(ctx,
+			fmt.Sprintf("UPDATE %s SET content_hash = ? WHERE id = ?", issueTable),
+			newHash, id); err != nil {
+			return fmt.Errorf("failed to update content_hash: %w", err)
+		}
+	}
+	return nil
+}
+
+// metadataIsJSONObjectRaw reports whether raw metadata is a JSON object (or
+// empty/null, treated as an empty object). Arrays and scalars are rejected —
+// they are valid JSON but cannot be edited by the map-based metadata edit paths.
+func metadataIsJSONObjectRaw(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return true
+	}
+	var obj map[string]json.RawMessage
+	return json.Unmarshal([]byte(trimmed), &obj) == nil
 }
 
 // IsAllowedUpdateField checks if a field name is valid for issue updates.
@@ -238,10 +299,10 @@ func updateIssueInTx(ctx context.Context, tx DBTX, id string, updates map[string
 	if err := validatePriorityUpdate(updates); err != nil {
 		return nil, err
 	}
-	// Same rationale as priority: title (required, <=500) and estimated_minutes
-	// (>=0) are Issue.Validate invariants the CLI guards but the batch/graph-
-	// apply/proxied/programmatic paths bypass — enforce them at the shared core
-	// so create and update converge on one gate (beads-25k6).
+	// Input-type guards for title/estimate (beads-25k6, folded into 2p6x): reject
+	// a bad value TYPE before the SQL layer silently coerces it (e.g. title:42 →
+	// "42", estimate:2.5 → 2). finalizeUpdatedIssueInTx below then validates the
+	// merged persisted result (full ValidateWithCustom + content_hash).
 	if err := validateTitleUpdate(updates); err != nil {
 		return nil, err
 	}
@@ -330,6 +391,21 @@ func updateIssueInTx(ctx context.Context, tx DBTX, id string, updates map[string
 	query := fmt.Sprintf("UPDATE %s SET %s WHERE id = ?", issueTable, strings.Join(setClauses, ", "))
 	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 		return nil, fmt.Errorf("failed to update issue: %w", err)
+	}
+
+	// Finalize the update the same way create does (beads-2p6x): re-run the full
+	// Issue.ValidateWithCustom on the merged post-update state and recompute the
+	// content hash. Before this, updateIssueInTx guarded only priority + issue_type,
+	// so the shared write path (batch/graph-apply/proxied-server/domain/programmatic
+	// — everything that doesn't route through the CLI's own guards) accepted an
+	// empty/>500 title (beads-25k6), a negative estimated_minutes (beads-25k6), and
+	// a non-object metadata (beads-lsbu), and left content_hash stale after any
+	// content change (beads-rzx8). Re-reading inside the tx reflects auto-managed
+	// columns (closed_at/started_at/pinned) so the validation and the hash match
+	// exactly what was persisted; a validation failure returns an error and the
+	// caller's transaction rolls back, so the invalid write never commits.
+	if err := finalizeUpdatedIssueInTx(ctx, tx, issueTable, id); err != nil {
+		return nil, err
 	}
 
 	if recordEvent {
