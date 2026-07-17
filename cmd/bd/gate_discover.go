@@ -35,6 +35,7 @@ type GHWorkflowRun struct {
 // gateDiscoverCmd discovers GitHub run IDs for gh:run gates
 var gateDiscoverCmd = &cobra.Command{
 	Use:   "discover",
+	Args:  cobra.NoArgs,
 	Short: "Discover await_id for gh:run gates",
 	Long: `Discovers GitHub workflow run IDs for gates awaiting CI/CD completion.
 

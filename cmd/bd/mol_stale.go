@@ -13,6 +13,7 @@ import (
 
 var molStaleCmd = &cobra.Command{
 	Use:   "stale",
+	Args:  cobra.NoArgs,
 	Short: "Detect complete-but-unclosed molecules",
 	Long: `Detect molecules (epics with children) that are complete but still open.
 

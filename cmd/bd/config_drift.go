@@ -36,6 +36,7 @@ const (
 
 var configDriftCmd = &cobra.Command{
 	Use:   "drift",
+	Args:  cobra.NoArgs,
 	Short: "Detect config-vs-reality inconsistencies",
 	Long: `Detect drift between declared configuration and actual system state.
 

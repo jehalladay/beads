@@ -344,6 +344,7 @@ Examples:
 // human stats command
 var humanStatsCmd = &cobra.Command{
 	Use:   "stats",
+	Args:  cobra.NoArgs,
 	Short: "Show summary statistics for human-needed beads",
 	Long: `Display summary statistics for human-needed beads.
 

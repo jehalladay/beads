@@ -569,6 +569,7 @@ var configUnsetCmd = &cobra.Command{
 
 var configValidateCmd = &cobra.Command{
 	Use:   "validate",
+	Args:  cobra.NoArgs,
 	Short: "Validate sync-related configuration",
 	Long: `Validate sync-related configuration settings.
 
