@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   query matched assignee case-sensitively (`assignee = ?`), so
   `bd ready --assignee Alice` missed an issue assigned `alice` — inconsistent
   with `bd list`/`bd query --assignee` (and the predicate path). `BuildReadyWorkWhere`
-  now `LOWER()`s both sides, closing the consistency gap.
+  now `LOWER()`s both sides. The identity-label default exclusion (`gt:agent`/`role`/`rig`) and `--label` matching in `bd ready` are likewise case-insensitive now, so a mixed-case `GT:Agent` label is correctly excluded and `bd ready --label Bug` finds `bug`.
 
 ### Fixed
 
