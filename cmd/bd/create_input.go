@@ -305,20 +305,34 @@ func resolveTitle(args []string, titleFlag, markdownFile, graphFile string) (str
 		return "", nil
 	}
 
+	var title string
 	switch {
 	case len(args) > 0 && titleFlag != "":
 		if args[0] != titleFlag {
 			return "", HandleError("cannot specify different titles as both positional argument and --title flag\n  Positional: %q\n  --title:    %q", args[0], titleFlag)
 		}
-		return args[0], nil
+		title = args[0]
 	case len(args) > 0:
+		// Flag-detection runs on the raw arg (before trimming) so a leading space
+		// can't smuggle a "-flag" past the check.
 		if strings.HasPrefix(args[0], "-") {
 			return "", HandleError("title %q looks like a flag (starts with '-').\n  Run 'bd create --help' for available options.\n  To use this title anyway, pass it explicitly: bd create --title=%q", args[0], args[0])
 		}
-		return args[0], nil
+		title = args[0]
 	case titleFlag != "":
-		return titleFlag, nil
+		title = titleFlag
 	default:
 		return "", HandleError("title required (or use --file to create from markdown)")
 	}
+
+	// Trim leading/trailing whitespace and reject an empty-after-trim title,
+	// mirroring the update path (cmd/bd/update.go). Without this, a padded title
+	// was stored verbatim (unsearchable) and a whitespace-only title was accepted
+	// as valid (types.Validate only rejects len==0) — a create/update asymmetry
+	// (beads-n5xz, sibling of the label-trim gap beads-4g2h).
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return "", HandleError("title cannot be empty")
+	}
+	return title, nil
 }

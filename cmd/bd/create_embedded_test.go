@@ -218,6 +218,29 @@ func TestEmbeddedCreate(t *testing.T) {
 		}
 	})
 
+	// beads-n5xz: the create command must trim leading/trailing whitespace and
+	// reject an empty-after-trim title, matching the update path — closing the
+	// create/update asymmetry (a padded title stored verbatim is unsearchable; a
+	// whitespace-only title displays blank yet passed types.Validate's len==0
+	// check). This exercises the live direct create path end-to-end (the
+	// create.go inline parse, distinct from gatherCreateInput's resolveTitle).
+	t.Run("title_trim", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "tt")
+
+		if issue := bdCreate(t, bd, dir, "  padded positional  "); issue.Title != "padded positional" {
+			t.Errorf("padded positional title: got %q, want %q", issue.Title, "padded positional")
+		}
+		if issue := bdCreate(t, bd, dir, "--title", "  padded flag  "); issue.Title != "padded flag" {
+			t.Errorf("padded --title: got %q, want %q", issue.Title, "padded flag")
+		}
+		if issue := bdCreate(t, bd, dir, "  a  b  "); issue.Title != "a  b" {
+			t.Errorf("internal whitespace should be preserved: got %q, want %q", issue.Title, "a  b")
+		}
+		// Whitespace-only title is rejected (was accepted before the fix).
+		bdCreateFail(t, bd, dir, "   ")
+		bdCreateFail(t, bd, dir, "--title", "\t \n")
+	})
+
 	// A validation failure under --json must emit a parseable JSON error object
 	// on stdout (HandleErrorRespectJSON), matching update.go/close.go — not
 	// plain text to stderr with empty stdout (beads-hqm0). Uses an invalid

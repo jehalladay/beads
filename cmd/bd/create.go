@@ -105,6 +105,17 @@ var createCmd = &cobra.Command{
 			return HandleErrorRespectJSON("title required (or use --file to create from markdown)")
 		}
 
+		// Trim leading/trailing whitespace and reject an empty-after-trim title,
+		// mirroring the update path (cmd/bd/update.go) and gatherCreateInput's
+		// resolveTitle (the proxied path). Without this, a padded title was stored
+		// verbatim (unsearchable) and a whitespace-only title was accepted as valid
+		// (types.Validate only rejects len==0) — a create/update asymmetry
+		// (beads-n5xz, sibling of the label-trim gap beads-4g2h).
+		title = strings.TrimSpace(title)
+		if title == "" {
+			return HandleErrorRespectJSON("title cannot be empty")
+		}
+
 		// Get silent flag
 		silent, _ := cmd.Flags().GetBool("silent")
 
