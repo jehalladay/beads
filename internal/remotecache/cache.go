@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/configfile"
@@ -112,7 +113,26 @@ func (c *Cache) Ensure(ctx context.Context, remoteURL string) (string, error) {
 			}
 		}
 		if err := c.doltPull(ctx, target); err != nil {
-			return "", fmt.Errorf("dolt pull failed for %s: %w", remoteURL, err)
+			// Belt-and-suspenders: a clone corrupted by other means (e.g. a
+			// partial dir from an older bd, or external corruption) makes the
+			// warm path fail forever with "not a valid dolt repository". Detect
+			// that and self-heal by evicting the corrupt entry and re-cloning
+			// cold, instead of returning a permanent error.
+			if isInvalidRepoErr(err) {
+				debug.Logf("remotecache: corrupt cached clone for %s (%v); re-cloning\n", remoteURL, err)
+				// Remove only the corrupt clone dir, not the whole entry: the
+				// entry also holds the .lock file we currently flock, and
+				// deleting it out from under our fd would break the lock's
+				// mutual exclusion for a concurrent process.
+				if rmErr := os.RemoveAll(target); rmErr != nil {
+					return "", fmt.Errorf("dolt pull failed for %s and removing corrupt clone failed: %v (original: %w)", remoteURL, rmErr, err)
+				}
+				if clErr := c.doltClone(ctx, remoteURL, target); clErr != nil {
+					return "", fmt.Errorf("dolt re-clone failed for %s after corrupt cache: %w", remoteURL, clErr)
+				}
+			} else {
+				return "", fmt.Errorf("dolt pull failed for %s: %w", remoteURL, err)
+			}
 		}
 	} else {
 		// Cold start: clone
@@ -188,7 +208,22 @@ func (c *Cache) doltExists(dbPath string) bool {
 }
 
 // doltClone clones a remote into the target directory.
-func (c *Cache) doltClone(ctx context.Context, remoteURL, target string) error {
+//
+// On failure it removes any partially-created target directory. Without this,
+// an interrupted cold clone (cancelled ctx, disk-full, network drop after
+// target/.dolt was created) would leave a partial .dolt behind; doltExists()
+// trusts that dir forever, so every subsequent Ensure takes the warm (pull)
+// path against the corrupt clone and fails permanently — wedging the cache
+// until a manual Evict. Cleaning up on error means the next Ensure re-clones
+// cold, matching dolt's own behavior for a clone that fails before writing.
+func (c *Cache) doltClone(ctx context.Context, remoteURL, target string) (err error) {
+	defer func() {
+		if err != nil {
+			if rmErr := os.RemoveAll(target); rmErr != nil {
+				debug.Logf("remotecache: failed to clean up partial clone target %s: %v\n", target, rmErr)
+			}
+		}
+	}()
 	cmd := exec.CommandContext(ctx, "dolt", "clone", remoteURL, target)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%w\nOutput: %s", err, output)
@@ -204,6 +239,17 @@ func (c *Cache) doltPull(ctx context.Context, dbDir string) error {
 		return fmt.Errorf("%w\nOutput: %s", err, output)
 	}
 	return nil
+}
+
+// isInvalidRepoErr reports whether a dolt error indicates the target directory
+// is not a valid dolt repository — the signature of a corrupt/partial clone
+// (e.g. an interrupted cold start that left a stub .dolt behind). doltPull's
+// error wraps the CLI's combined output, which contains this phrase.
+func isInvalidRepoErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "not a valid dolt repository")
 }
 
 // acquireLock acquires an exclusive file lock for a cache entry.
