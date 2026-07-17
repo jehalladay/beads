@@ -65,6 +65,12 @@ func (p *doltSQLProvider) BeginTx(ctx context.Context) (Tx, error) {
 
 	_, err := conn.ExecContext(ctx, "START TRANSACTION;")
 	if err != nil {
+		// The connection was successfully pinned but never handed to a
+		// doltServerTx, so nothing else will close it. Release it back to the
+		// pool here or a burst of transient START-TRANSACTION failures (exactly
+		// what the RunInTx retry loop drives) leaks connections until the pool
+		// is exhausted (beads-e3rj).
+		_ = conn.Close()
 		return nil, fmt.Errorf("uow: failed to start transaction: %w", err)
 	}
 
