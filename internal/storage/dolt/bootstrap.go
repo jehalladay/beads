@@ -58,8 +58,9 @@ func firstSegment(candidates ...string) string {
 	return ""
 }
 
-// staleLockAge is the maximum age of a lock file before it's considered stale.
-// Bootstrap operations should complete well within this window.
+// staleLockAge bounds how long a concurrent cold-start waits for an in-progress
+// bootstrap's exclusive lock before giving up (beads-apb1). A clone of a large
+// remote must complete well within this window.
 const staleLockAge = 5 * time.Minute
 
 // BootstrapFromRemote clones a Dolt database from a remote URL.
@@ -89,11 +90,12 @@ func BootstrapFromGitRemote(ctx context.Context, doltDir, gitRemoteURL string) (
 // callers should use cfg.GetDoltDatabase() which applies the fallback chain
 // (env var → config → default).
 func BootstrapFromRemoteWithDB(ctx context.Context, doltDir, remoteURL, database string) (bool, error) {
-	// Skip if a COMPLETE Dolt database already exists. doltExists() alone only
-	// checks for any subdir with a .dolt directory, which a partial/interrupted
-	// clone also satisfies — trusting that would permanently skip re-clone and
-	// wedge the database (beads-pf1j). Require the clone to be complete (a
-	// .dolt with the noms object store + repo_state.json) before short-circuiting.
+	// Skip if a COMPLETE Dolt database already exists (fast path, no lock
+	// needed). doltExists() alone only checks for any subdir with a .dolt
+	// directory, which a partial/interrupted clone also satisfies — trusting
+	// that would permanently skip re-clone and wedge the database (beads-pf1j).
+	// Require the clone to be complete (a .dolt with the noms object store +
+	// repo_state.json) before short-circuiting.
 	if doltExists(doltDir) && doltCloneComplete(doltDir) {
 		return false, nil
 	}
@@ -114,6 +116,30 @@ func BootstrapFromRemoteWithDB(ctx context.Context, doltDir, remoteURL, database
 	// Create the parent dolt directory
 	if err := os.MkdirAll(doltDir, 0o750); err != nil {
 		return false, fmt.Errorf("failed to create dolt directory: %w", err)
+	}
+
+	// Serialize concurrent cold-starts of the same workspace (beads-apb1).
+	// Two bd processes bootstrapping the same doltDir would otherwise both pass
+	// the doltExists() check above and both run `dolt clone` into the same
+	// target, racing writes to the same .dolt (and leaving a corrupt/partial
+	// clone). Hold an exclusive flock for the clone; a second cold-start waits
+	// here, then the double-checked doltExists() below sees the completed clone
+	// and skips. The lock file lives next to the dolt dir (not inside it, so it
+	// never travels with a clone). The doctor stale-lock check already expects a
+	// "dolt.bootstrap.lock" artifact here.
+	lockPath := filepath.Join(doltDir, "dolt.bootstrap.lock")
+	lock, lockErr := acquireBootstrapLock(lockPath, staleLockAge)
+	if lockErr != nil {
+		return false, fmt.Errorf("acquire bootstrap lock: %w", lockErr)
+	}
+	defer releaseBootstrapLock(lock, lockPath)
+
+	// Double-checked: a concurrent bootstrap we waited behind may have already
+	// completed the clone while we blocked on the lock. Require completeness
+	// (matching the top-level check) so a peer that died mid-clone doesn't make
+	// us skip re-cloning (beads-pf1j + beads-apb1).
+	if doltExists(doltDir) && doltCloneComplete(doltDir) {
+		return false, nil
 	}
 
 	// Clone into <doltDir>/<database>/ so the embedded driver can find it.
@@ -233,19 +259,18 @@ func schemaReady(_ context.Context, doltPath string, dbName string) bool {
 
 // acquireBootstrapLock acquires an exclusive lock for bootstrap operations.
 // Uses non-blocking flock with polling to respect the timeout deadline.
-// Detects and cleans up stale lock files from crashed processes.
+//
+// It deliberately does NOT remove a "stale" lock file by mtime. flock(2) is
+// bound to the open file description (inode), not the path, and is released by
+// the OS when the holding process dies — so a crashed holder leaves a lock the
+// try-lock loop below immediately acquires, and there is no stale flock to
+// clean up. Removing the lock file by mtime was actively unsafe: nothing
+// refreshes the file's mtime while the lock is held, so a legitimately-held
+// lock during a long clone would look "stale", get unlinked by a concurrent
+// waiter, and the waiter would O_CREATE a NEW inode and lock THAT — two
+// processes then clone the same target concurrently and corrupt it (the same
+// split-lock class as beads-vw2m in remotecache).
 func acquireBootstrapLock(lockPath string, timeout time.Duration) (*os.File, error) {
-	// Check for stale lock file before attempting to acquire.
-	// If the lock file is very old, the holding process likely crashed
-	// without cleanup. Remove it so we can proceed.
-	if info, err := os.Stat(lockPath); err == nil {
-		age := time.Since(info.ModTime())
-		if age > staleLockAge {
-			fmt.Fprintf(os.Stderr, "Bootstrap: removing stale lock file (age: %s)\n", age.Round(time.Second))
-			_ = os.Remove(lockPath) // Best effort cleanup of lock file
-		}
-	}
-
 	// Create lock file
 	// #nosec G304 - controlled path
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
@@ -278,12 +303,17 @@ func acquireBootstrapLock(lockPath string, timeout time.Duration) (*os.File, err
 	}
 }
 
-// releaseBootstrapLock releases the bootstrap lock and removes the lock file
-func releaseBootstrapLock(f *os.File, lockPath string) {
+// releaseBootstrapLock releases the bootstrap lock.
+//
+// The lock file is intentionally NOT unlinked: removing it after unlock is a
+// TOCTOU race — a concurrent waiter that already opened the same path and is
+// blocked on flock would have its just-acquired lock silently detached when
+// this process deletes the inode out from under it (beads-vw2m). A leftover
+// lock file with no live holder is harmless: the next acquireBootstrapLock's
+// try-lock acquires it immediately.
+func releaseBootstrapLock(f *os.File, _ string) {
 	if f != nil {
 		_ = lockfile.FlockUnlock(f) // Best effort: unlock may fail if fd is bad
 		_ = f.Close()               // Best effort cleanup
 	}
-	// Clean up lock file
-	_ = os.Remove(lockPath) // Best effort cleanup of lock file
 }
