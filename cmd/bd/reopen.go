@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/audit"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -80,6 +81,13 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 			}
 			mutatedStores[issueStore] = append(mutatedStores[issueStore], fullID)
 			pendingCloseResults = append(pendingCloseResults, result)
+
+			// Audit log the reopen (survives Dolt GC flatten), mirroring the CLI
+			// close/update paths and the proxied reopen handler. Without this, a
+			// GC flatten would leave the durable trail showing the close but not
+			// the reopen (beads-n4sn). The guard above guarantees this is a real
+			// closed->open transition.
+			audit.LogFieldChange(fullID, "status", string(issue.Status), string(types.StatusOpen), actor, reason)
 			if jsonOutput {
 				updated, _ := issueStore.GetIssue(ctx, fullID)
 				if updated != nil {
