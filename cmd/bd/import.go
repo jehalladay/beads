@@ -182,6 +182,7 @@ type importResultJSON struct {
 	UpdatedIssues       []ImportChange `json:"updated_issues,omitempty"`
 	TieKeptLocalIDs     []string       `json:"tie_kept_local_ids,omitempty"`
 	StaleSkippedIDs     []string       `json:"stale_skipped_ids,omitempty"`
+	InvalidMetadataIDs  []string       `json:"invalid_metadata_ids,omitempty"`
 	SkippedDependencies []string       `json:"skipped_dependencies,omitempty"`
 	DryRun              bool           `json:"dry_run,omitempty"`
 }
@@ -293,6 +294,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		result.UpdatedIssues = append(result.UpdatedIssues, importResult.UpdatedIssues...)
 		result.TieKeptLocalIDs = append(result.TieKeptLocalIDs, importResult.TieKeptLocalIDs...)
 		result.StaleSkippedIDs = append(result.StaleSkippedIDs, importResult.StaleSkippedIDs...)
+		result.InvalidMetadataIDs = append(result.InvalidMetadataIDs, importResult.InvalidMetadataIDs...)
 	}
 
 	if result.Created > 0 || result.Memories > 0 {
@@ -323,8 +325,11 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 	if dedupHits > 0 {
 		fmt.Fprintf(os.Stderr, " (%d duplicates skipped)", dedupHits)
 	}
-	if staleSkipped := result.Skipped - dedupHits; staleSkipped > 0 {
+	if staleSkipped := result.Skipped - dedupHits - len(result.InvalidMetadataIDs); staleSkipped > 0 {
 		fmt.Fprintf(os.Stderr, " (%d stale skipped; use --allow-stale to restore older rows)", staleSkipped)
+	}
+	if n := len(result.InvalidMetadataIDs); n > 0 {
+		fmt.Fprintf(os.Stderr, " (%d skipped: metadata is not a JSON object: %s)", n, strings.Join(result.InvalidMetadataIDs, ", "))
 	}
 	fmt.Fprintln(os.Stderr)
 	if len(result.UpdatedIssues) > 0 {
