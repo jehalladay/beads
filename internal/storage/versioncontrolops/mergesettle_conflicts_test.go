@@ -56,12 +56,17 @@ func TestDependencyConflictsAreAuditOnly(t *testing.T) {
 		"our_depends_on_wisp_id", "their_depends_on_wisp_id",
 		"our_depends_on_external", "their_depends_on_external",
 		"our_type", "their_type",
+		"our_metadata", "their_metadata",
+		"our_thread_id", "their_thread_id",
 	}
-	// A row where both sides carry identical natural identity + type.
+	// A row where both sides carry identical natural identity + type + semantic
+	// columns; created_at/created_by (not selected by the gate) are the only
+	// genuine audit difference.
 	auditRow := func() *sqlmock.Rows {
 		return sqlmock.NewRows(cols).AddRow(
 			"d1", "d1", "bd-1", "bd-1", "bd-2", "bd-2",
-			nil, nil, nil, nil, "blocks", "blocks")
+			nil, nil, nil, nil, "blocks", "blocks",
+			nil, nil, "", "")
 	}
 
 	t.Run("identical edge is audit-only", func(t *testing.T) {
@@ -86,7 +91,8 @@ func TestDependencyConflictsAreAuditOnly(t *testing.T) {
 		db, mock := newConflictMock(t)
 		mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows(cols).AddRow(
 			"d1", nil, "bd-1", nil, "bd-2", nil,
-			nil, nil, nil, nil, "blocks", nil))
+			nil, nil, nil, nil, "blocks", nil,
+			nil, nil, "", nil))
 		ok, err := dependencyConflictsAreAuditOnly(context.Background(), db)
 		if err != nil || ok {
 			t.Fatalf("got ok=%v err=%v, want false,nil", ok, err)
@@ -97,7 +103,8 @@ func TestDependencyConflictsAreAuditOnly(t *testing.T) {
 		db, mock := newConflictMock(t)
 		mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows(cols).AddRow(
 			"d1", "d1", "bd-1", "bd-9", "bd-2", "bd-2",
-			nil, nil, nil, nil, "blocks", "blocks"))
+			nil, nil, nil, nil, "blocks", "blocks",
+			nil, nil, "", ""))
 		ok, err := dependencyConflictsAreAuditOnly(context.Background(), db)
 		if err != nil || ok {
 			t.Fatalf("got ok=%v err=%v, want false,nil", ok, err)
@@ -108,7 +115,8 @@ func TestDependencyConflictsAreAuditOnly(t *testing.T) {
 		db, mock := newConflictMock(t)
 		mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows(cols).AddRow(
 			"d1", "d1", "bd-1", "bd-1", "bd-2", "bd-3",
-			nil, nil, nil, nil, "blocks", "blocks"))
+			nil, nil, nil, nil, "blocks", "blocks",
+			nil, nil, "", ""))
 		ok, err := dependencyConflictsAreAuditOnly(context.Background(), db)
 		if err != nil || ok {
 			t.Fatalf("got ok=%v err=%v, want false,nil", ok, err)
@@ -119,10 +127,55 @@ func TestDependencyConflictsAreAuditOnly(t *testing.T) {
 		db, mock := newConflictMock(t)
 		mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows(cols).AddRow(
 			"d1", "d1", "bd-1", "bd-1", "bd-2", "bd-2",
-			nil, nil, nil, nil, "blocks", "parent-child"))
+			nil, nil, nil, nil, "blocks", "parent-child",
+			nil, nil, "", ""))
 		ok, err := dependencyConflictsAreAuditOnly(context.Background(), db)
 		if err != nil || ok {
 			t.Fatalf("got ok=%v err=%v, want false,nil", ok, err)
+		}
+	})
+
+	// beads-fosi: metadata is semantic edge state (WaitsForMeta gate /
+	// AttestsMeta), NOT an audit column — a same-edge conflict differing only in
+	// metadata must NOT be auto-resolved with --theirs (silent gate/attestation
+	// clobber).
+	t.Run("differing metadata is not audit-only", func(t *testing.T) {
+		db, mock := newConflictMock(t)
+		mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows(cols).AddRow(
+			"d1", "d1", "bd-1", "bd-1", "bd-2", "bd-2",
+			nil, nil, nil, nil, "blocks", "blocks",
+			`{"gate":"all-children"}`, `{"gate":"any-children"}`, "", ""))
+		ok, err := dependencyConflictsAreAuditOnly(context.Background(), db)
+		if err != nil || ok {
+			t.Fatalf("got ok=%v err=%v, want false,nil (semantic metadata must not --theirs)", ok, err)
+		}
+	})
+
+	// beads-fosi: thread_id groups conversation edges — also semantic.
+	t.Run("differing thread_id is not audit-only", func(t *testing.T) {
+		db, mock := newConflictMock(t)
+		mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows(cols).AddRow(
+			"d1", "d1", "bd-1", "bd-1", "bd-2", "bd-2",
+			nil, nil, nil, nil, "blocks", "blocks",
+			nil, nil, "thread-a", "thread-b"))
+		ok, err := dependencyConflictsAreAuditOnly(context.Background(), db)
+		if err != nil || ok {
+			t.Fatalf("got ok=%v err=%v, want false,nil (thread_id is semantic)", ok, err)
+		}
+	})
+
+	// A same-edge conflict identical in every gated column (only created_at/
+	// created_by, not selected, could differ) stays audit-only — locks in that
+	// the fix did NOT over-restrict.
+	t.Run("identical semantic columns stays audit-only", func(t *testing.T) {
+		db, mock := newConflictMock(t)
+		mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows(cols).AddRow(
+			"d1", "d1", "bd-1", "bd-1", "bd-2", "bd-2",
+			nil, nil, nil, nil, "blocks", "blocks",
+			`{"gate":"all-children"}`, `{"gate":"all-children"}`, "t1", "t1"))
+		ok, err := dependencyConflictsAreAuditOnly(context.Background(), db)
+		if err != nil || !ok {
+			t.Fatalf("got ok=%v err=%v, want true,nil", ok, err)
 		}
 	})
 
@@ -136,7 +189,7 @@ func TestDependencyConflictsAreAuditOnly(t *testing.T) {
 
 	t.Run("scan error propagates", func(t *testing.T) {
 		db, mock := newConflictMock(t)
-		// Too few columns for the 12-target Scan.
+		// Too few columns for the 16-target Scan.
 		mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows([]string{"our_id"}).AddRow("d1"))
 		if _, err := dependencyConflictsAreAuditOnly(context.Background(), db); err == nil {
 			t.Fatal("expected scan error")
