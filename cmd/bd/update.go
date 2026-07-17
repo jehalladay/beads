@@ -349,21 +349,21 @@ create, update, show, or close operation).`,
 				if result != nil {
 					result.Close()
 				}
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+				reportItemError("Error resolving %s: %v", id, err)
 				continue
 			}
 			if result == nil || result.Issue == nil {
 				if result != nil {
 					result.Close()
 				}
-				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+				reportItemError("Issue %s not found", id)
 				continue
 			}
 			issue := result.Issue
 			issueStore := result.Store
 
 			if err := validateIssueUpdatable(id, issue); err != nil {
-				fmt.Fprintf(os.Stderr, "%s\n", err)
+				reportItemError("%s", err)
 				closeIfUnmutated(result)
 				continue
 			}
@@ -371,7 +371,7 @@ create, update, show, or close operation).`,
 			// Handle claim operation atomically using compare-and-swap semantics
 			if claimFlag {
 				if err := issueStore.ClaimIssue(ctx, result.ResolvedID, actor); err != nil {
-					fmt.Fprintf(os.Stderr, "Error claiming %s: %v\n", id, err)
+					reportItemError("Error claiming %s: %v", id, err)
 					closeIfUnmutated(result)
 					continue
 				}
@@ -421,7 +421,7 @@ create, update, show, or close operation).`,
 			}
 			if len(regularUpdates) > 0 {
 				if err := issueStore.UpdateIssue(ctx, result.ResolvedID, regularUpdates, actor); err != nil {
-					fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, err)
+					reportItemError("Error updating %s: %v", id, err)
 					closeIfUnmutated(result)
 					continue
 				}
@@ -451,7 +451,7 @@ create, update, show, or close operation).`,
 			}
 			if len(setLabels) > 0 || len(addLabels) > 0 || len(removeLabels) > 0 {
 				if err := applyLabelUpdates(ctx, issueStore, result.ResolvedID, actor, setLabels, addLabels, removeLabels); err != nil {
-					fmt.Fprintf(os.Stderr, "Error updating labels for %s: %v\n", id, err)
+					reportItemError("Error updating labels for %s: %v", id, err)
 					closeIfUnmutated(result)
 					continue
 				}
@@ -464,12 +464,12 @@ create, update, show, or close operation).`,
 				if newParent != "" {
 					parentIssue, err := issueStore.GetIssue(ctx, newParent)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error getting parent %s: %v\n", newParent, err)
+						reportItemError("Error getting parent %s: %v", newParent, err)
 						closeIfUnmutated(result)
 						continue
 					}
 					if parentIssue == nil {
-						fmt.Fprintf(os.Stderr, "Error: parent issue %s not found\n", newParent)
+						reportItemError("Error: parent issue %s not found", newParent)
 						closeIfUnmutated(result)
 						continue
 					}
@@ -478,14 +478,14 @@ create, update, show, or close operation).`,
 				// Find and remove existing parent-child dependency
 				deps, err := issueStore.GetDependencyRecords(ctx, result.ResolvedID)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error getting dependencies for %s: %v\n", id, err)
+					reportItemError("Error getting dependencies for %s: %v", id, err)
 					closeIfUnmutated(result)
 					continue
 				}
 				for _, dep := range deps {
 					if dep.Type == types.DepParentChild {
 						if err := issueStore.RemoveDependency(ctx, result.ResolvedID, dep.DependsOnID, actor); err != nil {
-							fmt.Fprintf(os.Stderr, "Error removing old parent dependency: %v\n", err)
+							reportItemError("Error removing old parent dependency: %v", err)
 						} else {
 							trackMutation(result)
 						}
@@ -501,7 +501,7 @@ create, update, show, or close operation).`,
 						Type:        types.DepParentChild,
 					}
 					if err := issueStore.AddDependency(ctx, newDep, actor); err != nil {
-						fmt.Fprintf(os.Stderr, "Error adding parent dependency: %v\n", err)
+						reportItemError("Error adding parent dependency: %v", err)
 						closeIfUnmutated(result)
 						continue
 					}
@@ -559,6 +559,13 @@ create, update, show, or close operation).`,
 		}
 
 		if len(args) > 0 && firstUpdatedID == "" {
+			// Nothing was updated (every ID failed; per-item detail already went
+			// to stderr). Under --json emit a JSON error object on stdout so a
+			// consumer parsing stdout sees structured output rather than an empty
+			// stream, matching `bd show`/`bd close` (beads-fg6).
+			if jsonOutput {
+				return HandleErrorRespectJSON("no issues updated matching the provided IDs")
+			}
 			return SilentExit()
 		}
 		return nil

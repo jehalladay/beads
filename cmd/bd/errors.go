@@ -120,6 +120,23 @@ func SilentExit() error {
 	return &exitError{Code: 1}
 }
 
+// reportItemError reports a per-item failure from a batch command loop. Commands
+// like `bd show` and `bd update` accept multiple IDs and continue past an
+// individual failure instead of aborting, so they cannot return a single error
+// through RunE. Under --json this writes a structured JSON error object to
+// stderr — keeping stdout reserved for the parseable success payload and
+// ensuring a --json consumer never encounters a bare "Error: ..." line on
+// either stream (beads-fg6). Without --json it writes the plain message to
+// stderr as before. The message must NOT include a trailing newline.
+func reportItemError(format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	if jsonOutput {
+		jsonStderrError(msg, "")
+		return
+	}
+	fmt.Fprintln(os.Stderr, msg)
+}
+
 // FatalError writes an error message to stderr (structured JSON when --json is
 // set) and exits with code 1.
 //
