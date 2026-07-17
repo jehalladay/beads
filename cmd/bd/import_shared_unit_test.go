@@ -227,6 +227,64 @@ func TestImportIssuesCoreReportsUpdatedAndTieKeptIssues(t *testing.T) {
 	}
 }
 
+// beads-4sxm: dedupeIntraBatchByID keeps the first record per id (order
+// preserved) and always keeps empty-id records so the create path can assign
+// each its own id.
+func TestDedupeIntraBatchByID(t *testing.T) {
+	in := []*types.Issue{
+		{ID: "bd-dup", Title: "first"},
+		{ID: "bd-dup", Title: "second (same id)"},
+		{ID: "bd-unique", Title: "unique"},
+		{ID: "", Title: "no id A"},
+		{ID: "", Title: "no id B"},
+	}
+	got := dedupeIntraBatchByID(in)
+	if len(got) != 4 {
+		t.Fatalf("len = %d, want 4 (one bd-dup dropped, both empty-id kept)", len(got))
+	}
+	if got[0].ID != "bd-dup" || got[0].Title != "first" {
+		t.Fatalf("got[0] = %#v, want first bd-dup (first-wins)", got[0])
+	}
+	if got[1].ID != "bd-unique" || got[2].Title != "no id A" || got[3].Title != "no id B" {
+		t.Fatalf("got = %#v, want [bd-dup(first) bd-unique noidA noidB]", got)
+	}
+}
+
+// beads-4sxm: a batch that carries the same id twice collapses to a single
+// first-wins row in storage, so Created must count DISTINCT ids — otherwise
+// "Imported N issues" over-reports (and, because the duplicate has an equal
+// updated_at, nondeterministically trips the transactional stale guard so the
+// same batch prints a different count on repeat runs) while hiding the
+// silently-dropped duplicate.
+func TestImportIssuesCoreDeduplicatesIntraBatchIDsInCount(t *testing.T) {
+	base := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	store := &fakeImportIssueLookupStore{}
+
+	result, err := importIssuesCore(context.Background(), "", store, []*types.Issue{
+		{ID: "bd-dup", Title: "first", UpdatedAt: base},
+		{ID: "bd-dup", Title: "second (same id)", UpdatedAt: base},
+		{ID: "bd-unique", Title: "unique", UpdatedAt: base},
+	}, ImportOptions{})
+	if err != nil {
+		t.Fatalf("importIssuesCore: %v", err)
+	}
+	if result.Created != 2 {
+		t.Fatalf("Created = %d, want 2 distinct ids (bd-dup collapses)", result.Created)
+	}
+	if len(result.ImportedIDs) != 2 {
+		t.Fatalf("ImportedIDs = %#v, want 2 distinct", result.ImportedIDs)
+	}
+	// First occurrence wins, matching the storage layer's first-wins insert.
+	if result.ImportedIDs[0] != "bd-dup" || result.ImportedIDs[1] != "bd-unique" {
+		t.Fatalf("ImportedIDs = %#v, want [bd-dup bd-unique]", result.ImportedIDs)
+	}
+	// The duplicate must never reach the batch write (where its equal
+	// timestamp would race the stale guard) — the store sees 2 rows, not 3.
+	if len(store.created) != 2 {
+		t.Fatalf("store.created = %d rows, want 2 (duplicate collapsed before write)", len(store.created))
+	}
+}
+
 // bd-pkim8: the pre-filter alone is racy (read-then-upsert), so importIssuesCore
 // must also arm the transactional guard inside the batch write — except under
 // --allow-stale, where overwriting newer local rows is the requested behavior.

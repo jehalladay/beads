@@ -74,10 +74,39 @@ type ImportChange struct {
 
 // importIssuesCore imports issues into the Dolt store.
 // This is a bridge function that delegates to the Dolt store's batch creation.
+// dedupeIntraBatchByID keeps the first record for each id and drops later
+// copies with the same id, preserving order. Empty ids (rare, e.g. a
+// title-only record) are always kept so the create path assigns each its own
+// id (beads-4sxm).
+func dedupeIntraBatchByID(issues []*types.Issue) []*types.Issue {
+	seen := make(map[string]struct{}, len(issues))
+	deduped := issues[:0:0]
+	for _, issue := range issues {
+		if issue.ID != "" {
+			if _, ok := seen[issue.ID]; ok {
+				continue
+			}
+			seen[issue.ID] = struct{}{}
+		}
+		deduped = append(deduped, issue)
+	}
+	return deduped
+}
+
 func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, issues []*types.Issue, opts ImportOptions) (*ImportResult, error) {
 	if opts.DryRun || len(issues) == 0 {
 		return &ImportResult{Skipped: len(issues)}, nil
 	}
+
+	// Collapse intra-batch duplicate ids to a single first-wins record before
+	// anything else looks at the batch (beads-4sxm). A hand-authored JSONL can
+	// carry the same id twice; the storage layer already keeps the first row,
+	// but leaving the later copies in the batch (a) over-reports Created and
+	// (b) makes the reported count nondeterministic — the second copy has an
+	// equal updated_at and races the transactional stale guard, so the same
+	// batch prints "Imported 3" on one run and "Imported 1 (2 stale skipped)"
+	// on the next while the DB always lands the distinct rows.
+	issues = dedupeIntraBatchByID(issues)
 
 	// The stale guard has two halves (bd-pkim8). This pre-filter reports the
 	// rows that are already known stale (StaleSkippedIDs) and keeps their
