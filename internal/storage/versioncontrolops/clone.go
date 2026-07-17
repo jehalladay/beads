@@ -20,7 +20,10 @@ func DoltClone(ctx context.Context, conn DBConn, remoteURL, database string) err
 func sanitizeURL(raw string) string {
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return raw
+		// Never echo the raw string on parse failure — a malformed but
+		// credential-bearing URL would leak user:pass into the error. Redact
+		// instead (beads-cc1).
+		return "<redacted-url>"
 	}
 	parsed.User = nil
 	parsed.RawQuery = ""
