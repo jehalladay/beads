@@ -217,6 +217,7 @@ func TestCircuitBreaker_SharedState(t *testing.T) {
 
 func TestCircuitBreaker_DifferentHostsSeparateState(t *testing.T) {
 	t.Setenv("BEADS_TEST_MODE", "")
+	isolateCircuitBreakerDir(t)
 	// Two breakers for the same port but different hosts should have independent state.
 	// This is the core fix: previously keyed on port only, which caused cross-host blocking.
 	cb1 := newCircuitBreaker("127.0.0.1", 99999, "")
@@ -250,6 +251,7 @@ func TestCircuitBreaker_DifferentHostsSeparateState(t *testing.T) {
 
 func TestCircuitBreaker_DifferentDatabasesSeparateState(t *testing.T) {
 	t.Setenv("BEADS_TEST_MODE", "")
+	isolateCircuitBreakerDir(t)
 	// Two breakers for the same host:port but different databases should have
 	// independent state. This prevents one degraded project from tripping the
 	// breaker for all worktrees on a shared server (GH#3140).
@@ -414,6 +416,7 @@ func TestCleanStaleCircuitBreakerFiles(t *testing.T) {
 func TestCircuitBreakerDir_UsesSubdirectory(t *testing.T) {
 	// Verify that circuit breaker files are created in the dedicated
 	// subdirectory, not directly in /tmp (which can have millions of entries).
+	isolateCircuitBreakerDir(t)
 	cb := newCircuitBreaker("127.0.0.1", 44444, "")
 	t.Cleanup(func() { os.Remove(cb.filePath) })
 
@@ -458,6 +461,19 @@ func TestIsConnectionError(t *testing.T) {
 			}
 		})
 	}
+}
+
+// isolateCircuitBreakerDir points the package-global circuitBreakerDir at a
+// fresh t.TempDir() for the duration of the test and restores it afterwards.
+// Tests that call newCircuitBreaker (which derives its filePath from
+// circuitBreakerDir) MUST use this, or they share on-disk state under
+// /tmp/beads-circuit with concurrent/prior runs on the same host and flake
+// ("cb1 should be open" / "file should exist") — the root cause of beads-bal.
+func isolateCircuitBreakerDir(t *testing.T) {
+	t.Helper()
+	orig := circuitBreakerDir
+	circuitBreakerDir = t.TempDir()
+	t.Cleanup(func() { circuitBreakerDir = orig })
 }
 
 // newTestCircuitBreaker creates a circuit breaker with a temp file for testing.
