@@ -315,6 +315,93 @@ func TestPersistDependenciesSkipsValidationErrorsWhenConfigured(t *testing.T) {
 	}
 }
 
+// TestPersistDependenciesReportsEmptyTargetWithActionableReason verifies that a
+// dependency edge whose depends_on_id is empty (e.g. hand-authored JSONL that
+// used the top-level "id" field instead of "depends_on_id") is skipped with a
+// reason that names the missing field, rather than the misleading empty
+// "source -> : target not found" (beads-p96v). The guard must short-circuit
+// BEFORE any target lookup, so no SQL is issued for the empty-target edge.
+func TestPersistDependenciesReportsEmptyTargetWithActionableReason(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+	issue := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "", // missing target
+			Type:        types.DepBlocks,
+		}},
+	}
+	var skipped []string
+
+	// No mock.ExpectQuery: the empty-target guard must short-circuit before any
+	// target lookup, so issuing SQL here would be an unmet expectation / error.
+	result, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{issue}, "tester", storage.BatchCreateOptions{
+		SkipDependencyValidationErrors: true,
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			skipped = append(skipped, issueID+" -> "+dependsOnID+": "+reason)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = %v, want nil", err)
+	}
+	if len(result.ChangedTables) != 0 {
+		t.Fatalf("ChangedTables = %#v, want none", result.ChangedTables)
+	}
+	if len(skipped) != 1 {
+		t.Fatalf("skipped = %#v, want exactly one skipped edge", skipped)
+	}
+	if strings.Contains(skipped[0], "target not found") {
+		t.Errorf("skipped reason is the misleading generic message: %q", skipped[0])
+	}
+	if !strings.Contains(skipped[0], "depends_on_id") {
+		t.Errorf("skipped reason should name the missing field, got: %q", skipped[0])
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// TestPersistDependenciesErrorsOnEmptyTargetWhenStrict verifies that without
+// SkipDependencyValidationErrors, an empty depends_on_id is a hard error naming
+// the missing field, not a silent skip or an empty "-> :" message (beads-p96v).
+func TestPersistDependenciesErrorsOnEmptyTargetWhenStrict(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+	issue := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "",
+			Type:        types.DepBlocks,
+		}},
+	}
+
+	// No SQL expected: the guard fails before any lookup.
+	_, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{issue}, "tester", storage.BatchCreateOptions{})
+	if err == nil {
+		t.Fatal("PersistDependenciesWithOptionsResult error = nil, want error for missing depends_on_id")
+	}
+	if !strings.Contains(err.Error(), "depends_on_id") {
+		t.Errorf("error should name the missing field, got: %v", err)
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 // TestPersistDependenciesSurfacesCrossKindIDCollision is the beads-xaxe
 // containment: depid.New keys on the flattened (issue_id, target-string) with no
 // target-kind marker, so an issue-target and a wisp-target sharing the same id
