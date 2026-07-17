@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -566,9 +567,14 @@ func withEnvCredentials(creds *remoteCredentials, fn func() error) error {
 // process env access.
 func (s *DoltStore) withPeerCredentials(ctx context.Context, peerName string, fn func(creds *remoteCredentials) error) error {
 	peer, err := s.GetFederationPeer(ctx, peerName)
-	if err != nil {
+	if err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return fmt.Errorf("failed to get peer credentials: %w", err)
 	}
+	// A Dolt remote with no stored federation credentials (ErrNotFound) is a
+	// valid credential-free peer — e.g. the common `origin` sync remote. Fall
+	// through with peer==nil so fn runs credential-free rather than failing the
+	// whole federation op (fetch/status/push/pull) with "not found: federation
+	// peer <name>".
 
 	var creds *remoteCredentials
 	if peer != nil && (peer.Username != "" || peer.Password != "") {
