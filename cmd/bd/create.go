@@ -482,6 +482,26 @@ var createCmd = &cobra.Command{
 			if err := validation.ValidateIDPrefixAllowed(explicitID, dbPrefix, allowedPrefixes, forceCreate); err != nil {
 				return HandleErrorRespectJSON("%v", err)
 			}
+
+			// A user-supplied --id that already exists would be silently
+			// UPSERTED by the create path (INSERT ... ON DUPLICATE KEY UPDATE
+			// via InsertIssueIfNew with no ConflictSkip), clobbering the stored
+			// bead's title/description/status while still printing "✓ Created"
+			// — silent data-loss on id reuse (beads-k75k). `bd import` already
+			// protects this case with ConflictSkip ("never overwrite"); a
+			// single create must too. Refuse unless --force; use `bd update` to
+			// modify an existing issue. Scoped to parentID=="" so it only guards
+			// the user's --id, not a parent-minted child ID (that counter-drift
+			// collision is tracked separately as beads-tnv9).
+			if !forceCreate && parentID == "" {
+				if _, err := store.GetIssue(ctx, explicitID); err == nil {
+					return HandleErrorWithHintRespectJSON(
+						fmt.Sprintf("issue %s already exists", explicitID),
+						"Use 'bd update' to modify it, or pass --force to overwrite.")
+				} else if !errors.Is(err, storage.ErrNotFound) {
+					return HandleErrorRespectJSON("failed to check whether %s already exists: %v", explicitID, err)
+				}
+			}
 		}
 
 		issue := buildCreateIssue(createIssueParams{

@@ -343,6 +343,36 @@ func TestEmbeddedCreate(t *testing.T) {
 		}
 	})
 
+	// beads-k75k: reusing an existing --id must be refused (not silently
+	// UPSERT/overwrite the stored bead). --force overrides. Exercises both the
+	// direct and (via bdEnv routing) whichever path is active — the guard lives
+	// on both create.go and create_proxied_server.go (direct-vs-proxied class).
+	t.Run("explicit_id_collision", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "ec")
+		orig := bdCreate(t, bd, dir, "original title", "--id", "ec-dup1", "-d", "original desc")
+		if orig.ID != "ec-dup1" {
+			t.Fatalf("setup ID: got %q, want ec-dup1", orig.ID)
+		}
+		// Reusing the id without --force must fail...
+		bdCreateFail(t, bd, dir, "clobber title", "--id", "ec-dup1", "-d", "clobber desc")
+		// ...and must NOT have mutated the stored bead.
+		after := bdShow(t, bd, dir, "ec-dup1")
+		if after.Title != "original title" {
+			t.Errorf("collision clobbered title: got %q, want %q", after.Title, "original title")
+		}
+		if after.Description != "original desc" {
+			t.Errorf("collision clobbered description: got %q, want %q", after.Description, "original desc")
+		}
+		// --force is the deliberate overwrite escape hatch.
+		forced := bdCreate(t, bd, dir, "forced title", "--id", "ec-dup1", "-d", "forced desc", "--force")
+		if forced.ID != "ec-dup1" {
+			t.Errorf("forced overwrite ID: got %q, want ec-dup1", forced.ID)
+		}
+		if forced.Title != "forced title" {
+			t.Errorf("forced overwrite title: got %q, want %q", forced.Title, "forced title")
+		}
+	})
+
 	t.Run("dependencies", func(t *testing.T) {
 		dir, beadsDir, _ := bdInit(t, bd, "--prefix", "dp")
 		parent := bdCreate(t, bd, dir, "Parent issue")
