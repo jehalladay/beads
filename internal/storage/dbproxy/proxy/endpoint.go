@@ -57,11 +57,25 @@ type OpenOpts struct {
 	External       configfile.ExternalDoltConfig
 }
 
-const (
-	openDeadline          = 15 * time.Second
-	spawnReadyHardTimeout = 2 * time.Minute
-	openPollInterval      = 100 * time.Millisecond
-)
+const openPollInterval = 100 * time.Millisecond
+
+// openTotalBudget bounds the entire GetCreateDatabaseProxyServerEndpoint call:
+// both waiting on a peer's in-progress spawn and spawning + booting a dolt
+// sql-server ourselves. It must be generous enough for a cold dolt boot under
+// shared-filesystem (/fsx) contention, where startup routinely exceeds 15s.
+//
+// Previously the caller-side wait used a separate 15s deadline that was ALSO
+// passed into spawnAndHandoff and used there to kill the freshly-forked child —
+// so the child was killed at 15s and the intended 2-minute spawn ceiling was
+// dead code. Under concurrent instantiation on a busy node this made the whole
+// open flaky (beads-j5salo: the lock winner killed its own booting child and
+// the lock losers gave up before it could come up) and made real callers on a
+// contended node spuriously fail with "timeout waiting for proxy". A single
+// unified budget for the wait AND the spawn fixes both.
+//
+// It is a var (not a const) so tests can shorten it to exercise the wait and
+// timeout paths deterministically, without a real dolt boot.
+var openTotalBudget = 2 * time.Minute
 
 var ResolveExecutable = os.Executable
 
@@ -98,9 +112,9 @@ func GetCreateDatabaseProxyServerEndpoint(rootDir string, opts OpenOpts) (Endpoi
 			return Endpoint{}, fmt.Errorf("OpenOpts.External: %w", err)
 		}
 	}
-	deadline := time.Now().Add(openDeadline)
+	deadline := time.Now().Add(openTotalBudget)
 
-	timeout := time.NewTimer(openDeadline)
+	timeout := time.NewTimer(openTotalBudget)
 	defer timeout.Stop()
 	poll := time.NewTicker(openPollInterval)
 	defer poll.Stop()
@@ -185,8 +199,6 @@ func spawnAndHandoff(rootDir string, opts OpenOpts, deadline time.Time, lock *ut
 		return Endpoint{}, fmt.Errorf("fork child: %w", err)
 	}
 
-	hard := time.NewTimer(spawnReadyHardTimeout)
-	defer hard.Stop()
 	poll := time.NewTicker(openPollInterval)
 	defer poll.Stop()
 
@@ -197,14 +209,15 @@ func spawnAndHandoff(rootDir string, opts OpenOpts, deadline time.Time, lock *ut
 		select {
 		case <-done:
 			return Endpoint{}, fmt.Errorf("proxy child on port %d exited before becoming ready (likely lost lock race)", port)
-		case <-hard.C:
-			_ = cmd.Process.Kill()
-			return Endpoint{}, fmt.Errorf("hard timeout (%s) waiting for proxy on port %d", spawnReadyHardTimeout, port)
 		case <-poll.C:
 		}
+		// Honor the caller's shared open budget rather than a separate,
+		// shorter deadline: killing the freshly-forked child early is what
+		// made concurrent instantiation flaky under /fsx contention, where a
+		// cold dolt boot can exceed the old 15s (beads-j5salo).
 		if time.Now().After(deadline) {
 			_ = cmd.Process.Kill()
-			return Endpoint{}, fmt.Errorf("timeout waiting for proxy to become ready on port %d", port)
+			return Endpoint{}, fmt.Errorf("timeout (%s) waiting for proxy to become ready on port %d", openTotalBudget, port)
 		}
 	}
 }
