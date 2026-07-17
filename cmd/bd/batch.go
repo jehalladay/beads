@@ -94,6 +94,10 @@ normal 'bd' subcommands for interactive/read operations.`,
 		filePath, _ := cmd.Flags().GetString("file")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		commitMsg, _ := cmd.Flags().GetString("message")
+		// --force overrides the close-time integrity guards (blocked-by-open,
+		// epic-with-open-children) for close/update-to-closed ops, mirroring
+		// `bd close --force` / `bd update --force` (beads-1d08).
+		force, _ := cmd.Flags().GetBool("force")
 
 		var reader io.Reader
 		if filePath != "" {
@@ -156,6 +160,23 @@ normal 'bd' subcommands for interactive/read operations.`,
 			ctx = context.Background()
 		}
 
+		// Enforce the close-time integrity guards (blocked-by-open,
+		// epic-with-open-children) that `bd close` / `bd update --status closed`
+		// enforce, for every op in this batch that closes an issue. batch writes
+		// straight to tx.CloseIssue/tx.UpdateIssue below the CLI guard layer, so
+		// without this pre-pass a blocked or epic-parent issue could be closed
+		// with rc=0 and no --force (beads-1d08, the batch sibling of beads-zgku).
+		// Runs read-only against the committed store BEFORE the write tx opens,
+		// so a violation aborts the whole batch with no partial write.
+		if err := guardBatchCloses(ctx, store, ops, force); err != nil {
+			if jsonOutput {
+				if jerr := outputJSONError(err, "batch_error"); jerr != nil {
+					return errors.Join(err, jerr)
+				}
+			}
+			return err
+		}
+
 		results := make([]batchOpResult, 0, len(ops))
 		err = transact(ctx, store, commitMsg, func(tx storage.Transaction) error {
 			for _, op := range ops {
@@ -200,6 +221,7 @@ func init() {
 	batchCmd.Flags().StringP("file", "f", "", "Read commands from file instead of stdin")
 	batchCmd.Flags().Bool("dry-run", false, "Parse input and echo commands without executing")
 	batchCmd.Flags().StringP("message", "m", "", "DOLT_COMMIT message (default: 'bd: batch N ops by <actor>')")
+	batchCmd.Flags().Bool("force", false, "Override close-time integrity guards (blocked-by-open, epic-with-open-children) for close/update-to-closed ops; mirrors 'bd close --force'")
 	rootCmd.AddCommand(batchCmd)
 }
 
@@ -434,6 +456,135 @@ func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp) (batchO
 		return result, nil
 	}
 	return result, fmt.Errorf("internal: unhandled batch op %q", op.cmd)
+}
+
+// batchClosesID reports whether op closes an issue (a `close <id>` op, or an
+// `update <id> status=closed` op) and returns the target id. Parse errors in an
+// update op's key=values are ignored here — they are surfaced authoritatively
+// when runBatchOp executes the op; this pre-pass only decides whether the
+// close-time guards apply.
+func batchClosesID(op batchOp) (id string, closes bool) {
+	switch op.cmd {
+	case "close":
+		if len(op.args) >= 1 {
+			return op.args[0], true
+		}
+	case "update":
+		if len(op.args) >= 2 {
+			updates, err := parseUpdateKVs(op.args[1:])
+			if err != nil {
+				return "", false
+			}
+			if s, ok := updates["status"].(string); ok && types.Status(s) == types.StatusClosed {
+				return op.args[0], true
+			}
+		}
+	}
+	return "", false
+}
+
+// guardBatchCloses enforces the close-time integrity guards (blocked-by-open,
+// epic-with-open-children) for every close/update-to-closed op in the batch,
+// mirroring the CLI-layer guards in `bd close` / `bd update --status closed`
+// (beads-zgku). It runs read-only against the committed store BEFORE the write
+// transaction opens, so a violation aborts the whole batch with no partial
+// write (matching batch's atomic all-or-nothing contract).
+//
+// It is batch-aware: an epic whose remaining open children are ALL being closed
+// in the same batch is allowed to close, and the guard set is computed from the
+// full op list up front so the result is independent of op ordering within the
+// batch. A blocked issue is refused if any of its blockers is open and not
+// itself being closed in this batch.
+//
+// force==true skips all checks (the --force override).
+func guardBatchCloses(ctx context.Context, s storage.DoltStorage, ops []batchOp, force bool) error {
+	if force || s == nil {
+		return nil
+	}
+
+	// Set of ids this batch will transition to closed (order-independent).
+	willClose := make(map[string]bool)
+	closeOps := make([]batchOp, 0, len(ops))
+	for _, op := range ops {
+		if id, closes := batchClosesID(op); closes {
+			willClose[id] = true
+			closeOps = append(closeOps, op)
+		}
+	}
+	if len(closeOps) == 0 {
+		return nil
+	}
+
+	for _, op := range closeOps {
+		id, _ := batchClosesID(op)
+		issue, err := s.GetIssue(ctx, id)
+		if err != nil {
+			// Not found / lookup error: let runBatchOp surface the authoritative
+			// error against the tx. Skip guarding an id we can't read.
+			continue
+		}
+		if issue == nil || issue.Status == types.StatusClosed {
+			// Already closed → no open->closed transition, guards do not apply
+			// (matches bd close / bd update, which only guard a real transition).
+			continue
+		}
+
+		// Epic-with-open-children guard, batch-aware: a child that is itself
+		// being closed in this batch does not count as open.
+		if issue.IssueType == types.TypeEpic {
+			openChildren, cerr := countEpicOpenChildrenExcluding(ctx, s, id, willClose)
+			if cerr != nil {
+				return fmt.Errorf("line %d (%s): checking epic children for %s: %w", op.line, op.raw, id, cerr)
+			}
+			if openChildren > 0 {
+				return fmt.Errorf("line %d (%s): cannot close epic %s: %d open child issue(s); close children first or use --force to override", op.line, op.raw, id, openChildren)
+			}
+		}
+
+		// Blocked-by-open guard, batch-aware: a blocker that is itself being
+		// closed in this batch no longer blocks.
+		blocked, blockers, berr := s.IsBlocked(ctx, id)
+		if berr != nil {
+			return fmt.Errorf("line %d (%s): checking blockers for %s: %w", op.line, op.raw, id, berr)
+		}
+		if blocked {
+			remaining := make([]string, 0, len(blockers))
+			for _, b := range blockers {
+				// blockers may be rendered as "id (deptype)"; take the leading id.
+				bid := b
+				if sp := strings.IndexByte(b, ' '); sp > 0 {
+					bid = b[:sp]
+				}
+				if !willClose[bid] {
+					remaining = append(remaining, b)
+				}
+			}
+			if len(remaining) > 0 {
+				return fmt.Errorf("line %d (%s): cannot close %s: blocked by open issues %v (use --force to override)", op.line, op.raw, id, remaining)
+			}
+		}
+	}
+	return nil
+}
+
+// countEpicOpenChildrenExcluding counts parent-child dependents of epicID that
+// are still open, EXCLUDING any child whose id is in the excluded set (used to
+// treat children being closed in the same batch as already-closed). Mirrors
+// countEpicOpenChildren (close.go) plus the batch-visibility exclusion.
+func countEpicOpenChildrenExcluding(ctx context.Context, s storage.DoltStorage, epicID string, excluded map[string]bool) (int, error) {
+	dependents, err := s.GetDependentsWithMetadata(ctx, epicID)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, dep := range dependents {
+		if dep.DependencyType == types.DepParentChild &&
+			dep.Issue.Status != types.StatusClosed &&
+			!excluded[dep.Issue.ID] {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // parseUpdateKVs walks a slice of "key=value" tokens and builds the updates
