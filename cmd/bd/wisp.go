@@ -176,7 +176,7 @@ func runWispCreateCore(cmd *cobra.Command, args []string) error {
 	for _, v := range varFlags {
 		parts := strings.SplitN(v, "=", 2)
 		if len(parts) != 2 {
-			return HandleError("invalid variable format '%s', expected 'key=value'", v)
+			return HandleErrorRespectJSON("invalid variable format '%s', expected 'key=value'", v)
 		}
 		vars[parts[0]] = parts[1]
 	}
@@ -211,7 +211,7 @@ func runWispCreateCore(cmd *cobra.Command, args []string) error {
 				Labels: []string{MoleculeLabel},
 			})
 			if err != nil {
-				return HandleError("searching for proto: %v", err)
+				return HandleErrorRespectJSON("searching for proto: %v", err)
 			}
 			found := false
 			for _, issue := range issues {
@@ -229,17 +229,17 @@ func runWispCreateCore(cmd *cobra.Command, args []string) error {
 		protoIssue, err := store.GetIssue(ctx, protoID)
 		if err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
-				return HandleError("proto not found: %s", protoID)
+				return HandleErrorRespectJSON("proto not found: %s", protoID)
 			}
-			return HandleError("loading proto %s: %v", protoID, err)
+			return HandleErrorRespectJSON("loading proto %s: %v", protoID, err)
 		}
 		if !isProtoIssue(protoIssue) {
-			return HandleError("%s is not a proto (missing '%s' label)", protoID, MoleculeLabel)
+			return HandleErrorRespectJSON("%s is not a proto (missing '%s' label)", protoID, MoleculeLabel)
 		}
 
 		subgraph, err = loadTemplateSubgraph(ctx, store, protoID)
 		if err != nil {
-			return HandleError("loading proto: %v", err)
+			return HandleErrorRespectJSON("loading proto: %v", err)
 		}
 	}
 
@@ -295,7 +295,7 @@ func runWispCreateCore(cmd *cobra.Command, args []string) error {
 		RootOnly:  rootOnly,
 	})
 	if err != nil {
-		return HandleError("creating wisp: %v", err)
+		return HandleErrorRespectJSON("creating wisp: %v", err)
 	}
 
 	if jsonOutput {
@@ -411,7 +411,7 @@ func runWispList(cmd *cobra.Command, args []string) error {
 	}
 	issues, err := store.SearchIssues(ctx, "", filter)
 	if err != nil {
-		return HandleError("listing wisps: %v", err)
+		return HandleErrorRespectJSON("listing wisps: %v", err)
 	}
 
 	// Filter closed issues unless --all is specified
@@ -601,7 +601,7 @@ func runWispGC(cmd *cobra.Command, args []string) error {
 		var err error
 		ageThreshold, err = time.ParseDuration(ageStr)
 		if err != nil {
-			return HandleError("invalid --age duration: %v", err)
+			return HandleErrorRespectJSON("invalid --age duration: %v", err)
 		}
 	}
 
@@ -626,7 +626,7 @@ func runWispGC(cmd *cobra.Command, args []string) error {
 	}
 	issues, err := store.SearchIssues(ctx, "", filter)
 	if err != nil {
-		return HandleError("listing wisps: %v", err)
+		return HandleErrorRespectJSON("listing wisps: %v", err)
 	}
 
 	// Find old/abandoned wisps
@@ -727,7 +727,7 @@ func runWispGC(cmd *cobra.Command, args []string) error {
 		ids[i] = issue.ID
 	}
 	if err := deleteBatch(nil, ids, true, false, true, jsonOutput, false, "wisp gc"); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	return nil
 }
@@ -744,7 +744,7 @@ func runWispPurgeClosed(ctx context.Context, dryRun bool, force bool, excludeTyp
 
 	closedIssues, err := store.SearchIssues(ctx, "", filter)
 	if err != nil {
-		return HandleError("listing closed wisps: %v", err)
+		return HandleErrorRespectJSON("listing closed wisps: %v", err)
 	}
 
 	// Filter out pinned and infra issues (protected from cleanup)
@@ -808,7 +808,7 @@ func runWispPurgeClosed(ctx context.Context, dryRun bool, force bool, excludeTyp
 	}
 
 	if err := deleteBatch(nil, ids, force, dryRun, true, jsonOutput, false, "wisp gc --closed"); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	if !dryRun && force && !jsonOutput {
