@@ -587,13 +587,18 @@ func TestImportFromLocalJSONL(t *testing.T) {
 			t.Errorf("Expected 1 issue on re-import, got %d", count2)
 		}
 
-		// Verify comments were NOT duplicated
-		issue, err := store.GetIssue(ctx, "test-cmt1")
-		if err != nil {
+		// Verify comments were NOT duplicated. Read via GetIssueComments —
+		// GetIssue does not hydrate comments (they persist to the comments
+		// table; PersistComments dedups on re-import).
+		if _, err := store.GetIssue(ctx, "test-cmt1"); err != nil {
 			t.Fatalf("Failed to get issue: %v", err)
 		}
-		if len(issue.Comments) != 2 {
-			t.Errorf("Expected 2 comments after re-import, got %d (duplicates!)", len(issue.Comments))
+		comments, err := store.GetIssueComments(ctx, "test-cmt1")
+		if err != nil {
+			t.Fatalf("GetIssueComments: %v", err)
+		}
+		if len(comments) != 2 {
+			t.Errorf("Expected 2 comments after re-import, got %d (duplicates!)", len(comments))
 		}
 	})
 
@@ -666,15 +671,23 @@ func TestImportFromLocalJSONL_LegacyFormats(t *testing.T) {
 			t.Errorf("Expected 1 issue imported, got %d", count)
 		}
 
-		issue, err := store.GetIssue(ctx, "test-numcmt")
-		if err != nil {
+		if _, err := store.GetIssue(ctx, "test-numcmt"); err != nil {
 			t.Fatalf("Failed to get issue: %v", err)
 		}
-		if len(issue.Comments) != 1 {
-			t.Fatalf("Expected 1 comment, got %d", len(issue.Comments))
+		// Comments are not hydrated by GetIssue (a lightweight single-issue
+		// fetch); they are read via the dedicated GetIssueComments getter, the
+		// same path bd show / export use. The import DOES persist the comment —
+		// the legacy numeric comment id (pre-v1.0 int) is coerced to a string by
+		// Comment.UnmarshalJSON and stored (beads-05o6).
+		comments, err := store.GetIssueComments(ctx, "test-numcmt")
+		if err != nil {
+			t.Fatalf("GetIssueComments: %v", err)
 		}
-		if issue.Comments[0].Text != "numeric id comment" {
-			t.Errorf("Comment text = %q, want %q", issue.Comments[0].Text, "numeric id comment")
+		if len(comments) != 1 {
+			t.Fatalf("Expected 1 comment, got %d", len(comments))
+		}
+		if comments[0].Text != "numeric id comment" {
+			t.Errorf("Comment text = %q, want %q", comments[0].Text, "numeric id comment")
 		}
 	})
 
