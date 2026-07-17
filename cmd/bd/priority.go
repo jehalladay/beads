@@ -77,6 +77,9 @@ Examples:
 		if err := issueStore.UpdateIssue(ctx, result.ResolvedID, updates, actor); err != nil {
 			return HandleErrorRespectJSON("updating %s: %v", id, err)
 		}
+		// GC-survivable audit trail via the shared chokepoint: `bd priority`
+		// changes an audited field just like `bd update -p` (beads-n4sn class).
+		auditIssueUpdate(result.ResolvedID, result.Issue, updates, actor, "")
 		if err := commitPendingIfEmbedded(ctx, issueStore, actor, doltAutoCommitParams{
 			Command:  "priority",
 			IssueIDs: []string{result.ResolvedID},

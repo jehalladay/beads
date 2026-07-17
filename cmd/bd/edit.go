@@ -160,6 +160,10 @@ Examples:
 			return HandleErrorRespectJSON("updating issue: %v", err)
 		}
 		editSaved = true
+		// GC-survivable audit trail via the shared chokepoint: `bd edit` can
+		// change an audited field (status/priority/assignee); auditIssueUpdate
+		// records those and no-ops on the others (beads-n4sn class).
+		auditIssueUpdate(id, issue, updates, actor, "")
 		if err := commitPendingIfEmbedded(ctx, issueStore, actor, doltAutoCommitParams{
 			Command:  "edit",
 			IssueIDs: []string{id},

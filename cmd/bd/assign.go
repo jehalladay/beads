@@ -93,6 +93,10 @@ Examples:
 		if err := issueStore.UpdateIssue(ctx, result.ResolvedID, updates, actor); err != nil {
 			return HandleErrorRespectJSON("updating %s: %v", id, err)
 		}
+		// GC-survivable audit trail via the shared chokepoint: `bd assign` changes
+		// an audited field (assignee) just like `bd update --assignee`, so it must
+		// record the same trail (beads-n4sn class).
+		auditIssueUpdate(result.ResolvedID, result.Issue, updates, actor, "")
 
 		if err := commitPendingIfEmbedded(ctx, issueStore, actor, doltAutoCommitParams{
 			Command:  "assign",
