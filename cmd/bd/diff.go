@@ -15,15 +15,18 @@ var diffCmd = &cobra.Command{
 	Short:   "Show changes between two commits or branches",
 	Long: `Show the differences in issues between two commits or branches.
 
-The refs can be:
-- Commit hashes (e.g., abc123def)
-- Branch names (e.g., main, feature-branch)
-- Special refs like HEAD, HEAD~1
+Refs are DOLT refs (the issue DB is Dolt-versioned), not git refs:
+- Dolt branch names (e.g., main, feature-branch)
+- Dolt commit hashes (32-char, from 'bd sql "SELECT commit_hash FROM dolt_log"')
+- HEAD (the current Dolt commit)
+
+Note: git-style relative refs (HEAD~1, HEAD^) and git commit SHAs are NOT
+accepted — use a Dolt commit hash or branch name.
 
 Examples:
-  bd diff main feature-branch   # Compare main to feature branch
-  bd diff HEAD~5 HEAD           # Show changes in last 5 commits
-  bd diff abc123 def456         # Compare two specific commits`,
+  bd diff main feature-branch                        # Compare two Dolt branches
+  bd diff HEAD main                                  # Current commit vs main
+  bd diff <dolt-hash-a> <dolt-hash-b>                # Compare two Dolt commits`,
 	Args:          cobra.ExactArgs(2),
 	SilenceUsage:  true,
 	SilenceErrors: true,
