@@ -52,6 +52,25 @@ COVERPKG="${TEST_COVERPKG:-}"
 # (make test-race). The race detector needs CGO, which .buildflags defaults on.
 RACE="${TEST_RACE:-}"
 
+# Shared-node CPU-contention mitigation (beads-cn5). On shared cluster nodes,
+# many crew each run `go test` concurrently; Go defaults GOMAXPROCS to all cores
+# and applies no nice level, so N crew × all-cores oversubscribes the node
+# (measured load ~4x nproc) and every crew's TDD loop stalls. We degrade
+# gracefully by (a) running under `nice` so concurrent loops share CPU fairly,
+# and (b) capping this invocation's GOMAXPROCS to ~half the cores so N builds
+# don't each grab every core. Both are overridable; set to empty to disable.
+#   BEADS_TEST_NICE      nice increment (default 10; "" = no nice)
+#   BEADS_TEST_GOMAXPROCS GOMAXPROCS for this run (default: max(2, nproc/2); "" = don't set)
+NICE_LEVEL="${BEADS_TEST_NICE-10}"
+if [[ -n "${BEADS_TEST_GOMAXPROCS+x}" ]]; then
+    # Caller set it explicitly (possibly to empty, meaning "don't cap").
+    GOMAXPROCS_CAP="${BEADS_TEST_GOMAXPROCS}"
+else
+    _ncpu="$(nproc 2>/dev/null || echo 4)"
+    GOMAXPROCS_CAP="$(( _ncpu / 2 ))"
+    (( GOMAXPROCS_CAP < 2 )) && GOMAXPROCS_CAP=2
+fi
+
 # Parse arguments
 PACKAGES=()
 while [[ $# -gt 0 ]]; do
@@ -151,6 +170,18 @@ if [[ -n "$RACE" && -z "$TIMEOUT_EXPLICIT" ]]; then
     TIMEOUT="$RACE_TIMEOUT"
 fi
 
+# Contention wrapper (beads-cn5): `nice` + a GOMAXPROCS cap so concurrent crew
+# runs on a shared node degrade gracefully instead of thrashing. Kept SEPARATE
+# from the go-test command so the "Running:" diagnostic below still leads with
+# `go test ...` (other tooling/tests parse that line for the go-test flags).
+WRAP=()
+if [[ -n "$NICE_LEVEL" ]] && command -v nice >/dev/null 2>&1; then
+    WRAP+=(nice -n "$NICE_LEVEL")
+fi
+if [[ -n "$GOMAXPROCS_CAP" ]]; then
+    WRAP+=(env "GOMAXPROCS=$GOMAXPROCS_CAP")
+fi
+
 # Build go test command
 CMD=(go test -p "$GO_TEST_PKG_PARALLEL" -parallel "$GO_TEST_PARALLEL" -timeout "$TIMEOUT")
 
@@ -187,10 +218,21 @@ fi
 CMD+=("${PACKAGES[@]}")
 
 echo "Running: ${CMD[*]}" >&2
+if [[ ${#WRAP[@]} -gt 0 ]]; then
+    echo "  (wrapped for shared-node contention: ${WRAP[*]})" >&2
+fi
 echo "Skipping: $SKIP_PATTERN" >&2
 echo "" >&2
 
-"${CMD[@]}"
+# TEST_PRINT_CMD=1 prints the fully-assembled command (wrapper + go test) and
+# exits without running it — used by scripts/test_contention_test.go to assert
+# command construction without a real build.
+if [[ -n "${TEST_PRINT_CMD:-}" ]]; then
+    echo "${WRAP[*]} ${CMD[*]}"
+    exit 0
+fi
+
+"${WRAP[@]}" "${CMD[@]}"
 status=$?
 
 if [[ -n "$COVERAGE" ]]; then

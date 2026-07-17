@@ -51,6 +51,34 @@ TEST_VERBOSE=1 ./scripts/test.sh
 TEST_RUN=TestCreate ./scripts/test.sh
 ```
 
+### Shared-node CPU contention (beads-cn5)
+
+On a shared cluster node many crew run `go test` at once. Go defaults
+`GOMAXPROCS` to *all* cores with no nice level, so N concurrent runs oversubscribe
+the CPU (observed load ~4x nproc) and every crew's edit→test loop stalls; a plain
+`go test ./cmd/bd/` can balloon from ~1min to 7min+ under contention. `scripts/test.sh`
+mitigates this by default: it runs `go test` under `nice` and caps this
+invocation's `GOMAXPROCS` to ~half the cores, so concurrent runs degrade
+gracefully instead of thrashing. (CI is unaffected — it shards via
+`scripts/ci/pr-core.sh`, not this script.)
+
+```bash
+# Defaults: nice -n 10, GOMAXPROCS = max(2, nproc/2)
+./scripts/test.sh
+
+# Override the nice increment (empty disables nice entirely)
+BEADS_TEST_NICE=5 ./scripts/test.sh
+BEADS_TEST_NICE= ./scripts/test.sh          # no nice
+
+# Override / disable the GOMAXPROCS cap
+BEADS_TEST_GOMAXPROCS=8 ./scripts/test.sh
+BEADS_TEST_GOMAXPROCS= ./scripts/test.sh    # use all cores
+```
+
+If you must run the heavy `cmd/bd` package alone under contention, prefer
+`TEST_RUN=<pattern> ./scripts/test.sh ./cmd/bd/` to compile+run a subset rather
+than the whole 325-file package.
+
 ### Docker (Dolt Integration Tests)
 
 Dolt integration tests require Docker with the exact Dolt image cached locally.
