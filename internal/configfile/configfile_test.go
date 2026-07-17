@@ -245,6 +245,10 @@ func TestDoltServerMode(t *testing.T) {
 	})
 
 	t.Run("GetDoltServerHost", func(t *testing.T) {
+		// Isolate ambient BEADS_DOLT_SERVER_HOST/PORT (a Gas Town crew shell
+		// exports them at the town hub) so the struct-field/default paths are
+		// exercised deterministically — see beads-zv8.
+		isolateDoltServerEnv(t)
 		tests := []struct {
 			name string
 			cfg  *Config
@@ -311,6 +315,8 @@ func TestDoltServerMode(t *testing.T) {
 	})
 
 	t.Run("GetDoltServerPort", func(t *testing.T) {
+		// Isolate ambient BEADS_DOLT_SERVER_PORT/BEADS_DOLT_PORT — see beads-zv8.
+		isolateDoltServerEnv(t)
 		tests := []struct {
 			name string
 			cfg  *Config
@@ -705,6 +711,9 @@ func TestGetCapabilities(t *testing.T) {
 
 // TestDoltServerModeRoundtrip tests that server mode config survives save/load
 func TestDoltServerModeRoundtrip(t *testing.T) {
+	// Isolate ambient BEADS_DOLT_SERVER_HOST/PORT so the loaded struct fields
+	// (not the crew-shell env) drive the getters — see beads-zv8.
+	isolateDoltServerEnv(t)
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0750); err != nil {
@@ -766,6 +775,10 @@ func TestEnvVarOverrides(t *testing.T) {
 
 	t.Run("invalid port env var falls through to config", func(t *testing.T) {
 		t.Setenv("BEADS_DOLT_SERVER_PORT", "not-a-number")
+		// Clear the BEADS_DOLT_PORT fallback (a crew shell exports it) so an
+		// invalid SERVER_PORT truly falls through to the config field — see
+		// beads-zv8.
+		t.Setenv("BEADS_DOLT_PORT", "")
 		cfg := &Config{DoltServerPort: 3308}
 		if got := cfg.GetDoltServerPort(); got != 3308 {
 			t.Errorf("GetDoltServerPort() = %d, want 3308", got)
@@ -773,6 +786,9 @@ func TestEnvVarOverrides(t *testing.T) {
 	})
 
 	t.Run("BEADS_DOLT_PORT fallback when SERVER_PORT not set", func(t *testing.T) {
+		// Ensure SERVER_PORT is genuinely unset (a crew shell exports it) so the
+		// DOLT_PORT fallback is exercised — see beads-zv8.
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 		t.Setenv("BEADS_DOLT_PORT", "3307")
 		cfg := &Config{}
 		if got := cfg.GetDoltServerPort(); got != 3307 {
