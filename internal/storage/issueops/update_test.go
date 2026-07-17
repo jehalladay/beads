@@ -66,3 +66,71 @@ func TestValidatePriorityUpdate(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateTitleUpdate verifies the shared-path title guard (beads-25k6):
+// non-empty + <=500 chars, mirroring Issue.Validate on create. Missing key and
+// valid titles pass; empty/oversize/non-string are rejected.
+func TestValidateTitleUpdate(t *testing.T) {
+	cases := []struct {
+		name    string
+		updates map[string]interface{}
+		wantErr string // substring; "" = expect no error
+	}{
+		{"missing key ok", map[string]interface{}{"priority": 1}, ""},
+		{"valid title", map[string]interface{}{"title": "a fine title"}, ""},
+		{"max length ok", map[string]interface{}{"title": strings.Repeat("x", 500)}, ""},
+		{"empty rejected", map[string]interface{}{"title": ""}, "title is required"},
+		{"oversize rejected", map[string]interface{}{"title": strings.Repeat("x", 501)}, "500 characters or less"},
+		{"non-string rejected", map[string]interface{}{"title": 42}, "expected a string"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateTitleUpdate(tc.updates)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateTitleUpdate(%v) = %v, want nil", tc.updates, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("validateTitleUpdate(%v) = %v, want error containing %q", tc.updates, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestValidateEstimatedMinutesUpdate verifies the shared-path estimate guard
+// (beads-25k6): >= 0, accepting int/int64/float64; negative and non-integral
+// float rejected; missing/nil key is a no-op.
+func TestValidateEstimatedMinutesUpdate(t *testing.T) {
+	cases := []struct {
+		name    string
+		updates map[string]interface{}
+		wantErr string
+	}{
+		{"missing key ok", map[string]interface{}{"title": "x"}, ""},
+		{"nil value ok", map[string]interface{}{"estimated_minutes": nil}, ""},
+		{"zero ok", map[string]interface{}{"estimated_minutes": 0}, ""},
+		{"positive int ok", map[string]interface{}{"estimated_minutes": 90}, ""},
+		{"int64 ok", map[string]interface{}{"estimated_minutes": int64(120)}, ""},
+		{"integral float ok", map[string]interface{}{"estimated_minutes": float64(30)}, ""},
+		{"negative int rejected", map[string]interface{}{"estimated_minutes": -5}, "cannot be negative"},
+		{"negative float rejected", map[string]interface{}{"estimated_minutes": float64(-1)}, "cannot be negative"},
+		{"non-integral float rejected", map[string]interface{}{"estimated_minutes": 2.5}, "expected an integer"},
+		{"non-numeric rejected", map[string]interface{}{"estimated_minutes": "soon"}, "expected an integer"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateEstimatedMinutesUpdate(tc.updates)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateEstimatedMinutesUpdate(%v) = %v, want nil", tc.updates, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("validateEstimatedMinutesUpdate(%v) = %v, want error containing %q", tc.updates, err, tc.wantErr)
+			}
+		})
+	}
+}
