@@ -626,3 +626,54 @@ func buildSQLInClause(ids []string) (string, []interface{}) {
 	}
 	return strings.Join(placeholders, ","), args
 }
+
+// CountReadyWorkInTx counts the durable issues-table rows that `bd ready`
+// would surface, using the SAME ready-work predicate as GetReadyWorkInTx
+// (status/blocked/deferred/ephemeral/pinned gates PLUS the
+// ReadyWorkExcludeTypes and ReadyWorkExcludeLabels identity exclusions).
+//
+// beads-phoh: GetStatistics previously derived stats.ReadyIssues as a naive
+// OpenIssues-blockedCount subtraction, which skips the type/label exclusions
+// bd ready applies — so `bd stats` ready_issues OVERCOUNTED the true
+// actionable-ready set by the number of unblocked agent/rig/role identity
+// beads (gt:agent/gt:role/gt:rig, type=rig, etc.). Counting through the shared
+// predicate makes stats agree with `bd ready` by construction and can't drift.
+//
+// Scope: the issues table only (matching stats.OpenIssues, which
+// ScanIssueCountsInTx computes from the issues table). The wisps-tier
+// merge divergence is the separate, deferred beads-rwmp.
+//
+//nolint:gosec // G201: whereSQL built from hardcoded fragments and ? placeholders only.
+func CountReadyWorkInTx(ctx context.Context, tx DBTX, filter types.WorkFilter) (int, error) {
+	preds, err := buildReadyWorkPredicates(ctx, tx, filter, IssuesFilterTables)
+	if err != nil {
+		return 0, err
+	}
+	// The ready-work ORDER BY can carry args (the hybrid recency cutoff); a
+	// COUNT(*) has no ORDER BY, so drop those trailing args to keep the
+	// placeholder count aligned with the WHERE clause.
+	whereArgs := preds.args
+	if n := len(buildReadyWorkOrder(filter.SortPolicy).Args); n > 0 && n <= len(whereArgs) {
+		whereArgs = whereArgs[:len(whereArgs)-n]
+	}
+	query := fmt.Sprintf("SELECT COUNT(*) FROM issues %s", preds.whereSQL)
+	var count int
+	if err := tx.QueryRowContext(ctx, query, whereArgs...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count ready work: %w", err)
+	}
+	return count, nil
+}
+
+// StatsReadyWorkFilter is the canonical WorkFilter used to count ready work
+// for `bd stats` (beads-phoh). It mirrors the defaults `bd ready` uses so the
+// stats count and the `bd ready` list agree: Status "open" (matching
+// stats.OpenIssues, which counts status='open' rows) and the priority sort
+// (no recency-cutoff args, keeping the COUNT query arg-free of ORDER BY args).
+// The type/label identity exclusions are applied unconditionally by
+// BuildReadyWorkWhere since neither Type nor Labels is set here.
+func StatsReadyWorkFilter() types.WorkFilter {
+	return types.WorkFilter{
+		Status:     types.StatusOpen,
+		SortPolicy: types.SortPolicyPriority,
+	}
+}

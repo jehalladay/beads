@@ -105,9 +105,19 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 	}
 	stats.BlockedIssues = blockedCount
 
-	stats.ReadyIssues = stats.OpenIssues - blockedCount
-	if stats.ReadyIssues < 0 {
-		stats.ReadyIssues = 0
+	// beads-phoh: count ready work through the shared bd-ready predicate
+	// (type/label identity exclusions included) instead of the naive
+	// OpenIssues-blocked subtraction, so `bd stats` ready_issues matches
+	// `bd ready` and does not overcount unblocked identity beads.
+	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		readyCount, rerr := issueops.CountReadyWorkInTx(ctx, tx, issueops.StatsReadyWorkFilter())
+		if rerr != nil {
+			return rerr
+		}
+		stats.ReadyIssues = readyCount
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("failed to count ready issues: %w", err)
 	}
 
 	return stats, nil

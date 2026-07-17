@@ -2722,6 +2722,69 @@ func TestGetStatistics_ReadyIssuesExcludesBlocked(t *testing.T) {
 	}
 }
 
+// TestGetStatistics_ReadyIssuesExcludesIdentityBeads is the beads-phoh
+// regression guard: stats.ReadyIssues must apply the SAME ReadyWorkExclude
+// type/label predicate `bd ready` applies, so an unblocked agent/rig/role
+// identity bead is NOT counted as ready work. The old naive
+// OpenIssues-blockedCount subtraction counted it (overcount).
+func TestGetStatistics_ReadyIssuesExcludesIdentityBeads(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// A normal, actionable, unblocked task — this IS ready work.
+	realWork := &types.Issue{
+		ID:        "stat-i-real",
+		Title:     "Real actionable work",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	// An unblocked task carrying an identity label (gt:agent) — bd ready
+	// HIDES this via ReadyWorkExcludeLabels, so stats must not count it.
+	// (Production identity beads land as type=task carrying gt:agent/role/rig
+	// labels; the type=rig leg is covered by the ready_work exclude-type tests.)
+	identityLabeled := &types.Issue{
+		ID:        "stat-i-agent",
+		Title:     "Agent registration bead",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+
+	for _, iss := range []*types.Issue{realWork, identityLabeled} {
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("failed to create issue %s: %v", iss.ID, err)
+		}
+	}
+	if err := store.AddLabel(ctx, identityLabeled.ID, "gt:agent", "tester"); err != nil {
+		t.Fatalf("failed to add gt:agent label: %v", err)
+	}
+
+	stats, err := store.GetStatistics(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Cross-check against what bd ready actually returns, so the assertion
+	// tracks the real ready set (not a hand-computed constant).
+	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen})
+	if err != nil {
+		t.Fatalf("GetReadyWork failed: %v", err)
+	}
+	if stats.ReadyIssues != len(ready) {
+		t.Errorf("stats.ReadyIssues (%d) must equal len(bd ready) (%d) — the phoh overcount",
+			stats.ReadyIssues, len(ready))
+	}
+	// Concretely: only the one real task is ready; the identity+rig beads are
+	// excluded. The old naive subtraction would report 3.
+	if stats.ReadyIssues != 1 {
+		t.Errorf("expected 1 ready issue (identity+rig beads excluded), got %d", stats.ReadyIssues)
+	}
+}
+
 // =============================================================================
 // GetStaleIssues tests
 // =============================================================================

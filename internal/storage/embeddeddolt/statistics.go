@@ -26,10 +26,14 @@ func (s *EmbeddedDoltStore) GetStatistics(ctx context.Context) (*types.Statistic
 			return err
 		}
 		stats.BlockedIssues = blockedCount
-		stats.ReadyIssues = stats.OpenIssues - stats.BlockedIssues
-		if stats.ReadyIssues < 0 {
-			stats.ReadyIssues = 0
+		// beads-phoh: count ready work through the shared bd-ready predicate
+		// (identity type/label exclusions included) so `bd stats` ready_issues
+		// matches `bd ready` instead of overcounting unblocked identity beads.
+		readyCount, rerr := issueops.CountReadyWorkInTx(ctx, tx, issueops.StatsReadyWorkFilter())
+		if rerr != nil {
+			return rerr
 		}
+		stats.ReadyIssues = readyCount
 		return nil
 	})
 	if err != nil {
