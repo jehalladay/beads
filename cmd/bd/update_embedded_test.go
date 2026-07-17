@@ -835,6 +835,35 @@ func TestEmbeddedUpdate(t *testing.T) {
 		}
 	})
 
+	// beads-9ynk: the `pinned` bool (Issue.Pinned — the prune/purge "skips pinned"
+	// protection marker, distinct from status="pinned") is accepted by the storage
+	// allowed-fields map and round-trips through import/export, but `bd update` had
+	// no flag to set it from the CLI, leaving the documented prune/purge protection
+	// unreachable. --pinned/--no-pinned must set/clear the bool without forcing the
+	// status, and a pinned closed bead must survive prune.
+	t.Run("update_pinned", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "Pinned test", "--type", "task")
+		bdUpdate(t, bd, dir, issue.ID, "--pinned")
+		got := bdShow(t, bd, dir, issue.ID)
+		if !got.Pinned {
+			t.Error("expected pinned to be true after --pinned")
+		}
+		// --pinned is a context marker; it must NOT change the lifecycle status.
+		if got.Status != types.StatusOpen {
+			t.Errorf("expected status to stay open after --pinned, got %s", got.Status)
+		}
+	})
+
+	t.Run("update_no_pinned", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "NoPinned test", "--type", "task")
+		bdUpdate(t, bd, dir, issue.ID, "--pinned")
+		bdUpdate(t, bd, dir, issue.ID, "--no-pinned")
+		got := bdShow(t, bd, dir, issue.ID)
+		if got.Pinned {
+			t.Error("expected pinned to be false after --no-pinned")
+		}
+	})
+
 	t.Run("update_ephemeral_persistent_conflict", func(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "Eph conflict", "--type", "task")
 		out := bdUpdateFail(t, bd, dir, issue.ID, "--ephemeral", "--persistent")
