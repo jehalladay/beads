@@ -79,6 +79,10 @@ Examples:
 				continue
 			}
 			undeferredCount++
+			// GC-survivable audit trail via the shared chokepoint: undefer is a
+			// deferred->open status transition, same class as reopen/defer
+			// (beads-n4sn). issue is guaranteed deferred by the guard above.
+			auditStatusChange(fullID, string(issue.Status), string(types.StatusOpen), actor, "")
 
 			if jsonOutput {
 				issue, _ := store.GetIssue(ctx, fullID)

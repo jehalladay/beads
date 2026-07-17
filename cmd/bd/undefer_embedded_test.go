@@ -39,6 +39,19 @@ func TestEmbeddedUndefer(t *testing.T) {
 		}
 	})
 
+	t.Run("undefer_writes_gc_survivable_audit_trail", func(t *testing.T) {
+		// beads-n4sn: undefer is a deferred->open status transition and must
+		// write the GC-survivable audit-file entry via the shared chokepoint,
+		// same as reopen/defer.
+		issue := bdCreate(t, bd, dir, "Audit undefer", "--type", "task")
+		bdDefer(t, bd, dir, issue.ID)
+		bdUndefer(t, bd, dir, issue.ID)
+
+		if !auditHasStatusChange(t, dir, issue.ID, "open") {
+			t.Errorf("undefer did not write a GC-survivable audit field_change to status=open for %s (beads-n4sn)", issue.ID)
+		}
+	})
+
 	// ===== Multiple Issues =====
 
 	t.Run("undefer_multiple", func(t *testing.T) {
