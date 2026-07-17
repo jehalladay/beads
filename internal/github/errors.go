@@ -23,6 +23,35 @@ const (
 	headerRateLimitResource  = "X-RateLimit-Resource"
 )
 
+// AmbiguousError indicates a non-idempotent request (POST/create) that failed
+// with an ambiguous outcome — a transport error, a lost response, or a 429/5xx
+// that the server may have emitted AFTER writing the resource. Such requests
+// are NOT retried, because a blind retry of a create can mint a duplicate
+// external issue (beads-fmb9's sibling, beads-merm). The caller must treat the
+// create as "may have succeeded" and reconcile (e.g. search-then-create)
+// rather than assuming it failed. Idempotent methods (GET/PUT/PATCH/DELETE)
+// are unaffected and keep retrying.
+type AmbiguousError struct {
+	Method string
+	URL    string
+	// Cause is the underlying transport/status error from the single attempt.
+	Cause error
+}
+
+func (e *AmbiguousError) Error() string {
+	return fmt.Sprintf("github %s %s failed with an ambiguous outcome (not retried to avoid a duplicate create): %v", e.Method, e.URL, e.Cause)
+}
+
+func (e *AmbiguousError) Unwrap() error { return e.Cause }
+
+// isIdempotentMethod reports whether an HTTP method is safe to retry after an
+// ambiguous failure without risking a duplicate side effect. POST creates a
+// new resource on each call, so it is the only non-idempotent method used by
+// this client.
+func isIdempotentMethod(method string) bool {
+	return method != http.MethodPost
+}
+
 // AuthError indicates a GitHub 403/401 that is not a rate limit (bad token,
 // missing scopes, IP allowlist, etc.). Auth errors are not retried.
 type AuthError struct {
