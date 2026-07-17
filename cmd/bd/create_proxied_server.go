@@ -118,8 +118,11 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 		}
 	}
 	if in.explicitID != "" {
-		effectivePrefix := overlayYAMLPrefix(cctx.IssuePrefix)
-		if err := validation.ValidateIDPrefixAllowed(in.explicitID, effectivePrefix, cctx.AllowedPrefixes, in.force); err != nil {
+		// Live DB prefix stays authoritative; a disagreeing config.yaml prefix is
+		// folded into the allowed-list so the DB's own auto-gen prefix is never
+		// rejected (beads-xevo).
+		dbPrefix, allowed := resolvePrefixValidation(cctx.IssuePrefix, cctx.AllowedPrefixes)
+		if err := validation.ValidateIDPrefixAllowed(in.explicitID, dbPrefix, allowed, in.force); err != nil {
 			FatalError("%v", err)
 		}
 	}

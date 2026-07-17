@@ -7,6 +7,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 func TestParseDepSpecs(t *testing.T) {
@@ -207,4 +208,99 @@ func TestOverlayYAMLPrefix(t *testing.T) {
 			t.Errorf("got %q, want empty", got)
 		}
 	})
+}
+
+// TestResolvePrefixValidation covers the union-accept resolution for --id
+// validation (beads-xevo): the live DB prefix is always authoritative and
+// accepted; a YAML issue-prefix that DISAGREES with the DB prefix is folded
+// into the allowed-list (so both work) rather than REPLACING the DB prefix.
+// The pre-fix overlayYAMLPrefix let a stale config.yaml prefix shadow the DB
+// prefix, so `bd create --id <db-prefix>-x` was rejected on the DB's own prefix.
+func TestResolvePrefixValidation(t *testing.T) {
+	t.Run("db prefix authoritative; disagreeing yaml folded into allowed", func(t *testing.T) {
+		config.ResetForTesting()
+		_ = config.Initialize()
+		config.Set("issue-prefix", "bd")
+		t.Cleanup(config.ResetForTesting)
+
+		gotDB, gotAllowed := resolvePrefixValidation("beads", "")
+		if gotDB != "beads" {
+			t.Errorf("dbPrefix = %q, want %q (live DB prefix stays authoritative)", gotDB, "beads")
+		}
+		// The disagreeing YAML prefix must be accepted too (union), so an id
+		// carrying either 'beads-' or 'bd-' passes.
+		if err := validationValidate(t, "beads-x", gotDB, gotAllowed); err != nil {
+			t.Errorf("id with DB prefix should be accepted: %v", err)
+		}
+		if err := validationValidate(t, "bd-x", gotDB, gotAllowed); err != nil {
+			t.Errorf("id with YAML prefix should be accepted (folded into allowed): %v", err)
+		}
+	})
+
+	t.Run("yaml equal to db is a no-op (not duplicated)", func(t *testing.T) {
+		config.ResetForTesting()
+		_ = config.Initialize()
+		config.Set("issue-prefix", "beads")
+		t.Cleanup(config.ResetForTesting)
+
+		gotDB, gotAllowed := resolvePrefixValidation("beads", "")
+		if gotDB != "beads" {
+			t.Errorf("dbPrefix = %q, want %q", gotDB, "beads")
+		}
+		if gotAllowed != "" {
+			t.Errorf("allowed = %q, want empty (yaml == db, nothing to add)", gotAllowed)
+		}
+	})
+
+	t.Run("existing allowed-list preserved and augmented", func(t *testing.T) {
+		config.ResetForTesting()
+		_ = config.Initialize()
+		config.Set("issue-prefix", "bd")
+		t.Cleanup(config.ResetForTesting)
+
+		gotDB, gotAllowed := resolvePrefixValidation("beads", "legacy,old")
+		if gotDB != "beads" {
+			t.Errorf("dbPrefix = %q, want %q", gotDB, "beads")
+		}
+		// All three of DB, existing-allowed, and YAML prefixes must pass.
+		for _, id := range []string{"beads-x", "legacy-x", "old-x", "bd-x"} {
+			if err := validationValidate(t, id, gotDB, gotAllowed); err != nil {
+				t.Errorf("id %q should be accepted: %v", id, err)
+			}
+		}
+	})
+
+	t.Run("empty db prefix falls back to yaml (un-inited store, old behavior)", func(t *testing.T) {
+		config.ResetForTesting()
+		_ = config.Initialize()
+		config.Set("issue-prefix", "yml")
+		t.Cleanup(config.ResetForTesting)
+
+		gotDB, gotAllowed := resolvePrefixValidation("", "")
+		if gotDB != "yml" {
+			t.Errorf("dbPrefix = %q, want %q (fall back to yaml when db empty)", gotDB, "yml")
+		}
+		if gotAllowed != "" {
+			t.Errorf("allowed = %q, want empty", gotAllowed)
+		}
+	})
+
+	t.Run("both empty stays empty", func(t *testing.T) {
+		config.ResetForTesting()
+		_ = config.Initialize()
+		config.Set("issue-prefix", "")
+		t.Cleanup(config.ResetForTesting)
+
+		gotDB, gotAllowed := resolvePrefixValidation("", "")
+		if gotDB != "" || gotAllowed != "" {
+			t.Errorf("got (%q,%q), want empty pair", gotDB, gotAllowed)
+		}
+	})
+}
+
+// validationValidate is a tiny local wrapper so the resolvePrefixValidation
+// test asserts end-to-end through the real ValidateIDPrefixAllowed contract.
+func validationValidate(t *testing.T, id, dbPrefix, allowed string) error {
+	t.Helper()
+	return validation.ValidateIDPrefixAllowed(id, dbPrefix, allowed, false)
 }
