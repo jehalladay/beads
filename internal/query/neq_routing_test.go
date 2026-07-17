@@ -18,13 +18,17 @@ func TestNeqRouting(t *testing.T) {
 	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
 
 	// wantsPredicate: fields with no exclusion filter column route to the
-	// predicate path. status/type have ExcludeStatus/ExcludeTypes so they stay
-	// filter-only (RequiresPredicate=false); owner is always predicate-only.
+	// predicate path. status/type/priority have ExcludeStatus/ExcludeTypes/
+	// ExcludePriority so they stay filter-only (RequiresPredicate=false); owner
+	// is always predicate-only.
 	cases := []struct {
 		query          string
 		wantsPredicate bool
 	}{
-		{`priority!=2`, true},
+		// priority!= became filter-only via ExcludePriority (beads-sgp3); the
+		// canUseFilterOnly gate is updated to match (beads-sgp3 follow-up), so it
+		// no longer routes to predicate mode.
+		{`priority!=2`, false},
 		{`assignee!=alice`, true},
 		{`label!=bug`, true},
 		{`title!=foo`, true},
@@ -37,7 +41,7 @@ func TestNeqRouting(t *testing.T) {
 		{`updated!="2026-07-01"`, true},
 		{`closed!="2026-07-01"`, true},
 		{`started!="2026-07-01"`, true},
-		// status/type keep the filter-only fast path via Exclude* columns.
+		// status/type/priority keep the filter-only fast path via Exclude* columns.
 		{`status!=open`, false},
 		{`type!=bug`, false},
 		// owner is always predicate-only (pre-existing force-route).
@@ -78,13 +82,19 @@ func TestNeqPredicateBehavior(t *testing.T) {
 		return res.Predicate
 	}
 
-	t.Run("priority!=2 excludes P2, includes P1", func(t *testing.T) {
-		p := pred(t, `priority!=2`)
-		if p(&types.Issue{Priority: 2}) {
-			t.Error("matched a P2 issue")
+	// priority!= is filter-only (ExcludePriority) after beads-sgp3 + its gate
+	// follow-up, so the exclusion lives in the Filter, not a predicate. Assert
+	// the filter-level exclusion (mirrors how status!=/type!= are expressed).
+	t.Run("priority!=2 records ExcludePriority 2, filter-only", func(t *testing.T) {
+		res, err := EvaluateAt(`priority!=2`, now)
+		if err != nil {
+			t.Fatalf("EvaluateAt(priority!=2): %v", err)
 		}
-		if !p(&types.Issue{Priority: 1}) {
-			t.Error("failed to match a P1 issue")
+		if res.RequiresPredicate {
+			t.Errorf("priority!=2 should be filter-only, got RequiresPredicate=true")
+		}
+		if len(res.Filter.ExcludePriority) != 1 || res.Filter.ExcludePriority[0] != 2 {
+			t.Errorf("priority!=2 ExcludePriority = %v, want [2]", res.Filter.ExcludePriority)
 		}
 	})
 
