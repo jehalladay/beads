@@ -59,6 +59,20 @@ func TestEmbeddedReopen(t *testing.T) {
 		}
 	})
 
+	t.Run("reopen_writes_gc_survivable_audit_trail", func(t *testing.T) {
+		// beads-n4sn: reopen must write the GC-survivable audit-file
+		// status-change entry (closed->open), like close/update do. Without it,
+		// a Dolt GC flatten leaves the durable trail showing the close but not
+		// the reopen.
+		issue := bdCreate(t, bd, dir, "Audit reopen", "--type", "task")
+		bdClose(t, bd, dir, issue.ID)
+		bdReopen(t, bd, dir, issue.ID)
+
+		if !auditHasStatusChange(t, dir, issue.ID, "open") {
+			t.Errorf("reopen did not write a GC-survivable audit field_change to status=open for %s (beads-n4sn)", issue.ID)
+		}
+	})
+
 	t.Run("reopen_multiple", func(t *testing.T) {
 		issue1 := bdCreate(t, bd, dir, "Multi reopen 1", "--type", "task")
 		issue2 := bdCreate(t, bd, dir, "Multi reopen 2", "--type", "task")

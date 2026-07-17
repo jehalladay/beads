@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/audit"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
@@ -94,27 +95,37 @@ Examples:
 			if deferUntil != nil {
 				updates["defer_until"] = *deferUntil
 			}
-			if reason != "" {
-				issue, err := store.GetIssue(ctx, fullID)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error loading %s: %v\n", fullID, err)
-					continue
+			// Load the issue up front for the pre-change status (audit trail) and
+			// for appending the reason to notes. Fall back to "open" if the load
+			// fails but the update later succeeds, matching close.go's default.
+			oldStatus := "open"
+			if issue, gerr := store.GetIssue(ctx, fullID); gerr == nil && issue != nil {
+				oldStatus = string(issue.Status)
+				if reason != "" {
+					notes := issue.Notes
+					if notes != "" {
+						notes += "\n"
+					}
+					updates["notes"] = notes + reason
 				}
-				if issue == nil {
+			} else if reason != "" {
+				// Reason requested but the issue couldn't be loaded: fail rather
+				// than silently drop the reason (prior behavior).
+				if gerr != nil {
+					fmt.Fprintf(os.Stderr, "Error loading %s: %v\n", fullID, gerr)
+				} else {
 					fmt.Fprintf(os.Stderr, "Issue %s not found\n", fullID)
-					continue
 				}
-				notes := issue.Notes
-				if notes != "" {
-					notes += "\n"
-				}
-				updates["notes"] = notes + reason
+				continue
 			}
 
 			if err := store.UpdateIssue(ctx, fullID, updates, actor); err != nil {
 				fmt.Fprintf(os.Stderr, "Error deferring %s: %v\n", fullID, err)
 				continue
 			}
+			// Audit log the defer status change (survives Dolt GC flatten),
+			// mirroring the CLI close/update paths (beads-n4sn).
+			audit.LogFieldChange(fullID, "status", oldStatus, string(types.StatusDeferred), actor, reason)
 			deferredCount++
 
 			if jsonOutput {

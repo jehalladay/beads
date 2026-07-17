@@ -98,6 +98,18 @@ func TestEmbeddedDefer(t *testing.T) {
 		}
 	})
 
+	t.Run("defer_writes_gc_survivable_audit_trail", func(t *testing.T) {
+		// beads-n4sn: defer changes status (open->deferred) and must write the
+		// GC-survivable audit-file entry, like close/update/reopen do — else a
+		// Dolt GC flatten drops the deferral from the durable trail.
+		issue := bdCreate(t, bd, dir, "Audit defer", "--type", "task")
+		bdDefer(t, bd, dir, issue.ID)
+
+		if !auditHasStatusChange(t, dir, issue.ID, "deferred") {
+			t.Errorf("defer did not write a GC-survivable audit field_change to status=deferred for %s (beads-n4sn)", issue.ID)
+		}
+	})
+
 	// ===== Multiple Issues =====
 
 	t.Run("defer_multiple", func(t *testing.T) {

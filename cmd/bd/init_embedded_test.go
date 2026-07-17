@@ -153,6 +153,39 @@ func bdInit(t *testing.T, bd string, extraArgs ...string) (dir, beadsDir string,
 	return
 }
 
+// auditHasStatusChange reports whether the GC-survivable audit trail
+// (.beads/interactions.jsonl) contains a field_change entry for issueID whose
+// field=="status" and new_value==wantNew. Used to assert that status-mutating
+// commands (close/update/reopen/defer) write the durable audit trail (beads-n4sn).
+func auditHasStatusChange(t *testing.T, dir, issueID, wantNew string) bool {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, ".beads", "interactions.jsonl"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+		t.Fatalf("read audit trail: %v", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var e struct {
+			Kind    string         `json:"kind"`
+			IssueID string         `json:"issue_id"`
+			Extra   map[string]any `json:"extra"`
+		}
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("bad audit line %q: %v", line, err)
+		}
+		if e.Kind == "field_change" && e.IssueID == issueID &&
+			e.Extra["field"] == "status" && e.Extra["new_value"] == wantNew {
+			return true
+		}
+	}
+	return false
+}
+
 // bdInitInDir runs bd init --quiet in an existing dir. Fatals on failure.
 func runBDInit(t *testing.T, bd, dir string, extraArgs ...string) string {
 	t.Helper()
