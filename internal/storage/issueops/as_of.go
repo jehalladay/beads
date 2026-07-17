@@ -40,20 +40,31 @@ func AsOfInTx(ctx context.Context, tx DBTX, issueID string, ref string) (*types.
 
 	var issue types.Issue
 	var createdAtStr, updatedAtStr sql.NullString
-	var closedAt sql.NullTime
+	var closedAt, startedAt sql.NullTime
 	var assignee, owner, contentHash sql.NullString
+	var design, acceptanceCriteria, notes sql.NullString
+	var closeReason, specID, molType sql.NullString
 	var estimatedMinutes sql.NullInt64
+	var pinned sql.NullInt64
 
+	// Project the full field set (matching HistoryInTx), not a 14-column subset.
+	// A subset silently omitted design/notes/acceptance_criteria/spec_id from the
+	// historical view, so `bd show --as-of --json` returned a structurally
+	// incomplete issue vs live `bd show --json` and vs History (beads-kpfp).
 	query := fmt.Sprintf(`
-		SELECT id, content_hash, title, description, status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, created_by, owner, updated_at, closed_at
+		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
+		       status, priority, issue_type, assignee, estimated_minutes,
+		       created_at, created_by, owner, updated_at, started_at, closed_at,
+		       close_reason, spec_id, pinned, mol_type
 		FROM issues AS OF '%s'
 		WHERE id = ?
 	`, ref)
 
 	err := tx.QueryRowContext(ctx, query, issueID).Scan(
-		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Status, &issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt,
+		&issue.ID, &contentHash, &issue.Title, &issue.Description, &design, &acceptanceCriteria, &notes,
+		&issue.Status, &issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
+		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &startedAt, &closedAt,
+		&closeReason, &specID, &pinned, &molType,
 	)
 
 	if err == sql.ErrNoRows {
@@ -72,6 +83,18 @@ func AsOfInTx(ctx context.Context, tx DBTX, issueID string, ref string) (*types.
 	if contentHash.Valid {
 		issue.ContentHash = contentHash.String
 	}
+	if design.Valid {
+		issue.Design = design.String
+	}
+	if acceptanceCriteria.Valid {
+		issue.AcceptanceCriteria = acceptanceCriteria.String
+	}
+	if notes.Valid {
+		issue.Notes = notes.String
+	}
+	if startedAt.Valid {
+		issue.StartedAt = &startedAt.Time
+	}
 	if closedAt.Valid {
 		issue.ClosedAt = &closedAt.Time
 	}
@@ -84,6 +107,18 @@ func AsOfInTx(ctx context.Context, tx DBTX, issueID string, ref string) (*types.
 	if estimatedMinutes.Valid {
 		mins := int(estimatedMinutes.Int64)
 		issue.EstimatedMinutes = &mins
+	}
+	if closeReason.Valid {
+		issue.CloseReason = closeReason.String
+	}
+	if specID.Valid {
+		issue.SpecID = specID.String
+	}
+	if pinned.Valid && pinned.Int64 != 0 {
+		issue.Pinned = true
+	}
+	if molType.Valid {
+		issue.MolType = types.MolType(molType.String)
 	}
 
 	return &issue, nil
