@@ -142,6 +142,18 @@ func (e *Engine) Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error
 		opts.Push = true
 	}
 
+	// A conflict-resolution preference (--prefer-local / --prefer-<provider>,
+	// i.e. ConflictLocal/ConflictExternal) only takes effect during a
+	// bidirectional sync: DetectConflicts/resolveConflicts run solely under
+	// (Pull && Push). On a one-directional sync the preference is silently
+	// ignored, which misleads a user who passed it. Warn so the no-op is
+	// visible (beads-dn2p). Handled centrally here so it covers all providers.
+	if !(opts.Pull && opts.Push) &&
+		(opts.ConflictResolution == ConflictLocal || opts.ConflictResolution == ConflictExternal) {
+		e.warn("--prefer-* conflict preference (%s) has no effect without a bidirectional sync (both pull and push); conflict resolution only applies when syncing both directions",
+			opts.ConflictResolution)
+	}
+
 	// Track IDs to skip/force during push based on conflict resolution
 	skipPushIDs := make(map[string]bool)
 	forcePushIDs := make(map[string]bool)
