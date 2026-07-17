@@ -134,6 +134,28 @@ func TestParseCompactDuration(t *testing.T) {
 			input:   "tomorrow",
 			wantErr: true,
 		},
+		// beads-85u5: over-cap amounts are rejected instead of overflowing
+		// int64 (weeks *7 sign-flip → a PAST date) or producing an absurd date.
+		{
+			name:    "weeks over cap rejected (would int64-overflow via *7)",
+			input:   "9223372036854775807w",
+			wantErr: true,
+		},
+		{
+			name:    "years over cap rejected (would be an absurd far-future date)",
+			input:   "1500000000000000000y",
+			wantErr: true,
+		},
+		{
+			name:    "amount just over cap rejected",
+			input:   "1000001w",
+			wantErr: true,
+		},
+		{
+			name:  "amount at cap accepted",
+			input: "1000000w",
+			want:  now.AddDate(0, 0, 1000000*7),
+		},
 	}
 
 	for _, tt := range tests {
