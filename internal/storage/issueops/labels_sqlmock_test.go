@@ -84,6 +84,23 @@ func TestAddLabelInTx(t *testing.T) {
 		}
 	})
 
+	t.Run("no-op insert (already present) writes no event", func(t *testing.T) {
+		t.Parallel()
+		// INSERT IGNORE on a duplicate label affects 0 rows; recording a
+		// label_added event for an addition that never happened pollutes the
+		// audit trail (beads-usz1). Expect ONLY the INSERT IGNORE, no event.
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectExec(regexp.QuoteMeta("INSERT IGNORE INTO labels (issue_id, label) VALUES (?, ?)")).
+			WithArgs("bd-1", "bug").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		if err := AddLabelInTx(context.Background(), tx, "labels", "events", "bd-1", "bug", "alice"); err != nil {
+			t.Fatalf("AddLabelInTx: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("expected no event write on no-op insert: %v", err)
+		}
+	})
+
 	t.Run("label insert error is wrapped (no event write)", func(t *testing.T) {
 		t.Parallel()
 		_, mock, tx := beginMockTx(t)
@@ -121,6 +138,23 @@ func TestRemoveLabelInTx(t *testing.T) {
 		}
 		if err := mock.ExpectationsWereMet(); err != nil {
 			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+
+	t.Run("no-op delete (label absent) writes no event", func(t *testing.T) {
+		t.Parallel()
+		// DELETE of a label that was never on the issue affects 0 rows;
+		// recording a label_removed event for a removal that never happened
+		// pollutes the audit trail (beads-usz1). Expect ONLY the DELETE.
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectExec(regexp.QuoteMeta("DELETE FROM labels WHERE issue_id = ? AND label = ?")).
+			WithArgs("bd-1", "bug").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		if err := RemoveLabelInTx(context.Background(), tx, "labels", "events", "bd-1", "bug", "alice"); err != nil {
+			t.Fatalf("RemoveLabelInTx: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("expected no event write on no-op delete: %v", err)
 		}
 	})
 

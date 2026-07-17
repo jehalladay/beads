@@ -143,8 +143,15 @@ func AddLabelInTx(ctx context.Context, tx DBTX, labelTable, eventTable, issueID,
 		}
 	}
 	//nolint:gosec // G201: labelTable is from WispTableRouting ("labels" or "wisp_labels")
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT IGNORE INTO %s (issue_id, label) VALUES (?, ?)`, labelTable), issueID, label); err != nil {
+	res, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT IGNORE INTO %s (issue_id, label) VALUES (?, ?)`, labelTable), issueID, label)
+	if err != nil {
 		return fmt.Errorf("add label: %w", err)
+	}
+	// INSERT IGNORE is a no-op when the label is already present; recording a
+	// label_added event in that case pollutes the audit trail with an addition
+	// that never happened (beads-usz1). Only record the event on a real insert.
+	if affected, aerr := res.RowsAffected(); aerr == nil && affected == 0 {
+		return nil
 	}
 	comment := "Added label: " + label
 	//nolint:gosec // G201: eventTable is from WispTableRouting ("events" or "wisp_events")
@@ -171,8 +178,15 @@ func RemoveLabelInTx(ctx context.Context, tx DBTX, labelTable, eventTable, issue
 			eventTable = et
 		}
 	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE issue_id = ? AND label = ?`, labelTable), issueID, label); err != nil {
+	res, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE issue_id = ? AND label = ?`, labelTable), issueID, label)
+	if err != nil {
 		return fmt.Errorf("remove label: %w", err)
+	}
+	// The DELETE is a no-op when the label was never on the issue; recording a
+	// label_removed event in that case pollutes the audit trail with a removal
+	// that never happened (beads-usz1). Only record the event on a real delete.
+	if affected, aerr := res.RowsAffected(); aerr == nil && affected == 0 {
+		return nil
 	}
 	comment := "Removed label: " + label
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)`, eventTable),
