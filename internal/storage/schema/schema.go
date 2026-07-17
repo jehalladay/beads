@@ -74,14 +74,33 @@ func IsSchemaSkewError(err error) bool {
 	return errors.As(err, &e)
 }
 
-// checkSchemaSkew queries the DB's current schema version and returns a
-// *SchemaSkewError if the DB is ahead of the binary. Returns nil for a fresh
-// DB (version=0) or when BD_IGNORE_SCHEMA_SKEW=1 (prints a warning instead).
-func checkSchemaSkew(ctx context.Context, db DBConn) error {
+// schemaMigrationsVersion reads MAX(version) from schema_migrations, treating a
+// missing table as version 0 (fresh/uninitialized DB) — the same convention as
+// migrationSource.currentVersion. The drift checks (checkSchemaSkew,
+// CheckBehindDrift) must use this rather than a raw query so a foreign or
+// pre-migrations Dolt DB with no schema_migrations table yields the intended
+// typed drift error (v0 < LatestVersion => SchemaBehindError) instead of a raw
+// "Error 1146: table not found" that defeats IsSchemaBehindError/IsSchemaSkewError
+// and the BD_IGNORE_SCHEMA_SKEW escape hatch (bd-xmyw; GH#3231 read-only opens).
+func schemaMigrationsVersion(ctx context.Context, db DBConn) (int, error) {
 	var currentVersion int
 	if err := db.QueryRowContext(ctx,
 		"SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
 	).Scan(&currentVersion); err != nil {
+		if dberrors.IsTableNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return currentVersion, nil
+}
+
+// checkSchemaSkew queries the DB's current schema version and returns a
+// *SchemaSkewError if the DB is ahead of the binary. Returns nil for a fresh
+// DB (version=0) or when BD_IGNORE_SCHEMA_SKEW=1 (prints a warning instead).
+func checkSchemaSkew(ctx context.Context, db DBConn) error {
+	currentVersion, err := schemaMigrationsVersion(ctx, db)
+	if err != nil {
 		return fmt.Errorf("schema skew check: %w", err)
 	}
 	if currentVersion == 0 || currentVersion <= LatestVersion() {
@@ -131,10 +150,8 @@ func IsSchemaBehindError(err error) bool {
 // to a warning, mirroring forward drift. A fresh DB (version 0) is reported
 // as behind too: it has no readable schema at all.
 func CheckBehindDrift(ctx context.Context, db *sql.DB) error {
-	var currentVersion int
-	if err := db.QueryRowContext(ctx,
-		"SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
-	).Scan(&currentVersion); err != nil {
+	currentVersion, err := schemaMigrationsVersion(ctx, db)
+	if err != nil {
 		return fmt.Errorf("schema behind-drift check: %w", err)
 	}
 	if currentVersion >= LatestVersion() {
