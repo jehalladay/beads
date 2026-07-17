@@ -75,12 +75,12 @@ Examples:
 		start := time.Now()
 
 		if compactDoltDays < 0 {
-			return HandleError("--days must be non-negative")
+			return HandleErrorRespectJSON("--days must be non-negative")
 		}
 
 		logEntries, logErr := store.Log(ctx, 0)
 		if logErr != nil {
-			return HandleError("failed to read commit log: %v", logErr)
+			return HandleErrorRespectJSON("failed to read commit log: %v", logErr)
 		}
 
 		totalCommits := len(logEntries)
@@ -165,11 +165,11 @@ Examples:
 		}
 
 		if boundaryHash == "" {
-			return HandleError("could not find boundary commit for compaction")
+			return HandleErrorRespectJSON("could not find boundary commit for compaction")
 		}
 
 		if !compactDoltForce {
-			return HandleErrorWithHint(
+			return HandleErrorWithHintRespectJSON(
 				fmt.Sprintf("would squash %d old commits into 1, preserving %d recent commits",
 					oldCommits, recentCommits),
 				"Use --force to confirm or --dry-run to preview.")
@@ -182,11 +182,11 @@ Examples:
 
 		compactor, ok := storage.UnwrapStore(store).(storage.Compactor)
 		if !ok {
-			return HandleError("storage backend does not support compact")
+			return HandleErrorRespectJSON("storage backend does not support compact")
 		}
 
 		if err := compactor.Compact(ctx, initialHash, boundaryHash, oldCommits, recentHashes); err != nil {
-			return HandleError("compact failed: %v", err)
+			return HandleErrorRespectJSON("compact failed: %v", err)
 		}
 
 		// Reclaim disk space from orphaned old history
