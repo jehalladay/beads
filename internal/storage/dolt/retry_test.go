@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	mysql "github.com/go-sql-driver/mysql"
 )
 
 func TestIsRetryableError(t *testing.T) {
@@ -96,6 +98,21 @@ func TestIsRetryableError(t *testing.T) {
 			name:     "table not found - not retryable",
 			err:      errors.New("Error 1146: Table 'beads.foo' doesn't exist"),
 			expected: false,
+		},
+		{
+			// beads-ynj8: a serialization failure guarantees a server-side
+			// rollback and is safe to replay — the withRetryTx write path already
+			// retries it, and RunInTransaction->withRetry must agree so a
+			// concurrent merge-slot acquire (and the other RunInTransaction
+			// call sites) retries the conflict instead of failing hard.
+			name:     "serialization deadlock 1213 - retryable",
+			err:      &mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock"},
+			expected: true,
+		},
+		{
+			name:     "lock wait timeout 1205 - retryable",
+			err:      &mysql.MySQLError{Number: 1205, Message: "Lock wait timeout exceeded"},
+			expected: true,
 		},
 	}
 
