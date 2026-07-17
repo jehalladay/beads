@@ -42,6 +42,24 @@ func assertSafeIdentifier(name string) error {
 // the operator.
 const memoryConfigKeyPrefix = kvkeys.MemoryConfigKeyPrefix
 
+// convergentMetadataKeys is the allowlist of committed-metadata keys that are
+// safe to auto-resolve with --theirs on a merge conflict. After migration 0030
+// moved every clone-local, churn-prone key (tip_*, bd_version(_max),
+// *.last_sync) out to the dolt-ignored local_metadata table and 0036 removed
+// dolt_auto_push_*, the only keys that REMAIN in the committed (versioned,
+// mergeable) metadata table are the project-identity/control keys
+// (_project_id, repo_id, clone_id, target_project_id) plus last_import_time.
+// Of those, only last_import_time is convergent — it is a monotonic timestamp
+// where taking the remote value is harmless. The identity keys are NOT: a
+// _project_id/repo_id/clone_id conflict is a genuine split (the beadstest
+// _project_id town-freeze in CLAUDE.md is exactly this), so silently taking
+// --theirs would overwrite this clone's identity. Anything not on this list
+// (including a future new metadata key) refuses to auto-resolve and leaves the
+// conflict for the operator — fail-closed (beads-ka1n).
+var convergentMetadataKeys = map[string]bool{
+	"last_import_time": true,
+}
+
 // This file holds the merge-settlement machinery shared by server-mode
 // DoltStore (which drives it inside an explicit *sql.Tx) and the embedded
 // store's pull path (which drives it on a pinned autocommit connection via
@@ -283,6 +301,13 @@ func TryAutoResolveMergeConflicts(ctx context.Context, db DBConn) (bool, error) 
 	for _, c := range conflicts {
 		switch c.table {
 		case "metadata":
+			convergent, err := metadataConflictsAreConvergent(ctx, db)
+			if err != nil {
+				return false, err
+			}
+			if !convergent {
+				return false, nil
+			}
 			resolvable = append(resolvable, "metadata")
 		case "dependencies":
 			auditOnly, err := dependencyConflictsAreAuditOnly(ctx, db)
@@ -344,6 +369,22 @@ func TryAutoResolveMergeConflicts(ctx context.Context, db DBConn) (bool, error) 
 			}
 			if _, err := db.ExecContext(ctx, "CALL DOLT_CONFLICTS_RESOLVE('--theirs', 'config')"); err != nil {
 				return false, fmt.Errorf("failed to resolve config conflicts: %w", err)
+			}
+		case "metadata":
+			// The gate above admitted only convergent metadata keys
+			// (last_import_time), never the identity keys. --theirs still
+			// supersedes this clone's local value, so name the resolved keys
+			// like the config path does — the supersession is otherwise
+			// undiagnosable (beads-ka1n). Best-effort: a diagnostics query
+			// failure must not abort an otherwise-correct resolution.
+			if keys, kerr := resolvedMetadataConflictKeys(ctx, db); kerr == nil && len(keys) > 0 {
+				fmt.Fprintf(os.Stderr,
+					"Notice: auto-resolved %d metadata conflict(s) with the remote value (--theirs); "+
+						"local edits to %s were superseded\n",
+					len(keys), strings.Join(keys, ", "))
+			}
+			if _, err := db.ExecContext(ctx, "CALL DOLT_CONFLICTS_RESOLVE('--theirs', 'metadata')"); err != nil {
+				return false, fmt.Errorf("failed to resolve metadata conflicts: %w", err)
 			}
 		default:
 			//nolint:gosec // G201: table is one of the hardcoded constants above.
@@ -482,6 +523,70 @@ func configConflictsAreMemoryConvergent(ctx context.Context, db DBConn) (bool, e
 func resolvedConfigConflictKeys(ctx context.Context, db DBConn) ([]string, error) {
 	rows, err := db.QueryContext(ctx,
 		"SELECT COALESCE(our_key, their_key) FROM dolt_conflicts_config")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keys []string
+	for rows.Next() {
+		var key sql.NullString
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		if key.Valid {
+			keys = append(keys, key.String)
+		}
+	}
+	return keys, rows.Err()
+}
+
+// metadataConflictsAreConvergent reports whether every conflicted metadata row
+// carries a key on the convergentMetadataKeys allowlist (only last_import_time
+// today). The metadata table's committed key set is now almost entirely
+// identity/control keys (_project_id/repo_id/clone_id/target_project_id) after
+// migrations 0030/0036 moved the churn-prone keys to local_metadata, so a
+// metadata conflict is by default an identity conflict — a real split that
+// must NOT be silently auto-resolved with --theirs (beads-ka1n; cf. the
+// beadstest _project_id town-freeze in CLAUDE.md). Any key not on the
+// allowlist — including a future new metadata key — makes the whole table
+// refuse to auto-resolve, so the pull fails closed and the operator resolves.
+//
+// metadata's primary key is `key`, so a same-key conflict carries the identical
+// key on both sides; an add/delete conflict leaves one side NULL. A row is
+// convergent only if every key it presents is on the allowlist.
+func metadataConflictsAreConvergent(ctx context.Context, db DBConn) (bool, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT our_key, their_key FROM dolt_conflicts_metadata`)
+	if err != nil {
+		return false, fmt.Errorf("query metadata conflicts: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var ourKey, theirKey sql.NullString
+		if err := rows.Scan(&ourKey, &theirKey); err != nil {
+			return false, fmt.Errorf("scan metadata conflict: %w", err)
+		}
+		for _, k := range []sql.NullString{ourKey, theirKey} {
+			if k.Valid && !convergentMetadataKeys[k.String] {
+				return false, nil
+			}
+		}
+	}
+	return true, rows.Err()
+}
+
+// resolvedMetadataConflictKeys returns the keys of the metadata rows currently
+// in conflict, used to name the keys whose local value the --theirs
+// auto-resolution is about to supersede. It must be called BEFORE
+// DOLT_CONFLICTS_RESOLVE clears dolt_conflicts_metadata. metadata's primary key
+// is `key`, so a same-key conflict carries the identical key on both sides; an
+// add/delete conflict leaves one side NULL, so COALESCE picks whichever side
+// has it.
+func resolvedMetadataConflictKeys(ctx context.Context, db DBConn) ([]string, error) {
+	rows, err := db.QueryContext(ctx,
+		"SELECT COALESCE(our_key, their_key) FROM dolt_conflicts_metadata")
 	if err != nil {
 		return nil, err
 	}
