@@ -70,3 +70,26 @@ func TestParseRelativeTime_SpaceSeparatedDatetime(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
+
+// TestParseRelativeTime_InvalidDateOnlyRejected covers beads-atue: a string
+// matching YYYY-MM-DD but denoting an invalid calendar date must ERROR, not
+// fall through to the NLP layer (which used to misread the tail as a time-of-
+// today and silently return a nonsense deadline).
+func TestParseRelativeTime_InvalidDateOnlyRejected(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+
+	for _, in := range []string{"2025-13-45", "2025-02-30", "2025-00-10", "2025-01-32"} {
+		if got, err := ParseRelativeTime(in, now); err == nil {
+			t.Errorf("ParseRelativeTime(%q) = %v, want error (invalid date must not fall through to NLP)", in, got)
+		}
+	}
+
+	// Valid date-only still parses (regression guard for the early-return path).
+	got, err := ParseRelativeTime("2025-01-15", now)
+	if err != nil {
+		t.Fatalf("ParseRelativeTime(valid date) error: %v", err)
+	}
+	if got.Year() != 2025 || got.Month() != 1 || got.Day() != 15 {
+		t.Errorf("ParseRelativeTime(2025-01-15) = %v, want 2025-01-15", got)
+	}
+}
