@@ -35,6 +35,20 @@ const (
 // 2. Fall back to URL heuristic with deprecation warning (graceful degradation)
 // 3. Default to maintainer for local projects (no remote configured)
 func DetectUserRole(repoPath string) (UserRole, error) {
+	// Fast path (beads-kpm): a parent process (e.g. gt on its mail/prime hot
+	// loop) can pass the already-resolved role via BD_ROLE, letting bd skip the
+	// `git config --get beads.role` spawn. Only a recognized value is honored;
+	// anything else falls through to normal detection, so a stale or malformed
+	// env can never force an unintended role.
+	if env := os.Getenv("BD_ROLE"); env != "" {
+		switch UserRole(strings.TrimSpace(env)) {
+		case Maintainer:
+			return Maintainer, nil
+		case Contributor:
+			return Contributor, nil
+		}
+	}
+
 	// First check for explicit role in git config (preferred source)
 	if role, ok := roleFromGitConfig(repoPath); ok {
 		return role, nil

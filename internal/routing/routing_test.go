@@ -135,6 +135,59 @@ func (s *gitStub) verify() {
 	}
 }
 
+func TestDetectUserRole_EnvOverrideSkipsGit(t *testing.T) {
+	// BD_ROLE from the parent env short-circuits the git-config spawn entirely
+	// (the gt hot-loop fast path, beads-kpm). The stub has NO responses, so any
+	// git call would fail the test.
+	orig := gitCommandRunner
+	stub := &gitStub{t: t, responses: nil}
+	gitCommandRunner = stub.run
+	t.Cleanup(func() {
+		gitCommandRunner = orig
+		stub.verify()
+	})
+
+	for _, tc := range []struct {
+		env  string
+		want UserRole
+	}{
+		{"maintainer", Maintainer},
+		{"contributor", Contributor},
+	} {
+		t.Setenv("BD_ROLE", tc.env)
+		role, err := DetectUserRole("/repo")
+		if err != nil {
+			t.Fatalf("DetectUserRole(BD_ROLE=%q) error = %v", tc.env, err)
+		}
+		if role != tc.want {
+			t.Fatalf("DetectUserRole(BD_ROLE=%q) = %s, want %s", tc.env, role, tc.want)
+		}
+	}
+}
+
+func TestDetectUserRole_EnvOverrideInvalidFallsThrough(t *testing.T) {
+	// An unrecognized BD_ROLE is ignored (not trusted blindly): detection falls
+	// through to the normal git-config path.
+	t.Setenv("BD_ROLE", "bogus")
+	orig := gitCommandRunner
+	stub := &gitStub{t: t, responses: []gitResponse{
+		{expect: gitCall{"/repo", []string{"config", "--get", "beads.role"}}, output: "maintainer\n"},
+	}}
+	gitCommandRunner = stub.run
+	t.Cleanup(func() {
+		gitCommandRunner = orig
+		stub.verify()
+	})
+
+	role, err := DetectUserRole("/repo")
+	if err != nil {
+		t.Fatalf("DetectUserRole error = %v", err)
+	}
+	if role != Maintainer {
+		t.Fatalf("expected fall-through to git config (%s), got %s", Maintainer, role)
+	}
+}
+
 func TestDetectUserRole_ConfigOverrideMaintainer(t *testing.T) {
 	orig := gitCommandRunner
 	stub := &gitStub{t: t, responses: []gitResponse{
