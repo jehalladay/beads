@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   All label match paths — the label-driven search JOIN, `ExcludeLabels`, and
   `GetIssuesByLabel` (used by `bd ship`/templates) — now `LOWER()` both sides to
   match the predicate path. `assignee=` matching in `bd list`/`search`/`query` is likewise now case-insensitive (beads-xl4k); `owner` was already predicate-only and consistent.
+- **`bd show --as-of <ref> --json` now returns a complete issue (beads-kpfp).**
+  The time-travel query projected only a 14-column subset, so the historical
+  `--json` view silently omitted `design`, `notes`, `acceptance_criteria`,
+  `spec_id`, `started_at`, `close_reason`, `pinned`, and `mol_type` — fields that
+  live `bd show --json` and `bd history` both include. A tool diffing historical
+  vs current state saw those as absent at the old ref. `AsOf` now projects the
+  full field set (matching `History`).
 
 ### Fixed
 

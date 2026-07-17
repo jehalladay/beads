@@ -11,14 +11,18 @@ import (
 )
 
 // These tests cover AsOfInTx using sqlmock — hermetic, no live Dolt. AsOfInTx
-// validates the ref, then issues a single AS OF SELECT of 14 columns and
-// hydrates the nullable fields. The default sqlmock QueryMatcher is
-// regexp/partial, so expectations match on stable substrings.
+// validates the ref, then issues a single AS OF SELECT and hydrates the nullable
+// fields. The default sqlmock QueryMatcher is regexp/partial, so expectations
+// match on stable substrings.
 
-// asOfCols is the 14-column projection AsOfInTx scans, in order.
+// asOfCols is the projection AsOfInTx scans, in order. Expanded from the
+// original 14-column subset to the full field set so the historical view is
+// complete and consistent with live show + History (beads-kpfp).
 var asOfCols = []string{
-	"id", "content_hash", "title", "description", "status", "priority", "issue_type", "assignee", "estimated_minutes",
-	"created_at", "created_by", "owner", "updated_at", "closed_at",
+	"id", "content_hash", "title", "description", "design", "acceptance_criteria", "notes",
+	"status", "priority", "issue_type", "assignee", "estimated_minutes",
+	"created_at", "created_by", "owner", "updated_at", "started_at", "closed_at",
+	"close_reason", "spec_id", "pinned", "mol_type",
 }
 
 // TestAsOfInTx_InvalidRef: an invalid ref is rejected before any query runs.
@@ -45,8 +49,10 @@ func TestAsOfInTx_FullRow(t *testing.T) {
 	mock.ExpectQuery(`FROM issues AS OF`).
 		WithArgs("bd-1").
 		WillReturnRows(sqlmock.NewRows(asOfCols).AddRow(
-			"bd-1", "hash123", "the title", "the desc", "open", 2, "task", "alice", int64(45),
-			"2026-07-17T00:00:00Z", "bob", "carol", "2026-07-17T01:00:00Z", time.Now(),
+			"bd-1", "hash123", "the title", "the desc", "the design", "the ac", "the notes",
+			"open", 2, "task", "alice", int64(45),
+			"2026-07-17T00:00:00Z", "bob", "carol", "2026-07-17T01:00:00Z", time.Now(), time.Now(),
+			"done reason", "SPEC-9", int64(1), "swarm",
 		))
 
 	got, err := AsOfInTx(context.Background(), tx, "bd-1", "release/v2.0")
@@ -74,6 +80,31 @@ func TestAsOfInTx_FullRow(t *testing.T) {
 	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
 		t.Errorf("created_at/updated_at should be parsed; got %v/%v", got.CreatedAt, got.UpdatedAt)
 	}
+	// beads-kpfp: the newly-included fields must be hydrated, not silently dropped.
+	if got.Design != "the design" {
+		t.Errorf("design = %q, want 'the design'", got.Design)
+	}
+	if got.AcceptanceCriteria != "the ac" {
+		t.Errorf("acceptance_criteria = %q, want 'the ac'", got.AcceptanceCriteria)
+	}
+	if got.Notes != "the notes" {
+		t.Errorf("notes = %q, want 'the notes'", got.Notes)
+	}
+	if got.SpecID != "SPEC-9" {
+		t.Errorf("spec_id = %q, want SPEC-9", got.SpecID)
+	}
+	if got.CloseReason != "done reason" {
+		t.Errorf("close_reason = %q, want 'done reason'", got.CloseReason)
+	}
+	if !got.Pinned {
+		t.Error("pinned = false, want true")
+	}
+	if got.MolType != "swarm" {
+		t.Errorf("mol_type = %q, want swarm", got.MolType)
+	}
+	if got.StartedAt == nil {
+		t.Error("started_at = nil, want a populated time")
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
 	}
@@ -88,8 +119,10 @@ func TestAsOfInTx_NullFields(t *testing.T) {
 	mock.ExpectQuery(`FROM issues AS OF`).
 		WithArgs("bd-2").
 		WillReturnRows(sqlmock.NewRows(asOfCols).AddRow(
-			"bd-2", nil, "t2", "d2", "open", 1, "bug", nil, nil,
-			nil, "creator", nil, nil, nil,
+			"bd-2", nil, "t2", "d2", nil, nil, nil,
+			"open", 1, "bug", nil, nil,
+			nil, "creator", nil, nil, nil, nil,
+			nil, nil, nil, nil,
 		))
 
 	got, err := AsOfInTx(context.Background(), tx, "bd-2", "main")
@@ -105,6 +138,15 @@ func TestAsOfInTx_NullFields(t *testing.T) {
 	}
 	if got.ClosedAt != nil {
 		t.Errorf("closed_at = %v, want nil", got.ClosedAt)
+	}
+	if got.StartedAt != nil {
+		t.Errorf("started_at = %v, want nil", got.StartedAt)
+	}
+	// New nullable fields (beads-kpfp) stay at zero values when NULL.
+	if got.Design != "" || got.AcceptanceCriteria != "" || got.Notes != "" ||
+		got.CloseReason != "" || got.SpecID != "" || got.MolType != "" || got.Pinned {
+		t.Errorf("null new-fields should stay zero; got design=%q ac=%q notes=%q close=%q spec=%q mol=%q pinned=%v",
+			got.Design, got.AcceptanceCriteria, got.Notes, got.CloseReason, got.SpecID, got.MolType, got.Pinned)
 	}
 	if !got.CreatedAt.IsZero() || !got.UpdatedAt.IsZero() {
 		t.Errorf("null time strings should leave zero times; got %v/%v", got.CreatedAt, got.UpdatedAt)
