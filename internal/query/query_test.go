@@ -1,6 +1,7 @@
 package query
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -608,6 +609,9 @@ func TestEvaluatorErrors(t *testing.T) {
 		{"priority out of range", "priority=5"},
 		{"invalid boolean", "pinned=maybe"},
 		{"unknown field", "unknown=value"},
+		{"invalid type", "type=bogustype"},
+		{"typo'd type", "type=bg"},
+		{"invalid excluded type", "type!=bogustype"},
 	}
 
 	for _, tt := range tests {
@@ -618,6 +622,65 @@ func TestEvaluatorErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestTypeFilterValidation covers beads-shux: applyTypeFilter must reject
+// unknown/typo'd types (like applyStatusFilter/applyPriorityFilter) while
+// still accepting valid built-in types, their aliases, and user-configured
+// custom types.
+func TestTypeFilterValidation(t *testing.T) {
+	t.Run("valid built-in type", func(t *testing.T) {
+		result, err := Evaluate("type=bug")
+		if err != nil {
+			t.Fatalf("unexpected error for valid type: %v", err)
+		}
+		if result.Filter.IssueType == nil || *result.Filter.IssueType != types.TypeBug {
+			t.Errorf("expected IssueType=bug, got %v", result.Filter.IssueType)
+		}
+	})
+
+	t.Run("alias normalizes to canonical", func(t *testing.T) {
+		// "enhancement" is a documented alias of "feature" (IssueType.Normalize).
+		result, err := Evaluate("type=enhancement")
+		if err != nil {
+			t.Fatalf("unexpected error for alias type: %v", err)
+		}
+		if result.Filter.IssueType == nil || *result.Filter.IssueType != types.TypeFeature {
+			t.Errorf("expected alias enhancement to normalize to feature, got %v", result.Filter.IssueType)
+		}
+	})
+
+	t.Run("invalid type is rejected, not false-empty", func(t *testing.T) {
+		_, err := Evaluate("type=bogustype")
+		if err == nil {
+			t.Fatal("expected error for invalid type, got nil (false-empty rc=0)")
+		}
+		if !strings.Contains(err.Error(), "invalid type") {
+			t.Errorf("expected 'invalid type' in error, got: %v", err)
+		}
+	})
+
+	t.Run("custom type accepted when configured", func(t *testing.T) {
+		eval := NewEvaluatorWithCustomTypes(time.Now(), []string{"widget"})
+		node, err := Parse("type=widget")
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		result, err := eval.Evaluate(node)
+		if err != nil {
+			t.Fatalf("unexpected error for configured custom type: %v", err)
+		}
+		if result.Filter.IssueType == nil || string(*result.Filter.IssueType) != "widget" {
+			t.Errorf("expected IssueType=widget, got %v", result.Filter.IssueType)
+		}
+	})
+
+	t.Run("custom type rejected when not configured", func(t *testing.T) {
+		_, err := Evaluate("type=widget")
+		if err == nil {
+			t.Fatal("expected error for unconfigured custom type, got nil")
+		}
+	})
 }
 
 func TestDurationParsing(t *testing.T) {

@@ -40,7 +40,7 @@ Boolean operators (case-insensitive):
 Supported fields:
   status            Stored status (open, in_progress, blocked, deferred, closed). Note: dependency-blocked issues stay "open"; use 'bd blocked' to find them
   priority          Priority level (0-4)
-  type              Issue type (bug, feature, task, epic, chore, decision)
+  type              Issue type (task, bug, feature, chore, epic, decision, spike, story, milestone; plus configured custom types). Invalid types are rejected, not silently empty
   assignee          Assigned user, e.g. rig/crew/name (use "none" for unassigned)
   owner             Issue owner, e.g. rig/crew/name or user@host
   label             Issue label (use "none" for unlabeled)
@@ -130,7 +130,17 @@ Examples:
 			return nil
 		}
 
-		eval := query.NewEvaluator(time.Now())
+		// Load configured custom types so a query against a valid custom type
+		// is validated, not rejected. Best-effort: an unavailable store or a
+		// load error falls back to built-in types only (beads-shux).
+		var customTypes []string
+		if store != nil {
+			if ct, ctErr := store.GetCustomTypes(rootCtx); ctErr == nil {
+				customTypes = ct
+			}
+		}
+
+		eval := query.NewEvaluatorWithCustomTypes(time.Now(), customTypes)
 		result, err := eval.Evaluate(node)
 		if err != nil {
 			return HandleErrorRespectJSON("evaluating query: %v", err)

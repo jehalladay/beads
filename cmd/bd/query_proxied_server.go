@@ -45,7 +45,21 @@ func runQueryProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 		return nil
 	}
 
-	eval := query.NewEvaluator(time.Now())
+	uw, err := openProxiedListUOW(ctx)
+	if err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
+	defer uw.Close(ctx)
+
+	// Load configured custom types so a query against a valid custom type is
+	// validated, not rejected. Best-effort: a load error falls back to
+	// built-in types only (beads-shux).
+	var customTypes []string
+	if ct, ctErr := uw.ConfigUseCase().GetCustomTypes(ctx); ctErr == nil {
+		customTypes = ct
+	}
+
+	eval := query.NewEvaluatorWithCustomTypes(time.Now(), customTypes)
 	result, err := eval.Evaluate(node)
 	if err != nil {
 		return HandleErrorRespectJSON("evaluating query: %v", err)
@@ -75,12 +89,6 @@ func runQueryProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 			searchFilter.Limit = 100
 		}
 	}
-
-	uw, err := openProxiedListUOW(ctx)
-	if err != nil {
-		return HandleErrorRespectJSON("%v", err)
-	}
-	defer uw.Close(ctx)
 
 	if jsonOutput {
 		page, err := uw.IssueUseCase().SearchIssuesWithCounts(ctx, "", searchFilter)
