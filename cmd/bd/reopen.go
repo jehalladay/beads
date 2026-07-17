@@ -57,8 +57,18 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 			issueStore := result.Store
 			issue := result.Issue
 
-			if issue.Status == types.StatusOpen {
-				fmt.Fprintf(os.Stderr, "%s is already open\n", fullID)
+			// reopen only applies to closed issues (see command help). Guard
+			// every non-closed status, not just already-open: reopening an
+			// in_progress/blocked/deferred bead would silently revert it to
+			// open and emit a misleading "Reopened" event for work that was
+			// never closed. Treat all non-closed states as a no-op with a
+			// clear message (matching the long-standing already-open behavior).
+			if issue.Status != types.StatusClosed {
+				if issue.Status == types.StatusOpen {
+					fmt.Fprintf(os.Stderr, "%s is already open\n", fullID)
+				} else {
+					fmt.Fprintf(os.Stderr, "%s is not closed (status: %s); reopen only applies to closed issues\n", fullID, issue.Status)
+				}
 				result.Close()
 				continue
 			}
