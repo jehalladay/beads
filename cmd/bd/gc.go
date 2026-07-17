@@ -21,6 +21,7 @@ var (
 var gcCmd = &cobra.Command{
 	Use:     "gc",
 	GroupID: "maint",
+	Args:    maintNoArgs,
 	Short:   "Garbage collect: decay old issues, compact Dolt commits, run Dolt GC",
 	Long: `Full lifecycle garbage collection for standalone Beads databases.
 

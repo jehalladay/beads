@@ -17,6 +17,7 @@ var (
 var flattenCmd = &cobra.Command{
 	Use:     "flatten",
 	GroupID: "maint",
+	Args:    maintNoArgs,
 	Short:   "Squash all Dolt history into a single commit",
 	Long: `Nuclear option: squash ALL Dolt commit history into a single commit.
 
