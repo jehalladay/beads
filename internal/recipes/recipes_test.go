@@ -162,6 +162,96 @@ func TestLoadUserRecipesNoFile(t *testing.T) {
 	}
 }
 
+func TestLoadUserRecipesDefaults(t *testing.T) {
+	// A recipe with no explicit type/name should get Type=TypeFile and
+	// Name=<map key> defaulted in during load.
+	tmpDir := t.TempDir()
+	toml := "[recipes.myeditor]\npath = \".myeditor/rules.md\"\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "recipes.toml"), []byte(toml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	recipes, err := LoadUserRecipes(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadUserRecipes: %v", err)
+	}
+	r, ok := recipes["myeditor"]
+	if !ok {
+		t.Fatal("myeditor recipe not found")
+	}
+	if r.Type != TypeFile {
+		t.Errorf("got Type=%q, want default %q", r.Type, TypeFile)
+	}
+	if r.Name != "myeditor" {
+		t.Errorf("got Name=%q, want default 'myeditor'", r.Name)
+	}
+}
+
+func TestLoadUserRecipesMalformed(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "recipes.toml"), []byte("this is = = not toml"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadUserRecipes(tmpDir); err == nil {
+		t.Error("LoadUserRecipes should error on malformed TOML")
+	}
+}
+
+// TestRecipeLoadersPropagateParseError verifies that a malformed recipes.toml
+// surfaces as an error through every loader that funnels through
+// LoadUserRecipes: GetAllRecipes, GetRecipe, and ListRecipeNames.
+func TestRecipeLoadersPropagateParseError(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "recipes.toml"), []byte("this is = = not toml"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := GetAllRecipes(tmpDir); err == nil {
+		t.Error("GetAllRecipes should propagate parse error")
+	}
+	if _, err := GetRecipe("cursor", tmpDir); err == nil {
+		t.Error("GetRecipe should propagate parse error")
+	}
+	if _, err := ListRecipeNames(tmpDir); err == nil {
+		t.Error("ListRecipeNames should propagate parse error")
+	}
+}
+
+func TestSaveUserRecipeMalformedExisting(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "recipes.toml"), []byte("this is = = not toml"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveUserRecipe(tmpDir, "myeditor", ".myeditor/rules.md"); err == nil {
+		t.Error("SaveUserRecipe should error when existing recipes.toml is malformed")
+	}
+}
+
+func TestSaveUserRecipeUpdatesExisting(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// First save creates the file; second save loads + appends into it,
+	// exercising the read-existing branch of SaveUserRecipe.
+	if err := SaveUserRecipe(tmpDir, "first", ".first/rules.md"); err != nil {
+		t.Fatalf("SaveUserRecipe(first): %v", err)
+	}
+	if err := SaveUserRecipe(tmpDir, "second", ".second/rules.md"); err != nil {
+		t.Fatalf("SaveUserRecipe(second): %v", err)
+	}
+
+	recipes, err := LoadUserRecipes(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadUserRecipes: %v", err)
+	}
+	for _, name := range []string{"first", "second"} {
+		if _, ok := recipes[name]; !ok {
+			t.Errorf("recipe %q missing after update", name)
+		}
+	}
+}
+
 func TestTemplate(t *testing.T) {
 	// Basic sanity check that template is not empty
 	if len(Template) < 100 {
