@@ -284,6 +284,34 @@ func sortedSchemes() []string {
 // Birthday-bound collision risk is negligible for a local cache: 50% at
 // ~4.3 billion entries, well beyond any realistic number of remotes.
 func CacheKey(remoteURL string) string {
-	h := sha256.Sum256([]byte(remoteURL))
+	h := sha256.Sum256([]byte(normalizeCacheKeyURL(remoteURL)))
 	return fmt.Sprintf("%x", h[:8])
+}
+
+// normalizeCacheKeyURL reduces a remote URL to its repo identity for cache
+// keying by stripping the ENTIRE userinfo (scheme+host+path[+query] is the
+// identity; who/what authenticates is not). Without this, CacheKey hashed the raw URL, so
+// the same repo accessed with a rotated token ("https://token1@h/r" vs
+// "https://token2@h/r"), or with creds vs without ("https://token@h/r" vs
+// "https://h/r"), produced DIFFERENT cache entries — a redundant re-clone and
+// wasted disk on every credential change (beads-78c8). Tokens commonly appear
+// as the USERNAME (no password), so both the username and password must be
+// dropped, not just the password (contrast the display-redaction in cmd/bd's
+// redactURLCredentials, which keeps a bare SSH username to stay runnable).
+//
+// Only http(s)-family URLs with a real host+userinfo are normalized. Inputs
+// that don't parse, or that lack an authority (scp-style git@host:path, opaque
+// or schemeless forms), are returned unchanged: url.Parse can't reliably split
+// their userinfo, and an SSH login there is part of identity — leaving them
+// verbatim keeps keying stable and never merges two genuinely-distinct repos.
+func normalizeCacheKeyURL(remoteURL string) string {
+	u, err := url.Parse(remoteURL)
+	if err != nil || u.Host == "" || u.User == nil {
+		return remoteURL
+	}
+	// Strip ONLY the credential (userinfo); leave scheme/host/path/query/fragment
+	// intact — this bead is scoped to credential-insensitivity, not query
+	// canonicalization.
+	u.User = nil
+	return u.String()
 }

@@ -298,3 +298,35 @@ func TestCacheKey(t *testing.T) {
 		t.Errorf("CacheKey length = %d, want 16", len(k1))
 	}
 }
+
+// TestCacheKey_CredentialInsensitive covers beads-78c8: the same repo accessed
+// with different/rotated/absent inline credentials must map to ONE cache entry
+// (key = repo identity, not the auth token). Otherwise a token rotation forces
+// a redundant re-clone into a fresh entry.
+func TestCacheKey_CredentialInsensitive(t *testing.T) {
+	base := CacheKey("https://github.com/org/repo.git")
+
+	sameIdentity := []string{
+		"https://token1@github.com/org/repo.git",   // token as username
+		"https://token2@github.com/org/repo.git",   // rotated token
+		"https://user:secret@github.com/org/repo.git", // user:password
+	}
+	for _, u := range sameIdentity {
+		if got := CacheKey(u); got != base {
+			t.Errorf("CacheKey(%q) = %q, want %q (same repo identity as the no-creds URL)", u, got, base)
+		}
+	}
+
+	// A genuinely different repo (or host) must still key apart.
+	if CacheKey("https://github.com/org/OTHER.git") == base {
+		t.Error("CacheKey collided distinct repos")
+	}
+	if CacheKey("https://gitlab.com/org/repo.git") == base {
+		t.Error("CacheKey collided distinct hosts")
+	}
+	// scp-style and schemeless inputs are left verbatim (no reliable userinfo
+	// split) — still deterministic, and distinct from the https identity.
+	if CacheKey("git@github.com:org/repo.git") == base {
+		t.Error("scp-style URL should not collide with the https identity")
+	}
+}
