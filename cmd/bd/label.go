@@ -270,6 +270,9 @@ var labelAddCmd = &cobra.Command{
 			if strings.HasPrefix(label, "provides:") {
 				return HandleErrorRespectJSON("'provides:' labels are reserved for cross-project capabilities. Hint: use 'bd ship %s' instead", strings.TrimPrefix(label, "provides:"))
 			}
+			if msg := reservedIdentityLabelError(label); msg != "" {
+				return HandleErrorRespectJSON("%s", msg)
+			}
 		}
 		// beads-aocj: route to the proxied handler in proxied-server mode.
 		// Without this, label add uses the direct global `store` — nil under
@@ -633,6 +636,9 @@ var labelPropagateCmd = &cobra.Command{
 
 		if strings.HasPrefix(label, "provides:") {
 			return HandleErrorRespectJSON("'provides:' labels are reserved for cross-project capabilities. Hint: use 'bd ship %s' instead", strings.TrimPrefix(label, "provides:"))
+		}
+		if msg := reservedIdentityLabelError(label); msg != "" {
+			return HandleErrorRespectJSON("%s", msg)
 		}
 
 		children, err := store.SearchIssues(ctx, "", types.IssueFilter{ParentID: &parentID})
