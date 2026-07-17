@@ -398,32 +398,39 @@ create, update, show, or close operation).`,
 				regularUpdates["status"] = string(types.StatusOpen)
 			}
 
-			// Handle --metadata: merge with existing metadata instead of replacing.
-			// A merge failure is a per-item error: report it and skip this issue
-			// (reportItemError + continue), never `return` out of the batch — a
-			// mid-loop return under --json would poison stdout with a per-item
-			// error object (breaking the pure-JSON contract) and abandon the
-			// remaining items plus earlier successes' output.
-			if newMeta, ok := regularUpdates["metadata"].(json.RawMessage); ok && len(issue.Metadata) > 0 {
-				merged, err := mergeMetadata(issue.Metadata, newMeta)
-				if err != nil {
+			// --metadata is a whole-blob MERGE with arbitrary (unvalidated) keys,
+			// so it can't safely decompose into per-key JSON_SET paths. Guard it
+			// against concurrent clobber with an optimistic CAS merge done wholly
+			// server-side (issueStore.MergeMetadataWithCAS: re-read + re-merge +
+			// bounded retry on updated_at conflict), instead of the old client-
+			// side read-modify-write that lost concurrent edits (beads-fnp6). A
+			// merge failure is a per-item error (reportItemError + continue,
+			// never `return` out of the batch — that would poison the --json
+			// stdout contract).
+			if newMeta, ok := regularUpdates["metadata"].(json.RawMessage); ok {
+				delete(regularUpdates, "metadata") // applied via CAS below, not whole-blob
+				if err := issueStore.MergeMetadataWithCAS(ctx, result.ResolvedID, newMeta, actor); err != nil {
 					reportItemError("metadata merge failed for %s: %v", id, err)
 					closeIfUnmutated(result)
 					continue
 				}
-				regularUpdates["metadata"] = merged
+				trackMutation(result)
 			}
-			// Handle incremental metadata edits (GH#1406) — same per-item error
-			// contract as the merge path above.
+			// --set/--unset-metadata are per-KEY edits (validated keys), applied
+			// server-side atomically (JSON_SET / JSON_REMOVE) below so concurrent
+			// per-key edits to the same issue don't clobber each other. Parsed
+			// here (same per-item error contract).
+			var metaSets map[string]json.RawMessage
+			var metaUnsets []string
 			if setMeta, ok := updates["_set_metadata"].([]string); ok {
 				unsetMeta, _ := updates["_unset_metadata"].([]string)
-				merged, err := applyMetadataEdits(issue.Metadata, setMeta, unsetMeta)
+				s, u, err := parseMetadataFieldEdits(setMeta, unsetMeta)
 				if err != nil {
 					reportItemError("metadata edit failed for %s: %v", id, err)
 					closeIfUnmutated(result)
 					continue
 				}
-				regularUpdates["metadata"] = merged
+				metaSets, metaUnsets = s, u
 			}
 			// Handle append_notes: combine existing notes with new content
 			if appendNotes, ok := updates["append_notes"].(string); ok {
@@ -451,6 +458,16 @@ create, update, show, or close operation).`,
 				if p, ok := regularUpdates["priority"].(int); ok {
 					audit.LogFieldChange(result.ResolvedID, "priority", fmt.Sprintf("%d", issue.Priority), fmt.Sprintf("%d", p), actor, "")
 				}
+			}
+
+			// Apply per-key metadata edits atomically at the server (beads-fnp6).
+			if len(metaSets) > 0 || len(metaUnsets) > 0 {
+				if err := issueStore.UpdateMetadataFields(ctx, result.ResolvedID, metaSets, metaUnsets, actor); err != nil {
+					reportItemError("metadata edit failed for %s: %v", id, err)
+					closeIfUnmutated(result)
+					continue
+				}
+				trackMutation(result)
 			}
 
 			// Handle label operations
@@ -642,6 +659,38 @@ func mergeMetadata(existing, newMeta json.RawMessage) (json.RawMessage, error) {
 		return nil, fmt.Errorf("failed to marshal merged metadata: %w", err)
 	}
 	return json.RawMessage(result), nil
+}
+
+// parseMetadataFieldEdits validates --set-metadata / --unset-metadata flags and
+// returns per-key edits (sets: key → JSON-encoded value; unsets: keys to remove)
+// WITHOUT reading or rebuilding the existing metadata blob. The edits are applied
+// server-side atomically (issueStore.UpdateMetadataFields → JSON_SET/JSON_REMOVE),
+// so concurrent per-key edits to the same issue don't clobber each other via a
+// client-side read-modify-write (beads-fnp6). Value typing (number/bool/null)
+// matches applyMetadataEdits via toJSONValue.
+func parseMetadataFieldEdits(setFlags, unsetFlags []string) (map[string]json.RawMessage, []string, error) {
+	var sets map[string]json.RawMessage
+	if len(setFlags) > 0 {
+		sets = make(map[string]json.RawMessage, len(setFlags))
+		for _, kv := range setFlags {
+			k, v, ok := strings.Cut(kv, "=")
+			if !ok || k == "" {
+				return nil, nil, fmt.Errorf("invalid --set-metadata: expected key=value, got %q", kv)
+			}
+			if err := storage.ValidateMetadataKey(k); err != nil {
+				return nil, nil, err
+			}
+			sets[k] = toJSONValue(v)
+		}
+	}
+	var unsets []string
+	for _, k := range unsetFlags {
+		if err := storage.ValidateMetadataKey(k); err != nil {
+			return nil, nil, err
+		}
+		unsets = append(unsets, k)
+	}
+	return sets, unsets, nil
 }
 
 // applyMetadataEdits applies --set-metadata and --unset-metadata edits to existing metadata.
