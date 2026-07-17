@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // TokenType represents the type of a lexer token.
@@ -104,13 +105,19 @@ func NewLexer(input string) *Lexer {
 }
 
 // next returns the next rune and advances position.
+//
+// It decodes a full UTF-8 rune (not a single byte) so multi-byte values —
+// accented names, CJK, etc. — tokenize intact. Reading byte-by-byte
+// (rune(input[pos]), width=1) silently split every multi-byte rune into its
+// individual bytes, corrupting quoted values into mojibake and rejecting
+// unquoted non-ASCII with a garbled byte-position (beads-wlz3).
 func (l *Lexer) next() rune {
 	if l.pos >= len(l.input) {
 		l.width = 0
 		return 0
 	}
-	r := rune(l.input[l.pos])
-	l.width = 1
+	r, w := utf8.DecodeRuneInString(l.input[l.pos:])
+	l.width = w
 	l.pos += l.width
 	return r
 }
@@ -120,7 +127,8 @@ func (l *Lexer) peek() rune {
 	if l.pos >= len(l.input) {
 		return 0
 	}
-	return rune(l.input[l.pos])
+	r, _ := utf8.DecodeRuneInString(l.input[l.pos:])
+	return r
 }
 
 // backup steps back one rune.
