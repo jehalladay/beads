@@ -738,6 +738,69 @@ func TestEventTypeValidation(t *testing.T) {
 	}
 }
 
+// TestIssueTypeNormalizeCaseInsensitive verifies that canonical type names
+// normalize+validate case-insensitively, matching the alias behavior (aliases
+// already switch on strings.ToLower). Before the fix, Normalize()'s default
+// case returned the raw string, so 'BUG'/'Task'/'EPIC' stayed non-canonical
+// and failed IsValid() while aliases like 'ENHANCEMENT' worked in any case
+// (beads-xsdh). Custom mixed-case types must still round-trip unchanged since
+// IsValidWithCustom compares them case-sensitively.
+func TestIssueTypeNormalizeCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	// Canonical builtins in non-lowercase form normalize to canonical lowercase
+	// and become valid.
+	builtinCases := []struct {
+		in   IssueType
+		want IssueType
+	}{
+		{IssueType("BUG"), TypeBug},
+		{IssueType("Bug"), TypeBug},
+		{IssueType("Task"), TypeTask},
+		{IssueType("EPIC"), TypeEpic},
+		{IssueType("Feature"), TypeFeature},
+		{IssueType("CHORE"), TypeChore},
+		{IssueType("Decision"), TypeDecision},
+		{IssueType("Spike"), TypeSpike},
+		{IssueType("Story"), TypeStory},
+		{IssueType("Milestone"), TypeMilestone},
+		// lowercase canonical is unchanged
+		{TypeBug, TypeBug},
+		// aliases keep working in any case
+		{IssueType("ENHANCEMENT"), TypeFeature},
+		{IssueType("Feat"), TypeFeature},
+		{IssueType("ADR"), TypeDecision},
+	}
+	for _, tc := range builtinCases {
+		if got := tc.in.Normalize(); got != tc.want {
+			t.Errorf("IssueType(%q).Normalize() = %q, want %q", tc.in, got, tc.want)
+		}
+		if !tc.in.Normalize().IsValid() {
+			t.Errorf("IssueType(%q).Normalize().IsValid() = false, want true", tc.in)
+		}
+	}
+
+	// Custom mixed-case types must NOT be lowercased (IsValidWithCustom compares
+	// them case-sensitively, so lowercasing would break a legitimately-cased
+	// custom type).
+	custom := []string{"MyType", "SpecialCase"}
+	for _, ct := range custom {
+		normalized := IssueType(ct).Normalize()
+		if string(normalized) != ct {
+			t.Errorf("IssueType(%q).Normalize() = %q, want unchanged %q", ct, normalized, ct)
+		}
+		if !normalized.IsValidWithCustom(custom) {
+			t.Errorf("custom type %q lost validity after Normalize (= %q)", ct, normalized)
+		}
+	}
+
+	// A non-builtin, non-custom mixed-case string must stay raw (not silently
+	// lowercased into something else).
+	if got := IssueType("Unknown").Normalize(); got != IssueType("Unknown") {
+		t.Errorf("IssueType(\"Unknown\").Normalize() = %q, want %q", got, "Unknown")
+	}
+}
+
 func TestIssueTypeRequiredSections(t *testing.T) {
 	tests := []struct {
 		issueType     IssueType
