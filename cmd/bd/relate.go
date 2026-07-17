@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -97,24 +98,30 @@ func runRelate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Add relates-to dependency: id1 -> id2 (bidirectional, so also id2 -> id1)
-	// Per Decision 004, relates-to links are now stored in dependencies table
-	// Add id1 -> id2
+	// Per Decision 004, relates-to links are now stored in dependencies table.
+	// Both directions are written in ONE transaction so the relation is
+	// atomic — a mid-op failure can never leave a half (asymmetric) relation
+	// where id1->id2 exists but id2->id1 doesn't. (beads-oyy1)
 	dep1 := &types.Dependency{
 		IssueID:     id1,
 		DependsOnID: id2,
 		Type:        types.DepRelatesTo,
 	}
-	if err := store.AddDependency(ctx, dep1, actor); err != nil {
-		return fmt.Errorf("failed to add relates-to %s -> %s: %w", id1, id2, err)
-	}
-	// Add id2 -> id1 (bidirectional)
 	dep2 := &types.Dependency{
 		IssueID:     id2,
 		DependsOnID: id1,
 		Type:        types.DepRelatesTo,
 	}
-	if err := store.AddDependency(ctx, dep2, actor); err != nil {
-		return fmt.Errorf("failed to add relates-to %s -> %s: %w", id2, id1, err)
+	if err := store.RunInTransaction(ctx, fmt.Sprintf("bd: relate %s <-> %s", id1, id2), func(tx storage.Transaction) error {
+		if err := tx.AddDependency(ctx, dep1, actor); err != nil {
+			return fmt.Errorf("failed to add relates-to %s -> %s: %w", id1, id2, err)
+		}
+		if err := tx.AddDependency(ctx, dep2, actor); err != nil {
+			return fmt.Errorf("failed to add relates-to %s -> %s: %w", id2, id1, err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	if jsonOutput {
