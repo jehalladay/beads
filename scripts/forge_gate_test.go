@@ -78,9 +78,17 @@ func runForgeGate(t *testing.T, stubBin string, args ...string) (string, int) {
 // error; the caller asserts on the code).
 func runScriptWithPath(t *testing.T, repo, binDir string, args ...string) (string, int) {
 	t.Helper()
+	return runScriptWithFullPath(t, repo, binDir+string(os.PathListSeparator)+os.Getenv("PATH"), args...)
+}
+
+// runScriptWithFullPath is like runScriptWithPath but takes the child's
+// complete PATH verbatim (no inherited PATH is appended). The no-toolchain test
+// uses this to guarantee `go` is genuinely absent from the child environment.
+func runScriptWithFullPath(t *testing.T, repo, fullPath string, args ...string) (string, int) {
+	t.Helper()
 	cmd := exec.Command("bash", args...)
 	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.Env = append(os.Environ(), "PATH="+fullPath)
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if err != nil {
@@ -91,6 +99,49 @@ func runScriptWithPath(t *testing.T, repo, binDir string, args ...string) (strin
 		}
 	}
 	return string(out), code
+}
+
+// pathWithoutGo returns the current PATH with every directory that contains a
+// `go` executable removed, so a child process using it cannot resolve a Go
+// toolchain. ok is false when the sanitized PATH would no longer be able to
+// resolve the shell tools the gate needs (bash, git) — e.g. when `go` lives in
+// a shared dir like /usr/bin alongside them — in which case the no-toolchain
+// path cannot be cleanly exercised on this host and the caller should skip.
+func pathWithoutGo(t *testing.T) (path string, ok bool) {
+	t.Helper()
+	var kept []string
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join(dir, "go")); err == nil && !info.IsDir() {
+			continue // drop any dir that provides `go`
+		}
+		kept = append(kept, dir)
+	}
+	sanitized := strings.Join(kept, string(os.PathListSeparator))
+	// The gate script itself and its helpers need bash + git; if either is no
+	// longer resolvable, we cannot exercise the no-toolchain path cleanly.
+	for _, tool := range []string{"bash", "git"} {
+		if !toolResolvable(tool, sanitized) {
+			return "", false
+		}
+	}
+	return sanitized, true
+}
+
+// toolResolvable reports whether name resolves to an executable in one of the
+// directories of the given PATH string.
+func toolResolvable(name, path string) bool {
+	for _, dir := range filepath.SplitList(path) {
+		if dir == "" {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 // shortHead returns the current git short SHA (matching what forge-gate.sh
@@ -136,16 +187,26 @@ func TestForgeGateFailsOnBareBuild(t *testing.T) {
 }
 
 func TestForgeGateFailsWhenNoToolchain(t *testing.T) {
-	// With an empty bin dir on PATH (no `go`, and the /fsx fallback absent in
-	// most CI), the gate must fail loudly rather than silently skip. We can't
-	// guarantee the /fsx fallback is missing on the cluster build host, so this
-	// test only asserts a hard failure when neither is available; skip if the
-	// fallback toolchain exists.
+	// The gate must fail loudly (not silently skip) when no `go` toolchain is
+	// reachable. Simply prepending an empty dir to PATH is NOT enough: on any
+	// host with `go` on the inherited system PATH, the gate would still resolve
+	// go and pass (the bug beads-59g fixes). So build a child PATH with every
+	// go-providing directory removed.
+	//
+	// The gate also resolves the pinned town toolchain /fsx/ubuntu/goroot-1262
+	// by *absolute* path (independent of PATH), so where that exists we cannot
+	// exercise the toolchain-absent branch and must skip.
 	if _, err := os.Stat("/fsx/ubuntu/goroot-1262/bin/go"); err == nil {
-		t.Skip("pinned fallback toolchain present; no-toolchain path not exercised here")
+		t.Skip("pinned /fsx fallback toolchain present; gate resolves it by absolute path, so the no-toolchain branch cannot be exercised here")
 	}
-	empty := t.TempDir()
-	out, code := runForgeGate(t, empty, "--fast")
+	sanitized, ok := pathWithoutGo(t)
+	if !ok {
+		t.Skip("cannot exercise no-toolchain path: `go` shares a PATH dir with bash/git on this host")
+	}
+
+	repo := sourceRepoRoot(t)
+	full := []string{filepath.Join(repo, "scripts", "ci", "forge-gate.sh"), "--fast"}
+	out, code := runScriptWithFullPath(t, repo, sanitized, full...)
 	if code == 0 {
 		t.Fatalf("expected gate to FAIL with no toolchain, but it passed:\n%s", out)
 	}
