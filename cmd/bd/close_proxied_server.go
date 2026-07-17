@@ -9,7 +9,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/steveyegge/beads/internal/audit"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/domain"
@@ -232,7 +231,7 @@ func closeProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string, 
 	if oldStatus == "" {
 		oldStatus = "open"
 	}
-	audit.LogFieldChange(id, "status", oldStatus, "closed", actor, reason)
+	auditStatusChange(id, oldStatus, "closed", actor, reason)
 
 	autoCloseProxiedCompletedMolecule(ctx, uw, id, actor, in.session, in.jsonOut)
 

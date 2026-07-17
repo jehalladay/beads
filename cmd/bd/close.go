@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/audit"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
@@ -174,12 +173,13 @@ the flags appear in the command line.`,
 			}
 			mutatedStores[activeStore] = append(mutatedStores[activeStore], id)
 
-			// Audit log the close (survives Dolt GC flatten)
+			// Audit log the close (survives Dolt GC flatten) via the shared
+			// cmd-layer chokepoint (beads-n4sn).
 			oldStatus := "open"
 			if issue != nil {
 				oldStatus = string(issue.Status)
 			}
-			audit.LogFieldChange(id, "status", oldStatus, "closed", actor, reason)
+			auditStatusChange(id, oldStatus, "closed", actor, reason)
 
 			closedCount++
 

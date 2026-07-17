@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/audit"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/timeparsing"
@@ -513,16 +512,10 @@ create, update, show, or close operation).`,
 					continue
 				}
 				trackMutation(result)
-				// Audit log key field changes (survives Dolt GC flatten)
-				if s, ok := regularUpdates["status"].(string); ok {
-					audit.LogFieldChange(result.ResolvedID, "status", string(issue.Status), s, actor, "")
-				}
-				if a, ok := regularUpdates["assignee"].(string); ok {
-					audit.LogFieldChange(result.ResolvedID, "assignee", issue.Assignee, a, actor, "")
-				}
-				if p, ok := regularUpdates["priority"].(int); ok {
-					audit.LogFieldChange(result.ResolvedID, "priority", fmt.Sprintf("%d", issue.Priority), fmt.Sprintf("%d", p), actor, "")
-				}
+				// Audit log key field changes (survives Dolt GC flatten) via the
+				// shared cmd-layer chokepoint so every field is captured uniformly
+				// (beads-n4sn).
+				auditIssueUpdate(result.ResolvedID, issue, regularUpdates, actor, "")
 			}
 
 			// Apply per-key metadata edits atomically at the server (beads-fnp6).
