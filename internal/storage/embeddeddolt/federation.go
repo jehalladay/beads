@@ -410,7 +410,15 @@ func (s *EmbeddedDoltStore) SyncStatus(ctx context.Context, peer string) (*stora
 		}
 		return nil
 	}); err != nil {
-		return nil, err
+		// beads-628e: return a PARTIAL (non-nil) status on a connection
+		// failure, mirroring the server DoltStore.SyncStatus contract (which
+		// always returns a status, never nil). Returning (nil, err) here made
+		// callers that ignore the error — e.g. runFederationStatus's
+		// `status, _ := ...` — nil-deref/panic in the render loop. The unknown
+		// ahead/behind is signalled with -1, same as the query-failure branch.
+		status.LocalAhead = -1
+		status.LocalBehind = -1
+		return status, fmt.Errorf("sync status for peer %s: %w", peer, err)
 	}
 
 	// Check for conflicts.
