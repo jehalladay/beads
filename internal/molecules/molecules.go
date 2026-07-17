@@ -79,46 +79,45 @@ func (l *Loader) LoadAll(ctx context.Context, beadsDir string) (*LoadResult, err
 	// 2. Load town-level molecules ($GT_ROOT/.beads/molecules.jsonl)
 	townPath := getTownMoleculesPath()
 	if townPath != "" {
-		if molecules, err := loadMoleculesFromFile(townPath); err == nil && len(molecules) > 0 {
-			count, err := l.loadMolecules(ctx, molecules)
-			if err != nil {
-				debug.Logf("warning: failed to load town molecules: %v", err)
-			} else {
-				result.Loaded += count
-				result.Sources = append(result.Sources, townPath)
-			}
-		}
+		l.loadFileSource(ctx, "town", townPath, result)
 	}
 
 	// 3. Load user-level molecules (~/.beads/molecules.jsonl)
 	userPath := getUserMoleculesPath()
 	if userPath != "" && userPath != townPath {
-		if molecules, err := loadMoleculesFromFile(userPath); err == nil && len(molecules) > 0 {
-			count, err := l.loadMolecules(ctx, molecules)
-			if err != nil {
-				debug.Logf("warning: failed to load user molecules: %v", err)
-			} else {
-				result.Loaded += count
-				result.Sources = append(result.Sources, userPath)
-			}
-		}
+		l.loadFileSource(ctx, "user", userPath, result)
 	}
 
 	// 4. Load project-level molecules (.beads/molecules.jsonl)
 	if beadsDir != "" {
 		projectPath := filepath.Join(beadsDir, MoleculeFileName)
-		if molecules, err := loadMoleculesFromFile(projectPath); err == nil && len(molecules) > 0 {
-			count, err := l.loadMolecules(ctx, molecules)
-			if err != nil {
-				debug.Logf("warning: failed to load project molecules: %v", err)
-			} else {
-				result.Loaded += count
-				result.Sources = append(result.Sources, projectPath)
-			}
-		}
+		l.loadFileSource(ctx, "project", projectPath, result)
 	}
 
 	return result, nil
+}
+
+// loadFileSource loads one molecule file source into the store. Unlike the old
+// inline `err == nil &&` guard, a read error (e.g. a molecule line exceeding the
+// scanner limit, or a permission error) is logged instead of silently dropping
+// the entire file — a non-existent file returns (nil, nil) and stays quiet
+// (beads-4uxm).
+func (l *Loader) loadFileSource(ctx context.Context, kind, path string, result *LoadResult) {
+	molecules, err := loadMoleculesFromFile(path)
+	if err != nil {
+		debug.Logf("warning: failed to read %s molecules from %s: %v", kind, path, err)
+		return
+	}
+	if len(molecules) == 0 {
+		return
+	}
+	count, err := l.loadMolecules(ctx, molecules)
+	if err != nil {
+		debug.Logf("warning: failed to load %s molecules: %v", kind, err)
+		return
+	}
+	result.Loaded += count
+	result.Sources = append(result.Sources, path)
 }
 
 // loadMolecules loads a slice of molecules into the store.
@@ -174,6 +173,12 @@ func loadMoleculesFromFile(path string) ([]*types.Issue, error) {
 
 	var molecules []*types.Issue
 	scanner := bufio.NewScanner(file)
+	// Raise the line limit well past bufio's 64KB default: molecules are one
+	// JSON object per line and a rich molecule (many steps, long description/
+	// design) can exceed 64KB. Without this, an oversized line stops the scan
+	// with bufio.ErrTooLong and the whole file is dropped (beads-4uxm).
+	const maxMoleculeLine = 8 * 1024 * 1024
+	scanner.Buffer(make([]byte, 0, 64*1024), maxMoleculeLine)
 	lineNum := 0
 
 	for scanner.Scan() {
