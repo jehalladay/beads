@@ -145,3 +145,70 @@ func TestParentPredicateRejectsOR(t *testing.T) {
 		t.Fatalf("EvaluateAt(parent=bd-1) bare filter should still work: %v", err)
 	}
 }
+
+// TestPriorityPPrefixParity pins beads-nl0d: the query language must accept the
+// P-prefix priority form ("priority=P2") that the `--priority` flag already
+// accepts and the docs advertise ("0-4 or P0-P4"). applyPriorityFilter and
+// buildPriorityPredicate both used raw strconv.Atoi, so `priority=P2` hard-
+// errored in BOTH filter and predicate mode — a flag-vs-query divergence, same
+// class as the status/type case-fold (beads-7wrj). Both paths now route through
+// validation.ParsePriority (P-strip + 0-4 range guard). P2 must behave exactly
+// like 2, and invalid P-forms must still error identically in both modes.
+func TestPriorityPPrefixParity(t *testing.T) {
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+
+	// Filter mode: priority=P2 must set Priority=2, matching the numeric form.
+	t.Run("filter-P2-equals-2", func(t *testing.T) {
+		res, err := EvaluateAt("priority=P2", now)
+		if err != nil {
+			t.Fatalf("EvaluateAt(priority=P2) unexpected err: %v", err)
+		}
+		if res.Filter.Priority == nil || *res.Filter.Priority != 2 {
+			t.Fatalf("priority=P2 -> Filter.Priority = %v, want 2", res.Filter.Priority)
+		}
+	})
+
+	// Lowercase p and P4 boundary also fold.
+	t.Run("filter-p4-lowercase", func(t *testing.T) {
+		res, err := EvaluateAt("priority=p4", now)
+		if err != nil {
+			t.Fatalf("EvaluateAt(priority=p4) unexpected err: %v", err)
+		}
+		if res.Filter.Priority == nil || *res.Filter.Priority != 4 {
+			t.Fatalf("priority=p4 -> Filter.Priority = %v, want 4", res.Filter.Priority)
+		}
+	})
+
+	// Predicate mode (OR forces a predicate): priority=P2 must match a P2 issue
+	// and reject a P3 issue — identical to the numeric form.
+	t.Run("predicate-P2-matches", func(t *testing.T) {
+		res, err := EvaluateAt("priority=P2 OR id=zzz", now)
+		if err != nil {
+			t.Fatalf("EvaluateAt(priority=P2 OR id=zzz) unexpected err: %v", err)
+		}
+		if res.Predicate == nil {
+			t.Fatal("expected a predicate for priority=P2 OR ...")
+		}
+		if !res.Predicate(&types.Issue{Priority: 2}) {
+			t.Error("predicate did not match a P2 issue for priority=P2")
+		}
+		if res.Predicate(&types.Issue{Priority: 3}) {
+			t.Error("predicate matched a P3 issue for priority=P2")
+		}
+	})
+
+	// Invalid P-forms must still error in BOTH modes (no laxity introduced).
+	for _, bad := range []string{"P9", "Pxyz", "P", "P-1"} {
+		bad := bad
+		t.Run("filter-invalid-"+bad, func(t *testing.T) {
+			if _, err := EvaluateAt("priority="+bad, now); err == nil || !strings.Contains(err.Error(), "invalid priority") {
+				t.Fatalf("EvaluateAt(priority=%s) err = %v, want 'invalid priority'", bad, err)
+			}
+		})
+		t.Run("predicate-invalid-"+bad, func(t *testing.T) {
+			if _, err := EvaluateAt("priority="+bad+" OR id=zzz", now); err == nil || !strings.Contains(err.Error(), "invalid priority") {
+				t.Fatalf("EvaluateAt(priority=%s OR id=zzz) err = %v, want 'invalid priority'", bad, err)
+			}
+		})
+	}
+}
