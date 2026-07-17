@@ -291,6 +291,18 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		if err := store.initSchema(ctx); err != nil {
 			return nil, fmt.Errorf("failed to initialize schema: %w", err)
 		}
+		// initSchema only applies PENDING (forward) migrations, so a DB that is
+		// AHEAD of this binary (e.g. a v54 hub opened by a v53 bd) has nothing
+		// pending and passes silently. That is the dangerous direction: the
+		// write path would then operate on a schema it does not fully know
+		// (e.g. skipping a newer row-lock/lease column), risking a silently lost
+		// concurrent write. Guard writes with the same forward-drift check the
+		// read path uses — it refuses by default and, under BD_IGNORE_SCHEMA_SKEW=1
+		// (the town-wide interim during a v54/v53 skew), downgrades to a warning.
+		if err := schema.CheckForwardDrift(ctx, db); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
 	}
 
 	if !cfg.CreateIfMissing {
