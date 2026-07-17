@@ -801,6 +801,56 @@ func TestIssueTypeNormalizeCaseInsensitive(t *testing.T) {
 	}
 }
 
+// beads-7wrj: Status.Normalize mirrors IssueType.Normalize — fold the case of
+// built-in statuses so the `bd list --status` flag path accepts mixed case like
+// the `bd query status=` language, while leaving mixed-case custom statuses
+// (compared case-sensitively by IsValidWithCustom) untouched.
+func TestStatusNormalizeCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	builtinCases := []struct {
+		in   Status
+		want Status
+	}{
+		{Status("OPEN"), StatusOpen},
+		{Status("Open"), StatusOpen},
+		{Status("In_Progress"), StatusInProgress},
+		{Status("BLOCKED"), StatusBlocked},
+		{Status("Deferred"), StatusDeferred},
+		{Status("CLOSED"), StatusClosed},
+		{Status("Pinned"), StatusPinned},
+		{Status("HOOKED"), StatusHooked},
+		// lowercase canonical unchanged
+		{StatusOpen, StatusOpen},
+	}
+	for _, tc := range builtinCases {
+		if got := tc.in.Normalize(); got != tc.want {
+			t.Errorf("Status(%q).Normalize() = %q, want %q", tc.in, got, tc.want)
+		}
+		if !tc.in.Normalize().IsValid() {
+			t.Errorf("Status(%q).Normalize().IsValid() = false, want true", tc.in)
+		}
+	}
+
+	// Custom mixed-case statuses must NOT be lowercased (IsValidWithCustom
+	// compares them case-sensitively).
+	custom := []string{"Triage", "OnHold"}
+	for _, cs := range custom {
+		normalized := Status(cs).Normalize()
+		if string(normalized) != cs {
+			t.Errorf("Status(%q).Normalize() = %q, want unchanged %q", cs, normalized, cs)
+		}
+		if !normalized.IsValidWithCustom(custom) {
+			t.Errorf("custom status %q lost validity after Normalize (= %q)", cs, normalized)
+		}
+	}
+
+	// A non-builtin, non-custom mixed-case string stays raw.
+	if got := Status("Bogus").Normalize(); got != Status("Bogus") {
+		t.Errorf("Status(%q).Normalize() = %q, want unchanged", "Bogus", got)
+	}
+}
+
 func TestIssueTypeRequiredSections(t *testing.T) {
 	tests := []struct {
 		issueType     IssueType
