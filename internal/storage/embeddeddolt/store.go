@@ -107,6 +107,23 @@ func newStore(ctx context.Context, beadsDir, database, branch string, lenientGat
 		return nil, fmt.Errorf("embeddeddolt: init schema: %w", err)
 	}
 
+	// initSchema (MigrateUp) only applies PENDING migrations, so a DB AHEAD of
+	// this binary (e.g. v54 data opened by a v53 embedded bd) has nothing pending
+	// and passes silently — the writable open would then operate on a schema it
+	// does not fully know, risking a silently lost concurrent write. Guard writes
+	// with the same forward-drift check OpenReadOnly already applies (beads-yd1g,
+	// the embedded twin of the server-path beads-0j3h). CheckForwardDrift refuses
+	// by default and, under BD_IGNORE_SCHEMA_SKEW=1 (the town-wide interim during
+	// a v54/v53 skew), downgrades to a warning.
+	db, cleanup, err := OpenSQL(ctx, s.dataDir, s.database, s.branch)
+	if err != nil {
+		return nil, fmt.Errorf("embeddeddolt: open db for drift check: %w", err)
+	}
+	defer func() { _ = cleanup() }()
+	if err := schema.CheckForwardDrift(ctx, db); err != nil {
+		return nil, err
+	}
+
 	return s, nil
 }
 
