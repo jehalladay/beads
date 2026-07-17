@@ -96,6 +96,15 @@ func (e *Evaluator) canUseFilterOnly(node Node) bool {
 		if n.Field == "owner" {
 			return false
 		}
+		// A bare `field!=value` can only be expressed as a filter for the two
+		// fields that have dedicated exclusion columns (status->ExcludeStatus,
+		// type->ExcludeTypes). For every other field the apply*Filter path
+		// hard-errors on != even though build*Predicate handles it fine, so
+		// route those to predicate mode (beads-pqrn) — mirroring the owner
+		// force-route above.
+		if n.Op == OpNotEquals && n.Field != "status" && n.Field != "type" {
+			return false
+		}
 		return true
 	case *AndNode:
 		return e.canUseFilterOnly(n.Left) && e.canUseFilterOnly(n.Right)
@@ -778,6 +787,13 @@ func (e *Evaluator) buildPriorityPredicate(comp *ComparisonNode) (func(*types.Is
 	priority, err := strconv.Atoi(comp.Value)
 	if err != nil {
 		return nil, fmt.Errorf("invalid priority: %s", comp.Value)
+	}
+	// Keep the predicate path's range validation in lockstep with
+	// applyPriorityFilter (0-4) so an out-of-range priority errors the same way
+	// regardless of which path a comparison takes (beads-pqrn: != now routes
+	// here, so this used to be enforced only on the filter path).
+	if priority < 0 || priority > 4 {
+		return nil, fmt.Errorf("priority must be between 0 and 4")
 	}
 	switch comp.Op {
 	case OpEquals:
