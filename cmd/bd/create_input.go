@@ -238,6 +238,9 @@ func gatherCreateInput(cmd *cobra.Command, args []string) (createInput, error) {
 		if !json.Valid([]byte(metadataJSON)) {
 			return in, HandleError("invalid JSON in --metadata: must be valid JSON")
 		}
+		if !metadataIsJSONObject(metadataJSON) {
+			return in, HandleError(`--metadata must be a JSON object, e.g. {"key":"value"} (arrays and scalars can't be edited by --set-metadata/--unset-metadata)`)
+		}
 		in.metadata = json.RawMessage(metadataJSON)
 		in.metadataSet = true
 	}
