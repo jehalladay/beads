@@ -284,9 +284,14 @@ create, update, show, or close operation).`,
 			} else {
 				metadataJSON = metadataValue
 			}
-			// Validate JSON
+			// Validate JSON is a top-level object. This is the live update
+			// RunE path; gatherUpdateInput's gate covers a separate path
+			// (beads-eum2/ef2k).
 			if !json.Valid([]byte(metadataJSON)) {
 				return HandleErrorRespectJSON("invalid JSON in --metadata: must be valid JSON")
+			}
+			if !metadataIsJSONObject(metadataJSON) {
+				return HandleErrorRespectJSON(`--metadata must be a JSON object, e.g. {"key":"value"} (arrays and scalars can't be edited by --set-metadata/--unset-metadata)`)
 			}
 			updates["metadata"] = json.RawMessage(metadataJSON)
 		}

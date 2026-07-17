@@ -971,6 +971,50 @@ func TestEmbeddedCreateFormCommitsLabelOnlyCreate(t *testing.T) {
 	}
 }
 
+// TestEmbeddedMetadataObjectGateLivePaths covers beads-eum2: the metadataIsJSONObject
+// gate must fire on the LIVE single-issue `bd create --metadata` path (create.go) and
+// the LIVE `bd update --metadata` RunE path (update.go), not just the batch/gatherInput
+// paths. A non-object --metadata that slips through is stored verbatim and permanently
+// locks the bead out of every object-only metadata edit path.
+func TestEmbeddedMetadataObjectGateLivePaths(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt create tests")
+	}
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "mog")
+
+	// create: array and scalar --metadata are rejected on the live single-issue path.
+	for _, bad := range []string{`[1,2,3]`, `42`, `"str"`, `true`} {
+		out := bdCreateFail(t, bd, dir, "gate check", "-t", "task", "--metadata", bad)
+		if !strings.Contains(out, "must be a JSON object") {
+			t.Fatalf("create --metadata %s: expected object-gate error, got: %s", bad, out)
+		}
+	}
+
+	// create: object and null still succeed.
+	obj := bdCreate(t, bd, dir, "obj meta", "-t", "task", "--metadata", `{"k":"v"}`)
+	bdCreate(t, bd, dir, "null meta", "-t", "task", "--metadata", `null`)
+
+	// update: array --metadata rejected on the live update RunE path (both on an
+	// object-metadata bead and on an empty-metadata bead, which took the raw-write
+	// branch before the fix).
+	empty := bdCreate(t, bd, dir, "empty meta", "-t", "task")
+	for _, id := range []string{obj.ID, empty.ID} {
+		out := bdUpdateFail(t, bd, dir, id, "--metadata", `[9,9]`)
+		if !strings.Contains(out, "must be a JSON object") {
+			t.Fatalf("update %s --metadata [9,9]: expected object-gate error, got: %s", id, out)
+		}
+	}
+
+	// The object bead is still editable via --set-metadata (not locked out).
+	bdUpdate(t, bd, dir, obj.ID, "--set-metadata", "k2=v2")
+	got := bdShow(t, bd, dir, obj.ID)
+	if !strings.Contains(string(got.Metadata), "k2") {
+		t.Fatalf("expected --set-metadata to add k2, got metadata: %s", got.Metadata)
+	}
+}
+
 // TestEmbeddedCreateCrossRepo verifies that bd create --repo routes to a different
 // repo's embedded dolt store, creates the issue there, and commits it.
 func TestEmbeddedCreateCrossRepo(t *testing.T) {

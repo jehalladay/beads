@@ -253,6 +253,11 @@ var createCmd = &cobra.Command{
 			if !json.Valid([]byte(metadataJSON)) {
 				return HandleError("invalid JSON in --metadata: must be valid JSON")
 			}
+			// This is the live single-issue create path; gatherCreateInput's
+			// gate covers only the batch path (beads-eum2/ef2k).
+			if !metadataIsJSONObject(metadataJSON) {
+				return HandleError(`--metadata must be a JSON object, e.g. {"key":"value"} (arrays and scalars can't be edited by --set-metadata/--unset-metadata)`)
+			}
 			metadata = json.RawMessage(metadataJSON)
 		}
 
