@@ -96,13 +96,17 @@ func (e *Evaluator) canUseFilterOnly(node Node) bool {
 		if n.Field == "owner" {
 			return false
 		}
-		// A bare `field!=value` can only be expressed as a filter for the two
+		// A bare `field!=value` can only be expressed as a filter for the
 		// fields that have dedicated exclusion columns (status->ExcludeStatus,
-		// type->ExcludeTypes). For every other field the apply*Filter path
-		// hard-errors on != even though build*Predicate handles it fine, so
-		// route those to predicate mode (beads-pqrn) — mirroring the owner
-		// force-route above.
-		if n.Op == OpNotEquals && n.Field != "status" && n.Field != "type" {
+		// type->ExcludeTypes, priority->ExcludePriority). For every other field
+		// the apply*Filter path hard-errors on != even though build*Predicate
+		// handles it fine, so route those to predicate mode (beads-pqrn) —
+		// mirroring the owner force-route above. priority was added to the
+		// filter path by beads-sgp3 (ExcludePriority) but this gate still forced
+		// it to predicate mode, so `priority!=N` never took its own filter sink
+		// and RequiresPredicate stayed true — a self-inconsistent land; keeping
+		// it here would leave the query package RED (beads-sgp3 follow-up).
+		if n.Op == OpNotEquals && n.Field != "status" && n.Field != "type" && n.Field != "priority" {
 			return false
 		}
 		return true
