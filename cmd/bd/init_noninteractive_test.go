@@ -166,11 +166,28 @@ func TestInitNonInteractiveAutoExportDefaultOffAndOptIn(t *testing.T) {
 	}
 }
 
+// initTestBDEnv returns a hermetic environment for the init subprocess tests:
+// it drops any BEADS_-prefixed vars so a crew's ambient dolt-server settings
+// (e.g. BEADS_DOLT_SERVER_HOST on a shared cluster node) don't force `bd init`
+// into a server-mode conflict ("dolt.host set via environment but server mode
+// not enabled") when the test drives embedded mode (beads-0xjb). Mirrors the
+// BEADS_-strip in autoExportDataLossTestEnv used by the other auto-export tests.
+func initTestBDEnv() []string {
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "BEADS_") {
+			continue
+		}
+		env = append(env, e)
+	}
+	return append(env, "BD_NON_INTERACTIVE=1")
+}
+
 func runBDStdoutForAutoExportInitTest(t *testing.T, bd, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(bd, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "BD_NON_INTERACTIVE=1")
+	cmd.Env = initTestBDEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("bd %v failed: %v", args, err)
@@ -182,7 +199,7 @@ func runBDForAutoExportInitTest(t *testing.T, bd, dir string, args ...string) st
 	t.Helper()
 	cmd := exec.Command(bd, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "BD_NON_INTERACTIVE=1")
+	cmd.Env = initTestBDEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("bd %v failed: %v\n%s", args, err, out)

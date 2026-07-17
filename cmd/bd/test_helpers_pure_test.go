@@ -305,6 +305,15 @@ func buildBDForInitTests(t *testing.T) string {
 		}
 		initTestBD = filepath.Join(tmpDir, bdBinary)
 		cmd := exec.Command("go", "build", "-tags", "gms_pure_go", "-o", initTestBD, ".")
+		// Force CGO on: these subprocess tests drive `bd init`, which uses
+		// embedded Dolt, and embedded Dolt requires a CGO build (a
+		// CGO_ENABLED=0 binary fails with "embedded Dolt requires a CGO
+		// build"). The ambient CGO_ENABLED can be 0 in some workspaces (e.g.
+		// the refinery clone on a shared cluster node), which produced
+		// spurious failures for these tests (beads-0xjb). Match the
+		// CGO_ENABLED=1 build convention already used by the integration
+		// harness and the other embedded-Dolt subprocess tests.
+		cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			initTestBDErr = fmt.Errorf("go build failed: %v\n%s", err, out)
 		}
