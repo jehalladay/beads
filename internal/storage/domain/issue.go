@@ -380,6 +380,20 @@ func (u *issueUseCaseImpl) update(ctx context.Context, id string, updates map[st
 			}
 		}
 	}
+	// Enforce the configured metadata schema, matching the direct DoltStore /
+	// embedded UpdateIssue wrappers. Without this the proxied-server/domain
+	// update path accepted schema-violating metadata that the direct path
+	// rejects (beads-lsbu). Uses the shared storage.ValidateMetadataIfConfigured
+	// (no-op unless metadata_validation=warn|error is configured).
+	if rawMeta, ok := updates["metadata"]; ok {
+		metaStr, err := storage.NormalizeMetadataValue(rawMeta)
+		if err != nil {
+			return fmt.Errorf("update: invalid metadata: %w", err)
+		}
+		if err := storage.ValidateMetadataIfConfigured(json.RawMessage(metaStr)); err != nil {
+			return fmt.Errorf("update: %w", err)
+		}
+	}
 	// Finalize: enforce the shared post-update invariants (title/estimate guards
 	// + ValidateWithCustom + content_hash) on this single-issue update path so
 	// the proxied/domain UPDATE matches the direct/embedded seam (beads-iu9f
