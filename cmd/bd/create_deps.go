@@ -52,7 +52,7 @@ func parseDepSpec(raw string) (domain.DependencySpec, error) {
 	}
 
 	if !spec.Type.IsValid() {
-		return domain.DependencySpec{}, fmt.Errorf("invalid dependency type %q (must be non-empty, max 50 chars); valid types: %s",
+		return domain.DependencySpec{}, fmt.Errorf("invalid dependency type %q (must be non-empty, max 32 chars); valid types: %s",
 			spec.Type, createDepsAcceptedTypeList())
 	}
 	if !spec.Type.IsWellKnown() {

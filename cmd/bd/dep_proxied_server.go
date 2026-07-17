@@ -152,7 +152,7 @@ func runDepAddProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 
 	dt := types.DependencyType(depType)
 	if !dt.IsValid() {
-		FatalErrorRespectJSON("invalid dependency type %q: must be non-empty and at most 50 characters", depType)
+		FatalErrorRespectJSON("invalid dependency type %q: must be non-empty and at most 32 characters", depType)
 	}
 
 	uw := openDepProxiedUOW(ctx)

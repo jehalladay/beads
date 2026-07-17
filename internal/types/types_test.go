@@ -678,7 +678,11 @@ func TestIssueCompoundHelpers(t *testing.T) {
 }
 
 func TestDependencyTypeIsValid(t *testing.T) {
-	// IsValid now accepts any non-empty string up to 50 chars (Decision 004)
+	// IsValid accepts any non-empty string up to 32 chars — matching the
+	// dependencies.type VARCHAR(32) column (0002_create_dependencies.up.sql).
+	// The old <=50 bound (Decision 004) was never storable: 33-50 char types
+	// passed IsValid then failed at insert with a raw "too large for column"
+	// error (beads-25mb). The cap is aligned to the schema's real limit.
 	tests := []struct {
 		depType DependencyType
 		valid   bool
@@ -694,10 +698,12 @@ func TestDependencyTypeIsValid(t *testing.T) {
 		{DepAuthoredBy, true},
 		{DepAssignedTo, true},
 		{DepApprovedBy, true},
-		{DependencyType("custom-type"), true}, // Custom types are now valid
-		{DependencyType("any-string"), true},  // Any non-empty string is valid
-		{DependencyType(""), false},           // Empty is still invalid
-		{DependencyType("this-is-a-very-long-dependency-type-that-exceeds-fifty-characters"), false}, // Too long
+		{DependencyType("custom-type"), true},                     // Custom types are valid
+		{DependencyType("any-string"), true},                      // Any non-empty string is valid
+		{DependencyType(""), false},                               // Empty is still invalid
+		{DependencyType("abcdefghijklmnopqrstuvwxyz012345"), true}, // exactly 32 chars — at the column limit
+		{DependencyType("abcdefghijklmnopqrstuvwxyz0123456"), false}, // 33 chars — exceeds VARCHAR(32)
+		{DependencyType("this-is-a-very-long-dependency-type-that-exceeds-fifty-characters"), false}, // way too long
 	}
 
 	for _, tt := range tests {
