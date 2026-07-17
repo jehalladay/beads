@@ -233,6 +233,17 @@ func (r *configSQLRepositoryImpl) GetAdaptiveIDConfig(ctx context.Context) (doma
 		}
 	}
 
+	// Config values are user-writable (bd config set min_hash_length ...) and
+	// parsed with no bounds check, so a zero/negative/inverted value could
+	// otherwise flow into ComputeAdaptiveLength → GenerateHashID → a crash or a
+	// zero-length ID (beads-722j). Floor both to >=1 and keep Min<=Max.
+	if cfg.MinLength < 1 {
+		cfg.MinLength = 1
+	}
+	if cfg.MaxLength < cfg.MinLength {
+		cfg.MaxLength = cfg.MinLength
+	}
+
 	return cfg, nil
 }
 

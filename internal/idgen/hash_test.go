@@ -5,6 +5,30 @@ import (
 	"time"
 )
 
+func TestEncodeBase36NonPositiveLength(t *testing.T) {
+	// A negative length must not panic (make([]byte, 0, length) would crash
+	// with "makeslice: cap out of range"); it and zero yield "" (beads-722j).
+	for _, length := range []int{-1, -100, 0} {
+		got := EncodeBase36([]byte{0xff, 0xff, 0xff}, length)
+		if got != "" {
+			t.Errorf("EncodeBase36(_, %d) = %q, want empty string", length, got)
+		}
+	}
+}
+
+func TestGenerateHashIDNonPositiveLengthDoesNotPanic(t *testing.T) {
+	// Reachable from a corrupt min_hash_length config → ComputeAdaptiveLength
+	// returns a negative length → GenerateHashID. Must not crash bd create.
+	ts := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	for _, length := range []int{-1, 0} {
+		got := GenerateHashID("bd", "t", "d", "actor", ts, length, 0)
+		// With an empty hash body the ID collapses to the prefix + "-".
+		if got != "bd-" {
+			t.Errorf("GenerateHashID length=%d = %q, want %q", length, got, "bd-")
+		}
+	}
+}
+
 func TestGenerateHashIDMatchesJiraVector(t *testing.T) {
 	timestamp := time.Date(2024, 1, 2, 3, 4, 5, 6*1_000_000, time.UTC)
 	prefix := "bd"

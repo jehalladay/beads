@@ -12,8 +12,17 @@ import (
 const base36Alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 // EncodeBase36 converts a byte slice to a base36 string of specified length.
-// Matches the algorithm used for bd hash IDs.
+// Matches the algorithm used for bd hash IDs. A non-positive length yields the
+// empty string rather than panicking: make([]byte, 0, length) crashes with
+// "makeslice: cap out of range" on a negative length, which is reachable from a
+// corrupt/hostile min_hash_length config value flowing through
+// ComputeAdaptiveLength → GenerateHashID (beads-722j). Returning "" here keeps
+// the len==0 behavior and stops any negative length from crashing bd create.
 func EncodeBase36(data []byte, length int) string {
+	if length <= 0 {
+		return ""
+	}
+
 	// Convert bytes to big integer
 	num := new(big.Int).SetBytes(data)
 
