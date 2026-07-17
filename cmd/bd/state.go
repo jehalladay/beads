@@ -129,12 +129,10 @@ The --reason flag provides context for the event bead (recommended).`,
 		issueID := args[0]
 		stateSpec := args[1]
 
-		parts := strings.SplitN(stateSpec, "=", 2)
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			return HandleErrorRespectJSON("invalid state format %q, expected <dimension>=<value>", stateSpec)
+		dimension, newValue, ok := parseStateSpec(stateSpec)
+		if !ok {
+			return HandleErrorRespectJSON("invalid state format %q, expected <dimension>=<value> (or <dimension>:<value>)", stateSpec)
 		}
-		dimension := parts[0]
-		newValue := parts[1]
 
 		reason, _ := cmd.Flags().GetString("reason")
 
@@ -334,6 +332,37 @@ func init() {
 
 	rootCmd.AddCommand(stateCmd)
 	rootCmd.AddCommand(setStateCmd)
+}
+
+// parseStateSpec splits a "<dimension><sep><value>" state spec into its parts.
+// It accepts BOTH "=" and ":" as the separator (beads-zk8): the input Usage
+// documents "=", but the help examples and the STORED label form use ":"
+// (e.g. health:healthy), so a user copying a documented example must not fail.
+// The earliest separator wins so a value containing the other char is preserved.
+// Returns ok=false if either part is empty or no separator is present.
+func parseStateSpec(spec string) (dimension, value string, ok bool) {
+	eq := strings.IndexByte(spec, '=')
+	colon := strings.IndexByte(spec, ':')
+	var idx int
+	switch {
+	case eq == -1 && colon == -1:
+		return "", "", false
+	case eq == -1:
+		idx = colon
+	case colon == -1:
+		idx = eq
+	default:
+		idx = eq
+		if colon < eq {
+			idx = colon
+		}
+	}
+	dimension = spec[:idx]
+	value = spec[idx+1:]
+	if dimension == "" || value == "" {
+		return "", "", false
+	}
+	return dimension, value, true
 }
 
 // Ensure ctx is available
