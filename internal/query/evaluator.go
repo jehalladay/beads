@@ -34,11 +34,23 @@ type QueryResult struct {
 // Evaluator converts a query AST to an IssueFilter and/or predicate function.
 type Evaluator struct {
 	now time.Time
+	// customTypes are user-configured issue types (types.custom) that
+	// applyTypeFilter accepts in addition to the built-in work types. Empty
+	// when the caller has no custom types (or could not load them).
+	customTypes []string
 }
 
 // NewEvaluator creates a new Evaluator with the given reference time.
 func NewEvaluator(now time.Time) *Evaluator {
 	return &Evaluator{now: now}
+}
+
+// NewEvaluatorWithCustomTypes creates an Evaluator that also accepts the given
+// user-configured custom issue types in type= / type!= filters. Callers that
+// have a store should thread the configured types.custom list through here so
+// a query against a valid custom type is not falsely rejected.
+func NewEvaluatorWithCustomTypes(now time.Time, customTypes []string) *Evaluator {
+	return &Evaluator{now: now, customTypes: customTypes}
 }
 
 // Evaluate evaluates the query AST and returns a QueryResult.
@@ -270,7 +282,15 @@ func (e *Evaluator) applyTypeFilter(comp *ComparisonNode, filter *types.IssueFil
 	if comp.Op != OpEquals && comp.Op != OpNotEquals {
 		return fmt.Errorf("type only supports = and != operators")
 	}
-	issueType := types.IssueType(strings.ToLower(comp.Value))
+	// Normalize documented aliases (enhancement->feature, adr->decision, ...)
+	// then validate against the built-in work types plus any configured custom
+	// types. Without this, a typo'd type silently matched nothing and returned
+	// a false-empty rc=0 result — matching the status/priority sibling
+	// validators (beads-shux).
+	issueType := types.IssueType(strings.ToLower(comp.Value)).Normalize()
+	if !issueType.IsValidWithCustom(e.customTypes) {
+		return fmt.Errorf("invalid type: %s (expected one of %s)", comp.Value, types.ValidWorkTypesString())
+	}
 	if comp.Op == OpEquals {
 		filter.IssueType = &issueType
 	} else {
