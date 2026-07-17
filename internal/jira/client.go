@@ -541,7 +541,11 @@ func DescriptionToPlainText(raw json.RawMessage) string {
 		return string(raw)
 	}
 
-	// Extract text from ADF nodes
+	// Extract text from ADF nodes. An empty "paragraph" block is a blank line
+	// (PlainTextToADF emits one per blank line), so it must be preserved as an
+	// empty entry to keep interior paragraph breaks on round-trip (beads-hyg4).
+	// Non-paragraph blocks with no extractable text (e.g. an unhandled
+	// bulletList/table) are still skipped so they don't inject spurious blanks.
 	var parts []string
 	for _, block := range doc.Content {
 		var line []string
@@ -552,10 +556,22 @@ func DescriptionToPlainText(raw json.RawMessage) string {
 		}
 		if len(line) > 0 {
 			parts = append(parts, strings.Join(line, ""))
+		} else if block.Type == "paragraph" {
+			parts = append(parts, "")
 		}
 	}
 
-	return strings.Join(parts, "\n")
+	// Trim leading/trailing empty entries so a lone or edge blank paragraph
+	// still yields "" (unchanged behavior); only INTERIOR blanks are kept.
+	start, end := 0, len(parts)
+	for start < end && parts[start] == "" {
+		start++
+	}
+	for end > start && parts[end-1] == "" {
+		end--
+	}
+
+	return strings.Join(parts[start:end], "\n")
 }
 
 // PlainTextToADF converts plain text to Jira's ADF (Atlassian Document Format).
