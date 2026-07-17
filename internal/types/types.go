@@ -644,33 +644,50 @@ func (t IssueType) IsValidWithCustom(customTypes []string) bool {
 }
 
 // Normalize maps issue type aliases to their canonical form.
-// For example, "enhancement" -> "feature".
-// Case-insensitive to match util.NormalizeIssueType behavior.
+// IssueTypeAliases is the SINGLE canonical shorthand→canonical alias table for
+// issue types, shared by the create/write path (IssueType.Normalize) and the
+// list/ready/update-filter path (utils.NormalizeIssueType). Keeping ONE map is
+// load-bearing: previously the two paths had DISJOINT alias tables, so
+// `bd create -t investigation` stored "spike" but `bd list -t investigation`
+// normalized to "investigation" and silently missed it (beads-9k6o). Keys are
+// lowercase; lookups lowercase the input.
+//
+// Note: "merge-request" is an orchestrator pseudo-type that is NOT a valid
+// first-class IssueType (IssueType.IsValid()==false) — it is queryable on the
+// filter path but the create path still rejects it via the post-Normalize
+// IsValid() check, so including "mr" here does not make merge-requests
+// hand-creatable.
+var IssueTypeAliases = map[string]IssueType{
+	"enhancement": TypeFeature,
+	"feat":        TypeFeature,
+	"dec":         TypeDecision,
+	"adr":         TypeDecision,
+	"investigation": TypeSpike,
+	"timebox":       TypeSpike,
+	"user-story":    TypeStory,
+	"user_story":    TypeStory,
+	"ms":            TypeMilestone,
+	"mr":            IssueType("merge-request"),
+	"mol":           TypeMolecule,
+}
+
+// Normalize expands issue-type aliases to their canonical form and folds the
+// case of canonical built-in names. For example, "enhancement" -> "feature",
+// "investigation" -> "spike", "BUG" -> "bug". Case-insensitive.
 func (t IssueType) Normalize() IssueType {
-	switch strings.ToLower(string(t)) {
-	case "enhancement", "feat":
-		return TypeFeature
-	case "dec", "adr":
-		return TypeDecision
-	case "investigation", "timebox":
-		return TypeSpike
-	case "user-story", "user_story":
-		return TypeStory
-	case "ms":
-		return TypeMilestone
-	default:
-		// Canonical built-in names are case-insensitive, matching the aliases
-		// above (which switch on the lowercased form). Without this, "BUG" /
-		// "Task" / "EPIC" stayed non-canonical and failed IsValid() while an
-		// alias like "ENHANCEMENT" worked in any case (beads-xsdh). Only fold
-		// case when the lowercased form is a built-in, so a legitimately
-		// mixed-case custom type (compared case-sensitively by
-		// IsValidWithCustom) round-trips unchanged.
-		if lowered := IssueType(strings.ToLower(string(t))); lowered.IsValid() {
-			return lowered
-		}
-		return t
+	if canonical, ok := IssueTypeAliases[strings.ToLower(string(t))]; ok {
+		return canonical
 	}
+	// Canonical built-in names are case-insensitive, matching the aliases
+	// (which look up the lowercased form). Without this, "BUG" / "Task" /
+	// "EPIC" stayed non-canonical and failed IsValid() while an alias like
+	// "ENHANCEMENT" worked in any case (beads-xsdh). Only fold case when the
+	// lowercased form is a built-in, so a legitimately mixed-case custom type
+	// (compared case-sensitively by IsValidWithCustom) round-trips unchanged.
+	if lowered := IssueType(strings.ToLower(string(t))); lowered.IsValid() {
+		return lowered
+	}
+	return t
 }
 
 // RequiredSection describes a recommended section for an issue type.
