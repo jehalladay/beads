@@ -131,7 +131,18 @@ func getLabelsIntoFromTable(ctx context.Context, tx DBTX, labelTable string, ids
 // AddLabelInTx adds a label to an issue and records an event within an existing
 // transaction. Automatically routes to wisp tables if the ID is an active wisp.
 // Uses INSERT IGNORE for idempotency.
+// maxLabelLen is the width of the label VARCHAR(255) column in both the
+// `labels` and `wisp_labels` tables (migrations 0003/0021). A label longer
+// than this otherwise reaches the INSERT and fails with a raw, value-echoing
+// "Error 1105 ... too large for column" — the standalone `bd label add` path
+// does NOT run Issue.Validate, so its length guard (beads-2953) does not cover
+// it. Guarding here closes that gap for AddLabel (beads-ho89).
+const maxLabelLen = 255
+
 func AddLabelInTx(ctx context.Context, tx DBTX, labelTable, eventTable, issueID, label, actor string) error {
+	if len(label) > maxLabelLen {
+		return fmt.Errorf("label must be %d characters or less (got %d)", maxLabelLen, len(label))
+	}
 	if labelTable == "" || eventTable == "" {
 		isWisp := IsActiveWispInTx(ctx, tx, issueID)
 		_, lt, et, _ := WispTableRouting(isWisp)
