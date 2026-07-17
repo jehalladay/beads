@@ -132,7 +132,14 @@ func GitHubIssueToBeads(gh *Issue, config *MappingConfig) *IssueConversion {
 func BeadsIssueToGitHubFields(issue *types.Issue, config *MappingConfig) map[string]interface{} {
 	fields := map[string]interface{}{
 		"title": issue.Title,
-		"body":  issue.Description,
+	}
+
+	// Omit an empty description so a local issue with no body does not
+	// overwrite (wipe) a non-empty body on the external issue during an
+	// update PATCH. Matches jira's intended guard (fieldmapper.go); see
+	// beads-fmb9. On create the empty body is a no-op either way.
+	if issue.Description != "" {
+		fields["body"] = issue.Description
 	}
 
 	// Build labels from type, priority, and status

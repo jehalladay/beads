@@ -145,8 +145,15 @@ func GitLabIssueToBeads(gl *Issue, config *MappingConfig) *IssueConversion {
 // BeadsIssueToGitLabFields converts a beads Issue to GitLab API update fields.
 func BeadsIssueToGitLabFields(issue *types.Issue, config *MappingConfig) map[string]interface{} {
 	fields := map[string]interface{}{
-		"title":       issue.Title,
-		"description": issue.Description,
+		"title": issue.Title,
+	}
+
+	// Omit an empty description so a local issue with no body does not
+	// overwrite (wipe) a non-empty description on the external issue during
+	// an update PUT. Matches jira's intended guard; see beads-fmb9. On create
+	// the empty description is a no-op either way.
+	if issue.Description != "" {
+		fields["description"] = issue.Description
 	}
 
 	// Build labels from type, priority, and status
