@@ -804,6 +804,17 @@ func (e *Evaluator) buildComparisonPredicate(comp *ComparisonNode) (func(*types.
 		return e.buildBoolPredicate(comp, func(i *types.Issue) bool { return i.IsTemplate })
 	case "has_metadata_key":
 		return e.buildHasMetadataKeyPredicate(comp)
+	case "mol_type":
+		return e.buildMolTypePredicate(comp)
+	case "parent":
+		// parent= is filter-only: applyParentFilter resolves transitive
+		// descendants against the store (a parent-child dependency-table lookup
+		// plus hierarchical-id fallback), which a pure in-memory predicate over
+		// a single issue cannot replicate. Rather than a predicate that silently
+		// mismatches the filter's descendant semantics, reject it in an
+		// OR/predicate context with a specific, actionable message — not the
+		// generic "unknown field" (beads-z6iy, option B).
+		return nil, fmt.Errorf("parent= is filter-only and cannot be combined with OR")
 	default:
 		if strings.HasPrefix(comp.Field, "metadata.") {
 			return e.buildMetadataPredicate(comp)
@@ -812,8 +823,34 @@ func (e *Evaluator) buildComparisonPredicate(comp *ComparisonNode) (func(*types.
 	}
 }
 
+// buildMolTypePredicate mirrors applyMolTypeFilter: mol_type is a plain column
+// compare, so it works identically in filter and predicate mode (beads-z6iy,
+// option A). Validates the value (parity with the filter's IsValid check) so an
+// invalid mol_type errors in OR mode instead of silently matching nothing.
+func (e *Evaluator) buildMolTypePredicate(comp *ComparisonNode) (func(*types.Issue) bool, error) {
+	mt := types.MolType(strings.ToLower(comp.Value))
+	if !mt.IsValid() {
+		return nil, fmt.Errorf("invalid mol_type: %s", comp.Value)
+	}
+	switch comp.Op {
+	case OpEquals:
+		return func(i *types.Issue) bool { return i.MolType == mt }, nil
+	case OpNotEquals:
+		return func(i *types.Issue) bool { return i.MolType != mt }, nil
+	default:
+		return nil, fmt.Errorf("mol_type does not support %s operator", comp.Op.String())
+	}
+}
+
 func (e *Evaluator) buildStatusPredicate(comp *ComparisonNode) (func(*types.Issue) bool, error) {
 	status := types.Status(strings.ToLower(comp.Value))
+	// Validate here too (mirroring applyStatusFilter): without this an invalid
+	// status in an OR/predicate context silently matched nothing (rc=0) instead
+	// of erroring — the filter-vs-predicate validation divergence (beads-bi4g),
+	// same class as the type-validation half of beads-123i.
+	if !status.IsValid() {
+		return nil, fmt.Errorf("invalid status: %s", comp.Value)
+	}
 	switch comp.Op {
 	case OpEquals:
 		return func(i *types.Issue) bool { return i.Status == status }, nil
@@ -1098,11 +1135,18 @@ func (e *Evaluator) buildSpecPredicate(comp *ComparisonNode) (func(*types.Issue)
 			return nil, fmt.Errorf("spec with wildcard only supports = and != operators")
 		}
 	}
+	// No wildcard: mirror applySpecFilter, which sets SpecIDPrefix=value
+	// unconditionally (a `spec_id LIKE 'value%'` PREFIX match). The predicate
+	// previously did an EXACT `SpecID==value` here, so `spec=abc` prefix-matched
+	// in AND/filter mode but exact-matched in an OR/predicate query — a silent
+	// context-dependent result (beads-dcww). The filter's prefix semantics are
+	// authoritative (IssueFilter/SQL express spec only as SpecIDPrefix, and the
+	// `*` wildcard is not lexable), so align the predicate to prefix.
 	switch comp.Op {
 	case OpEquals:
-		return func(i *types.Issue) bool { return i.SpecID == value }, nil
+		return func(i *types.Issue) bool { return strings.HasPrefix(i.SpecID, value) }, nil
 	case OpNotEquals:
-		return func(i *types.Issue) bool { return i.SpecID != value }, nil
+		return func(i *types.Issue) bool { return !strings.HasPrefix(i.SpecID, value) }, nil
 	default:
 		return nil, fmt.Errorf("spec does not support %s operator", comp.Op.String())
 	}
