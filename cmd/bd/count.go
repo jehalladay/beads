@@ -130,7 +130,7 @@ Examples:
 			filter.Assignee = &a
 		}
 		if issueType != "" {
-			t := types.IssueType(issueType)
+			t := issueTypeFilterValue(issueType)
 			filter.IssueType = &t
 		}
 		if len(labels) > 0 {
