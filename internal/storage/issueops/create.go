@@ -588,6 +588,15 @@ func PersistLabels(ctx context.Context, tx *sql.Tx, issue *types.Issue, actor, e
 	}
 	seen := make(map[string]struct{}, len(issue.Labels))
 	for _, label := range issue.Labels {
+		// Trim whitespace and skip empties, matching `bd label add`
+		// (cmd/bd/label.go). Without this, `bd create -l '  x  '` stored the
+		// label verbatim while queries and `bd label add/remove` normalize
+		// theirs, so the padded label became permanently unmatchable
+		// (beads-4g2h). Dedup on the trimmed value.
+		label = strings.TrimSpace(label)
+		if label == "" {
+			continue
+		}
 		if _, ok := seen[label]; ok {
 			continue
 		}
