@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -121,14 +120,14 @@ var showCmd = &cobra.Command{
 				if result != nil {
 					result.Close()
 				}
-				fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
+				reportItemError("Error fetching %s: %v", id, err)
 				continue
 			}
 			if result == nil || result.Issue == nil {
 				if result != nil {
 					result.Close()
 				}
-				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+				reportItemError("Issue %s not found", id)
 				continue
 			}
 			issue := result.Issue
