@@ -142,11 +142,20 @@ func sameRemoteRepository(a, b string) bool {
 	slugA, okA := remoteRepositorySlug(a)
 	slugB, okB := remoteRepositorySlug(b)
 	if okA && okB {
-		return slugA == slugB
+		// Case-insensitive: git hosts (GitHub/GitLab) treat owner/repo
+		// case-insensitively, so github.com/Owner/Repo and .../owner/repo are
+		// the same repo. Slugs include the host, so github.com/o/r and
+		// gitlab.com/o/r correctly compare UNEQUAL (beads-hbfz).
+		return strings.EqualFold(slugA, slugB)
 	}
-	return strings.TrimSpace(a) == strings.TrimSpace(b)
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
+// remoteRepositorySlug returns "host/owner/repo" for a git remote (or just the
+// path when no host can be extracted, e.g. a bare local path). Including the
+// host is required so two different repos on different hosts with the same
+// owner/repo path do not collapse to the same slug (beads-hbfz); the host is
+// dropped only when the URL genuinely has none.
 func remoteRepositorySlug(remote string) (string, bool) {
 	remote = strings.TrimSpace(strings.TrimSuffix(remote, "/"))
 	if remote == "" {
@@ -159,23 +168,34 @@ func remoteRepositorySlug(remote string) (string, bool) {
 		if len(parts) != 2 {
 			return "", false
 		}
-		return normalizeRemotePath(parts[1])
+		// parts[0] is "git@github.com" (or "github.com"); take the host after @.
+		host := parts[0]
+		if at := strings.LastIndex(host, "@"); at >= 0 {
+			host = host[at+1:]
+		}
+		return normalizeRemotePath(host, parts[1])
 	}
 
 	u, err := url.Parse(remote)
 	if err != nil {
 		return "", false
 	}
-	return normalizeRemotePath(u.Path)
+	return normalizeRemotePath(u.Host, u.Path)
 }
 
-func normalizeRemotePath(path string) (string, bool) {
+// normalizeRemotePath joins the host and the trimmed owner/repo path (dropping
+// a leading userinfo-free host is fine; host may be empty for pathless remotes).
+func normalizeRemotePath(host, path string) (string, bool) {
 	path = strings.TrimSpace(strings.Trim(path, "/"))
 	path = strings.TrimSuffix(path, ".git")
 	if path == "" {
 		return "", false
 	}
-	return path, true
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return path, true
+	}
+	return host + "/" + path, true
 }
 
 // RoutingConfig defines routing rules for issues
