@@ -120,6 +120,27 @@ func IsSecretKey(key string) bool {
 	return false
 }
 
+// RedactedSecretPlaceholder is the fixed string shown in place of a secret
+// config value when it is displayed (config list/show/set echo). It is a
+// constant (not derived from the value) so its length reveals nothing about
+// the underlying secret.
+const RedactedSecretPlaceholder = "<redacted>"
+
+// RedactSecretValue returns a display-safe rendering of a config value. For a
+// secret key (see IsSecretKey) with a non-empty value it returns
+// RedactedSecretPlaceholder; otherwise it returns the value unchanged. An empty
+// value is passed through so "(not set)" style messaging is preserved.
+//
+// Use this at every human/JSON display site (config list, config show, config
+// set/set-many echo). The single-value `config get` deliberately does NOT
+// redact — it is the explicit retrieval escape hatch for scripts.
+func RedactSecretValue(key, value string) string {
+	if value != "" && IsSecretKey(key) {
+		return RedactedSecretPlaceholder
+	}
+	return value
+}
+
 // isGitTracked returns true if the file at path is tracked by git
 // (i.e., has been git-added). Uses `git ls-files --error-unmatch`.
 func isGitTracked(path string) bool {
