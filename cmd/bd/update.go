@@ -475,7 +475,14 @@ create, update, show, or close operation).`,
 					}
 				}
 
-				// Find and remove existing parent-child dependency
+				// Find and remove ALL existing parent-child dependencies. A
+				// child can accumulate multiple parents (e.g. via `bd dep add X
+				// Y --type parent-child`, which has no single-parent guard), so
+				// removing only the first (the old `break`) left stale parent
+				// edges behind and silently corrupted the tree — wrong
+				// ready-work/blocked-state/descendant traversal (beads-94ia).
+				// --parent reparents to a single parent, so every prior parent
+				// edge must go.
 				deps, err := issueStore.GetDependencyRecords(ctx, result.ResolvedID)
 				if err != nil {
 					reportItemError("Error getting dependencies for %s: %v", id, err)
@@ -483,13 +490,18 @@ create, update, show, or close operation).`,
 					continue
 				}
 				for _, dep := range deps {
-					if dep.Type == types.DepParentChild {
-						if err := issueStore.RemoveDependency(ctx, result.ResolvedID, dep.DependsOnID, actor); err != nil {
-							reportItemError("Error removing old parent dependency: %v", err)
-						} else {
-							trackMutation(result)
-						}
-						break
+					if dep.Type != types.DepParentChild {
+						continue
+					}
+					// Skip the edge that already points at the desired parent so
+					// we neither drop-and-re-add it nor create a duplicate.
+					if dep.DependsOnID == newParent {
+						continue
+					}
+					if err := issueStore.RemoveDependency(ctx, result.ResolvedID, dep.DependsOnID, actor); err != nil {
+						reportItemError("Error removing old parent dependency: %v", err)
+					} else {
+						trackMutation(result)
 					}
 				}
 
