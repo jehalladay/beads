@@ -16,6 +16,12 @@ func (s *testSuite) TestDependencySQLRepository() {
 		s.Run("DifferentTypeIsRejected", s.depInsertConflictingType)
 		s.Run("MissingTargetIssueFailsFK", s.depInsertFKViolation)
 		s.Run("ThreadIDPersists", s.depInsertThreadID)
+		s.Run("RejectsTaskBlocksEpic", s.depInsertRejectsTaskBlocksEpic)
+		s.Run("RejectsEpicBlocksTask", s.depInsertRejectsEpicBlocksTask)
+		s.Run("AllowsTaskBlocksTask", s.depInsertAllowsTaskBlocksTask)
+		s.Run("AllowsEpicBlocksEpic", s.depInsertAllowsEpicBlocksEpic)
+		s.Run("AllowsCrossTypeNonBlocks", s.depInsertAllowsCrossTypeNonBlocks)
+		s.Run("RejectsMissingSource", s.depInsertRejectsMissingSource)
 	})
 	s.Run("Delete", func() {
 		s.Run("ReturnsFoundFalseOnMissingEdge", s.depDeleteMissingEdge)
