@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -493,9 +494,15 @@ func (c *Client) FetchAllWorkItemsMulti(ctx context.Context, projects []string, 
 
 // CreateWorkItem creates a new work item of the given type with the specified fields.
 func (c *Client) CreateWorkItem(ctx context.Context, typeName string, fields map[string]interface{}) (*WorkItem, error) {
-	ops := buildPatchOps(fields)
 	urlStr := addAPIVersion(c.apiBase() + "/wit/workitems/$" + url.PathEscape(typeName))
-	respBody, err := c.doRequest(ctx, http.MethodPost, urlStr, "application/json-patch+json", ops)
+	respBody, err := c.doRequest(ctx, http.MethodPost, urlStr, "application/json-patch+json", buildPatchOps(fields))
+	// beads-eotj: an unresolvable System.AssignedTo (e.g. a beads Owner email
+	// that is not an ADO org member) makes ADO 400-reject the ENTIRE patch. In
+	// that case, retry once WITHOUT the assignee — dropping just that field so
+	// the rest of the create still lands, rather than failing the whole push.
+	if err != nil && isAssigneeIdentityError(err, fields) {
+		respBody, err = c.doRequest(ctx, http.MethodPost, urlStr, "application/json-patch+json", buildPatchOps(withoutAssignee(fields)))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create work item: %w", err)
 	}
@@ -509,9 +516,13 @@ func (c *Client) CreateWorkItem(ctx context.Context, typeName string, fields map
 
 // UpdateWorkItem updates an existing work item's fields.
 func (c *Client) UpdateWorkItem(ctx context.Context, id int, fields map[string]interface{}) (*WorkItem, error) {
-	ops := buildPatchOps(fields)
 	urlStr := addAPIVersion(fmt.Sprintf("%s/wit/workitems/%d", c.apiBase(), id))
-	respBody, err := c.doRequest(ctx, http.MethodPatch, urlStr, "application/json-patch+json", ops)
+	respBody, err := c.doRequest(ctx, http.MethodPatch, urlStr, "application/json-patch+json", buildPatchOps(fields))
+	// beads-eotj: see CreateWorkItem — retry without the assignee on an
+	// identity-resolution 400 so a non-member Owner doesn't fail the whole update.
+	if err != nil && isAssigneeIdentityError(err, fields) {
+		respBody, err = c.doRequest(ctx, http.MethodPatch, urlStr, "application/json-patch+json", buildPatchOps(withoutAssignee(fields)))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to update work item: %w", err)
 	}
@@ -521,6 +532,40 @@ func (c *Client) UpdateWorkItem(ctx context.Context, id int, fields map[string]i
 		return nil, fmt.Errorf("failed to parse update response: %w", err)
 	}
 	return &item, nil
+}
+
+// isAssigneeIdentityError reports whether err is a 400 that plausibly stems
+// from an unresolvable System.AssignedTo identity, so the caller can retry
+// without it (beads-eotj). It requires the request to actually carry an
+// assignee (else there is nothing to drop) and the ADO error body to mention
+// the assigned-to field or identity resolution.
+func isAssigneeIdentityError(err error, fields map[string]interface{}) bool {
+	if _, ok := fields[FieldAssignedTo]; !ok {
+		return false
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	body := strings.ToLower(apiErr.Body)
+	return strings.Contains(body, "assignedto") ||
+		strings.Contains(body, "assigned to") ||
+		strings.Contains(body, "identity") ||
+		strings.Contains(body, "does not exist") ||
+		strings.Contains(body, "could not be resolved")
+}
+
+// withoutAssignee returns a shallow copy of fields with the assignee removed,
+// leaving the input map untouched (beads-eotj).
+func withoutAssignee(fields map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(fields))
+	for k, v := range fields {
+		if k == FieldAssignedTo {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // AddWorkItemLink adds a relation link from sourceID to the target work item URL.

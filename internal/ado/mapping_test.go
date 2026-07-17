@@ -1166,3 +1166,37 @@ func TestIssueToTrackerShortTitleUnchanged(t *testing.T) {
 		t.Errorf("short title changed: got %q, want %q", got, "Short title")
 	}
 }
+
+// TestIssueToTrackerPushesAssignee is the beads-eotj mapping teeth: when the
+// beads Owner is set, IssueToTracker must emit System.AssignedTo so ADO can
+// round-trip the assignee (unlike the bqeq trio).
+func TestIssueToTrackerPushesAssignee(t *testing.T) {
+	m := NewFieldMapper(nil, nil)
+
+	issue := &types.Issue{
+		Title:     "Assigned task",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Owner:     "dev@example.com",
+	}
+	fields := m.IssueToTracker(issue)
+	got, ok := fields[FieldAssignedTo]
+	if !ok {
+		t.Fatal("IssueToTracker did not emit System.AssignedTo for a bead with Owner set (beads-eotj)")
+	}
+	if got != "dev@example.com" {
+		t.Errorf("AssignedTo = %v, want %q", got, "dev@example.com")
+	}
+}
+
+// TestIssueToTrackerNoOwnerNoAssignee verifies an unset Owner does not emit an
+// empty System.AssignedTo (which would spuriously clear the ADO assignee).
+func TestIssueToTrackerNoOwnerNoAssignee(t *testing.T) {
+	m := NewFieldMapper(nil, nil)
+	issue := &types.Issue{Title: "No owner", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	fields := m.IssueToTracker(issue)
+	if _, ok := fields[FieldAssignedTo]; ok {
+		t.Error("IssueToTracker emitted System.AssignedTo for a bead with no Owner")
+	}
+}
