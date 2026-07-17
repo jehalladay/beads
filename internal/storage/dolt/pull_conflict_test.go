@@ -5,9 +5,13 @@ import (
 )
 
 // TestPullAutoResolveMetadataConflicts verifies that merge conflicts limited to
-// the metadata table are automatically resolved with "theirs" strategy (GH#2466).
-// This simulates the scenario where two machines each write different
-// dolt_auto_push_* values to the metadata table, causing recurring conflicts on pull.
+// the metadata table on a CONVERGENT key are automatically resolved with
+// "theirs" strategy (GH#2466). It uses last_import_time — the sole surviving
+// convergent metadata key after migrations 0030/0036 moved the churn-prone keys
+// (incl. dolt_auto_push_*) out of the committed metadata table — so the
+// beads-ka1n gate (metadataConflictsAreConvergent) permits the resolution.
+// Non-convergent identity keys (_project_id/repo_id/clone_id) instead fail
+// closed; that path is covered in the versioncontrolops gate tests.
 func TestPullAutoResolveMetadataConflicts(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -24,7 +28,7 @@ func TestPullAutoResolveMetadataConflicts(t *testing.T) {
 	}
 
 	// Insert a metadata row on the current branch and commit.
-	if _, err := db.ExecContext(ctx, "INSERT INTO metadata (`key`, value) VALUES ('dolt_auto_push_commit', 'aaa')"); err != nil {
+	if _, err := db.ExecContext(ctx, "INSERT INTO metadata (`key`, value) VALUES ('last_import_time', '2026-01-01T00:00:00Z')"); err != nil {
 		t.Fatalf("failed to insert metadata on current branch: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'local metadata')"); err != nil {
@@ -46,7 +50,7 @@ func TestPullAutoResolveMetadataConflicts(t *testing.T) {
 	if _, err := db.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", remoteBranch); err != nil {
 		t.Fatalf("failed to checkout remote branch: %v", err)
 	}
-	if _, err := db.ExecContext(ctx, "INSERT INTO metadata (`key`, value) VALUES ('dolt_auto_push_commit', 'bbb')"); err != nil {
+	if _, err := db.ExecContext(ctx, "INSERT INTO metadata (`key`, value) VALUES ('last_import_time', '2026-02-02T00:00:00Z')"); err != nil {
 		t.Fatalf("failed to insert metadata on remote branch: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'remote metadata')"); err != nil {
@@ -93,13 +97,13 @@ func TestPullAutoResolveMetadataConflicts(t *testing.T) {
 		t.Fatalf("failed to commit after auto-resolve: %v", err)
 	}
 
-	// Verify the metadata value is "theirs" (bbb from remote).
+	// Verify the metadata value is "theirs" (the remote timestamp).
 	var value string
-	if err := db.QueryRowContext(ctx, "SELECT value FROM metadata WHERE `key` = 'dolt_auto_push_commit'").Scan(&value); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT value FROM metadata WHERE `key` = 'last_import_time'").Scan(&value); err != nil {
 		t.Fatalf("failed to read resolved metadata: %v", err)
 	}
-	if value != "bbb" {
-		t.Errorf("expected metadata value 'bbb' (theirs), got %q", value)
+	if value != "2026-02-02T00:00:00Z" {
+		t.Errorf("expected metadata value '2026-02-02T00:00:00Z' (theirs), got %q", value)
 	}
 }
 
