@@ -89,14 +89,56 @@ fi
 # Lint changed code with auto-fix; block on remaining issues.
 # CGO_ENABLED=0 avoids typecheck failures from CGO-only dependencies
 # (e.g., dolthub/go-icu-regex) that require system headers not always present.
-# --allow-serial-runners: golangci-lint takes a HARDCODED global file lock at
-# /tmp/golangci-lint.lock (shared across all crew on a node, NOT per cache dir).
-# Without this flag it EXITS WITH ERROR the instant a sibling crew is already
-# linting on the same shared /fsx node ("parallel golangci-lint is running"),
-# which would block the commit and push crew back to --no-verify — the exact
-# gate-bypass this hook exists to prevent (beads-ub3, follow-up to beads-24k).
-# With it, the hook waits for the lock and then runs.
-CGO_ENABLED=0 "$LINTER" run --new-from-rev=HEAD --allow-serial-runners --fix || exit 1
+#
+# SERIALIZATION under concurrent-commit load (beads-qre, follow-up to beads-ub3):
+# golangci-lint takes a HARDCODED global lock at /tmp/golangci-lint.lock (shared
+# across all crew on a node). --allow-serial-runners makes it WAIT for that lock
+# instead of erroring out — but golangci counts the wait against its OWN
+# analysis --timeout, so under load a queued run's timeout elapses while it is
+# still blocked on the lock and the commit is rejected even though no analysis
+# ran (pushing crew back to --no-verify). We fix that by taking OUR OWN flock
+# with a BOUNDED wait BEFORE invoking the linter, so the lock-wait is outside
+# golangci's timeout budget. We still pass --allow-serial-runners as a
+# belt-and-suspenders guard against golangci's own lock.
+#
+# If the bounded wait is exceeded (a sibling sweep held the lock too long), we
+# DEGRADE-TO-WARN and let the commit proceed rather than forcing --no-verify —
+# the same philosophy as the "couldn't obtain the pinned linter" fallback above.
+# CI (make ci-pr-lint) remains the hard gate, so nothing red reaches main.
+#
+# Knobs: BEADS_PRECOMMIT_LINT_LOCK (lock path; "" disables the flock wrapper),
+# BEADS_PRECOMMIT_LINT_LOCK_WAIT (bounded wait in seconds, default 120).
+LINT_LOCK="${BEADS_PRECOMMIT_LINT_LOCK-/tmp/golangci-lint.lock}"
+LINT_LOCK_WAIT="${BEADS_PRECOMMIT_LINT_LOCK_WAIT:-120}"
+
+run_linter() {
+    CGO_ENABLED=0 "$LINTER" run --new-from-rev=HEAD --allow-serial-runners --fix
+}
+
+lint_rc=0
+if [ -n "$LINT_LOCK" ] && command -v flock >/dev/null 2>&1; then
+    # -w bounds the wait OUTSIDE golangci's timeout; -E 75 marks "lock not
+    # acquired in time" distinctly from a real lint failure. flock runs
+    # run_linter (exported below) once the lock is held.
+    export LINTER
+    flock -w "$LINT_LOCK_WAIT" -E 75 "$LINT_LOCK" \
+        bash -c "$(declare -f run_linter); run_linter"
+    lint_rc=$?
+    if [ "$lint_rc" -eq 75 ]; then
+        cat >&2 <<EOF
+⚠️  pre-commit: golangci-lint's global lock was held by a concurrent run for
+    more than ${LINT_LOCK_WAIT}s (shared-node contention). Skipping the local
+    lint step for THIS commit rather than blocking you — CI (make ci-pr-lint)
+    will still enforce lint before the merge queue picks this up (beads-qre).
+EOF
+        lint_rc=0
+    fi
+else
+    run_linter
+    lint_rc=$?
+fi
+
+[ "$lint_rc" -eq 0 ] || exit 1
 
 # Re-stage any auto-fixes from the linter
 echo "$staged_go_files" | xargs git add
