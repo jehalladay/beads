@@ -209,25 +209,37 @@ func (u *dependencyUseCaseImpl) reparent(ctx context.Context, childID, newParent
 		return fmt.Errorf("reparent: list current parent: %w", err)
 	}
 
-	var oldParentID string
+	// Collect ALL existing parent-child edges, not just the first. A child can
+	// accumulate multiple parents (e.g. via `bd dep add X Y --type
+	// parent-child`, which has no single-parent guard). Deleting only the first
+	// left stale parent edges behind and silently corrupted the tree — wrong
+	// ready-work/blocked-state/descendant traversal (beads-94ia). The `--parent`
+	// flag reparents to a single parent, so every prior parent edge must go.
+	oldParentIDs := make([]string, 0, len(res.Outgoing[childID]))
+	newParentAlreadySet := false
 	for _, dep := range res.Outgoing[childID] {
-		if dep.Type == types.DepParentChild {
-			oldParentID = dep.DependsOnID
-			break
+		if dep.Type != types.DepParentChild {
+			continue
 		}
+		if dep.DependsOnID == newParentID {
+			newParentAlreadySet = true
+			continue
+		}
+		oldParentIDs = append(oldParentIDs, dep.DependsOnID)
 	}
 
-	if oldParentID == newParentID {
+	// Fast path: the only parent-child edge is already the desired one.
+	if newParentAlreadySet && len(oldParentIDs) == 0 {
 		return nil
 	}
 
-	if oldParentID != "" {
+	for _, oldParentID := range oldParentIDs {
 		if _, err := u.depRepo.Delete(ctx, childID, oldParentID, actor, opts); err != nil {
 			return fmt.Errorf("reparent: remove old parent %s: %w", oldParentID, err)
 		}
 	}
 
-	if newParentID != "" {
+	if newParentID != "" && !newParentAlreadySet {
 		dep := &types.Dependency{
 			IssueID:     childID,
 			DependsOnID: newParentID,

@@ -127,3 +127,61 @@ func assertParentLists(t *testing.T, tmpDir, parentID, childID string, shouldApp
 		t.Errorf("%s (child=%s, parent=%s)", msg, childID, parentID)
 	}
 }
+
+// parentChildCount returns how many parent-child dependencies childID has
+// (via `bd dep list <child> --json`), counting only "parent-child" edges.
+func parentChildCount(t *testing.T, tmpDir, childID string) int {
+	t.Helper()
+	cmd := exec.Command(testBD, "dep", "list", childID, "--json")
+	cmd.Dir = tmpDir
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("dep list %s failed: %v\n%s", childID, err, out)
+	}
+	// dep list --json shapes vary; count parent-child occurrences robustly by
+	// scanning the raw JSON for the type string. Each edge serializes its type
+	// once, so this counts edges.
+	return strings.Count(string(out), "parent-child")
+}
+
+// TestCLI_ReparentRemovesAllOldParents is the beads-94ia regression: a child
+// with MORE THAN ONE parent-child edge (added directly via `bd dep add ...
+// --type parent-child`, which has no single-parent guard) must have ALL prior
+// parent edges removed when reparented via `bd update --parent`, not just the
+// first. The buggy inline loop in update.go `break`ed after the first removal,
+// silently leaving stale parents that corrupt tree/ready-work/blocked-state.
+func TestCLI_ReparentRemovesAllOldParents(t *testing.T) {
+	if testDoltServerPort == 0 {
+		t.Skip("skipping: Dolt test container not available")
+	}
+	tmpDir := initExecTestDB(t)
+
+	child := createExecTestIssue(t, tmpDir, "child")
+	parentA := createExecTestIssue(t, tmpDir, "parent A")
+	parentB := createExecTestIssue(t, tmpDir, "parent B")
+	parentC := createExecTestIssue(t, tmpDir, "new parent C")
+
+	// Give the child TWO parents directly (no single-parent guard on dep add).
+	runBD(t, tmpDir, "dep", "add", child, parentA, "--type", "parent-child")
+	runBD(t, tmpDir, "dep", "add", child, parentB, "--type", "parent-child")
+	if got := parentChildCount(t, tmpDir, child); got != 2 {
+		t.Fatalf("setup: child should have 2 parent-child edges, got %d", got)
+	}
+
+	// Reparent to C via `bd update --parent`.
+	runBD(t, tmpDir, "update", child, "--parent", parentC)
+
+	// The child must now have exactly ONE parent-child edge (C). The bug left
+	// a stale edge behind (count would be 2: the un-removed old parent + C).
+	if got := parentChildCount(t, tmpDir, child); got != 1 {
+		t.Errorf("after reparent, child should have exactly 1 parent-child edge, got %d", got)
+	}
+	// It must appear under C and under neither A nor B.
+	assertParentLists(t, tmpDir, parentC, child, true,
+		"child should appear under new parent C after reparent")
+	assertParentLists(t, tmpDir, parentA, child, false,
+		"child must NOT remain under old parent A after reparent")
+	assertParentLists(t, tmpDir, parentB, child, false,
+		"child must NOT remain under old parent B after reparent (beads-94ia stale-parent bug)")
+}
