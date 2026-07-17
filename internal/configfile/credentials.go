@@ -69,8 +69,12 @@ func readPasswordFromFile(path string, sectionKey string) string {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 
-		// Strip inline comments
-		if idx := strings.Index(line, "#"); idx >= 0 {
+		// Strip comments. A '#' is only a comment marker when it starts the
+		// line (whole-line comment) or is preceded by whitespace (inline
+		// comment). A '#' with no preceding whitespace is a literal value
+		// character, so a password like "p#ssw0rd" is NOT truncated (beads-l9rx)
+		// while "password=myPass # note" still drops the trailing comment.
+		if idx := commentIndex(line); idx >= 0 {
 			line = strings.TrimSpace(line[:idx])
 		}
 		if line == "" {
@@ -99,4 +103,22 @@ func readPasswordFromFile(path string, sectionKey string) string {
 	}
 
 	return ""
+}
+
+// commentIndex returns the index of the '#' that begins a comment, or -1 if the
+// line has none. A '#' is a comment marker only when it is the first character
+// or is immediately preceded by a space or tab (standard INI convention). This
+// keeps a '#' that is part of a value (e.g. a password "p#ss") literal while
+// still stripping " # trailing comment". The line is assumed already trimmed of
+// leading whitespace, so index 0 is a whole-line comment.
+func commentIndex(line string) int {
+	for i := 0; i < len(line); i++ {
+		if line[i] != '#' {
+			continue
+		}
+		if i == 0 || line[i-1] == ' ' || line[i-1] == '\t' {
+			return i
+		}
+	}
+	return -1
 }
