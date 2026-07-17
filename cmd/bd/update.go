@@ -379,6 +379,21 @@ create, update, show, or close operation).`,
 			}
 			pendingCloseResults = nil
 		}
+		// Per-item errors: under --json, reportItemError writes a JSON object to
+		// stderr (beads-fg6, for PARTIAL success where stdout carries the updated
+		// array). When EVERY id fails, the terminal path also writes a JSON error
+		// object to stdout, so a `2>&1` consumer got TWO objects (beads-92tz). So
+		// under --json we DEFER per-item errors and flush them to stderr only if
+		// at least one issue updated (partial success); when nothing updates, the
+		// single terminal stdout object is the sole error and stderr stays clean.
+		var deferredItemErrors []string
+		reportUpdateItemError := func(format string, a ...interface{}) {
+			if jsonOutput {
+				deferredItemErrors = append(deferredItemErrors, fmt.Sprintf(format, a...))
+				return
+			}
+			reportItemError(format, a...)
+		}
 		for _, id := range args {
 			// Resolve and get issue with routing (e.g., gt-xyz routes to another rig)
 			result, err := resolveAndGetIssueForMutation(ctx, store, id)
@@ -386,21 +401,21 @@ create, update, show, or close operation).`,
 				if result != nil {
 					result.Close()
 				}
-				reportItemError("Error resolving %s: %v", id, err)
+				reportUpdateItemError("Error resolving %s: %v", id, err)
 				continue
 			}
 			if result == nil || result.Issue == nil {
 				if result != nil {
 					result.Close()
 				}
-				reportItemError("Issue %s not found", id)
+				reportUpdateItemError("Issue %s not found", id)
 				continue
 			}
 			issue := result.Issue
 			issueStore := result.Store
 
 			if err := validateIssueUpdatable(id, issue); err != nil {
-				reportItemError("%s", err)
+				reportUpdateItemError("%s", err)
 				closeIfUnmutated(result)
 				continue
 			}
@@ -477,7 +492,7 @@ create, update, show, or close operation).`,
 			// Handle claim operation atomically using compare-and-swap semantics
 			if claimFlag {
 				if err := issueStore.ClaimIssue(ctx, result.ResolvedID, actor); err != nil {
-					reportItemError("Error claiming %s: %v", id, err)
+					reportUpdateItemError("Error claiming %s: %v", id, err)
 					closeIfUnmutated(result)
 					continue
 				}
@@ -505,13 +520,14 @@ create, update, show, or close operation).`,
 			// server-side (issueStore.MergeMetadataWithCAS: re-read + re-merge +
 			// bounded retry on updated_at conflict), instead of the old client-
 			// side read-modify-write that lost concurrent edits (beads-fnp6). A
-			// merge failure is a per-item error (reportItemError + continue,
+			// merge failure is a per-item error (reportUpdateItemError + continue,
 			// never `return` out of the batch — that would poison the --json
-			// stdout contract).
+			// stdout contract; beads-92tz defers the object so an all-failed batch
+			// emits exactly one error object).
 			if newMeta, ok := regularUpdates["metadata"].(json.RawMessage); ok {
 				delete(regularUpdates, "metadata") // applied via CAS below, not whole-blob
 				if err := issueStore.MergeMetadataWithCAS(ctx, result.ResolvedID, newMeta, actor); err != nil {
-					reportItemError("metadata merge failed for %s: %v", id, err)
+					reportUpdateItemError("metadata merge failed for %s: %v", id, err)
 					closeIfUnmutated(result)
 					continue
 				}
@@ -527,7 +543,7 @@ create, update, show, or close operation).`,
 				unsetMeta, _ := updates["_unset_metadata"].([]string)
 				s, u, err := parseMetadataFieldEdits(setMeta, unsetMeta)
 				if err != nil {
-					reportItemError("metadata edit failed for %s: %v", id, err)
+					reportUpdateItemError("metadata edit failed for %s: %v", id, err)
 					closeIfUnmutated(result)
 					continue
 				}
@@ -544,7 +560,7 @@ create, update, show, or close operation).`,
 			}
 			if len(regularUpdates) > 0 {
 				if err := issueStore.UpdateIssue(ctx, result.ResolvedID, regularUpdates, actor); err != nil {
-					reportItemError("Error updating %s: %v", id, err)
+					reportUpdateItemError("Error updating %s: %v", id, err)
 					closeIfUnmutated(result)
 					continue
 				}
@@ -578,7 +594,7 @@ create, update, show, or close operation).`,
 			}
 			if len(setLabels) > 0 || len(addLabels) > 0 || len(removeLabels) > 0 {
 				if err := applyLabelUpdates(ctx, issueStore, result.ResolvedID, actor, setLabels, addLabels, removeLabels); err != nil {
-					reportItemError("Error updating labels for %s: %v", id, err)
+					reportUpdateItemError("Error updating labels for %s: %v", id, err)
 					closeIfUnmutated(result)
 					continue
 				}
@@ -591,12 +607,12 @@ create, update, show, or close operation).`,
 				if newParent != "" {
 					parentIssue, err := issueStore.GetIssue(ctx, newParent)
 					if err != nil {
-						reportItemError("Error getting parent %s: %v", newParent, err)
+						reportUpdateItemError("Error getting parent %s: %v", newParent, err)
 						closeIfUnmutated(result)
 						continue
 					}
 					if parentIssue == nil {
-						reportItemError("parent issue %s not found", newParent)
+						reportUpdateItemError("parent issue %s not found", newParent)
 						closeIfUnmutated(result)
 						continue
 					}
@@ -612,7 +628,7 @@ create, update, show, or close operation).`,
 				// edge must go.
 				deps, err := issueStore.GetDependencyRecords(ctx, result.ResolvedID)
 				if err != nil {
-					reportItemError("Error getting dependencies for %s: %v", id, err)
+					reportUpdateItemError("Error getting dependencies for %s: %v", id, err)
 					closeIfUnmutated(result)
 					continue
 				}
@@ -626,7 +642,7 @@ create, update, show, or close operation).`,
 						continue
 					}
 					if err := issueStore.RemoveDependency(ctx, result.ResolvedID, dep.DependsOnID, actor); err != nil {
-						reportItemError("Error removing old parent dependency: %v", err)
+						reportUpdateItemError("Error removing old parent dependency: %v", err)
 					} else {
 						trackMutation(result)
 					}
@@ -640,7 +656,7 @@ create, update, show, or close operation).`,
 						Type:        types.DepParentChild,
 					}
 					if err := issueStore.AddDependency(ctx, newDep, actor); err != nil {
-						reportItemError("Error adding parent dependency: %v", err)
+						reportUpdateItemError("Error adding parent dependency: %v", err)
 						closeIfUnmutated(result)
 						continue
 					}
@@ -694,16 +710,23 @@ create, update, show, or close operation).`,
 		}
 
 		if jsonOutput && len(updatedIssues) > 0 {
+			// Partial success: stdout carries the updated array; flush any
+			// deferred per-item failures to stderr as JSON objects (fg6 contract).
+			for _, msg := range deferredItemErrors {
+				reportItemError("%s", msg)
+			}
 			if jerr := outputJSON(updatedIssues); jerr != nil {
 				return jerr
 			}
 		}
 
 		if len(args) > 0 && firstUpdatedID == "" {
-			// Every requested ID failed (per-item errors already reported via
-			// reportItemError). Under --json, stdout is still empty here, so
-			// emit a stdout JSON error object to keep the failure parseable
-			// (beads-fg6) instead of a bare silent exit.
+			// Every requested ID failed. Under --json the deferred per-item
+			// errors were intentionally NOT flushed to stderr — the single
+			// stdout JSON error object below is the sole error output, so a
+			// `2>&1` consumer gets exactly one parseable object (beads-92tz);
+			// stdout is never left empty (beads-fg6). Non-JSON exits silently
+			// after the per-item stderr lines already printed.
 			if jsonOutput {
 				return HandleErrorRespectJSON("no issues updated matching the provided IDs")
 			}
