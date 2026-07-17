@@ -126,8 +126,14 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 	var exactMatch string
 
 	for _, issue := range issues {
-		// Check for exact full ID match first (case: user typed full ID with different prefix)
-		if issue.ID == input {
+		// Check for exact full ID match first (case: user typed full ID with different prefix).
+		// EqualFold (not ==): the issues.id column is binary-collated (case-sensitive)
+		// so the SQL substring path surfaces a lowercase-stored row for an
+		// uppercase-typed input, but this Go post-filter would then over-reject it
+		// on case. IDs are NOT canonically lowercase (e.g. gt-rig-polecat-TestAgent
+		// is stored with uppercase), so fold the comparison instead of lowercasing
+		// the input — EqualFold resolves in both directions (beads-ry0m).
+		if strings.EqualFold(issue.ID, input) {
 			exactMatch = issue.ID
 			break
 		}
@@ -143,13 +149,13 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 		}
 
 		// Check for exact hash match (excluding hierarchical children)
-		if issueHash == hashPart {
+		if strings.EqualFold(issueHash, hashPart) {
 			exactMatch = issue.ID
 			// Don't break - keep searching in case there's a full ID match
 		}
 
 		// Check if the issue hash contains the input hash as substring
-		if strings.Contains(issueHash, hashPart) {
+		if containsFold(issueHash, hashPart) {
 			matches = append(matches, issue.ID)
 		}
 	}
@@ -168,7 +174,7 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 		wispFilter := types.IssueFilter{Ephemeral: &ephTrue}
 		if wisps, wispErr := store.SearchIssues(ctx, searchPart, wispFilter); wispErr == nil {
 			for _, w := range wisps {
-				if w.ID == input {
+				if strings.EqualFold(w.ID, input) {
 					return w.ID, nil
 				}
 				var wHash string
@@ -177,10 +183,10 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 				} else {
 					wHash = w.ID
 				}
-				if wHash == hashPart {
+				if strings.EqualFold(wHash, hashPart) {
 					exactMatch = w.ID
 				}
-				if strings.Contains(wHash, hashPart) {
+				if containsFold(wHash, hashPart) {
 					matches = append(matches, w.ID)
 				}
 			}
@@ -199,6 +205,15 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 	}
 
 	return matches[0], nil
+}
+
+// containsFold reports whether substr occurs within s, case-insensitively.
+// Used for partial-ID hash substring matching so an uppercase-typed input
+// resolves a lowercase-stored id (and vice versa) — the case-fold companion to
+// the strings.EqualFold exact checks (beads-ry0m). IDs are ASCII hashes, so a
+// simple ToLower fold is sufficient and avoids per-rune Unicode-fold cost.
+func containsFold(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
 
 func partialIDSearchPart(hashPart string) (string, bool) {
