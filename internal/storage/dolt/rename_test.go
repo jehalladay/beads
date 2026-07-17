@@ -634,3 +634,71 @@ func TestUpdateIssueIDStillWorksForRegularIssues(t *testing.T) {
 		t.Fatalf("expected 1 rename event for new ID, got %d", eventCount)
 	}
 }
+
+// TestUpdateIssueIDMovesChildCounter verifies that renaming a parent issue
+// moves its child_counters row from oldID to newID rather than stranding it.
+//
+// beads-hoss claimed this stranded the counter because migration 0039 drops
+// fk_counter_parent and 0008 created it without ON UPDATE CASCADE. That premise
+// is INCORRECT: ignored migration 0002 (0002_create_wisp_child_counters) RE-ADDS
+// fk_counter_parent with ON DELETE CASCADE ON UPDATE CASCADE, so the runtime
+// schema cascades the counter automatically on an issues.id update. This test
+// is the regression guard for that cascade — if a future migration drops the
+// ON UPDATE CASCADE, the counter would strand and this test would fail.
+func TestUpdateIssueIDMovesChildCounter(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	parent := &types.Issue{
+		Title:     "Parent with a counter",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeEpic,
+	}
+	if err := store.CreateIssue(ctx, parent, "tester"); err != nil {
+		t.Fatalf("CreateIssue parent failed: %v", err)
+	}
+	oldID := parent.ID
+
+	// Allocate a child id — this upserts a child_counters row keyed on oldID.
+	if _, err := store.GetNextChildID(ctx, oldID); err != nil {
+		t.Fatalf("GetNextChildID failed: %v", err)
+	}
+	var beforeCnt int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM child_counters WHERE parent_id = ?`, oldID).Scan(&beforeCnt); err != nil {
+		t.Fatalf("count counter before rename: %v", err)
+	}
+	if beforeCnt != 1 {
+		t.Fatalf("expected 1 child_counters row under old ID before rename, got %d", beforeCnt)
+	}
+
+	newID := "test-renamed-parent"
+	parent.ID = newID
+	if err := store.UpdateIssueID(ctx, oldID, newID, parent, "tester"); err != nil {
+		t.Fatalf("UpdateIssueID failed: %v", err)
+	}
+
+	// Counter must have moved to newID.
+	var newCnt int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM child_counters WHERE parent_id = ?`, newID).Scan(&newCnt); err != nil {
+		t.Fatalf("count counter under new ID: %v", err)
+	}
+	if newCnt != 1 {
+		t.Fatalf("expected child_counters row moved to new ID, got %d", newCnt)
+	}
+
+	// No counter stranded under the old ID.
+	var oldCnt int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM child_counters WHERE parent_id = ?`, oldID).Scan(&oldCnt); err != nil {
+		t.Fatalf("count counter under old ID: %v", err)
+	}
+	if oldCnt != 0 {
+		t.Fatalf("expected no stranded child_counters row under old ID, got %d", oldCnt)
+	}
+}
