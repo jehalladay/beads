@@ -221,6 +221,21 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	}
 
 	srcIsWisp := writeTable == "wisp_dependencies"
+
+	// Record an audit event so dependency-graph mutations are visible in
+	// `bd history` (beads-1qt9). Mirrors the label add/remove event pattern;
+	// routes to wisp_events when the source is a wisp.
+	eventTable := "events"
+	if srcIsWisp {
+		eventTable = "wisp_events"
+	}
+	depAddComment := fmt.Sprintf("Added dependency: %s -> %s (%s)", dep.IssueID, dep.DependsOnID, dep.Type)
+	//nolint:gosec // G201: eventTable is a hardcoded constant ("events" or "wisp_events").
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)`, eventTable),
+		NewEventID(), dep.IssueID, types.EventDependencyAdded, actor, depAddComment); err != nil {
+		return fmt.Errorf("add dependency: record event: %w", err)
+	}
+
 	var affectedIssues, affectedWisps []string
 	var aerr error
 	if srcIsWisp {
@@ -723,6 +738,19 @@ func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID 
 		`DELETE FROM %s WHERE issue_id = ? AND %s = ?`, depTable, DepTargetExpr),
 		issueID, dependsOnID); err != nil {
 		return fmt.Errorf("remove dependency: %w", err)
+	}
+
+	// Record an audit event so dependency-graph mutations are visible in
+	// `bd history` (beads-1qt9). Routes to wisp_events when the source is a wisp.
+	removeEventTable := "events"
+	if isWisp {
+		removeEventTable = "wisp_events"
+	}
+	depRemoveComment := fmt.Sprintf("Removed dependency: %s -> %s (%s)", issueID, dependsOnID, depType)
+	//nolint:gosec // G201: removeEventTable is a hardcoded constant ("events" or "wisp_events").
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)`, removeEventTable),
+		NewEventID(), issueID, types.EventDependencyRemoved, "system", depRemoveComment); err != nil {
+		return fmt.Errorf("remove dependency: record event: %w", err)
 	}
 
 	var affectedIssues, affectedWisps []string
