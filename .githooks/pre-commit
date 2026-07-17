@@ -89,7 +89,14 @@ fi
 # Lint changed code with auto-fix; block on remaining issues.
 # CGO_ENABLED=0 avoids typecheck failures from CGO-only dependencies
 # (e.g., dolthub/go-icu-regex) that require system headers not always present.
-CGO_ENABLED=0 "$LINTER" run --new-from-rev=HEAD --fix || exit 1
+# --allow-serial-runners: golangci-lint takes a HARDCODED global file lock at
+# /tmp/golangci-lint.lock (shared across all crew on a node, NOT per cache dir).
+# Without this flag it EXITS WITH ERROR the instant a sibling crew is already
+# linting on the same shared /fsx node ("parallel golangci-lint is running"),
+# which would block the commit and push crew back to --no-verify — the exact
+# gate-bypass this hook exists to prevent (beads-ub3, follow-up to beads-24k).
+# With it, the hook waits for the lock and then runs.
+CGO_ENABLED=0 "$LINTER" run --new-from-rev=HEAD --allow-serial-runners --fix || exit 1
 
 # Re-stage any auto-fixes from the linter
 echo "$staged_go_files" | xargs git add

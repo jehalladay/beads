@@ -14,8 +14,11 @@ source "$REPO_ROOT/scripts/ci/lib/timing.sh"
 cd "$REPO_ROOT"
 
 ci_time "gofmt check" -- make fmt-check
+# --allow-serial-runners: golangci-lint holds a global /tmp/golangci-lint.lock;
+# on shared /fsx CI/crew nodes a concurrent run would otherwise fail this step
+# with "parallel golangci-lint is running" instead of waiting (beads-ub3).
 ci_time "golangci-lint" -- \
-    golangci-lint run --timeout=5m --build-tags=gms_pure_go ./...
+    golangci-lint run --timeout=5m --allow-serial-runners --build-tags=gms_pure_go ./...
 
 # RESOURCE-SAFETY ratchet (beads-r06.4, Mayor ruling Option 2): block NEW
 # violations of the deferred linter classes (sqlclosecheck/contextcheck/
