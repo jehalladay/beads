@@ -62,7 +62,15 @@ var issueUpsertColumns = []string{
 	"content_hash", "title", "description", "design", "acceptance_criteria",
 	"notes", "status", "priority", "issue_type", "assignee",
 	"estimated_minutes", "started_at", "closed_at", "external_ref",
-	"source_repo", "close_reason", "metadata", "updated_at",
+	"source_repo", "close_reason", "metadata",
+	// owner/pinned/mol_type/work_type are user-mutable and written by the fresh
+	// INSERT above; without them here a `bd export → edit → re-import` over an
+	// EXISTING issue silently dropped edits to these fields (beads-kalv). They
+	// flow through issueUpsertAssignments, so the stale-reject/tie-row no-wipe
+	// guard (bd-hj85c) applies to them too. updated_at MUST stay last (it is the
+	// stale-guard comparison column).
+	"owner", "pinned", "mol_type", "work_type",
+	"updated_at",
 }
 
 // issueUpsertAssignments renders the ON DUPLICATE KEY UPDATE clause. With
