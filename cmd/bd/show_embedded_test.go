@@ -95,6 +95,55 @@ func TestEmbeddedShow(t *testing.T) {
 		}
 	})
 
+	// beads-92tz: `bd show <nonexistent> --json` must emit EXACTLY ONE JSON
+	// error object across both streams — on stdout, with stderr clean — so a
+	// 2>&1 consumer can json.load it. Previously the per-item reportItemError
+	// put a JSON object on stderr AND the terminal put one on stdout = two
+	// objects that broke json.load under 2>&1.
+	t.Run("show_all_failed_json_single_object", func(t *testing.T) {
+		cmd := exec.Command(bd, "show", "ts-nope-aaa", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Errorf("expected non-zero exit for all-nonexistent show, got success\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+		}
+		out := strings.TrimSpace(stdout.String())
+		var obj map[string]any
+		if jerr := json.Unmarshal([]byte(out), &obj); jerr != nil {
+			t.Fatalf("stdout is not a single JSON object: %v\nstdout:\n%s", jerr, out)
+		}
+		if _, ok := obj["error"]; !ok {
+			t.Errorf("expected an \"error\" field on stdout, got: %s", out)
+		}
+		// stderr must NOT also carry a JSON error object (that's the double-emit).
+		errStr := strings.TrimSpace(stderr.String())
+		if errStr != "" && json.Valid([]byte(errStr)) {
+			t.Errorf("stderr must be clean of a competing JSON error object on all-failed --json (beads-92tz); got:\n%s", errStr)
+		}
+	})
+
+	// Partial success must still route per-item errors to stderr (fg6): stdout
+	// stays a pure JSON array of the found issue; stderr reports the missing one.
+	t.Run("show_partial_json_stdout_array_stderr_error", func(t *testing.T) {
+		found := bdCreate(t, bd, dir, "Partial found", "--type", "task")
+		cmd := exec.Command(bd, "show", found.ID, "ts-missing-zzz", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, _ := runCommandBuffers(t, cmd)
+		out := strings.TrimSpace(stdout.String())
+		var arr []map[string]any
+		if jerr := json.Unmarshal([]byte(out), &arr); jerr != nil {
+			t.Fatalf("stdout must be a JSON array on partial success: %v\nstdout:\n%s", jerr, out)
+		}
+		if len(arr) != 1 {
+			t.Errorf("expected 1 found issue in stdout array, got %d\nstdout:\n%s", len(arr), out)
+		}
+		if !strings.Contains(stderr.String(), "ts-missing-zzz") {
+			t.Errorf("expected the missing id reported on stderr; got:\n%s", stderr.String())
+		}
+	})
+
 	t.Run("show_multiple_issues", func(t *testing.T) {
 		issue1 := bdCreate(t, bd, dir, "Multi 1", "--type", "task")
 		issue2 := bdCreate(t, bd, dir, "Multi 2", "--type", "task")
