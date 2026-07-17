@@ -153,11 +153,12 @@ func bdInit(t *testing.T, bd string, extraArgs ...string) (dir, beadsDir string,
 	return
 }
 
-// auditHasStatusChange reports whether the GC-survivable audit trail
+// auditHasFieldChange reports whether the GC-survivable audit trail
 // (.beads/interactions.jsonl) contains a field_change entry for issueID whose
-// field=="status" and new_value==wantNew. Used to assert that status-mutating
-// commands (close/update/reopen/defer) write the durable audit trail (beads-n4sn).
-func auditHasStatusChange(t *testing.T, dir, issueID, wantNew string) bool {
+// field==wantField and new_value==wantNew. Used to assert that field-mutating
+// commands (close/update/reopen/defer/assign/priority/edit) write the durable
+// audit trail via the shared auditIssueUpdate chokepoint (beads-n4sn).
+func auditHasFieldChange(t *testing.T, dir, issueID, wantField, wantNew string) bool {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir, ".beads", "interactions.jsonl"))
 	if err != nil {
@@ -179,11 +180,18 @@ func auditHasStatusChange(t *testing.T, dir, issueID, wantNew string) bool {
 			t.Fatalf("bad audit line %q: %v", line, err)
 		}
 		if e.Kind == "field_change" && e.IssueID == issueID &&
-			e.Extra["field"] == "status" && e.Extra["new_value"] == wantNew {
+			e.Extra["field"] == wantField && e.Extra["new_value"] == wantNew {
 			return true
 		}
 	}
 	return false
+}
+
+// auditHasStatusChange is the status-field convenience wrapper used by the
+// reopen/defer audit tests.
+func auditHasStatusChange(t *testing.T, dir, issueID, wantNew string) bool {
+	t.Helper()
+	return auditHasFieldChange(t, dir, issueID, "status", wantNew)
 }
 
 // bdInitInDir runs bd init --quiet in an existing dir. Fatals on failure.
