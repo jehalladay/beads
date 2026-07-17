@@ -79,7 +79,7 @@ func simulateCompaction(t *testing.T, bd, dir, beadsDir, database string) string
 	}
 
 	originalSize := len(issue.Description) + len(issue.Design)
-	if err := store.ApplyCompaction(ctx, id, 1, originalSize, 0, "simulated"); err != nil {
+	if err := store.ApplyCompaction(ctx, id, 1, originalSize, 0, "simulated", "tester"); err != nil {
 		store.Close()
 		t.Fatalf("apply compaction: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestEmbeddedRestoreConcurrent(t *testing.T) {
 			store.Close()
 			t.Fatalf("get issue %s: %v", id, err)
 		}
-		if err := store.ApplyCompaction(ctx, id, 1, len(issue.Description), 0, "sim"); err != nil {
+		if err := store.ApplyCompaction(ctx, id, 1, len(issue.Description), 0, "sim", "tester"); err != nil {
 			store.Close()
 			t.Fatalf("apply compaction %s: %v", id, err)
 		}

@@ -194,8 +194,8 @@ func GetLatestSnapshotInTx(ctx context.Context, tx *sql.Tx, issueID string) (*ty
 // returns the snapshot that was applied, or (nil, nil) when no snapshot exists.
 // The snapshot row is left in place as an audit trail.
 //
-// Restore is a destructive content-overwrite mutation, so it emits an
-// EventCompacted audit event (with the real actor) recording the level change,
+// Restore is a destructive content-overwrite mutation, so it emits a typed
+// EventRestored audit event (with the real actor) recording the level change,
 // symmetric with ApplyCompactionInTx and every other content mutation
 // (beads-ehtw). Compaction targets only real issues (never wisps) → "events".
 func RestoreFromSnapshotInTx(ctx context.Context, tx *sql.Tx, issueID string, actor string) (*types.IssueSnapshot, error) {
@@ -235,7 +235,7 @@ func RestoreFromSnapshotInTx(ctx context.Context, tx *sql.Tx, issueID string, ac
 	comment := fmt.Sprintf("Restored from snapshot: compaction level %d -> %d", snap.CompactionLevel, newLevel)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO events (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)`,
-		NewEventID(), issueID, types.EventCompacted, actor, comment); err != nil {
+		NewEventID(), issueID, types.EventRestored, actor, comment); err != nil {
 		return nil, fmt.Errorf("restore issue %s: record event: %w", issueID, err)
 	}
 	return snap, nil

@@ -171,4 +171,5 @@ const (
 	EventLabelAdded        = types.EventLabelAdded
 	EventLabelRemoved      = types.EventLabelRemoved
 	EventCompacted         = types.EventCompacted
+	EventRestored          = types.EventRestored
 )
