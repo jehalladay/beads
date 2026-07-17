@@ -676,16 +676,51 @@ func toJSONValue(s string) json.RawMessage {
 	if s == "true" || s == "false" {
 		return json.RawMessage(s)
 	}
-	// Check for numbers (integer or float)
-	if _, err := fmt.Sscanf(s, "%f", new(float64)); err == nil {
-		// Verify it round-trips cleanly (not NaN, Inf, etc.)
-		if json.Valid([]byte(s)) {
-			return json.RawMessage(s)
-		}
+	// Check for numbers (integer or float). Only coerce when the value is a
+	// canonical JSON number that round-trips LOSSLESSLY — otherwise a big
+	// integer (snowflake/gh:run ID, >15-16 significant digits) would be stored
+	// as a lossy float, and a whitespace-padded or non-canonical form ("  3  ",
+	// "5.0") would silently change the user's value (beads-nj8y). Auto-typing of
+	// clean numbers (e.g. story_points=5) stays a blessed feature.
+	if isLosslessJSONNumber(s) {
+		return json.RawMessage(s)
 	}
 	// Default to JSON string
 	b, _ := json.Marshal(s)
 	return json.RawMessage(b)
+}
+
+// isLosslessJSONNumber reports whether s should be stored as a JSON number.
+// It requires that s is a canonical JSON number literal AND that it survives a
+// full round-trip through the float64 that a standard JSON consumer
+// (json.Unmarshal into interface{}) will read back — because that is how the
+// stored metadata is later decoded. This rejects:
+//   - non-canonical forms ("  3  ", "3 ", "5.0") — literal != re-encoding
+//   - integers beyond float64's exact range (>2^53, e.g. 18-30 digit IDs) —
+//     they'd read back as a lossy float, corrupting the value (beads-nj8y)
+//
+// while accepting clean small numbers (5, -3, 1.5) so the story_points=5 style
+// auto-typing stays intact.
+func isLosslessJSONNumber(s string) bool {
+	// Must be a canonical number literal: the json.Number token must equal the
+	// entire input (rejects surrounding whitespace and trailing garbage).
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+	var num json.Number
+	if err := dec.Decode(&num); err != nil || num.String() != s || dec.More() {
+		return false
+	}
+	// The value must round-trip through float64 (how it is later read back) with
+	// no loss: re-encoding the parsed float must reproduce the original literal.
+	f, err := num.Float64()
+	if err != nil {
+		return false
+	}
+	b, err := json.Marshal(f)
+	if err != nil || string(b) != s {
+		return false
+	}
+	return true
 }
 
 func init() {
