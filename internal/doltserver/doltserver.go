@@ -42,6 +42,14 @@ import (
 // failures (GH#2670).
 var ErrServerNotRunning = errors.New("dolt server is not running")
 
+// openDB is the injectable seam used by EnsureGlobalDatabase and
+// FlushWorkingSet to obtain a *sql.DB. In production it opens a real MySQL
+// (Dolt) connection; tests override it to return a sqlmock DB so the query
+// logic can be exercised hermetically without a live Dolt server (beads-w103).
+var openDB = func(dsn string) (*sql.DB, error) {
+	return sql.Open("mysql", dsn)
+}
+
 // IgnoreNotRunning strips ErrServerNotRunning from err and returns any
 // remaining errors (typically cleanup failures). If the only error was the
 // sentinel, it returns nil. Handles both errors.Join (multi-unwrap) and
@@ -944,7 +952,7 @@ func EnsureGlobalDatabase(host string, port int, user, password string) error {
 		User:     user,
 		Password: password,
 	}.String()
-	db, err := sql.Open("mysql", dsn)
+	db, err := openDB(dsn)
 	if err != nil {
 		return fmt.Errorf("ensure global db: failed to open connection: %w", err)
 	}
@@ -982,7 +990,7 @@ func FlushWorkingSet(host string, port int) error {
 		Port: port,
 		User: "root",
 	}.String()
-	db, err := sql.Open("mysql", dsn)
+	db, err := openDB(dsn)
 	if err != nil {
 		return fmt.Errorf("flush: failed to open connection: %w", err)
 	}
