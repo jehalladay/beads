@@ -326,6 +326,18 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 		whereClauses = append(whereClauses, "status = ?")
 		args = append(args, *filter.Status)
 	}
+	// Multi-status IN filter — mirrors sqlbuild/filter.go so the in-tx
+	// read-your-writes path honors filter.Statuses like the live search path
+	// (beads-u9zr; without this the whole clause was silently dropped ->
+	// results ignored the status set = over-broad).
+	if len(filter.Statuses) > 0 {
+		placeholders := make([]string, len(filter.Statuses))
+		for i, s := range filter.Statuses {
+			placeholders[i] = "?"
+			args = append(args, string(s))
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("status IN (%s)", strings.Join(placeholders, ",")))
+	}
 	if len(filter.ExcludeStatus) > 0 {
 		placeholders := make([]string, len(filter.ExcludeStatus))
 		for i, s := range filter.ExcludeStatus {
@@ -357,6 +369,16 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 	if filter.PriorityMax != nil {
 		whereClauses = append(whereClauses, "priority <= ?")
 		args = append(args, *filter.PriorityMax)
+	}
+	// Exclude-priority — mirrors sqlbuild/filter.go so the in-tx read path
+	// honors filter.ExcludePriority (beads-u9zr; was silently dropped).
+	if len(filter.ExcludePriority) > 0 {
+		placeholders := make([]string, len(filter.ExcludePriority))
+		for i, p := range filter.ExcludePriority {
+			placeholders[i] = "?"
+			args = append(args, p)
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("priority NOT IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	if filter.IssueType != nil {
@@ -421,6 +443,16 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 		whereClauses = append(whereClauses, "due_at < ?")
 		args = append(args, filter.DueBefore.Format(time.RFC3339))
 	}
+	// started_at range — mirrors sqlbuild/filter.go so the in-tx read path
+	// honors filter.StartedAfter/StartedBefore (beads-u9zr; was silently dropped).
+	if filter.StartedAfter != nil {
+		whereClauses = append(whereClauses, "started_at > ?")
+		args = append(args, filter.StartedAfter.Format(time.RFC3339))
+	}
+	if filter.StartedBefore != nil {
+		whereClauses = append(whereClauses, "started_at < ?")
+		args = append(args, filter.StartedBefore.Format(time.RFC3339))
+	}
 
 	// Empty/null checks
 	if filter.EmptyDescription {
@@ -456,6 +488,19 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 		}
 		//nolint:gosec // G201: labelTable is hardcoded to "labels" or "wisp_labels"
 		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) IN (%s))", labelTable, strings.Join(placeholders, ", ")))
+	}
+
+	// Exclude-labels — mirrors sqlbuild/filter.go so the in-tx read path honors
+	// filter.ExcludeLabels (beads-u9zr; was silently dropped -> excluded issues
+	// leaked into the result set). Case-insensitive like the include clauses.
+	if len(filter.ExcludeLabels) > 0 {
+		placeholders := make([]string, len(filter.ExcludeLabels))
+		for i, label := range filter.ExcludeLabels {
+			placeholders[i] = "LOWER(?)"
+			args = append(args, label)
+		}
+		//nolint:gosec // G201: labelTable is hardcoded to "labels" or "wisp_labels"
+		whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (SELECT issue_id FROM %s WHERE LOWER(label) IN (%s))", labelTable, strings.Join(placeholders, ", ")))
 	}
 
 	// ID filtering
