@@ -115,6 +115,42 @@ func TestEmbeddedDefer(t *testing.T) {
 		}
 	})
 
+	// When every requested ID fails to resolve, defer must exit NON-ZERO
+	// (nothing was deferred) — not the previous unconditional rc=0 that made
+	// scripts read false success on total failure (beads-0l4c).
+	t.Run("defer_all_failed_exit_nonzero", func(t *testing.T) {
+		cmd := exec.Command(bd, "defer", "df-nope-aaa", "df-nope-bbb")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		_, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Errorf("expected non-zero exit when all defer IDs fail, got success\nstderr:\n%s", stderr.String())
+		}
+	})
+
+	// All requested IDs fail under --json: stdout must carry a parseable JSON
+	// error object, not be empty (beads-0l4c / beads-fg6 / beads-tx70).
+	t.Run("defer_all_failed_json_emits_stdout_error", func(t *testing.T) {
+		cmd := exec.Command(bd, "defer", "df-nope-ccc", "df-nope-ddd", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Errorf("expected non-zero exit when all IDs fail, got success\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+		}
+		out := strings.TrimSpace(stdout.String())
+		if out == "" {
+			t.Fatalf("stdout is empty on all-failed --json defer — must emit a JSON error object (beads-0l4c)\nstderr:\n%s", stderr.String())
+		}
+		var obj map[string]any
+		if jerr := json.Unmarshal([]byte(out), &obj); jerr != nil {
+			t.Fatalf("stdout is not a JSON object on all-failed --json defer: %v\nstdout:\n%s", jerr, out)
+		}
+		if _, ok := obj["error"]; !ok {
+			t.Errorf("expected an \"error\" field in the all-failed --json stdout object, got: %s", out)
+		}
+	})
+
 	// ===== With --until =====
 
 	t.Run("defer_until", func(t *testing.T) {
