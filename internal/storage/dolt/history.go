@@ -141,8 +141,63 @@ func (s *DoltStore) getIssueHistory(ctx context.Context, issueID string) ([]*iss
 		h.Issue = &issue
 		history = append(history, &h)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-	return history, rows.Err()
+	// beads-2gr: dolt_history_issues yields one row per commit in which the PK
+	// merely EXISTS, not per commit that changed it — so unrelated commits (that
+	// touched other issues) appear as spurious entries with the wrong committer.
+	// Collapse consecutive identical snapshots, keeping only commits where the
+	// issue's content actually changed. Rows are ordered commit_date DESC, so we
+	// keep a row iff it differs from the next-older row (or it is the oldest).
+	return dedupeHistory(history), nil
+}
+
+// dedupeHistory drops entries whose issue content is identical to the
+// next-older entry, leaving only the commits that actually modified the issue.
+// Input is ordered newest-first (commit_date DESC).
+func dedupeHistory(history []*issueHistory) []*issueHistory {
+	if len(history) <= 1 {
+		return history
+	}
+	deduped := make([]*issueHistory, 0, len(history))
+	for i, h := range history {
+		// Keep the oldest entry unconditionally; otherwise keep only when this
+		// snapshot differs from the immediately older one.
+		if i == len(history)-1 || !sameIssueSnapshot(h.Issue, history[i+1].Issue) {
+			deduped = append(deduped, h)
+		}
+	}
+	return deduped
+}
+
+// sameIssueSnapshot reports whether two issue snapshots have identical
+// user-visible content (the fields captured in the history query). It ignores
+// commit metadata (hash/committer/date) and the derived UpdatedAt timestamp.
+func sameIssueSnapshot(a, b *types.Issue) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	estEq := (a.EstimatedMinutes == nil) == (b.EstimatedMinutes == nil) &&
+		(a.EstimatedMinutes == nil || *a.EstimatedMinutes == *b.EstimatedMinutes)
+	closedEq := (a.ClosedAt == nil) == (b.ClosedAt == nil) &&
+		(a.ClosedAt == nil || a.ClosedAt.Equal(*b.ClosedAt))
+	return a.Title == b.Title &&
+		a.Description == b.Description &&
+		a.Design == b.Design &&
+		a.AcceptanceCriteria == b.AcceptanceCriteria &&
+		a.Notes == b.Notes &&
+		a.Status == b.Status &&
+		a.Priority == b.Priority &&
+		a.IssueType == b.IssueType &&
+		a.Assignee == b.Assignee &&
+		a.Owner == b.Owner &&
+		a.CreatedBy == b.CreatedBy &&
+		a.CloseReason == b.CloseReason &&
+		a.Pinned == b.Pinned &&
+		a.MolType == b.MolType &&
+		estEq && closedEq
 }
 
 // getIssueAsOf returns an issue as it existed at a specific commit or time
