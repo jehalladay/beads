@@ -116,6 +116,26 @@ func HandleErrorWithHintRespectJSON(message, hint string) error {
 	return &exitError{Code: 1}
 }
 
+// reportItemError reports a per-item failure inside a batch command that loops
+// over multiple IDs and `continue`s past individual failures (e.g. bd show, bd
+// update). Such commands cannot funnel a single error through RunE, so they
+// historically printed a bare plain-text "Error ..." line to stderr even under
+// --json, which breaks parsers (beads-fg6).
+//
+// Under --json it emits a structured JSON error object to STDERR — stdout is
+// reserved for the parseable success payload (partial success must keep stdout
+// a pure JSON array/object). Otherwise it prints plain text to stderr, matching
+// the pre-existing behavior. It does not return an error or change the exit
+// code; the caller decides the terminal outcome (see the all-failed paths that
+// emit a stdout JSON error via HandleErrorRespectJSON / SilentExit).
+func reportItemError(format string, args ...interface{}) {
+	if jsonOutput {
+		jsonStderrError(fmt.Sprintf(format, args...), "")
+		return
+	}
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+}
+
 func SilentExit() error {
 	return &exitError{Code: 1}
 }
