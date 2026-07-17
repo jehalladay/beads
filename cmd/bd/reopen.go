@@ -116,6 +116,16 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 		}
 
 		if hasError {
+			// If nothing was reopened at all, the batch wholly failed. Under
+			// --json, stdout is still empty here, so emit a stdout JSON error
+			// object to keep the failure parseable (beads-fg6/beads-tx70,
+			// matching the update and close batch paths) instead of a bare
+			// SilentExit that leaves --json consumers with empty stdout. When
+			// SOME issues reopened (partial success), their JSON array was
+			// already emitted above, so keep the plain non-zero exit.
+			if jsonOutput && len(reopenedIssues) == 0 {
+				return HandleErrorRespectJSON("no issues reopened matching the provided IDs")
+			}
 			return SilentExit()
 		}
 		return nil
