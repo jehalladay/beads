@@ -216,6 +216,45 @@ func (i *Issue) ValidateWithCustomStatuses(customStatuses []string) error {
 	return i.ValidateWithCustom(customStatuses, nil)
 }
 
+// validateFieldLengths rejects string fields that exceed the width of their
+// backing VARCHAR column. Without these guards an over-length value passes
+// Validate and then fails at INSERT/UPDATE with a raw, value-echoing
+// "Error 1105: string '...' is too large for column 'X'" (beads-2953). The
+// caps mirror the migration column widths: assignee/external_ref/await_id/
+// label VARCHAR(255), spec_id VARCHAR(1024). title is checked separately
+// (VARCHAR(500)) alongside the required-check.
+func (i *Issue) validateFieldLengths() error {
+	if len(i.Assignee) > 255 {
+		return fmt.Errorf("assignee must be 255 characters or less (got %d)", len(i.Assignee))
+	}
+	if i.ExternalRef != nil && len(*i.ExternalRef) > 255 {
+		return fmt.Errorf("external_ref must be 255 characters or less (got %d)", len(*i.ExternalRef))
+	}
+	if len(i.SpecID) > 1024 {
+		return fmt.Errorf("spec_id must be 1024 characters or less (got %d)", len(i.SpecID))
+	}
+	if len(i.AwaitID) > 255 {
+		return fmt.Errorf("await_id must be 255 characters or less (got %d)", len(i.AwaitID))
+	}
+	for _, label := range i.Labels {
+		if len(label) > 255 {
+			return fmt.Errorf("label must be 255 characters or less (got %d): %q", len(label), truncateForError(label))
+		}
+	}
+	return nil
+}
+
+// truncateForError shortens a value for inclusion in an error message so the
+// message stays readable and does not echo an entire over-length string
+// (contrast the raw SQL 1105 error, which dumps the whole value).
+func truncateForError(s string) string {
+	const max = 40
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
 // ValidateWithCustom checks if the issue has valid field values,
 // allowing custom statuses and types in addition to built-in ones.
 func (i *Issue) ValidateWithCustom(customStatuses, customTypes []string) error {
@@ -233,6 +272,9 @@ func (i *Issue) ValidateWithCustom(customStatuses, customTypes []string) error {
 	}
 	if !i.IssueType.IsValidWithCustom(customTypes) {
 		return fmt.Errorf("invalid issue type %q (valid types: %s; custom types require types.custom config, see 'bd types')", string(i.IssueType), ValidWorkTypesString())
+	}
+	if err := i.validateFieldLengths(); err != nil {
+		return err
 	}
 	if i.EstimatedMinutes != nil && *i.EstimatedMinutes < 0 {
 		return fmt.Errorf("estimated_minutes cannot be negative")
