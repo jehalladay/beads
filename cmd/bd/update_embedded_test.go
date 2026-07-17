@@ -177,6 +177,35 @@ func TestEmbeddedUpdateBatchAutoCommitDoesNotAdvanceHead(t *testing.T) {
 // The observable contract: with --json, stdout stays a valid JSON ARRAY of the
 // successfully-updated issues (A present, B absent); the per-item failure is on
 // stderr, never on stdout. Regression guard for beads-pqma.
+
+// seedNonObjectMetadata writes a non-object (scalar/array) JSON metadata value
+// directly to an issue via a raw working-set UPDATE, bypassing the ef2k CLI
+// input gate that rejects non-object --metadata. rawJSON must be valid JSON
+// (e.g. "42", `[1,2,3]`). The write lands in the same on-disk embedded working
+// set the next `bd` subprocess reads, so a subsequent metadata edit sees the
+// non-object value and errors as it would on an imported/legacy row (beads-d478).
+func seedNonObjectMetadata(t *testing.T, beadsDir, id, rawJSON string) {
+	t.Helper()
+	dataDir := filepath.Join(beadsDir, "embeddeddolt")
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil {
+		t.Fatalf("load config for metadata seed: %v", err)
+	}
+	db, cleanup, err := embeddeddolt.OpenSQL(t.Context(), dataDir, cfg.GetDoltDatabase(), "main")
+	if err != nil {
+		t.Fatalf("OpenSQL for metadata seed: %v", err)
+	}
+	defer func() {
+		if cerr := cleanup(); cerr != nil {
+			t.Errorf("cleanup seed db: %v", cerr)
+		}
+	}()
+	if _, err := db.ExecContext(t.Context(),
+		"UPDATE issues SET metadata = CAST(? AS JSON) WHERE id = ?", rawJSON, id); err != nil {
+		t.Fatalf("seed non-object metadata on %s: %v", id, err)
+	}
+}
+
 func TestEmbeddedUpdateBatchMetadataJSONContract(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt update tests")
@@ -184,15 +213,21 @@ func TestEmbeddedUpdateBatchMetadataJSONContract(t *testing.T) {
 	t.Parallel()
 
 	bd := buildEmbeddedBD(t)
-	dir, _, _ := bdInit(t, bd, "--prefix", "bm")
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "bm")
 
 	a := bdCreate(t, bd, dir, "Issue A")
 	b := bdCreate(t, bd, dir, "Issue B")
 
-	// Give B non-object (but valid-JSON) metadata so applyMetadataEdits fails
-	// on B: "existing metadata is not a JSON object". --metadata only checks
-	// json.Valid, so a bare number is accepted here.
-	bdUpdate(t, bd, dir, b.ID, "--metadata", "42")
+	// Give B non-object (but valid-JSON) metadata so the batch metadata edit
+	// fails on B: "existing metadata is not a JSON object". We seed it via a
+	// raw working-set UPDATE rather than `bd update --metadata 42`, because the
+	// ef2k input gate now rejects a non-object --metadata at the CLI ("must be
+	// a JSON object"). A non-object metadata row is still reachable in
+	// production via bd import's verbatim upsert and pre-ef2k legacy rows, so
+	// seeding it directly at the storage layer both reproduces the real state
+	// and keeps this test decoupled from the od9b reject-vs-warn import fork
+	// (beads-d478).
+	seedNonObjectMetadata(t, beadsDir, b.ID, "42")
 
 	// Batch --set-metadata over [A, B] under --json: A succeeds, B fails. The
 	// failure must land on stderr and stdout must remain a valid JSON array
