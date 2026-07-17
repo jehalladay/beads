@@ -65,6 +65,11 @@ func (p *doltSQLProvider) BeginTx(ctx context.Context) (Tx, error) {
 
 	_, err := conn.ExecContext(ctx, "START TRANSACTION;")
 	if err != nil {
+		// Release the pinned connection: no doltServerTx is constructed on this
+		// error path, so releaseConn() will never run. Without this the *sql.Conn
+		// leaks back to the pool as in-use on every failed begin, exhausting the
+		// pool under a flapping/degraded server.
+		_ = conn.Close()
 		return nil, fmt.Errorf("uow: failed to start transaction: %w", err)
 	}
 
