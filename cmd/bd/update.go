@@ -323,6 +323,14 @@ create, update, show, or close operation).`,
 
 		updatedIssues := []*types.Issue{}
 		var firstUpdatedID string // Track first successful update for last-touched
+		// Count items that completed the loop body without hitting a per-item
+		// failure `continue`. Every reportItemError path continues before the
+		// end-of-body success point, so processedCount < len(args) means at
+		// least one id failed — used to make the batch exit code honest
+		// (rc!=0 when any id failed), matching `bd close`/`bd delete` instead of
+		// the old "rc=0 if ANY id succeeded" which silently masked a bad id in a
+		// multi-id update (beads-4i20).
+		processedCount := 0
 		mutatedStores := map[storage.DoltStorage][]string{}
 		mutatedResults := map[*RoutedResult]bool{}
 		pendingCloseResults := []*RoutedResult{}
@@ -576,6 +584,8 @@ create, update, show, or close operation).`,
 			if firstUpdatedID == "" {
 				firstUpdatedID = result.ResolvedID
 			}
+			// This id completed the loop body without a failure `continue`.
+			processedCount++
 			closeIfUnmutated(result)
 		}
 
@@ -614,6 +624,17 @@ create, update, show, or close operation).`,
 			if jsonOutput {
 				return HandleErrorRespectJSON("no issues updated matching the provided IDs")
 			}
+			return SilentExit()
+		}
+		if processedCount < len(args) {
+			// A partial batch: some ids applied, at least one failed (already
+			// reported per-item via reportItemError). Return a non-zero exit so
+			// a caller scripting `bd update a b c ...` sees the failure instead
+			// of a misleading rc=0, matching `bd close`/`bd delete` which fail
+			// on any bad id (beads-4i20). Successes are preserved (their --json
+			// output was already emitted above); this only corrects the exit
+			// code, and stdout is not touched here so the pure-JSON contract for
+			// the emitted successes holds.
 			return SilentExit()
 		}
 		return nil

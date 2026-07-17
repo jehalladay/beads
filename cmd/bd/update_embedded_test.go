@@ -924,6 +924,37 @@ func TestEmbeddedUpdate(t *testing.T) {
 		}
 	})
 
+	t.Run("update_partial_batch_bad_id_exits_nonzero", func(t *testing.T) {
+		// beads-4i20: a multi-id update where one id is bad must exit non-zero
+		// (matching bd close/delete) instead of the old rc=0-if-any-succeeded,
+		// while still applying the good id (partial-apply is preserved).
+		good := bdCreate(t, bd, dir, "Partial batch good", "--type", "task")
+		missing := good.ID + "-nope-does-not-exist"
+		// bdUpdateFail asserts a non-zero exit code.
+		out := bdUpdateFail(t, bd, dir, good.ID, missing, "--priority", "0")
+		if !strings.Contains(out, missing) {
+			t.Errorf("expected the failed id %q to be reported; got:\n%s", missing, out)
+		}
+		// The good id must still have been updated (partial-apply preserved).
+		got := bdShow(t, bd, dir, good.ID)
+		if got.Priority != 0 {
+			t.Errorf("good id: expected priority 0 to be applied despite the bad sibling, got P%d", got.Priority)
+		}
+	})
+
+	t.Run("update_all_ids_good_exits_zero", func(t *testing.T) {
+		// Guard the happy path: when every id resolves, the batch still exits 0.
+		a := bdCreate(t, bd, dir, "All good A", "--type", "task")
+		b := bdCreate(t, bd, dir, "All good B", "--type", "task")
+		bdUpdate(t, bd, dir, a.ID, b.ID, "--priority", "1") // bdUpdate fails the test on non-zero exit
+		if got := bdShow(t, bd, dir, a.ID); got.Priority != 1 {
+			t.Errorf("a: expected priority 1, got P%d", got.Priority)
+		}
+		if got := bdShow(t, bd, dir, b.ID); got.Priority != 1 {
+			t.Errorf("b: expected priority 1, got P%d", got.Priority)
+		}
+	})
+
 	t.Run("update_dolt_commit", func(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "Dolt commit test", "--type", "task")
 		bdUpdate(t, bd, dir, issue.ID, "--status", "in_progress")
