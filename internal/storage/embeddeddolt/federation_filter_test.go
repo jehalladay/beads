@@ -186,6 +186,37 @@ func TestEmbeddedFilteredPushRoundTripOmitsExcluded(t *testing.T) {
 	}
 }
 
+// TestEmbeddedSyncStatusReturnsPartialOnError is the beads-628e regression:
+// SyncStatus must return a non-nil (partial) status even when the underlying
+// connection fails, mirroring the server DoltStore.SyncStatus contract. Before
+// the fix it returned (nil, err) on a withDBConn failure, and callers that
+// ignore the error (cmd/bd/federation.go runFederationStatus `status, _ := ...`)
+// then nil-derefed status.Peer in the render loop and panicked.
+func TestEmbeddedSyncStatusReturnsPartialOnError(t *testing.T) {
+	store, ctx := openFilterTestStore(t)
+
+	// Force the withDBConn path to fail: a closed store makes withDBConn return
+	// errClosed. A valid peer name keeps remoteRef valid so we reach that path
+	// (an invalid ref would take the early ValidateRef branch instead).
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	status, err := store.SyncStatus(ctx, "peer")
+	if err == nil {
+		t.Fatal("SyncStatus on a closed store = nil error, want a surfaced error")
+	}
+	if status == nil {
+		t.Fatal("SyncStatus returned a NIL status on error — regression: callers that ignore the error nil-deref/panic (beads-628e)")
+	}
+	if status.Peer != "peer" {
+		t.Errorf("partial status Peer = %q, want %q", status.Peer, "peer")
+	}
+	if status.LocalAhead != -1 || status.LocalBehind != -1 {
+		t.Errorf("partial status ahead/behind = %d/%d, want -1/-1 (unknown)", status.LocalAhead, status.LocalBehind)
+	}
+}
+
 // insertEphemeralIssue inserts an ephemeral (wisp) row directly into the
 // committed issues table. description/design/acceptance_criteria/notes are
 // TEXT NOT NULL with no default (migrations/0001), so the raw INSERT must

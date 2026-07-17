@@ -293,10 +293,11 @@ func runFederationStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	type peerStatus struct {
-		Status     *storage.SyncStatus
-		URL        string
-		Reachable  bool
-		ReachError string
+		Status      *storage.SyncStatus
+		URL         string
+		Reachable   bool
+		ReachError  string
+		StatusError string
 	}
 	var peerStatuses []peerStatus
 
@@ -305,14 +306,27 @@ func runFederationStatus(cmd *cobra.Command, args []string) error {
 			URL: remoteURLs[peer],
 		}
 
-		status, _ := ds.SyncStatus(ctx, peer)
-		ps.Status = status
+		// beads-628e: don't discard the SyncStatus error and never store a nil
+		// status — a backend may return (nil, err) (embeddeddolt did before the
+		// parity fix), and the render loop below dereferences ps.Status. Keep a
+		// non-nil placeholder so the peer still renders and surface the error.
+		if status, err := ds.SyncStatus(ctx, peer); err == nil && status != nil {
+			ps.Status = status
+		} else {
+			ps.Status = &storage.SyncStatus{Peer: peer, LocalAhead: -1, LocalBehind: -1}
+			if err != nil {
+				ps.StatusError = err.Error()
+			}
+		}
 
 		fetchErr := ds.Fetch(ctx, peer)
 		if fetchErr == nil {
 			ps.Reachable = true
-			status, _ = ds.SyncStatus(ctx, peer)
-			ps.Status = status
+			if status, err := ds.SyncStatus(ctx, peer); err == nil && status != nil {
+				ps.Status = status
+			} else if err != nil {
+				ps.StatusError = err.Error()
+			}
 		} else {
 			ps.ReachError = fetchErr.Error()
 		}
@@ -335,12 +349,22 @@ func runFederationStatus(cmd *cobra.Command, args []string) error {
 
 	for _, ps := range peerStatuses {
 		status := ps.Status
+		// beads-628e: defense-in-depth — never deref a nil status even if a
+		// future backend returns one. The collection loop already substitutes a
+		// placeholder, so this is belt-and-suspenders.
+		if status == nil {
+			status = &storage.SyncStatus{Peer: "(unknown)", LocalAhead: -1, LocalBehind: -1}
+		}
 		fmt.Printf("  %s  %s\n", ui.RenderAccent(status.Peer), ui.RenderMuted(ps.URL))
 
 		if ps.Reachable {
 			fmt.Printf("    %s Reachable\n", ui.RenderPass("✓"))
 		} else {
 			fmt.Printf("    %s Unreachable: %s\n", ui.RenderFail("✗"), ps.ReachError)
+		}
+
+		if ps.StatusError != "" {
+			fmt.Printf("    %s Status unavailable: %s\n", ui.RenderWarn("⚠"), ps.StatusError)
 		}
 
 		if status.LocalAhead >= 0 {
