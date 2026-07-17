@@ -3,13 +3,13 @@ package jira
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
@@ -288,13 +288,25 @@ func (t *Tracker) UpdateIssue(ctx context.Context, externalID string, issue *typ
 	return &ti, nil
 }
 
+// ErrNoTransitionAvailable indicates the Jira workflow offers no transition
+// whose target is the desired status. applyTransition is only called when the
+// current status already differs from the desired one, so this is a genuine
+// failure to apply the status change — not a no-op — and must be surfaced to
+// the caller rather than silently swallowed (beads-p9oq). The push loop then
+// counts it as an error instead of a successful Update, and the operator can
+// see that the status did not sync.
+var ErrNoTransitionAvailable = errors.New("jira: no workflow transition reaches the desired status")
+
 // applyTransition finds and applies the Jira workflow transition matching the given beads status.
-// If no matching transition is available (e.g., the issue is already in the target state or the
-// workflow doesn't permit the path), it silently succeeds.
+// The caller (UpdateIssue) only invokes this when the current status already differs from the
+// desired one, so if no matching transition exists the status change genuinely could not be
+// applied: it returns ErrNoTransitionAvailable rather than silently succeeding (beads-p9oq).
 func (t *Tracker) applyTransition(ctx context.Context, key string, status types.Status) error {
 	mapper := t.FieldMapper()
 	desiredName, ok := mapper.StatusToTracker(status).(string)
 	if !ok || desiredName == "" {
+		// The status does not map to any Jira state name — there is nothing to
+		// attempt, so this is a no-op rather than a failed transition.
 		return nil
 	}
 
@@ -309,8 +321,7 @@ func (t *Tracker) applyTransition(ctx context.Context, key string, status types.
 		}
 	}
 
-	debug.Logf("jira: no available transition to %q for %s (%d transitions checked)\n", desiredName, key, len(transitions))
-	return nil
+	return fmt.Errorf("%w: %q for %s (%d transitions available)", ErrNoTransitionAvailable, desiredName, key, len(transitions))
 }
 
 func (t *Tracker) FieldMapper() tracker.FieldMapper {
