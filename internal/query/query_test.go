@@ -294,6 +294,16 @@ func TestEvaluatorSimpleQueries(t *testing.T) {
 			},
 		},
 		{
+			// beads-sgp3: bare priority!=N must be expressible in filter-only
+			// mode (via ExcludePriority), mirroring status!=/type!=, instead of
+			// hard-erroring "priority != requires predicate filtering".
+			name:  "priority not equals",
+			query: "priority!=2",
+			expectFilter: func(f *types.IssueFilter) bool {
+				return len(f.ExcludePriority) == 1 && f.ExcludePriority[0] == 2
+			},
+		},
+		{
 			name:  "type equals",
 			query: "type=bug",
 			expectFilter: func(f *types.IssueFilter) bool {

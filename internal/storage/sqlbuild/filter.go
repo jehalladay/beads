@@ -101,6 +101,14 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 		whereClauses = append(whereClauses, "priority <= ?")
 		args = append(args, *filter.PriorityMax)
 	}
+	if len(filter.ExcludePriority) > 0 {
+		placeholders := make([]string, len(filter.ExcludePriority))
+		for i, p := range filter.ExcludePriority {
+			placeholders[i] = "?"
+			args = append(args, p)
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("priority NOT IN (%s)", strings.Join(placeholders, ",")))
+	}
 
 	if len(filter.IDs) > 0 {
 		placeholders := make([]string, len(filter.IDs))
