@@ -161,52 +161,50 @@ func TestEmbeddedHistory(t *testing.T) {
 
 	// ===== Nonexistent issue ID =====
 
-	t.Run("nonexistent_issue_empty_history", func(t *testing.T) {
-		out := bdHistory(t, bd, dir, "hi-nonexistent999")
-		if !strings.Contains(out, "No history") {
-			t.Errorf("expected 'No history' message for nonexistent issue, got: %s", out)
+	// beads-4skk: a nonexistent issue must ERROR (rc!=0) with a "not found"
+	// message, consistent with show/comments/children — not print "No history"
+	// rc=0, which was indistinguishable from an existing issue with no history.
+	t.Run("nonexistent_issue_errors", func(t *testing.T) {
+		out := bdHistoryFail(t, bd, dir, "hi-nonexistent999")
+		// The resolve layer phrases this as "no issue found matching" while the
+		// direct-lookup layer says "not found"; accept either — the contract is
+		// that a nonexistent id ERRORS (bdHistoryFail asserts rc!=0), not the
+		// exact wording.
+		if !strings.Contains(out, "not found") && !strings.Contains(out, "no issue found") {
+			t.Errorf("expected a not-found error for nonexistent issue, got: %s", out)
 		}
 	})
 
-	// --json must always produce parseable JSON, even when history is empty.
-	// Without this, consumers piping `bd history --json | jq` break on the
-	// empty case while every other --json subcommand returns valid JSON.
-	t.Run("nonexistent_issue_json_returns_empty_array", func(t *testing.T) {
+	// --json must still produce parseable JSON on the error path (a JSON error
+	// object, matching show/comments --json) so `bd history --json | jq` doesn't
+	// break — but the process must exit non-zero (beads-4skk).
+	t.Run("nonexistent_issue_json_errors_with_parseable_object", func(t *testing.T) {
 		cmd := exec.Command(bd, "history", "--json", "hi-nonexistent999")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		stdout, stderr, err := runCommandBuffers(t, cmd)
-		if err != nil {
-			t.Fatalf("bd history --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("expected nonzero exit for nonexistent issue, got success:\n%s", out)
 		}
-		s := strings.TrimSpace(stdout.String())
-		var entries []map[string]interface{}
-		if err := json.Unmarshal([]byte(s), &entries); err != nil {
-			t.Fatalf("expected valid JSON for empty history, got prose:\n%s\n(parse error: %v)", s, err)
+		s := strings.TrimSpace(string(out))
+		var obj map[string]interface{}
+		if jerr := json.Unmarshal([]byte(s), &obj); jerr != nil {
+			t.Fatalf("expected a parseable JSON error object, got prose:\n%s\n(parse error: %v)", s, jerr)
 		}
-		if len(entries) != 0 {
-			t.Errorf("expected empty array for nonexistent issue, got %d entries", len(entries))
+		if _, ok := obj["error"]; !ok {
+			t.Errorf("expected an \"error\" field in the JSON error object, got: %s", s)
 		}
 	})
 
-	// --limit combined with --json on empty history must still produce [].
-	// Guards against future reordering that might apply limit semantics
-	// before the empty-check and skip the JSON branch.
-	t.Run("nonexistent_issue_json_with_limit_returns_empty_array", func(t *testing.T) {
+	// Same on the --limit path: still errors non-zero (the existence check runs
+	// before limit handling).
+	t.Run("nonexistent_issue_json_with_limit_errors", func(t *testing.T) {
 		cmd := exec.Command(bd, "history", "--json", "--limit", "2", "hi-nonexistent999")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		stdout, stderr, err := runCommandBuffers(t, cmd)
-		if err != nil {
-			t.Fatalf("bd history --json --limit 2 failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
-		}
-		s := strings.TrimSpace(stdout.String())
-		var entries []map[string]interface{}
-		if err := json.Unmarshal([]byte(s), &entries); err != nil {
-			t.Fatalf("expected valid JSON for empty history with --limit, got prose:\n%s\n(parse error: %v)", s, err)
-		}
-		if len(entries) != 0 {
-			t.Errorf("expected empty array for nonexistent issue with --limit, got %d entries", len(entries))
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("expected nonzero exit for nonexistent issue with --limit, got:\n%s", out)
 		}
 	})
 

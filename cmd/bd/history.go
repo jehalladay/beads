@@ -36,7 +36,27 @@ Examples:
 		ctx := rootCtx
 		issueID := args[0]
 
-		history, err := store.History(ctx, issueID)
+		// Verify the issue exists first (with prefix routing), so a nonexistent
+		// ID errors rc!=0 like show/comments/children — rather than being
+		// indistinguishable from an existing issue that simply has no history
+		// (beads-4skk). This also routes History() to the owning rig's store.
+		result, err := resolveAndGetIssueWithRouting(ctx, store, issueID)
+		if err != nil {
+			if result != nil {
+				result.Close()
+			}
+			return HandleErrorRespectJSON("resolving %s: %v", issueID, err)
+		}
+		if result == nil || result.Issue == nil {
+			if result != nil {
+				result.Close()
+			}
+			return HandleErrorRespectJSON("issue %s not found", issueID)
+		}
+		defer result.Close()
+		issueID = result.ResolvedID
+
+		history, err := result.Store.History(ctx, issueID)
 		if err != nil {
 			return HandleErrorRespectJSON("failed to get history: %v", err)
 		}
