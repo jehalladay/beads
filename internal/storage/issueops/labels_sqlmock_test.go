@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -90,6 +91,44 @@ func TestAddLabelInTx(t *testing.T) {
 		mock.ExpectExec("INSERT IGNORE INTO labels").WillReturnError(errors.New("boom"))
 		if err := AddLabelInTx(context.Background(), tx, "labels", "events", "bd-1", "bug", "alice"); err == nil {
 			t.Fatal("expected wrapped label-insert error")
+		}
+	})
+
+	t.Run("over-length label is rejected before any write (beads-ho89)", func(t *testing.T) {
+		t.Parallel()
+		// No ExpectExec: the guard must reject BEFORE the INSERT, so a raw
+		// "Error 1105 too large for column" can never leak. A 256-char label
+		// exceeds the VARCHAR(255) column width.
+		_, mock, tx := beginMockTx(t)
+		tooLong := strings.Repeat("x", maxLabelLen+1)
+		err := AddLabelInTx(context.Background(), tx, "labels", "events", "bd-1", tooLong, "alice")
+		if err == nil {
+			t.Fatal("expected an over-length label to be rejected")
+		}
+		if !strings.Contains(err.Error(), "255 characters or less") {
+			t.Fatalf("error should name the limit, got: %v", err)
+		}
+		// Assert no INSERT/event write was attempted.
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("guard must reject before any DB write, but a query ran: %v", err)
+		}
+	})
+
+	t.Run("label at exactly the max length is allowed", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		atMax := strings.Repeat("y", maxLabelLen)
+		mock.ExpectExec(regexp.QuoteMeta("INSERT IGNORE INTO labels (issue_id, label) VALUES (?, ?)")).
+			WithArgs("bd-1", atMax).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectExec(regexp.QuoteMeta("INSERT INTO events (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)")).
+			WithArgs(sqlmock.AnyArg(), "bd-1", "label_added", "alice", "Added label: "+atMax).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		if err := AddLabelInTx(context.Background(), tx, "labels", "events", "bd-1", atMax, "alice"); err != nil {
+			t.Fatalf("label at exactly max length must be allowed: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
 		}
 	})
 
