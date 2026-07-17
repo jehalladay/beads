@@ -20,6 +20,21 @@ func writeTestConfigYAML(t *testing.T, beadsDir, contents string) {
 	}
 }
 
+// clearAmbientActorEnv unsets every environment variable that participates in
+// actor resolution (see resolveActor in main.go: BEADS_ACTOR > BD_ACTOR, plus
+// GT_ROLE which Gas Town crew/refinery sessions set). These tests write an
+// "actor: target-actor" config and assert it is rebound; without clearing the
+// ambient env the real session actor (e.g. the refinery's BD_ACTOR/GT_ROLE)
+// leaks in and overrides the target, so the tests pass in a bare shell but fail
+// under a crew/refinery process. t.Setenv also registers cleanup, restoring the
+// caller's environment when the test ends.
+func clearAmbientActorEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{"BEADS_ACTOR", "BD_ACTOR", "GT_ROLE"} {
+		t.Setenv(k, "")
+	}
+}
+
 type flagSnapshot struct {
 	value   string
 	changed bool
@@ -54,6 +69,7 @@ func restoreRootFlagState(t *testing.T, state map[string]flagSnapshot) {
 func TestPrepareSelectedCommandContext_RebindsTargetConfig(t *testing.T) {
 	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "")
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+	clearAmbientActorEnv(t)
 
 	callerDir := t.TempDir()
 	callerBeadsDir := filepath.Join(callerDir, ".beads")
@@ -134,6 +150,7 @@ func TestPrepareSelectedCommandContext_RebindsTargetConfig(t *testing.T) {
 func TestPrepareSelectedCommandContext_DoesNotMergeCallerConfigForUnsetKeys(t *testing.T) {
 	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "")
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+	clearAmbientActorEnv(t)
 
 	root := t.TempDir()
 	callerDir := filepath.Join(root, "caller")
