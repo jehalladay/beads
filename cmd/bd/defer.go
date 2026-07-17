@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/audit"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
@@ -123,9 +122,9 @@ Examples:
 				fmt.Fprintf(os.Stderr, "Error deferring %s: %v\n", fullID, err)
 				continue
 			}
-			// Audit log the defer status change (survives Dolt GC flatten),
-			// mirroring the CLI close/update paths (beads-n4sn).
-			audit.LogFieldChange(fullID, "status", oldStatus, string(types.StatusDeferred), actor, reason)
+			// Audit log the defer status change (survives Dolt GC flatten) via
+			// the shared cmd-layer chokepoint (beads-n4sn).
+			auditStatusChange(fullID, oldStatus, string(types.StatusDeferred), actor, reason)
 			deferredCount++
 
 			if jsonOutput {

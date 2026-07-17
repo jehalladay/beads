@@ -8,7 +8,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/steveyegge/beads/internal/audit"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/storage/uow"
@@ -114,7 +113,7 @@ func reopenProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string)
 	if oldStatus == "" {
 		oldStatus = "closed"
 	}
-	audit.LogFieldChange(id, "status", oldStatus, string(types.StatusOpen), actor, reason)
+	auditStatusChange(id, oldStatus, string(types.StatusOpen), actor, reason)
 	return reopenProxiedOutcome{id: id, before: current, after: res.Issue, reopened: res.Reopened}, true
 }
 
