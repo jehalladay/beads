@@ -1369,13 +1369,24 @@ func formatTreeNode(node *types.TreeNode, isBlocked bool) string {
 		line += " " + ui.RenderMuted(fmt.Sprintf("[%s]", node.EdgeFromParent))
 	}
 
-	// Add READY/BLOCKED indicator for root node
+	// Add READY/BLOCKED indicator for root node.
+	// Gate the styled (bold) render on ShouldUseColor(): lipgloss .Bold(true)
+	// emits ANSI (^[[1m…^[[m) even when the foreground is NoColor, so on a
+	// non-TTY/NO_COLOR sink we must render plain text to avoid escape noise
+	// in piped/parsed output (beads-s7x).
 	if node.Status == types.StatusOpen && node.Depth == 0 {
+		indicator := "[READY]"
 		if isBlocked {
-			line += " " + ui.FailStyle.Bold(true).Render("[BLOCKED]")
-		} else {
-			line += " " + ui.PassStyle.Bold(true).Render("[READY]")
+			indicator = "[BLOCKED]"
 		}
+		if ui.ShouldUseColor() {
+			style := ui.PassStyle
+			if isBlocked {
+				style = ui.FailStyle
+			}
+			indicator = style.Bold(true).Render(indicator)
+		}
+		line += " " + indicator
 	}
 
 	return line
