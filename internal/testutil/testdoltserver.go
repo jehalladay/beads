@@ -213,13 +213,34 @@ func StartIsolatedDoltContainer(t *testing.T) string {
 	return portStr
 }
 
-// ensureSharedContainer starts the singleton container and sets BEADS_DOLT_PORT.
+// ensureSharedContainer starts the singleton container and points the Dolt
+// server connection env vars at it.
+//
+// It must override BEADS_DOLT_SERVER_HOST and BEADS_DOLT_SERVER_PORT — not just
+// set the legacy BEADS_DOLT_PORT — because applyConfigDefaults resolves the
+// server endpoint from BEADS_DOLT_SERVER_{HOST,PORT} at HIGHER priority than
+// both the caller-set cfg.ServerPort and the legacy BEADS_DOLT_PORT. A Gas Town
+// crew shell exports BEADS_DOLT_SERVER_HOST/PORT pointing at the production town
+// hub (e.g. 172.31.26.56:3307); if we leave those in place, every store the
+// tests open connects to prod (which the BEADS_TEST_MODE guard then rewrites to
+// the unreachable port 1), so the whole DB-backed suite fails under a crew
+// shell even though it passes in a clean CI env. Overriding them here fixes it
+// centrally for every package that uses the shared container. In a clean env
+// these vars are unset, so pointing them at localhost:<testport> is a no-op
+// beyond what the defaults already resolve to.
 func ensureSharedContainer() {
 	doltServerOnce.Do(func() {
 		doltServerErr = startDoltContainer()
 		if doltServerErr == nil && doltTestPort != "" {
-			if err := os.Setenv("BEADS_DOLT_PORT", doltTestPort); err != nil {
-				doltServerErr = fmt.Errorf("set BEADS_DOLT_PORT: %w", err)
+			for k, v := range map[string]string{
+				"BEADS_DOLT_PORT":        doltTestPort,
+				"BEADS_DOLT_SERVER_PORT": doltTestPort,
+				"BEADS_DOLT_SERVER_HOST": "127.0.0.1",
+			} {
+				if err := os.Setenv(k, v); err != nil {
+					doltServerErr = fmt.Errorf("set %s: %w", k, err)
+					return
+				}
 			}
 		}
 	})
