@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
@@ -15,6 +18,58 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/metrics"
 )
+
+// defaultPreflightTimeout bounds each external check (go test / lint / gofmt)
+// so a slow or hung check can't block `bd preflight --check` indefinitely.
+// Override with BD_PREFLIGHT_TIMEOUT (a Go duration, e.g. "10m").
+const defaultPreflightTimeout = 5 * time.Minute
+
+// preflightCheckTimeout returns the per-check timeout, honoring the
+// BD_PREFLIGHT_TIMEOUT override and falling back to the default on an empty,
+// unparseable, or non-positive value.
+func preflightCheckTimeout() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("BD_PREFLIGHT_TIMEOUT")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultPreflightTimeout
+}
+
+// runBoundedCommand runs an external command with a per-check timeout, streams
+// its combined output live to stderr (so a long-running suite shows progress),
+// and — critically — runs the child in its own process group so that on
+// timeout the entire child tree is killed rather than orphaned. It returns the
+// captured output, whether the deadline fired, and the run error.
+func runBoundedCommand(name string, args ...string) (output []byte, timedOut bool, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), preflightCheckTimeout())
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	// Kill the whole process group (not just the direct child) on ctx expiry.
+	setProcessGroup(cmd)
+	cmd.Cancel = func() error { return killProcessGroup(cmd) }
+
+	// Tee output: capture for the CheckResult and stream live so the user sees
+	// progress instead of a silent hang.
+	var buf outputTee
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+
+	err = cmd.Run()
+	timedOut = ctx.Err() == context.DeadlineExceeded
+	return buf.Bytes(), timedOut, err
+}
+
+// timeoutMessage renders a friendly CheckResult output for a check that hit its
+// deadline, preserving whatever partial output was captured.
+func timeoutMessage(d time.Duration, partial []byte) string {
+	msg := fmt.Sprintf("check timed out after %s (raise with BD_PREFLIGHT_TIMEOUT, e.g. BD_PREFLIGHT_TIMEOUT=15m)", d)
+	if p := strings.TrimSpace(string(partial)); p != "" {
+		msg += "\nPartial output:\n" + p
+	}
+	return msg
+}
 
 // CheckResult represents the result of a single preflight check.
 type CheckResult struct {
@@ -209,11 +264,33 @@ func runChecks(jsonOutput, skipLint bool) error {
 	return nil
 }
 
+// outputTee captures command output into a buffer while streaming it live to
+// stderr, so a long check (e.g. the full test suite) shows progress instead of
+// hanging silently.
+type outputTee struct {
+	buf bytes.Buffer
+}
+
+func (t *outputTee) Write(p []byte) (int, error) {
+	os.Stderr.Write(p)
+	return t.buf.Write(p)
+}
+
+func (t *outputTee) Bytes() []byte { return t.buf.Bytes() }
+
 // runTestCheck runs go test -short ./... and returns the result.
 func runTestCheck() CheckResult {
 	command := "go test -tags gms_pure_go -short ./..."
-	cmd := exec.Command("go", "test", "-tags", "gms_pure_go", "-short", "./...")
-	output, err := cmd.CombinedOutput()
+	fmt.Fprintln(os.Stderr, "→ Running full test suite (this may take several minutes)...")
+	output, timedOut, err := runBoundedCommand("go", "test", "-tags", "gms_pure_go", "-short", "./...")
+	if timedOut {
+		return CheckResult{
+			Name:    "Tests pass",
+			Passed:  false,
+			Output:  timeoutMessage(preflightCheckTimeout(), output),
+			Command: command,
+		}
+	}
 
 	return CheckResult{
 		Name:    "Tests pass",
@@ -247,8 +324,16 @@ func runLintCheck(skipLint bool) CheckResult {
 		}
 	}
 
-	cmd := exec.Command("golangci-lint", "run", "--build-tags=gms_pure_go", "./...")
-	output, err := cmd.CombinedOutput()
+	fmt.Fprintln(os.Stderr, "→ Running golangci-lint...")
+	output, timedOut, err := runBoundedCommand("golangci-lint", "run", "--build-tags=gms_pure_go", "./...")
+	if timedOut {
+		return CheckResult{
+			Name:    "Lint passes",
+			Passed:  false,
+			Output:  timeoutMessage(preflightCheckTimeout(), output),
+			Command: command,
+		}
+	}
 
 	return CheckResult{
 		Name:    "Lint passes",
@@ -272,8 +357,15 @@ func runFmtCheck() CheckResult {
 		}
 	}
 
-	cmd := exec.Command("gofmt", "-l", ".")
-	output, err := cmd.CombinedOutput()
+	output, timedOut, err := runBoundedCommand("gofmt", "-l", ".")
+	if timedOut {
+		return CheckResult{
+			Name:    "Formatting",
+			Passed:  false,
+			Output:  timeoutMessage(preflightCheckTimeout(), output),
+			Command: command,
+		}
+	}
 
 	if err != nil {
 		return CheckResult{
