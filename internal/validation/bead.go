@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
@@ -64,6 +65,14 @@ func ValidatePriority(priorityStr string) (int, error) {
 func ValidateIDFormat(id string) (string, error) {
 	if id == "" {
 		return "", nil
+	}
+
+	// Reject whitespace outright. An ID is never legitimately spaced; a
+	// mis-quoted "--id ' bd-x1 '" would otherwise pass and yield a prefix
+	// carrying the space (" bd"), causing a spurious prefix mismatch or a
+	// whitespace-corrupted stored ID that won't round-trip on lookup (beads-qpf0).
+	if strings.IndexFunc(id, unicode.IsSpace) >= 0 {
+		return "", fmt.Errorf("invalid ID format %q (must not contain whitespace)", id)
 	}
 
 	// Must contain hyphen
