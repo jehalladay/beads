@@ -734,6 +734,17 @@ func runCompactApply(ctx context.Context, store storage.DoltStorage) {
 		actor = "agent"
 	}
 
+	// Archive the original content BEFORE the destructive overwrite so the
+	// compaction is reversible (bd restore --apply reads this snapshot). The
+	// --auto path (compact.CompactTier1) already does this; --apply must too, or
+	// the advertised undo hard-fails "no archived snapshot" and the original
+	// design/notes/acceptance text is lost (beads-zh1r). If archiving fails we
+	// abort with the original content intact rather than silently destroy it.
+	if err := store.SnapshotIssue(ctx, compactID, compactTier); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to archive pre-compaction snapshot: %v\n", err)
+		os.Exit(1)
+	}
+
 	updates := map[string]interface{}{
 		"description":         summary,
 		"design":              "",
