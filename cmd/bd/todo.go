@@ -37,6 +37,13 @@ TODOs can be promoted to full issues by changing type or priority:
 			}
 		}()
 
+		// beads-jl7: a bare positional title (e.g. `bd todo "Fix the bug"`) must
+		// create the todo — matching `bd create "title"` — not silently drop the
+		// arg and fall through to the list view. Delegate to the add path.
+		if len(args) > 0 {
+			return addTodoCmd.RunE(cmd, args)
+		}
+
 		// Delegate to the shared, non-emitting list core so a single `bd todo`
 		// records exactly one cli_command event ("todo"), not also "todo-list".
 		return runTodoListCore(cmd, args)
