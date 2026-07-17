@@ -2,6 +2,7 @@ package validation
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -19,8 +20,12 @@ func ParsePriority(content string) int {
 		content = content[1:] // Strip the "P" prefix
 	}
 
-	var p int
-	if _, err := fmt.Sscanf(content, "%d", &p); err == nil && p >= 0 && p <= 4 {
+	// Parse the WHOLE remaining string strictly. strconv.Atoi rejects any
+	// trailing/embedded junk ("3xyz", "3.9", "1e3", "0x2", "3 4"), unlike
+	// fmt.Sscanf("%d") which stops at the first non-digit and silently drops
+	// the rest — that laxity let typos like "-p 3x" become P3 (beads-itys).
+	p, err := strconv.Atoi(content)
+	if err == nil && p >= 0 && p <= 4 {
 		return p
 	}
 	return -1 // Invalid
