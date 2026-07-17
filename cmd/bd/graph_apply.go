@@ -647,15 +647,16 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 
 // validateGraphApplyPlannedBlockingCycles rejects planned blocking edges that
 // would close a blocking-dependency cycle, evaluated whole-graph before any
-// insert. It mirrors the storage per-edge SQL cycle check
-// (issueops.CheckDependencyCycleInTx), which only traverses blocks and
-// conditional-blocks edges: both the planned adjacency and the existing-dep
-// walk are restricted to cycle-relevant types via
-// graphApplyCycleRelevantDependencyType. This is deliberately narrower than
-// the ready-work traversal used by validateGraphApplyPlannedParentBlockingPaths
-// — graph-apply must not reject a blocking edge whose only return path runs
-// through an existing parent-child or waits-for dep when plain `bd dep add`
-// would allow it.
+// insert. Both the planned adjacency and the existing-dep walk are restricted
+// to cycle-relevant BLOCKING types via graphApplyCycleRelevantDependencyType.
+// This is deliberately narrower than the ready-work traversal used by
+// validateGraphApplyPlannedParentBlockingPaths — graph-apply must not reject a
+// blocking edge whose only return path runs through an existing parent-child or
+// waits-for dep when plain `bd dep add` would allow it. The storage per-edge
+// check (issueops.CheckDependencyCycleInTx) is a backstop at insert time and
+// checks each edge against its OWN type family (blocks-vs-blocks,
+// parent-child-vs-parent-child, beads-8qij); this whole-graph pass covers the
+// blocking family before any write for a clear plan-level error.
 func validateGraphApplyPlannedBlockingCycles(ctx context.Context, tx storage.Transaction, plan *GraphApplyPlan, keyToID map[string]string) error {
 	type plannedEdge struct {
 		index  int
