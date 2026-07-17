@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   onward. **User-visible:** `>` and `>=` now differ, and `<`/`<=` queries near a
   day boundary may match a slightly different set than before. Applies to both
   date literals (`2026-01-15`) and relative durations (`7d`).
+- **`bd query` `!=` now works for all fields, not just `status`/`type`
+  (beads-pqrn).** A bare `field!=value` query previously errored for most
+  fields (`priority!=2`, `assignee!=x`, `label!=x`, `title!=x`, `id!=x`,
+  `pinned!=x`, and the date fields) with "only supports = operator" or
+  "requires predicate filtering", even though the same `!=` works inside `AND`/
+  `OR` expressions. The query evaluator was routing every single comparison to
+  a filter path that only handles `!=` for `status`/`type` (which have
+  exclusion columns); it now routes an unsupported `!=` to predicate evaluation
+  (as it already did for `owner`), so the comparison matches the documented
+  behavior. Priority range validation (0–4) is enforced on both paths.
 
 ## [1.1.0-rc.1] - 2026-06-23
 
