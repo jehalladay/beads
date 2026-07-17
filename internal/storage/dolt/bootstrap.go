@@ -89,8 +89,12 @@ func BootstrapFromGitRemote(ctx context.Context, doltDir, gitRemoteURL string) (
 // callers should use cfg.GetDoltDatabase() which applies the fallback chain
 // (env var → config → default).
 func BootstrapFromRemoteWithDB(ctx context.Context, doltDir, remoteURL, database string) (bool, error) {
-	// Skip if Dolt database already exists
-	if doltExists(doltDir) {
+	// Skip if a COMPLETE Dolt database already exists. doltExists() alone only
+	// checks for any subdir with a .dolt directory, which a partial/interrupted
+	// clone also satisfies — trusting that would permanently skip re-clone and
+	// wedge the database (beads-pf1j). Require the clone to be complete (a
+	// .dolt with the noms object store + repo_state.json) before short-circuiting.
+	if doltExists(doltDir) && doltCloneComplete(doltDir) {
 		return false, nil
 	}
 
@@ -115,8 +119,30 @@ func BootstrapFromRemoteWithDB(ctx context.Context, doltDir, remoteURL, database
 	// Clone into <doltDir>/<database>/ so the embedded driver can find it.
 	// `dolt clone <url> <target>` creates <target>/.dolt/ directly.
 	cloneTarget := filepath.Join(doltDir, database)
+
+	// A previous bootstrap may have been interrupted after dolt created the
+	// target (and possibly a partial .dolt) but before the clone completed.
+	// doltExists() above trusts any subdir with a .dolt directory, so we only
+	// reach here when the top-level check saw no completed clone — but the
+	// specific target may still hold partial state that `dolt clone` refuses
+	// to overwrite. Remove any incomplete target so the clone starts clean and
+	// a prior partial can never wedge us (beads-pf1j; twin of remotecache's
+	// beads-ix3r).
+	if _, statErr := os.Stat(cloneTarget); statErr == nil {
+		if rmErr := os.RemoveAll(cloneTarget); rmErr != nil {
+			return false, fmt.Errorf("failed to clear partial clone target %s: %w", cloneTarget, rmErr)
+		}
+	}
+
 	cmd := exec.CommandContext(ctx, "dolt", "clone", remoteURL, cloneTarget)
 	if output, err := cmd.CombinedOutput(); err != nil {
+		// Clean up any partial target the failed/interrupted clone left behind.
+		// Without this, a lingering <target>/.dolt makes doltExists() return
+		// true on the next bootstrap, permanently skipping re-clone and wedging
+		// the database (beads-pf1j).
+		if rmErr := os.RemoveAll(cloneTarget); rmErr != nil {
+			return false, fmt.Errorf("dolt clone failed: %w\nOutput: %s\n(additionally, failed to clean up partial clone %s: %v)", err, output, cloneTarget, rmErr)
+		}
 		return false, fmt.Errorf("dolt clone failed: %w\nOutput: %s", err, output)
 	}
 
@@ -152,6 +178,40 @@ func doltExists(doltPath string) bool {
 				return true
 			}
 		}
+	}
+	return false
+}
+
+// doltCloneComplete reports whether at least one <doltPath>/<db>/.dolt directory
+// looks like a COMPLETED clone rather than a partial/interrupted one. A finished
+// `dolt clone` leaves the noms object store and repo_state.json inside .dolt; an
+// interrupted clone can leave a bare or half-written .dolt that doltExists()
+// would still trust. Requiring these markers prevents a partial clone from
+// permanently short-circuiting BootstrapFromRemoteWithDB and wedging the
+// database (beads-pf1j).
+func doltCloneComplete(doltPath string) bool {
+	entries, err := os.ReadDir(doltPath)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		fullPath := filepath.Join(doltPath, entry.Name())
+		info, statErr := os.Stat(fullPath)
+		if statErr != nil || !info.IsDir() {
+			continue
+		}
+		dotDolt := filepath.Join(fullPath, ".dolt")
+		if di, e := os.Stat(dotDolt); e != nil || !di.IsDir() {
+			continue
+		}
+		nomsInfo, nomsErr := os.Stat(filepath.Join(dotDolt, "noms"))
+		if nomsErr != nil || !nomsInfo.IsDir() {
+			continue
+		}
+		if _, rsErr := os.Stat(filepath.Join(dotDolt, "repo_state.json")); rsErr != nil {
+			continue
+		}
+		return true
 	}
 	return false
 }
