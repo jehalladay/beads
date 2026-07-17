@@ -3,6 +3,7 @@ package dolt
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage/issueops"
@@ -633,4 +634,52 @@ func TestUpdateIssueIDStillWorksForRegularIssues(t *testing.T) {
 	if eventCount != 1 {
 		t.Fatalf("expected 1 rename event for new ID, got %d", eventCount)
 	}
+}
+
+// TestUpdateIssueIDRejectsCrossTableIDCollision verifies that renaming to a
+// newID that already exists in the OTHER table (issue→existing-wisp-id, or
+// wisp→existing-issue-id) is rejected, so the two tables never share an id —
+// which would mint the uekw/jym1 same-id collision (beads-mgsx). issues and
+// wisps are separate tables with no cross-table uniqueness, so the guard is in
+// updateIssueIDInTx/updateWispIDInTx, not an FK.
+func TestUpdateIssueIDRejectsCrossTableIDCollision(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// An issue and a wisp with distinct ids.
+	iss := &types.Issue{ID: "mgsx-iss", Title: "issue", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	wisp := &types.Issue{ID: "mgsx-wisp", Title: "wisp", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, Ephemeral: true}
+	if err := store.CreateIssue(ctx, wisp, "tester"); err != nil {
+		t.Fatalf("create wisp: %v", err)
+	}
+
+	// Rename the ISSUE to the WISP's id → must be rejected (would collide).
+	iss.ID = "mgsx-wisp"
+	err := store.UpdateIssueID(ctx, "mgsx-iss", "mgsx-wisp", iss, "tester")
+	if err == nil || !strings.Contains(err.Error(), "already exists as a wisp") {
+		t.Fatalf("issue→existing-wisp-id rename error = %v, want 'already exists as a wisp'", err)
+	}
+	// The original issue must be untouched (still under its old id).
+	assertRowCountForIssue(t, store, "issues", "mgsx-iss", 1)
+	assertRowCountForIssue(t, store, "wisps", "mgsx-wisp", 1)
+
+	// Rename the WISP to the ISSUE's id → must be rejected too.
+	wisp.ID = "mgsx-iss"
+	err = store.UpdateIssueID(ctx, "mgsx-wisp", "mgsx-iss", wisp, "tester")
+	if err == nil || !strings.Contains(err.Error(), "already exists as an issue") {
+		t.Fatalf("wisp→existing-issue-id rename error = %v, want 'already exists as an issue'", err)
+	}
+
+	// A rename to a genuinely-free id still works (guard doesn't over-reject).
+	iss2 := &types.Issue{ID: "mgsx-iss", Title: "issue", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	if err := store.UpdateIssueID(ctx, "mgsx-iss", "mgsx-iss-renamed", iss2, "tester"); err != nil {
+		t.Fatalf("rename to free id should succeed: %v", err)
+	}
+	assertRowCountForIssue(t, store, "issues", "mgsx-iss-renamed", 1)
 }
