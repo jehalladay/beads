@@ -255,19 +255,50 @@ func DataSourceTitle(items []RichText) string {
 	return strings.Join(parts, "")
 }
 
+// maxRichTextRunes is Notion's hard cap on a single rich_text object's
+// text.content. Longer content must be split across multiple rich_text
+// objects or the API rejects the whole request with a 400 validation error
+// (beads-ux45).
+const maxRichTextRunes = 2000
+
 func richTextRequest(content string) []map[string]interface{} {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return []map[string]interface{}{}
 	}
-	return []map[string]interface{}{
-		{
+	chunks := chunkByRunes(content, maxRichTextRunes)
+	items := make([]map[string]interface{}, 0, len(chunks))
+	for _, chunk := range chunks {
+		items = append(items, map[string]interface{}{
 			"type": "text",
 			"text": map[string]interface{}{
-				"content": content,
+				"content": chunk,
 			},
-		},
+		})
 	}
+	return items
+}
+
+// chunkByRunes splits s into substrings of at most maxRunes runes each,
+// always breaking on a rune boundary so multi-byte characters are never
+// corrupted. Concatenating the result reproduces s exactly.
+func chunkByRunes(s string, maxRunes int) []string {
+	if maxRunes <= 0 {
+		return []string{s}
+	}
+	chunks := make([]string, 0, (len(s)/maxRunes)+1)
+	start := 0
+	count := 0
+	for i := range s { // range over a string iterates rune-start byte offsets
+		if count == maxRunes {
+			chunks = append(chunks, s[start:i])
+			start = i
+			count = 0
+		}
+		count++
+	}
+	chunks = append(chunks, s[start:])
+	return chunks
 }
 
 func BuildInitialDataSourceProperties() map[string]interface{} {
