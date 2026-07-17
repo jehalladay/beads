@@ -659,6 +659,54 @@ func TestCLI_Show(t *testing.T) {
 	}
 }
 
+// TestCLI_ShowJSONIncludesComments verifies that `bd show --json` includes the
+// actual comment bodies by default (not just comment_count), matching the text
+// `bd show` output and the count it reports (beads-p5k).
+func TestCLI_ShowJSONIncludesComments(t *testing.T) {
+	// Note: Not using t.Parallel() because inProcessMutex serializes execution anyway
+	tmpDir := setupCLITestDB(t)
+	out := runBDInProcess(t, tmpDir, "create", "Commented issue", "-p", "1", "--json")
+	var created map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &created); err != nil {
+		t.Fatalf("parse create JSON: %v\n%s", err, out)
+	}
+	id, _ := created["id"].(string)
+	if id == "" {
+		t.Fatalf("no id in create output: %s", out)
+	}
+
+	runBDInProcess(t, tmpDir, "comment", id, "CONFIRMXYZ marker body")
+
+	// Default --json (no --include-comments) must carry the comment bodies.
+	out = runBDInProcess(t, tmpDir, "show", id, "--json")
+	s := strings.TrimSpace(out)
+	if start := strings.IndexAny(s, "[{"); start >= 0 {
+		s = s[start:]
+	}
+	var details map[string]interface{}
+	if strings.HasPrefix(s, "[") {
+		var arr []map[string]interface{}
+		if err := json.Unmarshal([]byte(s), &arr); err != nil || len(arr) == 0 {
+			t.Fatalf("parse show JSON array: %v\n%s", err, s)
+		}
+		details = arr[0]
+	} else if err := json.Unmarshal([]byte(s), &details); err != nil {
+		t.Fatalf("parse show JSON: %v\n%s", err, s)
+	}
+
+	if cc, ok := details["comment_count"]; ok && cc != float64(1) {
+		t.Errorf("expected comment_count=1, got %v", cc)
+	}
+	comments, ok := details["comments"].([]interface{})
+	if !ok || len(comments) == 0 {
+		t.Fatalf("expected comment bodies in default show --json, got comments=%v\nfull: %s", details["comments"], s)
+	}
+	body, _ := comments[0].(map[string]interface{})
+	if txt, _ := body["text"].(string); !strings.Contains(txt, "CONFIRMXYZ") {
+		t.Errorf("expected comment text to contain CONFIRMXYZ, got %v", body["text"])
+	}
+}
+
 func TestCLI_Export(t *testing.T) {
 	// Note: Not using t.Parallel() because inProcessMutex serializes execution anyway
 	tmpDir := setupCLITestDB(t)

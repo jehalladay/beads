@@ -142,8 +142,12 @@ var showCmd = &cobra.Command{
 			}
 
 			if jsonOutput {
-				// be-ijck6q: default is count-only (no dependents/comments slice in output).
-				// Use --include-dependents / --include-comments to stream the full lists.
+				// be-ijck6q: dependents are count-only by default (be-4d36f2: hub
+				// beads with thousands of dependents cost 5-13GB to materialize);
+				// use --include-dependents to stream them. Comments, by contrast,
+				// are bounded per issue and are always streamed so `--json` matches
+				// the text `bd show` (which loads them unconditionally) and doesn't
+				// report comment_count>0 with no comment data (beads-p5k).
 				details := &types.IssueDetails{Issue: *issue}
 				details.Labels, _ = issueStore.GetLabels(ctx, issue.ID)
 				details.Dependencies, _ = issueStore.GetDependenciesWithMetadata(ctx, issue.ID)
@@ -199,15 +203,15 @@ var showCmd = &cobra.Command{
 					}
 				}
 
-				// --include-comments: stream via Iter.
-				// May be slow on issues with many comments.
-				if includeComments {
-					iter, err := issueStore.IterIssueComments(ctx, issue.ID)
-					if err == nil {
-						defer iter.Close() //nolint:errcheck
-						for iter.Next(ctx) {
-							details.Comments = append(details.Comments, iter.Value())
-						}
+				// Comments are streamed by default so `bd show --json` carries the
+				// comment bodies it reports a count for (beads-p5k). The
+				// --include-comments flag is retained (now a no-op that still forces
+				// the stream) for backward compatibility with existing callers.
+				_ = includeComments
+				if iter, err := issueStore.IterIssueComments(ctx, issue.ID); err == nil {
+					defer iter.Close() //nolint:errcheck
+					for iter.Next(ctx) {
+						details.Comments = append(details.Comments, iter.Value())
 					}
 				}
 
@@ -478,7 +482,7 @@ func init() {
 	showCmd.Flags().BoolP("watch", "w", false, "Watch for changes and auto-refresh display")
 	showCmd.Flags().Bool("current", false, "Show the currently active issue (in-progress, hooked, or last touched)")
 	showCmd.Flags().Bool("include-dependents", false, "Stream full dependent issues in JSON output (--json only; may be slow on hub beads)")
-	showCmd.Flags().Bool("include-comments", false, "Stream full comment bodies in JSON output (--json only; may be slow on issues with many comments)")
+	showCmd.Flags().Bool("include-comments", false, "Deprecated no-op: comment bodies are always included in JSON output (--json only)")
 	showCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(showCmd)
 }
