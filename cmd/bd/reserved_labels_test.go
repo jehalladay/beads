@@ -38,6 +38,17 @@ func TestReservedIdentityLabelError(t *testing.T) {
 		}
 	})
 
+	t.Run("GT_INTERNAL must equal the exact value, not just be non-empty", func(t *testing.T) {
+		// A stray/inherited GT_INTERNAL=0 or garbage must NOT bypass the guard;
+		// only the exact value gt stamps (gtInternalValue) counts as internal.
+		for _, v := range []string{"0", "true", "yes", "2", "internal"} {
+			t.Setenv(gtInternalEnv, v)
+			if msg := reservedIdentityLabelError("gt:agent"); msg == "" {
+				t.Errorf("GT_INTERNAL=%q should NOT bypass the reservation (only %q does)", v, gtInternalValue)
+			}
+		}
+	})
+
 	t.Run("non-reserved labels always allowed", func(t *testing.T) {
 		t.Setenv(gtInternalEnv, "")
 		for _, label := range []string{

@@ -5,12 +5,19 @@ import (
 	"strings"
 )
 
-// gtInternalEnv is the environment variable the gt orchestrator sets on its own
-// `bd` shell-outs (agent/rig/mail registration). When it is present the CLI
-// treats the write as a privileged system write and does NOT reserve the gt:
-// identity family — so gt's own CLI-fallback registration path keeps working.
-// Human/script writes never set it, so they are rejected.
+// gtInternalEnv is the environment variable the gt orchestrator sets (to
+// gtInternalValue) on its own `bd` shell-outs (agent/rig/role/mail
+// registration). gt strips-then-sets it so it cannot be spoofed by an inherited
+// environment. When it equals gtInternalValue the CLI treats the write as a
+// privileged system write and does NOT reserve the gt: identity family — so
+// gt's own registration path keeps working. Human/script writes never set it,
+// so they are rejected (beads-3c4g; gt-fork half myosw @bc04e5fc).
 const gtInternalEnv = "GT_INTERNAL"
+
+// gtInternalValue is the exact value gt stamps. Gate on equality (not merely
+// non-empty) so a stray/inherited GT_INTERNAL=0 or garbage does not bypass the
+// reservation.
+const gtInternalValue = "1"
 
 // reservedIdentityLabels are the identity/registration labels that the ready
 // discriminator (beads-wqs) treats as system-controlled and always hides from
@@ -26,9 +33,9 @@ var reservedIdentityLabels = map[string]bool{
 }
 
 // gtInternalWrite reports whether the current process is a privileged gt
-// orchestrator write (GT_INTERNAL set to a non-empty value).
+// orchestrator write (GT_INTERNAL == gtInternalValue).
 func gtInternalWrite() bool {
-	return strings.TrimSpace(os.Getenv(gtInternalEnv)) != ""
+	return strings.TrimSpace(os.Getenv(gtInternalEnv)) == gtInternalValue
 }
 
 // reservedIdentityLabelError returns a non-nil error message if label is a
