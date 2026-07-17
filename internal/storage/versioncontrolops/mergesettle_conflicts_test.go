@@ -236,6 +236,110 @@ func TestResolvedConfigConflictKeys(t *testing.T) {
 	})
 }
 
+// --- metadataConflictsAreConvergent & resolvedMetadataConflictKeys -----------
+
+func TestMetadataConflictsAreConvergent(t *testing.T) {
+	t.Parallel()
+	q := `FROM dolt_conflicts_metadata`
+	cols := []string{"our_key", "their_key"}
+
+	t.Run("last_import_time is convergent", func(t *testing.T) {
+		db, mock := newConflictMock(t)
+		mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows(cols).
+			AddRow("last_import_time", "last_import_time"))
+		ok, err := metadataConflictsAreConvergent(context.Background(), db)
+		if err != nil || !ok {
+			t.Fatalf("got ok=%v err=%v, want true,nil", ok, err)
+		}
+	})
+
+	// The core beads-ka1n guard: an identity-key conflict must REFUSE, so the
+	// pull fails closed instead of silently taking the remote _project_id.
+	for _, key := range []string{"_project_id", "repo_id", "clone_id", "target_project_id"} {
+		t.Run(key+" identity conflict is NOT convergent", func(t *testing.T) {
+			db, mock := newConflictMock(t)
+			mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows(cols).AddRow(key, key))
+			ok, err := metadataConflictsAreConvergent(context.Background(), db)
+			if err != nil || ok {
+				t.Fatalf("got ok=%v err=%v, want false,nil (identity key must refuse)", ok, err)
+			}
+		})
+	}
+
+	t.Run("an unknown/future key is NOT convergent (fail-closed)", func(t *testing.T) {
+		db, mock := newConflictMock(t)
+		mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows(cols).AddRow("some_new_key", "some_new_key"))
+		ok, err := metadataConflictsAreConvergent(context.Background(), db)
+		if err != nil || ok {
+			t.Fatalf("got ok=%v err=%v, want false,nil", ok, err)
+		}
+	})
+
+	t.Run("mixed convergent+identity is NOT convergent", func(t *testing.T) {
+		db, mock := newConflictMock(t)
+		mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows(cols).
+			AddRow("last_import_time", "last_import_time").
+			AddRow("_project_id", "_project_id"))
+		ok, err := metadataConflictsAreConvergent(context.Background(), db)
+		if err != nil || ok {
+			t.Fatalf("got ok=%v err=%v, want false,nil", ok, err)
+		}
+	})
+
+	t.Run("add/delete of a convergent key still convergent", func(t *testing.T) {
+		db, mock := newConflictMock(t)
+		mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows(cols).
+			AddRow("last_import_time", nil))
+		ok, err := metadataConflictsAreConvergent(context.Background(), db)
+		if err != nil || !ok {
+			t.Fatalf("got ok=%v err=%v, want true,nil", ok, err)
+		}
+	})
+
+	t.Run("query error propagates", func(t *testing.T) {
+		db, mock := newConflictMock(t)
+		mock.ExpectQuery(q).WillReturnError(errors.New("boom"))
+		if _, err := metadataConflictsAreConvergent(context.Background(), db); err == nil {
+			t.Fatal("expected query error")
+		}
+	})
+
+	t.Run("scan error propagates", func(t *testing.T) {
+		db, mock := newConflictMock(t)
+		mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows([]string{"our_key"}).AddRow("last_import_time"))
+		if _, err := metadataConflictsAreConvergent(context.Background(), db); err == nil {
+			t.Fatal("expected scan error")
+		}
+	})
+}
+
+func TestResolvedMetadataConflictKeys(t *testing.T) {
+	t.Parallel()
+	q := regexp.QuoteMeta("SELECT COALESCE(our_key, their_key) FROM dolt_conflicts_metadata")
+
+	t.Run("returns coalesced keys", func(t *testing.T) {
+		db, mock := newConflictMock(t)
+		mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows([]string{"k"}).
+			AddRow("last_import_time").
+			AddRow(nil)) // NULL row is skipped
+		keys, err := resolvedMetadataConflictKeys(context.Background(), db)
+		if err != nil {
+			t.Fatalf("resolvedMetadataConflictKeys: %v", err)
+		}
+		if len(keys) != 1 || keys[0] != "last_import_time" {
+			t.Fatalf("keys = %v, want [last_import_time]", keys)
+		}
+	})
+
+	t.Run("query error propagates", func(t *testing.T) {
+		db, mock := newConflictMock(t)
+		mock.ExpectQuery(q).WillReturnError(errors.New("boom"))
+		if _, err := resolvedMetadataConflictKeys(context.Background(), db); err == nil {
+			t.Fatal("expected query error")
+		}
+	})
+}
+
 // --- schemaMigrationsConflictsAreVintageOnly ---------------------------------
 
 func TestSchemaMigrationsConflictsAreVintageOnly(t *testing.T) {
