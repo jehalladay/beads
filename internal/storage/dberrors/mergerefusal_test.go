@@ -29,6 +29,11 @@ func TestAncestorPKMismatch_NonMatches(t *testing.T) {
 	if IsAncestorPKMismatch(nil) {
 		t.Error("IsAncestorPKMismatch(nil) = true, want false")
 	}
+	// nil must yield an empty table name via the dedicated nil guard, not panic
+	// (beads-rv1: covers AncestorPKMismatchTable's err == nil branch).
+	if got := AncestorPKMismatchTable(nil); got != "" {
+		t.Errorf("AncestorPKMismatchTable(nil) = %q, want empty", got)
+	}
 	err := errors.New("merge conflict in table dependencies")
 	if IsAncestorPKMismatch(err) {
 		t.Errorf("IsAncestorPKMismatch(%q) = true, want false", err)
