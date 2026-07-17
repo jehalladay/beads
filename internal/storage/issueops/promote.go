@@ -3,6 +3,7 @@ package issueops
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/steveyegge/beads/internal/storage"
@@ -12,6 +13,23 @@ import (
 func PromoteFromEphemeralInTx(ctx context.Context, tx *sql.Tx, id string, actor string) error {
 	if !IsActiveWispInTx(ctx, tx, id) {
 		return fmt.Errorf("wisp %s not found", id)
+	}
+
+	// Reject when a permanent issue already holds this id. issues and wisps are
+	// separate tables with no cross-table uniqueness, so the same id string can
+	// live in both (explicit/imported/carried ids). Without this guard promote
+	// would INSERT ... ON DUPLICATE KEY UPDATE over the pre-existing issue,
+	// bleed the wisp's aux-data (labels/deps/events/comments) into that
+	// unrelated issue, delete the wisp, and return success — silent data loss
+	// (beads-jym1). Mirrors the collision guards in this lane
+	// (checkRetargetTargetCollision / checkRenameTargetCollision). Note
+	// GetIssueInTx below is issues-first, so on collision it would return the
+	// wrong (permanent-issue) row entirely; this check must precede it.
+	var issueExists int
+	if err := tx.QueryRowContext(ctx, "SELECT 1 FROM issues WHERE id = ? LIMIT 1", id).Scan(&issueExists); err == nil {
+		return fmt.Errorf("cannot promote wisp %s: id already exists as a permanent issue", id)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("check id collision before promote %s: %w", id, err)
 	}
 
 	issue, err := GetIssueInTx(ctx, tx, id)
