@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -67,6 +68,60 @@ func TestEmbeddedUndefer(t *testing.T) {
 		out, _ := cmd.CombinedOutput()
 		if !strings.Contains(string(out), "not deferred") {
 			t.Errorf("expected 'not deferred' message: %s", out)
+		}
+	})
+
+	// ===== All-failed guard (beads-7pcm) =====
+
+	// When every requested ID fails to resolve, undefer must exit NON-ZERO
+	// (nothing was undeferred) — not the previous unconditional rc=0 that made
+	// scripts read false success on total failure. Mirrors defer (beads-0l4c).
+	t.Run("undefer_all_failed_exit_nonzero", func(t *testing.T) {
+		cmd := exec.Command(bd, "undefer", "ud-nope-aaa", "ud-nope-bbb")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		_, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Errorf("expected non-zero exit when all undefer IDs fail, got success\nstderr:\n%s", stderr.String())
+		}
+	})
+
+	// All requested IDs fail under --json: stdout must carry a parseable JSON
+	// error object, not be empty (beads-7pcm / beads-fg6 / beads-tx70).
+	t.Run("undefer_all_failed_json_emits_stdout_error", func(t *testing.T) {
+		cmd := exec.Command(bd, "undefer", "ud-nope-ccc", "ud-nope-ddd", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Errorf("expected non-zero exit when all IDs fail, got success\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+		}
+		out := strings.TrimSpace(stdout.String())
+		if out == "" {
+			t.Fatalf("stdout is empty on all-failed --json undefer — must emit a JSON error object (beads-7pcm)\nstderr:\n%s", stderr.String())
+		}
+		var obj map[string]any
+		if jerr := json.Unmarshal([]byte(out), &obj); jerr != nil {
+			t.Fatalf("stdout is not a JSON object on all-failed --json undefer: %v\nstdout:\n%s", jerr, out)
+		}
+		if _, ok := obj["error"]; !ok {
+			t.Errorf("expected an \"error\" field in the all-failed --json stdout object, got: %s", out)
+		}
+	})
+
+	// IDs that RESOLVE but all fail the deferred-status check (a valid, open,
+	// not-deferred issue) reach the bottom guard: undeferredCount stays 0, so
+	// the command must exit non-zero rather than the previous unconditional
+	// rc=0 (beads-7pcm — this exercises the count-based guard, distinct from the
+	// top-level unresolvable-ID path above).
+	t.Run("undefer_resolved_but_none_deferred_exit_nonzero", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "Open not deferred", "--type", "task")
+		cmd := exec.Command(bd, "undefer", issue.ID)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		_, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Errorf("expected non-zero exit when the only ID was not deferred, got success\nstderr:\n%s", stderr.String())
 		}
 	})
 }
