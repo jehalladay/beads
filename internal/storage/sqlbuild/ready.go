@@ -147,7 +147,10 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 	if filter.Unassigned {
 		whereClauses = append(whereClauses, "(assignee IS NULL OR assignee = '')")
 	} else if filter.Assignee != nil {
-		whereClauses = append(whereClauses, "assignee = ?")
+		// Case-insensitive to match the predicate path and the bd list/query
+		// filter path (beads-xl4k): `bd ready --assignee Alice` must find an
+		// issue assigned "alice" the same way `bd list --assignee` does.
+		whereClauses = append(whereClauses, "LOWER(assignee) = LOWER(?)")
 		args = append(args, *filter.Assignee)
 	}
 

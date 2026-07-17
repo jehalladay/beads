@@ -71,8 +71,9 @@ func TestBuildReadyWorkWhere_FilterArms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("assignee: %v", err)
 	}
-	if !strings.Contains(aw, "assignee = ?") {
-		t.Errorf("Assignee should emit 'assignee = ?', where = %q", aw)
+	// Case-insensitive assignee match (beads-xl4k): LOWER() both sides.
+	if !strings.Contains(aw, "LOWER(assignee) = LOWER(?)") {
+		t.Errorf("Assignee should emit 'LOWER(assignee) = LOWER(?)', where = %q", aw)
 	}
 	found := false
 	for _, a := range aargs {
