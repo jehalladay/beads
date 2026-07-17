@@ -86,6 +86,23 @@ func TestEmbeddedTodo(t *testing.T) {
 		}
 	})
 
+	// beads-jl7: a bare positional title (no "add" subcommand) must CREATE the
+	// todo, not silently drop the arg and fall through to the list view.
+	t.Run("todo_bare_arg_creates", func(t *testing.T) {
+		out := bdTodo(t, bd, dir, "Bare title todo")
+		if !strings.Contains(out, "Created") {
+			t.Errorf("bare 'bd todo <title>' should create the todo, got: %s", out)
+		}
+		if !strings.Contains(out, "Bare title todo") {
+			t.Errorf("expected the title in output: %s", out)
+		}
+		// Confirm it actually exists (not a silent no-op).
+		list := bdTodo(t, bd, dir, "list")
+		if !strings.Contains(list, "Bare title todo") {
+			t.Errorf("bare-arg todo was not created (silent no-op); list: %s", list)
+		}
+	})
+
 	// ===== todo list =====
 
 	t.Run("todo_list", func(t *testing.T) {
