@@ -91,7 +91,7 @@ func (m *adoFieldMapper) IssueToBeads(ti *tracker.TrackerIssue) *tracker.IssueCo
 // IssueToTracker converts a beads Issue to a map of ADO work item field values.
 func (m *adoFieldMapper) IssueToTracker(issue *types.Issue) map[string]interface{} {
 	fields := map[string]interface{}{
-		FieldTitle:    issue.Title,
+		FieldTitle:    truncateTitle(issue.Title),
 		FieldState:    m.StatusToTracker(issue.Status),
 		FieldPriority: m.PriorityToTracker(issue.Priority),
 	}
@@ -152,6 +152,30 @@ func (m *adoFieldMapper) IssueToTracker(issue *types.Issue) map[string]interface
 	restoreMetadata(issue, fields)
 
 	return fields
+}
+
+// truncateTitle caps a title at ADO's System.Title limit (maxTitleLength),
+// appending an ellipsis marker so the truncation is visible on the ADO side
+// (beads-z5ys). A local beads title may be up to 500 chars, but ADO 400-rejects
+// anything over maxTitleLength — so the PUSHED copy is truncated while the local
+// title is left untouched. Rune-aware so a multi-byte character is never split.
+func truncateTitle(title string) string {
+	if len(title) <= maxTitleLength {
+		return title
+	}
+	const marker = "..."
+	runes := []rune(title)
+	// Fast path: if the rune count already fits, the byte-length overflow was
+	// from multi-byte runes — but ADO's limit is on characters, so a title whose
+	// rune count is within the cap is fine as-is.
+	if len(runes) <= maxTitleLength {
+		return title
+	}
+	keep := maxTitleLength - len([]rune(marker))
+	if keep < 0 {
+		keep = 0
+	}
+	return string(runes[:keep]) + marker
 }
 
 // extractAssignedTo extracts the display name from an ADO AssignedTo field.

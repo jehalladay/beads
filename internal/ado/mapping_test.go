@@ -3,6 +3,7 @@ package ado
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/tracker"
@@ -1120,5 +1121,48 @@ func TestHasBeadsTag(t *testing.T) {
 				t.Errorf("hasBeadsTag(%q, %q) = %v, want %v", tt.tagStr, tt.tag, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestIssueToTrackerTruncatesLongTitle is the beads-z5ys regression: ADO's
+// System.Title caps at maxTitleLength chars and 400-rejects anything longer.
+// A beads title may be up to 500 chars, so the PUSHED copy must be truncated
+// with a marker while the local title is left untouched.
+func TestIssueToTrackerTruncatesLongTitle(t *testing.T) {
+	m := NewFieldMapper(nil, nil)
+
+	longTitle := strings.Repeat("a", 300) // legal beads title, over ADO's cap
+	issue := &types.Issue{
+		Title:     longTitle,
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+
+	fields := m.IssueToTracker(issue)
+	got, ok := fields[FieldTitle].(string)
+	if !ok {
+		t.Fatalf("FieldTitle not a string: %T", fields[FieldTitle])
+	}
+	if len([]rune(got)) > maxTitleLength {
+		t.Errorf("pushed title length = %d runes, want <= %d (ADO 400-rejects longer)", len([]rune(got)), maxTitleLength)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Errorf("truncated title missing ellipsis marker: %q", got[max(0, len(got)-10):])
+	}
+	// Local issue title must NOT be mutated by the push mapping.
+	if issue.Title != longTitle {
+		t.Errorf("local issue.Title was mutated by IssueToTracker (len %d), must stay %d", len(issue.Title), len(longTitle))
+	}
+}
+
+// TestIssueToTrackerShortTitleUnchanged verifies a within-cap title passes
+// through verbatim (no spurious truncation/marker).
+func TestIssueToTrackerShortTitleUnchanged(t *testing.T) {
+	m := NewFieldMapper(nil, nil)
+	issue := &types.Issue{Title: "Short title", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	fields := m.IssueToTracker(issue)
+	if got := fields[FieldTitle]; got != "Short title" {
+		t.Errorf("short title changed: got %q, want %q", got, "Short title")
 	}
 }

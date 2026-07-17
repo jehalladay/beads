@@ -80,6 +80,13 @@ const (
 	FieldTeamProject = "System.TeamProject"
 )
 
+// maxTitleLength is the server-side character cap on System.Title in Azure
+// DevOps. ADO rejects a work-item create/update whose title exceeds this with a
+// 400 validation error, so the push path truncates to fit (beads-z5ys). beads
+// titles may be up to 500 chars (types.Issue.Validate), so a legal local title
+// can overshoot this cap.
+const maxTitleLength = 256
+
 // ADO link relation type constants.
 const (
 	// RelParent is the parent link type (hierarchy reverse).
