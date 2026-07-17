@@ -19,7 +19,13 @@ import (
 // Returns the issue ID if found. Returns storage.ErrNotFound (wrapped) if not found.
 func GetIssueByExternalRefInTx(ctx context.Context, tx *sql.Tx, externalRef string) (string, error) {
 	var id string
-	err := tx.QueryRowContext(ctx, "SELECT id FROM issues WHERE external_ref = ?", externalRef).Scan(&id)
+	// external_ref is only a non-unique index, so a duplicate is possible
+	// (e.g. a manual `bd update --external-ref`, a cross-clone merge, or the
+	// beads-2cis orphan path). ORDER BY id ... LIMIT 1 makes the match
+	// deterministic — the lowest id — instead of an arbitrary engine-chosen
+	// row, so a re-import consistently updates the same local bead rather than
+	// flip-flopping between duplicates (beads-w1d6).
+	err := tx.QueryRowContext(ctx, "SELECT id FROM issues WHERE external_ref = ? ORDER BY id LIMIT 1", externalRef).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
@@ -28,7 +34,7 @@ func GetIssueByExternalRefInTx(ctx context.Context, tx *sql.Tx, externalRef stri
 	}
 
 	// Fall through to wisps table — pushed wisps have external_ref set there.
-	err = tx.QueryRowContext(ctx, "SELECT id FROM wisps WHERE external_ref = ?", externalRef).Scan(&id)
+	err = tx.QueryRowContext(ctx, "SELECT id FROM wisps WHERE external_ref = ? ORDER BY id LIMIT 1", externalRef).Scan(&id)
 	if err == sql.ErrNoRows {
 		return "", fmt.Errorf("%w: external_ref %s", storage.ErrNotFound, externalRef)
 	}

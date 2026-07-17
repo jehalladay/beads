@@ -14,8 +14,10 @@ import (
 func TestGetIssueByExternalRefInTx(t *testing.T) {
 	t.Parallel()
 
-	issuesQ := regexp.QuoteMeta("SELECT id FROM issues WHERE external_ref = ?")
-	wispsQ := regexp.QuoteMeta("SELECT id FROM wisps WHERE external_ref = ?")
+	// ORDER BY id makes a duplicate external_ref resolve deterministically to
+	// the lowest id instead of an arbitrary engine-chosen row (beads-w1d6).
+	issuesQ := regexp.QuoteMeta("SELECT id FROM issues WHERE external_ref = ? ORDER BY id LIMIT 1")
+	wispsQ := regexp.QuoteMeta("SELECT id FROM wisps WHERE external_ref = ? ORDER BY id LIMIT 1")
 
 	t.Run("found in issues table", func(t *testing.T) {
 		t.Parallel()
@@ -23,6 +25,24 @@ func TestGetIssueByExternalRefInTx(t *testing.T) {
 		mock.ExpectQuery(issuesQ).WithArgs("ext-1").
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("bd-1"))
 		got, err := GetIssueByExternalRefInTx(context.Background(), tx, "ext-1")
+		if err != nil || got != "bd-1" {
+			t.Fatalf("got (%q,%v), want (bd-1,nil)", got, err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+
+	t.Run("duplicate external_ref resolves deterministically (beads-w1d6)", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		// The ORDER BY id ... LIMIT 1 query lets the DB return the lowest id
+		// deterministically when two issues share an external_ref (external_ref
+		// is only a non-unique index). Without ORDER BY the returned row was
+		// arbitrary, so which local bead a re-import matched was unstable.
+		mock.ExpectQuery(issuesQ).WithArgs("dup").
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("bd-1"))
+		got, err := GetIssueByExternalRefInTx(context.Background(), tx, "dup")
 		if err != nil || got != "bd-1" {
 			t.Fatalf("got (%q,%v), want (bd-1,nil)", got, err)
 		}
