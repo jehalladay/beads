@@ -315,6 +315,130 @@ func TestPersistDependenciesSkipsValidationErrorsWhenConfigured(t *testing.T) {
 	}
 }
 
+// TestPersistDependenciesSurfacesCrossKindIDCollision is the beads-xaxe
+// containment: depid.New keys on the flattened (issue_id, target-string) with no
+// target-kind marker, so an issue-target and a wisp-target sharing the same id
+// string collide on one PK. When the batch INSERT's ON DUPLICATE KEY UPDATE
+// no-ops (rowsAffected=0) because a row with a DIFFERENT typed target column
+// already occupies that PK, the edge must be surfaced as skipped, not silently
+// collapsed.
+func TestPersistDependenciesSurfacesCrossKindIDCollision(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+
+	// "X" is an issue-target here; a wisp-target "X" (same string) is assumed to
+	// already occupy depid.New("source","X") in the depends_on_wisp_id column.
+	source := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "X",
+			Type:        types.DepRelated,
+		}},
+	}
+	var skipped []string
+
+	// ClassifyDepTarget: not a wisp → issue kind.
+	mock.ExpectQuery("SELECT 1 FROM wisps WHERE id = \\? LIMIT 1").
+		WithArgs("X").
+		WillReturnError(sql.ErrNoRows)
+	// Issue-existence check for the target.
+	mock.ExpectQuery("SELECT 1 FROM issues WHERE id = \\?").
+		WithArgs("X").
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	// INSERT ... ON DUPLICATE KEY UPDATE no-ops (rowsAffected=0): the PK is
+	// already taken by the colliding wisp-target edge.
+	mock.ExpectExec("INSERT INTO dependencies").
+		WithArgs(depid.New("source", "X"), "source", "X", types.DepRelated, "tester", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	// Collision probe: no row at this PK with THIS kind's column (issue) → the
+	// occupant is a different target kind → cross-kind collision.
+	mock.ExpectQuery("SELECT 1 FROM dependencies WHERE id = \\? AND depends_on_issue_id = \\?").
+		WithArgs(depid.New("source", "X"), "X").
+		WillReturnError(sql.ErrNoRows)
+
+	result, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{source}, "tester", storage.BatchCreateOptions{
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			skipped = append(skipped, issueID+" -> "+dependsOnID+": "+reason)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = %v, want nil", err)
+	}
+	// The colliding edge must NOT be counted as a successful change...
+	if result.ChangedTables["dependencies"] {
+		t.Errorf("ChangedTables marked dependencies changed, but the edge collided and was skipped")
+	}
+	// ...and it MUST be surfaced as skipped, not silently dropped.
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "source -> X") ||
+		!strings.Contains(skipped[0], "collision") {
+		t.Fatalf("skipped = %#v, want a cross-kind id-collision skip for source -> X", skipped)
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// TestPersistDependenciesSameKindReimportIsCleanNoOp verifies the other
+// rowsAffected=0 branch (beads-xaxe): a same-kind idempotent re-import (the edge
+// already exists in THIS kind's column) is a legitimate no-op — NOT a collision,
+// so it must not be surfaced as skipped.
+func TestPersistDependenciesSameKindReimportIsCleanNoOp(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+
+	source := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "target",
+			Type:        types.DepRelated,
+		}},
+	}
+	var skipped []string
+
+	mock.ExpectQuery("SELECT 1 FROM wisps WHERE id = \\? LIMIT 1").
+		WithArgs("target").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT 1 FROM issues WHERE id = \\?").
+		WithArgs("target").
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	mock.ExpectExec("INSERT INTO dependencies").
+		WithArgs(depid.New("source", "target"), "source", "target", types.DepRelated, "tester", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	// Probe finds the row in THIS kind's column → clean same-kind re-import.
+	mock.ExpectQuery("SELECT 1 FROM dependencies WHERE id = \\? AND depends_on_issue_id = \\?").
+		WithArgs(depid.New("source", "target"), "target").
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+
+	_, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{source}, "tester", storage.BatchCreateOptions{
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			skipped = append(skipped, issueID+" -> "+dependsOnID+": "+reason)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = %v, want nil", err)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("skipped = %#v, want none (same-kind re-import is a clean no-op)", skipped)
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 // TestPrepareIssueForInsert_InvalidTypeError verifies the invalid-type failure
 // surfaces the valid-type hint and, when the issue has no ID yet, labels it by
 // title instead of producing a bare "issue :" fragment (beads-4fh).
