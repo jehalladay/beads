@@ -74,13 +74,46 @@ func applyDuration(base time.Time, amount int, unit string) time.Time {
 	case "w":
 		return base.AddDate(0, 0, amount*7)
 	case "m":
-		return base.AddDate(0, amount, 0)
+		return addMonthsClamped(base, amount)
 	case "y":
-		return base.AddDate(amount, 0, 0)
+		// A year shift is a 12-month shift; clamp so Feb-29 -> Feb-28 rather
+		// than overflowing to Mar-1 (beads-aysw).
+		return addMonthsClamped(base, amount*12)
 	default:
 		// Should not happen given regex, but return base unchanged
 		return base
 	}
+}
+
+// addMonthsClamped adds months to base without Go's AddDate month-overflow: if
+// the target month has fewer days than base's day-of-month (e.g. Jan-31 minus 1
+// month -> "Feb-31"), Go normalizes forward into the next month (Mar-03), which
+// silently skews a month/year-relative query threshold (beads-aysw: `updated>1m`
+// on the 31st landed in the same month). Instead, clamp to the last valid day of
+// the target month (Jan-31 - 1mo -> Feb-28/29). Time-of-day is preserved.
+func addMonthsClamped(base time.Time, months int) time.Time {
+	y, m, d := base.Date()
+	// Target year/month via 0-based month arithmetic, then normalize the month.
+	targetMonth := int(m) - 1 + months
+	targetYear := y + targetMonth/12
+	targetMonth %= 12
+	if targetMonth < 0 {
+		targetMonth += 12
+		targetYear--
+	}
+	tm := time.Month(targetMonth + 1)
+	// Clamp the day to the target month's length.
+	if last := daysInMonth(targetYear, tm); d > last {
+		d = last
+	}
+	hh, mm, ss := base.Clock()
+	return time.Date(targetYear, tm, d, hh, mm, ss, base.Nanosecond(), base.Location())
+}
+
+// daysInMonth returns the number of days in the given year/month. The day-0 of
+// the *next* month is the last day of this month (Go normalizes it).
+func daysInMonth(year int, month time.Month) int {
+	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
 // isCompactDuration returns true if the string matches compact duration syntax.

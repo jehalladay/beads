@@ -180,17 +180,41 @@ func TestIsCompactDuration(t *testing.T) {
 }
 
 // TestParseCompactDuration_MonthBoundary tests month arithmetic edge cases.
+// Month/year shifts CLAMP to the target month's last valid day rather than
+// overflowing forward via Go's AddDate (beads-aysw): Jan 31 + 1 month is
+// Feb 28 (2025 non-leap), not March 3. Overflow would silently skew a
+// month-relative query threshold on the 29th-31st.
 func TestParseCompactDuration_MonthBoundary(t *testing.T) {
-	// Jan 31 + 1 month = Feb 28 (or 29 in leap year)
 	jan31 := time.Date(2025, 1, 31, 12, 0, 0, 0, time.UTC)
 	got, err := ParseCompactDuration("+1m", jan31)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Go's AddDate normalizes: Jan 31 + 1 month = March 3 (31 days into Feb)
-	// This is Go's default behavior, which we preserve
-	if got.Month() != time.March {
-		t.Logf("Note: Jan 31 + 1m = %v (Go's AddDate overflow behavior)", got)
+	want := time.Date(2025, 2, 28, 12, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("Jan 31 + 1m = %v, want %v (clamp to Feb 28, not AddDate overflow)", got, want)
+	}
+
+	// Leap year: Jan 31, 2024 + 1 month clamps to Feb 29.
+	jan31Leap := time.Date(2024, 1, 31, 12, 0, 0, 0, time.UTC)
+	gotLeap, err := ParseCompactDuration("+1m", jan31Leap)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantLeap := time.Date(2024, 2, 29, 12, 0, 0, 0, time.UTC)
+	if !gotLeap.Equal(wantLeap) {
+		t.Errorf("Jan 31, 2024 + 1m = %v, want %v (clamp to Feb 29)", gotLeap, wantLeap)
+	}
+
+	// Backward month shift on a month-end also clamps: Mar 31 - 1m = Feb 28.
+	mar31 := time.Date(2026, 3, 31, 12, 0, 0, 0, time.UTC)
+	gotBack, err := ParseCompactDuration("-1m", mar31)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantBack := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)
+	if !gotBack.Equal(wantBack) {
+		t.Errorf("Mar 31 - 1m = %v, want %v (clamp to Feb 28, not Mar 3)", gotBack, wantBack)
 	}
 }
 
