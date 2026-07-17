@@ -482,7 +482,7 @@ func TestRestoreFromSnapshotInTx(t *testing.T) {
 		// beads-ehtw: restore is a destructive content-overwrite mutation and
 		// must emit an audit event (with the real actor), symmetric with compact.
 		mock.ExpectExec(`INSERT INTO events`).
-			WithArgs(sqlmock.AnyArg(), "bd-1", types.EventCompacted, "alice", sqlmock.AnyArg()).
+			WithArgs(sqlmock.AnyArg(), "bd-1", types.EventRestored, "alice", sqlmock.AnyArg()).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 		snap, err := RestoreFromSnapshotInTx(context.Background(), tx, "bd-1", "alice")
 		if err != nil || snap == nil {
@@ -500,7 +500,7 @@ func TestRestoreFromSnapshotInTx(t *testing.T) {
 		mock.ExpectExec(`SET description = \?, design = \?, notes = \?, acceptance_criteria = \?,\s+compaction_level = \?`).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec(`INSERT INTO events`).
-			WithArgs(sqlmock.AnyArg(), "bd-2", types.EventCompacted, "alice", sqlmock.AnyArg()).
+			WithArgs(sqlmock.AnyArg(), "bd-2", types.EventRestored, "alice", sqlmock.AnyArg()).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 		snap, err := RestoreFromSnapshotInTx(context.Background(), tx, "bd-2", "alice")
 		if err != nil || snap == nil {

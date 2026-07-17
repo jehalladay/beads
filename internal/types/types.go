@@ -658,10 +658,10 @@ func (t IssueType) IsValidWithCustom(customTypes []string) bool {
 // IsValid() check, so including "mr" here does not make merge-requests
 // hand-creatable.
 var IssueTypeAliases = map[string]IssueType{
-	"enhancement": TypeFeature,
-	"feat":        TypeFeature,
-	"dec":         TypeDecision,
-	"adr":         TypeDecision,
+	"enhancement":   TypeFeature,
+	"feat":          TypeFeature,
+	"dec":           TypeDecision,
+	"adr":           TypeDecision,
 	"investigation": TypeSpike,
 	"timebox":       TypeSpike,
 	"user-story":    TypeStory,
@@ -1095,6 +1095,7 @@ const (
 	EventLabelAdded        EventType = "label_added"
 	EventLabelRemoved      EventType = "label_removed"
 	EventCompacted         EventType = "compacted"
+	EventRestored          EventType = "restored"
 )
 
 // BlockedIssue extends Issue with blocking information
