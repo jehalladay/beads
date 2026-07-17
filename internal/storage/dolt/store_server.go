@@ -15,6 +15,7 @@ package dolt
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -484,25 +485,17 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 	// pairs in dolt-server.log).
 	applyPoolLimits(db, cfg)
 
-	// Ensure database exists (may need to create it)
-	// First connect without database to create it
-	initConnStr := buildServerDSN(cfg, "")
-	initDB, err := sql.Open("mysql", initConnStr)
-	if err != nil {
-		_ = db.Close()
-		return nil, "", fmt.Errorf("failed to open init connection: %w", err)
-	}
-	defer func() { _ = initDB.Close() }()
-
-	// Validate database name to prevent SQL injection via backtick escaping
+	// Validate database name to prevent SQL injection via backtick escaping.
+	// Kept on every path (matching the previous unconditional guard placement).
 	if err := ValidateDatabaseName(cfg.Database); err != nil {
 		_ = db.Close()
 		return nil, "", fmt.Errorf("invalid database name %q: %w", cfg.Database, err)
 	}
 
-	// FIREWALL: Never create test databases on the production server.
+	// FIREWALL: Never touch a test-named database on the production server.
 	// This is the last line of defense against test pollution (Clown Shows #12-#18).
 	// Pattern-based, not env-var-based — env vars can be misconfigured or missing.
+	// Kept on every path (matching the previous unconditional guard placement).
 	if isTestDatabaseName(cfg.Database) && cfg.ServerPort == DefaultSQLPort {
 		_ = db.Close()
 		return nil, "", fmt.Errorf(
@@ -511,9 +504,99 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 			cfg.Database, cfg.ServerPort)
 	}
 
-	// Check if the database already exists before deciding whether to create it.
-	// This prevents the shadow database bug: without CreateIfMissing, connecting
-	// to a server that lacks the expected database is an error (not silent creation).
+	// Ensure the database exists (creating it when asked). On the read/write
+	// hot path — CreateIfMissing=false, which is every normal bd invocation
+	// (list/show/ready/update/…) — we deliberately do NOT open a second
+	// no-database "init" pool just to run SHOW DATABASES: a missing database
+	// already surfaces as an "unknown database" error from the ping on the
+	// main pool below (its DSN carries the database name). Skipping the init
+	// connection removes one TCP connect and one NewConnection/ConnectionClosed
+	// pair from dolt-server.log per invocation, which dominates gt's mail/prime
+	// hot-loop startup cost (beads-kpm, beads-e8d).
+	if cfg.CreateIfMissing {
+		if err := ensureDatabaseExists(ctx, cfg); err != nil {
+			_ = db.Close()
+			return nil, "", err
+		}
+	}
+
+	// Ping to confirm the database is usable. This doubles as the missing-database
+	// check on the read path: because the main pool's DSN carries the database
+	// name, a database that does not exist fails here with "unknown database" —
+	// so we no longer need the separate SHOW DATABASES probe on its own connection.
+	//
+	// After CREATE DATABASE, there is a race where the server has created the
+	// database on disk but hasn't updated its in-memory catalog yet, so the ping
+	// transiently fails with "unknown database" until the catalog catches up; we
+	// retry with exponential backoff (GH-1851). That retry is only warranted when
+	// we just created the database — when CreateIfMissing=false an "unknown
+	// database" is authoritative (the database genuinely isn't there), so we fail
+	// fast with the friendly not-found guidance instead of burning the full
+	// backoff window.
+	bo := backoff.NewExponentialBackOff()
+	bo.InitialInterval = 100 * time.Millisecond
+	bo.MaxElapsedTime = 10 * time.Second
+	if err := backoff.Retry(func() error {
+		pingErr := db.PingContext(ctx)
+		if pingErr == nil {
+			return nil
+		}
+		// On the read path a missing database is definitive, not a transient
+		// catalog race — do not retry it. Dolt surfaces this either as
+		// "unknown database" or as MySQL error 1049 "database not found".
+		if !cfg.CreateIfMissing && isDatabaseNotFoundError(pingErr) {
+			return backoff.Permanent(errDatabaseNotFound)
+		}
+		if isRetryableError(pingErr) {
+			return pingErr // retryable — backoff will retry
+		}
+		return backoff.Permanent(pingErr)
+	}, backoff.WithContext(bo, ctx)); err != nil {
+		_ = db.Close()
+		if errors.Is(err, errDatabaseNotFound) {
+			return nil, "", databaseNotFoundError(cfg)
+		}
+		return nil, "", fmt.Errorf("database %q not available: %w", cfg.Database, err)
+	}
+
+	return db, connStr, nil
+}
+
+// errDatabaseNotFound is a sentinel used inside openServerConnection's ping
+// backoff to short-circuit a genuinely-missing database on the read path
+// (CreateIfMissing=false) into databaseNotFoundError, without retrying.
+var errDatabaseNotFound = errors.New("database not found")
+
+// isDatabaseNotFoundError reports whether err is the server's "the requested
+// database does not exist" error. Dolt surfaces this both as the textual
+// "unknown database" (the post-CREATE catalog race, GH-1851) and as MySQL
+// error 1049 "database not found" when connecting to a database that was never
+// created, so match either form.
+func isDatabaseNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unknown database") ||
+		strings.Contains(msg, "database not found") ||
+		strings.Contains(msg, "1049")
+}
+
+// ensureDatabaseExists creates cfg.Database on the server when it is missing.
+// Only the create path (CreateIfMissing=true) calls this; it opens a short-lived
+// no-database "init" connection so it can CREATE DATABASE and run existence
+// checks that a database-scoped connection cannot. The read path skips this
+// entirely to avoid the extra connection. The caller has already validated the
+// database name and applied the production test-database firewall.
+func ensureDatabaseExists(ctx context.Context, cfg *Config) error {
+	initConnStr := buildServerDSN(cfg, "")
+	initDB, err := sql.Open("mysql", initConnStr)
+	if err != nil {
+		return fmt.Errorf("failed to open init connection: %w", err)
+	}
+	defer func() { _ = initDB.Close() }()
+
+	// Check if the database already exists before creating it.
 	//
 	// Uses SHOW DATABASES + iterate for exact match instead of SHOW DATABASES LIKE,
 	// because LIKE treats _ and % as wildcards and Dolt does not support backslash
@@ -521,57 +604,28 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 	// match unrelated databases with LIKE.
 	dbExists, checkErr := databaseExistsOnServer(ctx, initDB, cfg.Database)
 	if checkErr != nil {
-		_ = db.Close()
-		return nil, "", fmt.Errorf("failed to check if database %q exists on server %s:%d: %w",
+		return fmt.Errorf("failed to check if database %q exists on server %s:%d: %w",
 			cfg.Database, cfg.ServerHost, cfg.ServerPort, checkErr)
 	}
-
-	if !dbExists {
-		if !cfg.CreateIfMissing {
-			_ = db.Close()
-			return nil, "", databaseNotFoundError(cfg)
-		}
-
-		_, err = initDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", cfg.Database)) //nolint:gosec // G201: cfg.Database validated by ValidateDatabaseName above
-		if err != nil {
-			// Dolt may return error 1007 even with IF NOT EXISTS - ignore if database already exists
-			errLower := strings.ToLower(err.Error())
-			if !strings.Contains(errLower, "database exists") && !strings.Contains(errLower, "1007") {
-				_ = db.Close()
-				// Check for connection refused - server likely not running
-				if strings.Contains(errLower, "connection refused") || strings.Contains(errLower, "connect: connection refused") {
-					return nil, "", fmt.Errorf("failed to connect to Dolt server at %s:%d: %w\n\nThe Dolt server may not be running. Try:\n  bd dolt start    # Start a local server\n  gt dolt start    # If using an orchestrator",
-						cfg.ServerHost, cfg.ServerPort, err)
-				}
-				return nil, "", fmt.Errorf("failed to create database: %w", err)
-			}
-			// Database already exists - that's fine, continue
-		}
-	}
-
-	// Wait for the Dolt server's in-memory catalog to register the new database.
-	// After CREATE DATABASE, there is a race where the server has created the
-	// database on disk but hasn't updated its catalog yet. Pinging db (which
-	// has the database in the DSN) will fail with "Unknown database" until the
-	// catalog catches up. We retry with exponential backoff. (GH-1851)
-	bo := backoff.NewExponentialBackOff()
-	bo.InitialInterval = 100 * time.Millisecond
-	bo.MaxElapsedTime = 10 * time.Second
-	if err := backoff.Retry(func() error {
-		pingErr := db.PingContext(ctx)
-		if pingErr != nil && isRetryableError(pingErr) {
-			return pingErr // retryable — backoff will retry
-		}
-		if pingErr != nil {
-			return backoff.Permanent(pingErr)
-		}
+	if dbExists {
 		return nil
-	}, backoff.WithContext(bo, ctx)); err != nil {
-		_ = db.Close()
-		return nil, "", fmt.Errorf("database %q not available after CREATE DATABASE: %w", cfg.Database, err)
 	}
 
-	return db, connStr, nil
+	_, err = initDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", cfg.Database)) //nolint:gosec // G201: cfg.Database validated by ValidateDatabaseName above
+	if err != nil {
+		// Dolt may return error 1007 even with IF NOT EXISTS - ignore if database already exists
+		errLower := strings.ToLower(err.Error())
+		if !strings.Contains(errLower, "database exists") && !strings.Contains(errLower, "1007") {
+			// Check for connection refused - server likely not running
+			if strings.Contains(errLower, "connection refused") || strings.Contains(errLower, "connect: connection refused") {
+				return fmt.Errorf("failed to connect to Dolt server at %s:%d: %w\n\nThe Dolt server may not be running. Try:\n  bd dolt start    # Start a local server\n  gt dolt start    # If using an orchestrator",
+					cfg.ServerHost, cfg.ServerPort, err)
+			}
+			return fmt.Errorf("failed to create database: %w", err)
+		}
+		// Database already exists - that's fine, continue
+	}
+	return nil
 }
 
 // databaseExistsOnServer checks if a database with the exact given name exists
