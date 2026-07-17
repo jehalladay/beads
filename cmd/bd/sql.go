@@ -11,6 +11,37 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 )
 
+// sqlStatementIsReadOnlySafe reports whether a raw SQL statement is provably
+// read-only — safe to run under `bd sql --readonly` (worker sandboxes).
+//
+// The prefix classification that routes query-vs-exec (isRead) is NOT a safety
+// check: `WITH cte AS (...) DELETE ...` and `SELECT DOLT_RESET(...)` /
+// `SELECT DOLT_COMMIT(...)` all start with a "read" prefix yet mutate, so the
+// old readonly guard (only on the exec branch) let them through (beads-5afw).
+// This is deliberately conservative: only the classic pure-read leaders
+// (SELECT/EXPLAIN/PRAGMA/SHOW/DESCRIBE) qualify, and even those are rejected if
+// they invoke a Dolt mutating system function (DOLT_*). WITH is never treated
+// as read-only-safe because a CTE can wrap any DML. A false "unsafe" only costs
+// a readonly-mode user an error on an exotic-but-benign query; a false "safe"
+// would breach the sandbox — so we err toward unsafe.
+func sqlStatementIsReadOnlySafe(query string) bool {
+	trimmed := strings.TrimSpace(strings.ToUpper(query))
+	isReadPrefix := strings.HasPrefix(trimmed, "SELECT") ||
+		strings.HasPrefix(trimmed, "EXPLAIN") ||
+		strings.HasPrefix(trimmed, "PRAGMA") ||
+		strings.HasPrefix(trimmed, "SHOW") ||
+		strings.HasPrefix(trimmed, "DESCRIBE")
+	if !isReadPrefix {
+		return false
+	}
+	// A read-prefixed statement that calls a Dolt mutating system function
+	// (DOLT_COMMIT/DOLT_RESET/DOLT_MERGE/DOLT_ADD/…) mutates despite the prefix.
+	if strings.Contains(trimmed, "DOLT_") {
+		return false
+	}
+	return true
+}
+
 var sqlCmd = &cobra.Command{
 	Use:     "sql <query>",
 	GroupID: "maint",
@@ -61,6 +92,15 @@ WARNING: Direct database access bypasses the storage layer. Use with caution.`,
 		}
 
 		ctx := rootCtx
+
+		// Read-only guard runs for EVERY statement, not just the exec branch:
+		// a WITH-prefixed CTE write or a SELECT DOLT_*(...) mutation is routed to
+		// the query branch by isRead below yet still mutates, so gating only the
+		// exec branch left --readonly bypassable (beads-5afw). Reject anything not
+		// provably read-only up front.
+		if !sqlStatementIsReadOnlySafe(query) {
+			CheckReadonly("sql")
+		}
 
 		trimmed := strings.TrimSpace(strings.ToUpper(query))
 		isRead := strings.HasPrefix(trimmed, "SELECT") ||
