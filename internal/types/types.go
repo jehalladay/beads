@@ -659,6 +659,16 @@ func (t IssueType) Normalize() IssueType {
 	case "ms":
 		return TypeMilestone
 	default:
+		// Canonical built-in names are case-insensitive, matching the aliases
+		// above (which switch on the lowercased form). Without this, "BUG" /
+		// "Task" / "EPIC" stayed non-canonical and failed IsValid() while an
+		// alias like "ENHANCEMENT" worked in any case (beads-xsdh). Only fold
+		// case when the lowercased form is a built-in, so a legitimately
+		// mixed-case custom type (compared case-sensitively by
+		// IsValidWithCustom) round-trips unchanged.
+		if lowered := IssueType(strings.ToLower(string(t))); lowered.IsValid() {
+			return lowered
+		}
 		return t
 	}
 }
