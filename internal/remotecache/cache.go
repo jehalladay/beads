@@ -16,9 +16,6 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 )
 
-// staleLockAge is the maximum age of a lock file before it's considered stale.
-const staleLockAge = 5 * time.Minute
-
 // StoreOpener is a function that opens a DoltStorage from a beads directory.
 // This is injected by the cmd layer to abstract over build-tag-specific
 // store construction (embedded vs server).
@@ -253,15 +250,22 @@ func isInvalidRepoErr(err error) bool {
 }
 
 // acquireLock acquires an exclusive file lock for a cache entry.
+//
+// It deliberately does NOT remove a "stale" lock file by mtime. flock(2) is
+// bound to the open file description (inode), not the path, and is released
+// automatically by the OS when the holding process dies — so a crashed holder
+// leaves a lock the try-lock loop below will immediately acquire, and there is
+// no such thing as a stale flock to clean up. Removing the lock file by mtime
+// was actively unsafe: nothing refreshes the file's mtime while the lock is
+// held, so a legitimately-held lock during a long clone/pull (a large DB over
+// slow egress) would look "stale", get unlinked by a concurrent waiter, and the
+// waiter would O_CREATE a NEW inode and lock THAT — two processes then hold
+// "exclusive" locks on different inodes and clone/pull the same cache entry
+// concurrently, corrupting it (beads-vw2m; the split feeds the beads-ix3r
+// partial-clone wedge). The lock file is never unlinked, matching releaseLock's
+// TOCTOU rationale.
 func (c *Cache) acquireLock(ctx context.Context, remoteURL string) (*os.File, error) {
 	lp := c.lockPath(remoteURL)
-
-	// Clean up stale locks
-	if info, err := os.Stat(lp); err == nil {
-		if time.Since(info.ModTime()) > staleLockAge {
-			_ = os.Remove(lp)
-		}
-	}
 
 	// #nosec G304 - controlled path
 	f, err := os.OpenFile(lp, os.O_CREATE|os.O_RDWR, 0o600)
