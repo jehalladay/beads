@@ -77,6 +77,13 @@ func (e *Evaluator) Evaluate(node Node) (*QueryResult, error) {
 func (e *Evaluator) canUseFilterOnly(node Node) bool {
 	switch n := node.(type) {
 	case *ComparisonNode:
+		// owner has no IssueFilter field — it is only expressible as a
+		// predicate (buildOwnerPredicate). Taking the filter-only fast path
+		// makes applyOwnerFilter hard-error ("requires predicate mode"), so
+		// force owner comparisons into the predicate path where they work.
+		if n.Field == "owner" {
+			return false
+		}
 		return true
 	case *AndNode:
 		return e.canUseFilterOnly(n.Left) && e.canUseFilterOnly(n.Right)
