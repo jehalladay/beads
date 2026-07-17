@@ -365,15 +365,18 @@ func ValidateRange(expr string) error {
 		return "1"
 	})
 
+	// PARSE (not just tokenize) both sub-expressions so ValidateRange rejects
+	// exactly what ParseRange would reject at runtime. Tokenizing alone accepts
+	// lexable-but-unparseable exprs like "2+", "(3", "3)", "*3", "2 3" — those
+	// then fail at pour/loop-expansion time, defeating the point of validation
+	// (beads-01pb). EvaluateExpr = substituteVars + tokenize + parseExpr.
 	startExpr := strings.TrimSpace(m[1])
-	startExpr = substituteVars(startExpr, placeholderVars)
-	if _, err := tokenize(startExpr); err != nil {
+	if _, err := EvaluateExpr(startExpr, placeholderVars); err != nil {
 		return fmt.Errorf("invalid start expression: %w", err)
 	}
 
 	endExpr := strings.TrimSpace(m[2])
-	endExpr = substituteVars(endExpr, placeholderVars)
-	if _, err := tokenize(endExpr); err != nil {
+	if _, err := EvaluateExpr(endExpr, placeholderVars); err != nil {
 		return fmt.Errorf("invalid end expression: %w", err)
 	}
 
