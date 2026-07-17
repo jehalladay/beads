@@ -195,13 +195,41 @@ func TestEmbeddedClose(t *testing.T) {
 	})
 
 	t.Run("close_already_closed", func(t *testing.T) {
+		// beads-dr3: closing an already-closed issue must NOT print the
+		// "✓ Closed" success glyph (which falsely implies a transition
+		// occurred). It reports an informational no-op instead, keeps rc=0
+		// (idempotent), and leaves updated_at unchanged.
 		issue := bdCreate(t, bd, dir, "Double close", "--type", "task")
-		bdClose(t, bd, dir, issue.ID)
-		// Closing again should not panic.
+		firstOut := bdClose(t, bd, dir, issue.ID)
+		if !strings.Contains(firstOut, "Closed") {
+			t.Fatalf("first close should report a real close, got: %q", firstOut)
+		}
+		before := bdShow(t, bd, dir, issue.ID)
+
+		// Second close: no panic, exit 0, no false success.
 		cmd := exec.Command(bd, "close", issue.ID)
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		cmd.CombinedOutput() // Don't check error — behavior varies.
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("re-close of already-closed issue should exit 0 (idempotent), got err=%v\n%s", err, out)
+		}
+		got := string(out)
+		if !strings.Contains(got, "already closed") {
+			t.Errorf("re-close should say 'already closed', got: %q", got)
+		}
+		if strings.Contains(got, "✓ Closed") || strings.Contains(got, "✓ "+issue.ID) {
+			t.Errorf("re-close must not print the '✓ Closed' success glyph, got: %q", got)
+		}
+
+		// Verify it was a true no-op: updated_at unchanged.
+		after := bdShow(t, bd, dir, issue.ID)
+		if after.Status != types.StatusClosed {
+			t.Errorf("issue should remain closed, got %s", after.Status)
+		}
+		if !before.UpdatedAt.Equal(after.UpdatedAt) {
+			t.Errorf("re-close mutated updated_at: before=%v after=%v", before.UpdatedAt, after.UpdatedAt)
+		}
 	})
 
 	t.Run("close_nonexistent_id", func(t *testing.T) {

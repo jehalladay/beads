@@ -106,6 +106,7 @@ the flags appear in the command line.`,
 		// Direct mode
 		closedIssues := []*types.Issue{}
 		closedCount := 0
+		alreadyClosedCount := 0
 
 		for i, id := range resolvedIDs {
 			result := results[i]
@@ -116,6 +117,24 @@ the flags appear in the command line.`,
 
 			if err := validateIssueClosable(id, issue, force); err != nil {
 				fmt.Fprintf(os.Stderr, "%s\n", err)
+				continue
+			}
+
+			// Already-closed guard (beads-dr3): closing an already-closed issue
+			// is a no-op — do not fire another CloseIssue write, and do not print
+			// the "✓ Closed" success glyph, which falsely implies a state
+			// transition occurred. Report it as an informational no-op instead.
+			// rc stays 0 (idempotent close is fine) via alreadyClosedCount below.
+			if issue != nil && issue.Status == types.StatusClosed {
+				alreadyClosedCount++
+				if jsonOutput {
+					// JSON reflects state, not a claimed transition: the issue
+					// is (still) closed, so keep it in the payload for consumers.
+					closedIssues = append(closedIssues, issue)
+				} else {
+					fmt.Printf("%s %s was already closed (no change)\n",
+						ui.RenderInfoIcon(), formatFeedbackID(id, issueTitleOrEmpty(issue)))
+				}
 				continue
 			}
 
@@ -280,8 +299,12 @@ the flags appear in the command line.`,
 			}
 		}
 
+		// Exit non-zero only when nothing was closed AND nothing was an
+		// idempotent already-closed no-op. Already-closed inputs keep rc=0
+		// (idempotent close is fine — beads-dr3); genuine failures (guard
+		// rejections, errors, nonexistent ids) still trip SilentExit.
 		totalAttempted := len(resolvedIDs)
-		if totalAttempted > 0 && closedCount == 0 {
+		if totalAttempted > 0 && closedCount == 0 && alreadyClosedCount == 0 {
 			return SilentExit()
 		}
 		return nil
