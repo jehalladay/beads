@@ -24,12 +24,23 @@ var labelCmd = &cobra.Command{
 
 func processBatchLabelOperation(issueIDs []string, label string, operation string, jsonOut bool,
 	txFunc func(context.Context, storage.Transaction, string, string, string) error) error {
+	return processBatchLabelsOperation(issueIDs, []string{label}, operation, jsonOut, txFunc)
+}
+
+// processBatchLabelsOperation applies every label in labels to every issue in issueIDs
+// inside a SINGLE transaction. This keeps N-labels-on-M-issues to one process/one commit,
+// which is what lets callers (e.g. gt prime's mail delivery-ack) avoid a per-label exec
+// storm (beads-9c7).
+func processBatchLabelsOperation(issueIDs []string, labels []string, operation string, jsonOut bool,
+	txFunc func(context.Context, storage.Transaction, string, string, string) error) error {
 	ctx := rootCtx
-	commitMsg := fmt.Sprintf("bd: label %s '%s' on %d issue(s)", operation, label, len(issueIDs))
+	commitMsg := fmt.Sprintf("bd: label %s %d label(s) on %d issue(s)", operation, len(labels), len(issueIDs))
 	err := transactHonoringAutoCommit(ctx, store, commitMsg, func(tx storage.Transaction) error {
 		for _, issueID := range issueIDs {
-			if err := txFunc(ctx, tx, issueID, label, actor); err != nil {
-				return fmt.Errorf("%s label '%s' on %s: %w", operation, label, issueID, err)
+			for _, label := range labels {
+				if err := txFunc(ctx, tx, issueID, label, actor); err != nil {
+					return fmt.Errorf("%s label '%s' on %s: %w", operation, label, issueID, err)
+				}
 			}
 		}
 		return nil
@@ -39,13 +50,15 @@ func processBatchLabelOperation(issueIDs []string, label string, operation strin
 	}
 	commandDidWrite.Store(true)
 	if jsonOut {
-		results := make([]map[string]interface{}, 0, len(issueIDs))
+		results := make([]map[string]interface{}, 0, len(issueIDs)*len(labels))
 		for _, issueID := range issueIDs {
-			results = append(results, map[string]interface{}{
-				"status":   operation,
-				"issue_id": issueID,
-				"label":    label,
-			})
+			for _, label := range labels {
+				results = append(results, map[string]interface{}{
+					"status":   operation,
+					"issue_id": issueID,
+					"label":    label,
+				})
+			}
 		}
 		return outputJSON(results)
 	}
@@ -56,10 +69,36 @@ func processBatchLabelOperation(issueIDs []string, label string, operation strin
 		prep = "from"
 	}
 	for _, issueID := range issueIDs {
-		fmt.Printf("%s %s label '%s' %s %s\n", ui.RenderPass("✓"), verb, label, prep, issueID)
+		for _, label := range labels {
+			fmt.Printf("%s %s label '%s' %s %s\n", ui.RenderPass("✓"), verb, label, prep, issueID)
+		}
 	}
 	return nil
 }
+
+// collectLabelArgs merges the trailing positional label (if any) with repeatable --label
+// flag values, trims blanks, and dedupes (preserving first-seen order). When any --label
+// flag is present, ALL positional args are treated as issue IDs; otherwise the original
+// grammar applies and the last positional arg is the label.
+func collectLabelArgs(args []string, flagLabels []string) (issueIDs []string, labels []string) {
+	if len(flagLabels) > 0 {
+		issueIDs = args
+	} else if len(args) > 0 {
+		issueIDs = args[:len(args)-1]
+		flagLabels = []string{args[len(args)-1]}
+	}
+	seen := make(map[string]bool, len(flagLabels))
+	for _, l := range flagLabels {
+		l = strings.TrimSpace(l)
+		if l == "" || seen[l] {
+			continue
+		}
+		seen[l] = true
+		labels = append(labels, l)
+	}
+	return issueIDs, labels
+}
+
 func parseLabelArgs(args []string) (issueIDs []string, label string) {
 	label = args[len(args)-1]
 	issueIDs = args[:len(args)-1]
@@ -68,9 +107,13 @@ func parseLabelArgs(args []string) (issueIDs []string, label string) {
 
 //nolint:dupl // labelAddCmd and labelRemoveCmd are similar but serve different operations
 var labelAddCmd = &cobra.Command{
-	Use:           "add [issue-id...] [label]",
-	Short:         "Add a label to one or more issues",
-	Args:          cobra.MinimumNArgs(2),
+	Use:   "add [issue-id...] [label]",
+	Short: "Add one or more labels to one or more issues",
+	Long: "Add labels to issues. The trailing positional label form (bd label add <id> <label>)\n" +
+		"is preserved; the repeatable --label flag adds N labels in ONE process/transaction\n" +
+		"(bd label add <id> --label a --label b --label c), which keeps batch labeling to a\n" +
+		"single commit instead of one exec per label.",
+	Args:          cobra.MinimumNArgs(1),
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -83,10 +126,18 @@ var labelAddCmd = &cobra.Command{
 			}
 		}()
 
-		issueIDs, label := parseLabelArgs(args)
-		label = strings.TrimSpace(label)
-		if label == "" {
-			return HandleErrorRespectJSON("label cannot be empty")
+		flagLabels, _ := cmd.Flags().GetStringSlice("label")
+		issueIDs, labels := collectLabelArgs(args, flagLabels)
+		if len(labels) == 0 {
+			return HandleErrorRespectJSON("no label given: pass a trailing label or one or more --label flags")
+		}
+		if len(issueIDs) == 0 {
+			return HandleErrorRespectJSON("no issue id given")
+		}
+		for _, label := range labels {
+			if strings.HasPrefix(label, "provides:") {
+				return HandleErrorRespectJSON("'provides:' labels are reserved for cross-project capabilities. Hint: use 'bd ship %s' instead", strings.TrimPrefix(label, "provides:"))
+			}
 		}
 		ctx := rootCtx
 		resolvedIDs := make([]string, 0, len(issueIDs))
@@ -101,12 +152,11 @@ var labelAddCmd = &cobra.Command{
 			resolvedIDs = append(resolvedIDs, fullID)
 		}
 		issueIDs = resolvedIDs
-
-		if strings.HasPrefix(label, "provides:") {
-			return HandleErrorRespectJSON("'provides:' labels are reserved for cross-project capabilities. Hint: use 'bd ship %s' instead", strings.TrimPrefix(label, "provides:"))
+		if len(issueIDs) == 0 {
+			return HandleErrorRespectJSON("no issue id resolved")
 		}
 
-		return processBatchLabelOperation(issueIDs, label, "added", jsonOutput,
+		return processBatchLabelsOperation(issueIDs, labels, "added", jsonOutput,
 			func(ctx context.Context, tx storage.Transaction, issueID, lbl, act string) error {
 				return tx.AddLabel(ctx, issueID, lbl, act)
 			})
@@ -348,6 +398,8 @@ func init() {
 	labelRemoveCmd.ValidArgsFunction = issueIDCompletion
 	labelListCmd.ValidArgsFunction = issueIDCompletion
 	labelPropagateCmd.ValidArgsFunction = issueIDCompletion
+
+	labelAddCmd.Flags().StringSlice("label", nil, "Label to add (repeatable; adds all labels in one transaction)")
 
 	labelCmd.AddCommand(labelAddCmd)
 	labelCmd.AddCommand(labelRemoveCmd)
