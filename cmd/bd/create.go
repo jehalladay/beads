@@ -482,6 +482,21 @@ var createCmd = &cobra.Command{
 			if err := validation.ValidateIDPrefixAllowed(explicitID, dbPrefix, allowedPrefixes, forceCreate); err != nil {
 				return HandleErrorRespectJSON("%v", err)
 			}
+
+			// An explicit --id that already exists would be silently UPSERTED by
+			// the create path (INSERT ... ON DUPLICATE KEY UPDATE), overwriting
+			// the existing bead while still printing "✓ Created" — silent
+			// data-loss on id reuse (beads-k75k). Refuse unless --force is set;
+			// use `bd update` to modify an existing issue.
+			if !forceCreate {
+				if _, err := store.GetIssue(ctx, explicitID); err == nil {
+					return HandleErrorWithHint(
+						fmt.Sprintf("issue %s already exists", explicitID),
+						"Use 'bd update' to modify it, or pass --force to overwrite.")
+				} else if !errors.Is(err, storage.ErrNotFound) {
+					return HandleError("failed to check whether %s already exists: %v", explicitID, err)
+				}
+			}
 		}
 
 		issue := buildCreateIssue(createIssueParams{

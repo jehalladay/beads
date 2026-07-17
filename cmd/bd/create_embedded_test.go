@@ -899,6 +899,45 @@ A new feature
 	})
 }
 
+// TestEmbeddedCreateExplicitIDCollision verifies that reusing an explicit --id
+// refuses (rather than silently UPSERT-overwriting the existing bead) unless
+// --force is passed (beads-k75k).
+func TestEmbeddedCreateExplicitIDCollision(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt create tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "ci")
+
+	// Seed the id with a known original.
+	first := bdCreate(t, bd, dir, "original", "--id", "ci-fixed", "--type", "task", "-p", "2")
+	if first.ID != "ci-fixed" {
+		t.Fatalf("first create ID = %q, want ci-fixed", first.ID)
+	}
+
+	// Reusing the id WITHOUT --force must fail and leave the original intact.
+	out := bdCreateFail(t, bd, dir, "clobber", "--id", "ci-fixed", "--type", "bug", "-p", "0")
+	if !strings.Contains(out, "already exists") {
+		t.Errorf("expected 'already exists' collision error, got: %s", out)
+	}
+	got := bdShow(t, bd, dir, "ci-fixed")
+	if got.Title != "original" || got.IssueType != types.TypeTask || got.Priority != 2 {
+		t.Errorf("original bead was mutated by a refused collision: %+v", got)
+	}
+
+	// --force overwrites explicitly.
+	forced := bdCreate(t, bd, dir, "forced clobber", "--id", "ci-fixed", "--type", "bug", "-p", "0", "--force")
+	if forced.ID != "ci-fixed" {
+		t.Fatalf("forced create ID = %q, want ci-fixed", forced.ID)
+	}
+	after := bdShow(t, bd, dir, "ci-fixed")
+	if after.Title != "forced clobber" || after.IssueType != types.TypeBug || after.Priority != 0 {
+		t.Errorf("--force did not overwrite: %+v", after)
+	}
+}
+
 // TestEmbeddedCreateCommitPending verifies that CommitPending works on EmbeddedDoltStore:
 // no-op when clean, commits when there are pending changes.
 func TestEmbeddedCreateCommitPending(t *testing.T) {
