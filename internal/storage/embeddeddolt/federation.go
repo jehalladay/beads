@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
@@ -22,6 +23,12 @@ import (
 
 // credentialKeyFile is the filename for the random encryption key.
 const credentialKeyFile = ".beads-credential-key" //nolint:gosec // G101: filename, not a credential
+
+// federationStagingBranch is the temporary branch used to filter excluded
+// issue types before pushing to a federation peer. It mirrors the server
+// DoltStore's staging branch (dolt/federation.go) so both backends filter the
+// same way (beads-t129).
+const federationStagingBranch = "__federation_push_staging"
 
 // ensureCredentialKey lazily initializes the credential encryption key.
 func (s *EmbeddedDoltStore) ensureCredentialKey() error {
@@ -267,8 +274,19 @@ func (s *EmbeddedDoltStore) Sync(ctx context.Context, peer string, strategy stri
 		result.PulledCommits = 1
 	}
 
-	// Step 5: Push
-	if err := s.PushTo(ctx, peer); err != nil {
+	// Step 5: Push our changes to peer, filtering excluded types.
+	//
+	// beads-t129: the exclude_types PRIVACY filter (beads-lgda) was implemented
+	// ONLY on the server DoltStore.Sync path (dolt/federation.go
+	// filteredPushToPeer). The embedded backend pushed UNFILTERED — a plain
+	// PushTo — so a `bd federation sync` on a default (embedded) workspace
+	// published every excluded/private issue type to the peer, and did so on
+	// EVERY sync (the filter was simply absent), leaking by default (the
+	// default exclude_types is ["wisp"]). Route through the same fail-CLOSED
+	// filtered push so both backends honor the confidentiality boundary.
+	excludeTypes := config.GetFederationConfig().ExcludeTypes
+	if err := s.filteredPushToPeer(ctx, peer, excludeTypes); err != nil {
+		// Push failure is not fatal - peer may not accept pushes.
 		result.PushError = err
 	} else {
 		result.Pushed = true
@@ -279,6 +297,89 @@ func (s *EmbeddedDoltStore) Sync(ctx context.Context, peer string, strategy stri
 
 	result.EndTime = time.Now()
 	return result, nil
+}
+
+// filteredPushToPeer pushes to a peer after filtering out excluded issue types,
+// mirroring the server DoltStore's filteredPushToPeer (dolt/federation.go) so
+// the embedded backend honors the exclude_types privacy boundary the same way
+// (beads-t129). When excludeTypes is empty, delegates directly to PushTo (no
+// filtering).
+//
+// For non-empty excludeTypes, the method creates a temporary staging branch on
+// a single pinned connection (branch operations are session-scoped), deletes
+// matching issues, commits the filtered state, and pushes the staging branch to
+// the peer mapped onto the peer's expected branch name. The staging branch is
+// always cleaned up.
+//
+// A delete error is FATAL (fail CLOSED): exclude_types is a privacy filter, so
+// if we cannot remove an excluded type we must NOT push the staging branch —
+// doing so would leak the very issues the filter exists to withhold (the
+// beads-lgda failure mode, applied here to the embedded backend).
+//
+// The special type "wisp" matches issues with ephemeral=true in the committed
+// issues table (defense-in-depth: wisps normally live in dolt_ignore'd tables
+// and are not pushed).
+func (s *EmbeddedDoltStore) filteredPushToPeer(ctx context.Context, peer string, excludeTypes []string) error {
+	if len(excludeTypes) == 0 {
+		return s.PushTo(ctx, peer)
+	}
+
+	return s.withMutatingPinnedDBConn(ctx, func(db versioncontrolops.DBConn) error {
+		// Clean up any leftover staging branch from a previous failed run.
+		_, _ = db.ExecContext(ctx, "CALL DOLT_BRANCH('-Df', ?)", federationStagingBranch)
+
+		// Create staging branch from the current branch.
+		if _, err := db.ExecContext(ctx, "CALL DOLT_BRANCH(?, ?)", federationStagingBranch, s.branch); err != nil {
+			return fmt.Errorf("federation filter: create staging branch: %w", err)
+		}
+
+		// Ensure cleanup: restore original branch and delete staging.
+		defer func() {
+			_, _ = db.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", s.branch)
+			_, _ = db.ExecContext(ctx, "CALL DOLT_BRANCH('-Df', ?)", federationStagingBranch)
+		}()
+
+		// Checkout staging branch.
+		if err := versioncontrolops.CheckoutBranch(ctx, db, federationStagingBranch); err != nil {
+			return fmt.Errorf("federation filter: checkout staging: %w", err)
+		}
+
+		// Delete excluded issues from the committed issues table. A delete
+		// error MUST be fatal (fail CLOSED) — see the method doc.
+		deleted := false
+		for _, excludeType := range excludeTypes {
+			var result sql.Result
+			var execErr error
+			if excludeType == "wisp" {
+				result, execErr = db.ExecContext(ctx, "DELETE FROM issues WHERE ephemeral = 1")
+			} else {
+				result, execErr = db.ExecContext(ctx, "DELETE FROM issues WHERE issue_type = ?", excludeType)
+			}
+			if execErr != nil {
+				return fmt.Errorf("federation filter: delete excluded type %q (aborting push to avoid leaking it): %w", excludeType, execErr)
+			}
+			if n, _ := result.RowsAffected(); n > 0 {
+				deleted = true
+			}
+		}
+
+		if deleted {
+			if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?)",
+				"federation: exclude private issue types"); err != nil {
+				return fmt.Errorf("federation filter: commit filtered state: %w", err)
+			}
+		}
+
+		// Restore original branch context before pushing.
+		if err := versioncontrolops.CheckoutBranch(ctx, db, s.branch); err != nil {
+			return fmt.Errorf("federation filter: restore branch %s: %w", s.branch, err)
+		}
+
+		// Push staging branch to peer, mapped to the peer's expected branch
+		// name. DOLT_PUSH accepts a "local:remote" refspec as the branch arg.
+		refspec := federationStagingBranch + ":" + s.branch
+		return versioncontrolops.Push(ctx, db, peer, refspec, remoteAuthUser())
+	})
 }
 
 // SyncStatus returns the synchronization status with a peer.
