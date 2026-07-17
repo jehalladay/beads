@@ -4,10 +4,25 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// eventsSinceSafetyCap bounds an unbounded (old `since`) audit-trail scan.
+// GetAllEventsSinceInTx is filtered only by created_at, so a very old `since`
+// on a high-event DB would load every matching event into memory — the same
+// unbounded-load class that grew a bd-list process to 128GB RSS (hq-lcu9o) and
+// that beads-heq capped for SearchIssuesWithCounts. Events are smaller structs
+// than issues+counts, so the risk is lower, but the load is still unbounded.
+// The value matches searchCountsSafetyCap for consistency across read paths.
+const eventsSinceSafetyCap = 10000
+
+// eventsSinceTruncationWarnOnce ensures the "results truncated" warning is
+// emitted at most once per process, so a broad scan does not spam stderr.
+var eventsSinceTruncationWarnOnce sync.Once
 
 // GetEventsInTx retrieves events for an issue. If limit <= 0, all events are returned.
 //
@@ -37,24 +52,48 @@ func GetEventsInTx(ctx context.Context, tx *sql.Tx, issueID string, limit int) (
 }
 
 // GetAllEventsSinceInTx returns all events created after the given time,
-// querying both events and wisp_events tables.
+// querying both events and wisp_events tables. The scan is hard-capped at
+// eventsSinceSafetyCap rows to keep memory bounded on a high-event DB with an
+// old `since` (see the constant doc). Each UNION branch is capped at cap+1 so
+// real truncation is detectable; the merged set is trimmed to the cap with a
+// one-time stderr warning.
+//
+//nolint:gosec // G201: LIMIT fragment is built from an internal int constant.
 func GetAllEventsSinceInTx(ctx context.Context, tx *sql.Tx, since time.Time) ([]*types.Event, error) {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at
+	query := fmt.Sprintf(`
+		(SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at
 		FROM events
 		WHERE created_at > ?
+		ORDER BY created_at ASC
+		LIMIT %d)
 		UNION ALL
-		SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at
+		(SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at
 		FROM wisp_events
 		WHERE created_at > ?
 		ORDER BY created_at ASC
-	`, since, since)
+		LIMIT %d)
+		ORDER BY created_at ASC
+	`, eventsSinceSafetyCap+1, eventsSinceSafetyCap+1)
+
+	rows, err := tx.QueryContext(ctx, query, since, since)
 	if err != nil {
 		return nil, fmt.Errorf("get events since %v: %w", since, err)
 	}
 	defer rows.Close()
 
-	return scanEvents(rows)
+	events, err := scanEvents(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(events) > eventsSinceSafetyCap {
+		eventsSinceTruncationWarnOnce.Do(func() {
+			fmt.Fprintf(os.Stderr,
+				"Warning: event scan truncated at %d rows (safety cap); narrow the time window\n",
+				eventsSinceSafetyCap)
+		})
+		events = events[:eventsSinceSafetyCap]
+	}
+	return events, nil
 }
 
 func scanEvents(rows *sql.Rows) ([]*types.Event, error) {
