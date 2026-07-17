@@ -366,7 +366,7 @@ Examples:
 
 		dt := types.DependencyType(depType)
 		if !dt.IsValid() {
-			return HandleErrorRespectJSON("invalid dependency type %q: must be non-empty and at most 50 characters", depType)
+			return HandleErrorRespectJSON("invalid dependency type %q: must be non-empty and at most 32 characters", depType)
 		}
 
 		dep := &types.Dependency{
@@ -586,7 +586,7 @@ func readBulkDepEdges(file string, defaultType string) ([]bulkDepEdge, error) {
 		}
 		dt := types.DependencyType(depType)
 		if !dt.IsValid() {
-			errs = append(errs, fmt.Sprintf("line %d: invalid dependency type %q: must be non-empty and at most 50 characters", lineNo, depType))
+			errs = append(errs, fmt.Sprintf("line %d: invalid dependency type %q: must be non-empty and at most 32 characters", lineNo, depType))
 		}
 		if from == "" || to == "" || !dt.IsValid() {
 			continue

@@ -606,7 +606,7 @@ var createCmd = &cobra.Command{
 			}
 
 			if !depType.IsValid() {
-				return HandleErrorRespectJSON("invalid dependency type %q (must be non-empty, max 50 chars); valid types: %s", depType, createDepsAcceptedTypeList())
+				return HandleErrorRespectJSON("invalid dependency type %q (must be non-empty, max 32 chars); valid types: %s", depType, createDepsAcceptedTypeList())
 			}
 			if !depType.IsWellKnown() {
 				return HandleErrorRespectJSON("unknown dependency type %q; valid types: %s", depType, createDepsAcceptedTypeList())
