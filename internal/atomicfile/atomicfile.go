@@ -95,6 +95,18 @@ func (w *Writer) Close() error {
 		return fmt.Errorf("atomicfile: rename: %w", err)
 	}
 
+	// fsync the parent directory so the rename itself is durable: a successful
+	// os.Rename makes the new name visible to concurrent readers, but the
+	// directory entry is not persisted until the directory is fsynced. Without
+	// this a crash right after rename can lose the entry entirely (neither the
+	// old nor the new file survives), breaking the crash-durability contract in
+	// this package's doc comment. The data is already renamed into place, so a
+	// dir-sync failure is a durability-not-correctness concern; surface it so
+	// callers relying on persistence can react. No-op on non-Unix (see syncDir).
+	if err := syncDir(filepath.Dir(w.target)); err != nil {
+		return fmt.Errorf("atomicfile: sync dir: %w", err)
+	}
+
 	return nil
 }
 
