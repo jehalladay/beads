@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+// ptrTo returns a pointer to v, for populating pointer-typed struct fields
+// (e.g. Issue.ExternalRef) in table-driven tests.
+func ptrTo[T any](v T) *T { return &v }
+
 func TestIssueValidation(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -49,6 +53,138 @@ func TestIssueValidation(t *testing.T) {
 			},
 			wantErr: true,
 			errMsg:  "title must be 500 characters or less",
+		},
+		{
+			// beads-2953: assignee is VARCHAR(255); a longer value used to slip
+			// past Validate and fail at insert with a raw "Error 1105 ... too
+			// large for column 'assignee'". It must be rejected cleanly here.
+			name: "assignee too long",
+			issue: Issue{
+				ID:        "test-1",
+				Title:     "Valid title",
+				Assignee:  string(make([]byte, 256)), // 256 chars — exceeds VARCHAR(255)
+				Status:    StatusOpen,
+				Priority:  2,
+				IssueType: TypeFeature,
+			},
+			wantErr: true,
+			errMsg:  "assignee must be 255 characters or less",
+		},
+		{
+			name: "assignee at limit ok",
+			issue: Issue{
+				ID:        "test-1",
+				Title:     "Valid title",
+				Assignee:  string(make([]byte, 255)), // exactly 255 — the column limit
+				Status:    StatusOpen,
+				Priority:  2,
+				IssueType: TypeFeature,
+			},
+			wantErr: false,
+		},
+		{
+			// beads-2953: external_ref is VARCHAR(255); same leak class as assignee.
+			name: "external_ref too long",
+			issue: Issue{
+				ID:          "test-1",
+				Title:       "Valid title",
+				ExternalRef: ptrTo(string(make([]byte, 256))), // 256 chars — exceeds VARCHAR(255)
+				Status:      StatusOpen,
+				Priority:    2,
+				IssueType:   TypeFeature,
+			},
+			wantErr: true,
+			errMsg:  "external_ref must be 255 characters or less",
+		},
+		{
+			name: "external_ref at limit ok",
+			issue: Issue{
+				ID:          "test-1",
+				Title:       "Valid title",
+				ExternalRef: ptrTo(string(make([]byte, 255))), // exactly 255 — the column limit
+				Status:      StatusOpen,
+				Priority:    2,
+				IssueType:   TypeFeature,
+			},
+			wantErr: false,
+		},
+		{
+			// beads-2953: spec_id is VARCHAR(1024).
+			name: "spec_id too long",
+			issue: Issue{
+				ID:        "test-1",
+				Title:     "Valid title",
+				SpecID:    string(make([]byte, 1025)), // 1025 chars — exceeds VARCHAR(1024)
+				Status:    StatusOpen,
+				Priority:  2,
+				IssueType: TypeFeature,
+			},
+			wantErr: true,
+			errMsg:  "spec_id must be 1024 characters or less",
+		},
+		{
+			name: "spec_id at limit ok",
+			issue: Issue{
+				ID:        "test-1",
+				Title:     "Valid title",
+				SpecID:    string(make([]byte, 1024)), // exactly 1024 — the column limit
+				Status:    StatusOpen,
+				Priority:  2,
+				IssueType: TypeFeature,
+			},
+			wantErr: false,
+		},
+		{
+			// beads-2953: await_id is VARCHAR(255).
+			name: "await_id too long",
+			issue: Issue{
+				ID:        "test-1",
+				Title:     "Valid title",
+				AwaitID:   string(make([]byte, 256)), // 256 chars — exceeds VARCHAR(255)
+				Status:    StatusOpen,
+				Priority:  2,
+				IssueType: TypeFeature,
+			},
+			wantErr: true,
+			errMsg:  "await_id must be 255 characters or less",
+		},
+		{
+			name: "await_id at limit ok",
+			issue: Issue{
+				ID:        "test-1",
+				Title:     "Valid title",
+				AwaitID:   string(make([]byte, 255)), // exactly 255 — the column limit
+				Status:    StatusOpen,
+				Priority:  2,
+				IssueType: TypeFeature,
+			},
+			wantErr: false,
+		},
+		{
+			// beads-2953: label is VARCHAR(255).
+			name: "label too long",
+			issue: Issue{
+				ID:        "test-1",
+				Title:     "Valid title",
+				Labels:    []string{"ok", string(make([]byte, 256))}, // 2nd exceeds VARCHAR(255)
+				Status:    StatusOpen,
+				Priority:  2,
+				IssueType: TypeFeature,
+			},
+			wantErr: true,
+			errMsg:  "label must be 255 characters or less",
+		},
+		{
+			name: "label at limit ok",
+			issue: Issue{
+				ID:        "test-1",
+				Title:     "Valid title",
+				Labels:    []string{string(make([]byte, 255))}, // exactly 255 — the column limit
+				Status:    StatusOpen,
+				Priority:  2,
+				IssueType: TypeFeature,
+			},
+			wantErr: false,
 		},
 		{
 			name: "invalid priority too low",
