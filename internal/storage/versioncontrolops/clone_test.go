@@ -36,16 +36,28 @@ func TestSanitizeURL(t *testing.T) {
 			name: "parse failure does not leak credentials",
 			raw:  "http://user:secret@host\x7f/db",
 		},
+		{
+			// Schemeless "user:secret@host/path" parses OK with nil User (the
+			// creds land in Path/Opaque), so clearing User leaves them intact.
+			// Must be redacted wholesale (beads-enax).
+			name: "schemeless userinfo does not leak credentials",
+			raw:  "user:secret@github.com/org/repo.git",
+		},
+		{
+			// scp-like remote (git@host:path) — '@' before any '/', no scheme.
+			name: "scp-like remote does not leak credentials",
+			raw:  "deploy:secret@github.com:org/repo.git",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := sanitizeURL(tt.raw)
+			got := SanitizeURL(tt.raw)
 			if strings.Contains(got, "secret") || strings.Contains(got, "user:") {
-				t.Errorf("sanitizeURL(%q) = %q, leaks credentials", tt.raw, got)
+				t.Errorf("SanitizeURL(%q) = %q, leaks credentials", tt.raw, got)
 			}
 			if tt.wantOut != "" && got != tt.wantOut {
-				t.Errorf("sanitizeURL(%q) = %q, want %q", tt.raw, got, tt.wantOut)
+				t.Errorf("SanitizeURL(%q) = %q, want %q", tt.raw, got, tt.wantOut)
 			}
 		})
 	}
