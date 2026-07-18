@@ -160,6 +160,113 @@ func TestAddLabelInTx(t *testing.T) {
 	})
 }
 
+func TestSetLabelsInTx(t *testing.T) {
+	t.Parallel()
+
+	// SetLabelsInTx is the canonical diff-based label-set replace lifted to the
+	// shared in-tx seam (beads-idvy). It must read the current set once, then
+	// remove ONLY current-not-desired and add ONLY desired-not-present — leaving
+	// unchanged labels untouched (no churn event) and never doing remove-all-add-all.
+	// Explicit table names ("labels"/"events") skip the wisp-routing probe.
+
+	t.Run("overlap removes only current-not-desired and adds only desired-not-present", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		// current {a,b} -> desired {b,c}: read current, remove a, add c; b untouched.
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT label FROM labels WHERE issue_id = ? ORDER BY label")).
+			WithArgs("bd-1").
+			WillReturnRows(sqlmock.NewRows([]string{"label"}).AddRow("a").AddRow("b"))
+		mock.ExpectExec(regexp.QuoteMeta("DELETE FROM labels WHERE issue_id = ? AND label = ?")).
+			WithArgs("bd-1", "a").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec(regexp.QuoteMeta("INSERT INTO events (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)")).
+			WithArgs(sqlmock.AnyArg(), "bd-1", "label_removed", "alice", "Removed label: a").
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectExec(regexp.QuoteMeta("INSERT IGNORE INTO labels (issue_id, label) VALUES (?, ?)")).
+			WithArgs("bd-1", "c").
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectExec(regexp.QuoteMeta("INSERT INTO events (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)")).
+			WithArgs(sqlmock.AnyArg(), "bd-1", "label_added", "alice", "Added label: c").
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		if err := SetLabelsInTx(context.Background(), tx, "labels", "events", "bd-1", []string{"b", "c"}, "alice"); err != nil {
+			t.Fatalf("SetLabelsInTx: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations (churn or wrong diff): %v", err)
+		}
+	})
+
+	t.Run("identical set is a pure read no-op (no writes)", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		// desired == current {a,b}: only the read runs; no DELETE/INSERT/event.
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT label FROM labels WHERE issue_id = ? ORDER BY label")).
+			WithArgs("bd-1").
+			WillReturnRows(sqlmock.NewRows([]string{"label"}).AddRow("a").AddRow("b"))
+		if err := SetLabelsInTx(context.Background(), tx, "labels", "events", "bd-1", []string{"a", "b"}, "alice"); err != nil {
+			t.Fatalf("SetLabelsInTx: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("identical set must not write: %v", err)
+		}
+	})
+
+	t.Run("empty desired set removes every current label", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT label FROM labels WHERE issue_id = ? ORDER BY label")).
+			WithArgs("bd-1").
+			WillReturnRows(sqlmock.NewRows([]string{"label"}).AddRow("a"))
+		mock.ExpectExec(regexp.QuoteMeta("DELETE FROM labels WHERE issue_id = ? AND label = ?")).
+			WithArgs("bd-1", "a").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec(regexp.QuoteMeta("INSERT INTO events (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)")).
+			WithArgs(sqlmock.AnyArg(), "bd-1", "label_removed", "alice", "Removed label: a").
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		if err := SetLabelsInTx(context.Background(), tx, "labels", "events", "bd-1", nil, "alice"); err != nil {
+			t.Fatalf("SetLabelsInTx: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+
+	t.Run("whitespace-only desired entries are skipped (not added)", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		// desired {"  ", "c"} against empty current: "  " trimmed away, only c added.
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT label FROM labels WHERE issue_id = ? ORDER BY label")).
+			WithArgs("bd-1").
+			WillReturnRows(sqlmock.NewRows([]string{"label"}))
+		mock.ExpectExec(regexp.QuoteMeta("INSERT IGNORE INTO labels (issue_id, label) VALUES (?, ?)")).
+			WithArgs("bd-1", "c").
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectExec(regexp.QuoteMeta("INSERT INTO events (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)")).
+			WithArgs(sqlmock.AnyArg(), "bd-1", "label_added", "alice", "Added label: c").
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		if err := SetLabelsInTx(context.Background(), tx, "labels", "events", "bd-1", []string{"  ", "c"}, "alice"); err != nil {
+			t.Fatalf("SetLabelsInTx: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+
+	t.Run("read error aborts before any write", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT label FROM labels WHERE issue_id = ? ORDER BY label")).
+			WithArgs("bd-1").
+			WillReturnError(errors.New("boom"))
+		if err := SetLabelsInTx(context.Background(), tx, "labels", "events", "bd-1", []string{"c"}, "alice"); err == nil {
+			t.Fatal("expected the current-set read error to propagate")
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("no write should be attempted after a read failure: %v", err)
+		}
+	})
+}
+
 func TestRemoveLabelInTx(t *testing.T) {
 	t.Parallel()
 

@@ -190,6 +190,15 @@ func (h *HookFiringStore) RemoveLabel(ctx context.Context, issueID, label, actor
 	return nil
 }
 
+// SetLabels atomically replaces the label set and fires on_update once.
+func (h *HookFiringStore) SetLabels(ctx context.Context, issueID string, labels []string, actor string) error {
+	if err := h.inner.SetLabels(ctx, issueID, labels, actor); err != nil {
+		return err
+	}
+	h.fireHookByID(ctx, hooks.EventUpdate, issueID)
+	return nil
+}
+
 // ── Comment mutations ───────────────────────────────────────────────
 
 // AddIssueComment adds a comment and fires on_update.

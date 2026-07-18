@@ -4,6 +4,7 @@ package embeddeddolt_test
 
 import (
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 
@@ -236,5 +237,90 @@ func TestAddLabel(t *testing.T) {
 		if len(labels) != 1 {
 			t.Errorf("expected 1 label, got %v", labels)
 		}
+	})
+}
+
+// TestSetLabels covers beads-idvy: the atomic diff-based SetLabels replaces the
+// label set to exactly the desired set, on real embedded Dolt (round-trip).
+func TestSetLabels(t *testing.T) {
+	skipUnlessEmbeddedDolt(t)
+
+	seed := func(t *testing.T, prefix string, initial []string) (*testEnv, string) {
+		t.Helper()
+		te := newTestEnv(t, prefix)
+		ctx := t.Context()
+		id := prefix + "-1"
+		issue := &types.Issue{
+			ID:        id,
+			Title:     "Set labels",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		}
+		if err := te.store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("CreateIssue: %v", err)
+		}
+		for _, l := range initial {
+			if err := te.store.AddLabel(ctx, id, l, "tester"); err != nil {
+				t.Fatalf("AddLabel %s: %v", l, err)
+			}
+		}
+		if err := te.store.Commit(ctx, "seed labels"); err != nil {
+			t.Fatalf("Commit: %v", err)
+		}
+		return te, id
+	}
+
+	assertLabels := func(t *testing.T, te *testEnv, id string, want []string) {
+		t.Helper()
+		got, err := te.store.GetLabels(t.Context(), id)
+		if err != nil {
+			t.Fatalf("GetLabels: %v", err)
+		}
+		gs := append([]string(nil), got...)
+		ws := append([]string(nil), want...)
+		sort.Strings(gs)
+		sort.Strings(ws)
+		if len(gs) != len(ws) {
+			t.Fatalf("labels = %v, want %v", got, want)
+		}
+		for i := range gs {
+			if gs[i] != ws[i] {
+				t.Fatalf("labels = %v, want %v", got, want)
+			}
+		}
+	}
+
+	t.Run("overlap replaces to exactly the desired set", func(t *testing.T) {
+		te, id := seed(t, "slov", []string{"a", "b"})
+		// {a,b} -> {b,c}
+		if err := te.store.SetLabels(t.Context(), id, []string{"b", "c"}, "tester"); err != nil {
+			t.Fatalf("SetLabels: %v", err)
+		}
+		assertLabels(t, te, id, []string{"b", "c"})
+	})
+
+	t.Run("identical set is a no-op", func(t *testing.T) {
+		te, id := seed(t, "slid", []string{"a", "b"})
+		if err := te.store.SetLabels(t.Context(), id, []string{"a", "b"}, "tester"); err != nil {
+			t.Fatalf("SetLabels: %v", err)
+		}
+		assertLabels(t, te, id, []string{"a", "b"})
+	})
+
+	t.Run("disjoint set replaces all", func(t *testing.T) {
+		te, id := seed(t, "sldj", []string{"a", "b"})
+		if err := te.store.SetLabels(t.Context(), id, []string{"c", "d"}, "tester"); err != nil {
+			t.Fatalf("SetLabels: %v", err)
+		}
+		assertLabels(t, te, id, []string{"c", "d"})
+	})
+
+	t.Run("empty desired clears all", func(t *testing.T) {
+		te, id := seed(t, "slcl", []string{"a", "b"})
+		if err := te.store.SetLabels(t.Context(), id, nil, "tester"); err != nil {
+			t.Fatalf("SetLabels: %v", err)
+		}
+		assertLabels(t, te, id, nil)
 	})
 }

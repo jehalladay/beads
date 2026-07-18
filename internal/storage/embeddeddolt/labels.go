@@ -31,3 +31,12 @@ func (s *EmbeddedDoltStore) RemoveLabel(ctx context.Context, issueID, label, act
 		return issueops.RemoveLabelInTx(ctx, tx, "", "", issueID, label, actor)
 	})
 }
+
+// SetLabels atomically replaces an issue's label set with exactly `labels`,
+// diffing inside ONE write transaction (issueops.SetLabelsInTx) — unchanged
+// labels untouched, half-applied sets impossible (beads-idvy).
+func (s *EmbeddedDoltStore) SetLabels(ctx context.Context, issueID string, labels []string, actor string) error {
+	return s.withConn(ctx, true, func(tx *sql.Tx) error {
+		return issueops.SetLabelsInTx(ctx, tx, "", "", issueID, labels, actor)
+	})
+}

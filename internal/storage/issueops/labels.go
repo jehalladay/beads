@@ -182,6 +182,61 @@ func AddLabelInTx(ctx context.Context, tx DBTX, labelTable, eventTable, issueID,
 	return nil
 }
 
+// SetLabelsInTx replaces an issue's label set with exactly `labels`, diffing
+// against the current set inside ONE transaction: it removes only
+// current-not-desired and adds only desired-not-present, so unchanged labels
+// are left untouched (no churn event) and the whole replace is atomic — a
+// mid-diff failure rolls back the caller's tx rather than leaving a
+// half-applied set (beads-idvy). This lifts the canonical diff logic that
+// previously lived only in the proxied domain path (labelUseCase.setMany) down
+// to the shared in-tx seam so the direct CLI path (applyLabelUpdates) and the
+// proxied path share ONE implementation. Desired labels are trimmed and
+// de-duplicated the same way AddLabelInTx trims (beads-13zc); an empty/
+// whitespace-only entry is skipped.
+func SetLabelsInTx(ctx context.Context, tx DBTX, labelTable, eventTable, issueID string, labels []string, actor string) error {
+	// Resolve wisp routing once so the list/remove/add below all target the
+	// same tables (and we don't re-probe IsActiveWispInTx per call).
+	if labelTable == "" || eventTable == "" {
+		isWisp := IsActiveWispInTx(ctx, tx, issueID)
+		_, lt, et, _ := WispTableRouting(isWisp)
+		if labelTable == "" {
+			labelTable = lt
+		}
+		if eventTable == "" {
+			eventTable = et
+		}
+	}
+
+	desired := make(map[string]bool, len(labels))
+	for _, l := range labels {
+		if l = strings.TrimSpace(l); l != "" {
+			desired[l] = true
+		}
+	}
+
+	current, err := GetLabelsInTx(ctx, tx, labelTable, issueID)
+	if err != nil {
+		return err
+	}
+	existing := make(map[string]bool, len(current))
+	for _, l := range current {
+		existing[l] = true
+		if !desired[l] {
+			if err := RemoveLabelInTx(ctx, tx, labelTable, eventTable, issueID, l, actor); err != nil {
+				return err
+			}
+		}
+	}
+	for l := range desired {
+		if !existing[l] {
+			if err := AddLabelInTx(ctx, tx, labelTable, eventTable, issueID, l, actor); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // RemoveLabelInTx removes a label from an issue and records an event within
 // an existing transaction. Automatically routes to wisp tables if the ID is
 // an active wisp.
