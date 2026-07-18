@@ -679,8 +679,9 @@ func (s *configStore) GetDependentsWithMetadata(_ context.Context, _ string) ([]
 func (s *configStore) GetDependencyTree(_ context.Context, _ string, _ int, _, _ bool) ([]*types.TreeNode, error) {
 	return nil, nil
 }
-func (s *configStore) AddLabel(_ context.Context, _, _, _ string) error    { return nil }
-func (s *configStore) RemoveLabel(_ context.Context, _, _, _ string) error { return nil }
+func (s *configStore) AddLabel(_ context.Context, _, _, _ string) error                  { return nil }
+func (s *configStore) RemoveLabel(_ context.Context, _, _, _ string) error               { return nil }
+func (s *configStore) SetLabels(_ context.Context, _ string, _ []string, _ string) error { return nil }
 func (s *configStore) GetLabels(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
