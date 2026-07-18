@@ -812,6 +812,37 @@ func TestProxiedServerShow(t *testing.T) {
 			t.Fatalf("expected wisp comments with --include-comments: %v", m)
 		}
 	})
+
+	// beads-qtw9: the --as-of/--refs/--children legs of proxied `bd show` print
+	// the ids that DID resolve and `continue` past a not-found one, but must
+	// still exit non-zero on any id-resolution failure — matching the direct
+	// paths (show.go/show_refs.go/show_children.go all return exitError{Code:1}
+	// on any failed id) and the proxied default/thread legs. Without this a
+	// `bd show <ghost> --refs || fail` gate reads false-clean in proxied mode.
+	t.Run("refs_nonexistent_id_exits_nonzero", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "rfn")
+		bdProxiedShowFail(t, bd, p.dir, "rfn-nonexistent999", "--refs")
+	})
+
+	t.Run("refs_partial_failure_exits_nonzero", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "rfp")
+		issue := bdProxiedCreate(t, bd, p.dir, "Real refs", "--type", "task")
+		// A real id + a bogus id: the real one still renders, but the bogus id
+		// must drive a non-zero exit (partial-failure contract).
+		stdout, _ := bdProxiedShowFail(t, bd, p.dir, issue.ID, "rfp-nonexistent999", "--refs")
+		_ = stdout
+	})
+
+	t.Run("children_nonexistent_id_exits_nonzero", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "chn")
+		bdProxiedShowFail(t, bd, p.dir, "chn-nonexistent999", "--children")
+	})
+
+	t.Run("as_of_nonexistent_id_exits_nonzero", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "aof")
+		hash := proxiedCurrentCommit(t, p)
+		bdProxiedShowFail(t, bd, p.dir, "aof-nonexistent999", "--as-of", hash)
+	})
 }
 
 func proxiedCurrentCommit(t *testing.T, p proxiedProject) string {
