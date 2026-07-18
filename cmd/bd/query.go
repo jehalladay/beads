@@ -61,8 +61,9 @@ Supported fields:
 
 Values:
   Bare values may contain letters, digits, and _ - . : / (so Gas Town
-  addresses like beads/crew/beads_eng_5 parse unquoted). Wrap a value in
-  double quotes if it contains spaces or any other special character,
+  addresses like beads/crew/beads_eng_5 parse unquoted), plus a trailing *
+  for the id/spec wildcard forms above (id=bd-*). Wrap a value in double
+  quotes if it contains spaces or any other special character,
   e.g. owner="user@host" or title="hello world".
 
 Date values:
