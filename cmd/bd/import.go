@@ -104,6 +104,10 @@ func init() {
 }
 
 func runImport(cmd *cobra.Command, args []string) error {
+	// beads-q634: import is a bulk write channel (create/overwrite arbitrary
+	// issues) — the most dangerous --readonly bypass, since a sandboxed worker
+	// could inject issues. Block it under --readonly like the mutation verbs.
+	CheckReadonly("import")
 	evt := metrics.NewCommandEvent("import")
 	defer func() {
 		if c := metrics.Global(); c != nil {
