@@ -762,8 +762,15 @@ func runCompactApply(ctx context.Context, store storage.DoltStorage) {
 	savingBytes := originalSize - compactedSize
 	reductionPct := float64(savingBytes) / float64(originalSize) * 100
 	eventData := fmt.Sprintf("Tier %d compaction: %d → %d bytes (saved %d, %.1f%%)", compactTier, originalSize, compactedSize, savingBytes, reductionPct)
+	// beads-4yi7 (CLI sibling of beads-ezng): this event comment is a COSMETIC
+	// post-log — CompactOverwrite above already committed the overwrite +
+	// compaction mark durably (beads-pj38). A FatalErrorRespectJSON here would
+	// os.Exit(1) for an issue that WAS successfully compacted (false failure; a
+	// retry then hits the eligibility/size skip). Warn and continue to the
+	// success output instead — mirroring promote.go's post-commit comment
+	// handling and the "durable state committed = success" contract.
 	if err := store.AddComment(ctx, compactID, actor, eventData); err != nil {
-		FatalErrorRespectJSON("failed to record event: %v", err)
+		fmt.Fprintf(os.Stderr, "Warning: %s compacted successfully but recording the compaction event comment failed: %v\n", compactID, err)
 	}
 
 	elapsed := time.Since(start)
