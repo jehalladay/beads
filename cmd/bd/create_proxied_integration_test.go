@@ -144,6 +144,43 @@ func TestProxiedServerCreate(t *testing.T) {
 		}
 	})
 
+	// beads-ie84: re-using an existing --id on the proxied path must FAIL LOUD
+	// (refuse, no overwrite) rather than silently UPSERT/clobber the stored
+	// bead — mirrors the direct-path k75k guard. --force overwrites.
+	t.Run("explicit_id_collision_rejected", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "ec")
+		orig := bdProxiedCreate(t, bd, p.dir, "Original bead", "--id", "ec-dup1")
+		if orig.ID != "ec-dup1" {
+			t.Fatalf("setup: ID got %q, want %q", orig.ID, "ec-dup1")
+		}
+		// Re-use the same id without --force → must be rejected.
+		out := bdProxiedCreateFail(t, bd, p.dir, "Clobber attempt", "--id", "ec-dup1")
+		if !strings.Contains(out, "already exists") {
+			t.Errorf("expected 'already exists' rejection, got:\n%s", out)
+		}
+		// The original must be intact (not clobbered).
+		db := openProxiedDB(t, p)
+		var gotTitle string
+		if err := db.QueryRow("SELECT title FROM issues WHERE id = ?", "ec-dup1").Scan(&gotTitle); err != nil {
+			t.Fatalf("query original: %v", err)
+		}
+		if gotTitle != "Original bead" {
+			t.Errorf("original clobbered: title got %q, want %q", gotTitle, "Original bead")
+		}
+	})
+
+	t.Run("explicit_id_collision_force_overwrites", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "ef")
+		if orig := bdProxiedCreate(t, bd, p.dir, "Original", "--id", "ef-dup1"); orig.ID != "ef-dup1" {
+			t.Fatalf("setup: ID got %q, want %q", orig.ID, "ef-dup1")
+		}
+		// --force is the documented overwrite escape hatch → must succeed.
+		issue := bdProxiedCreate(t, bd, p.dir, "Overwritten", "--id", "ef-dup1", "--force")
+		if issue.ID != "ef-dup1" {
+			t.Errorf("ID: got %q, want %q", issue.ID, "ef-dup1")
+		}
+	})
+
 	t.Run("dependencies", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "dp")
 		parent := bdProxiedCreate(t, bd, p.dir, "Parent issue")
