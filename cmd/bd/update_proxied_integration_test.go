@@ -1157,3 +1157,51 @@ func readIsBlocked(t *testing.T, db *sql.DB, id string) bool {
 	}
 	return v != 0
 }
+
+// TestProxiedServerUpdateWritesAuditTrail asserts the proxied UPDATE handler
+// emits the GC-survivable audit-file field-change trail via the shared
+// auditIssueUpdate chokepoint (beads-jffu). The proxied close/reopen handlers
+// already write this trail (auditStatusChange), and so does the CLI update
+// path (auditIssueUpdate in cmd/bd/update.go) — the proxied update path was the
+// lone sibling that dropped it. Removing the auditIssueUpdate call in
+// applyUpdateProxiedOne turns these assertions RED.
+func TestProxiedServerUpdateWritesAuditTrail(t *testing.T) {
+	requireProxiedServerEnv(t)
+	bd := buildEmbeddedBD(t)
+
+	t.Run("status_assignee_priority_write_field_change", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "ua")
+		issue := bdProxiedCreate(t, bd, p.dir, "Audit trail seed")
+
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID,
+			"--status", "in_progress",
+			"--assignee", "alice",
+			"-p", "0")
+
+		if !auditHasFieldChange(t, p.dir, issue.ID, "status", "in_progress") {
+			t.Errorf("proxied update did not write a GC-survivable audit field_change for status (beads-jffu)")
+		}
+		if !auditHasFieldChange(t, p.dir, issue.ID, "assignee", "alice") {
+			t.Errorf("proxied update did not write a GC-survivable audit field_change for assignee (beads-jffu)")
+		}
+		if !auditHasFieldChange(t, p.dir, issue.ID, "priority", "0") {
+			t.Errorf("proxied update did not write a GC-survivable audit field_change for priority (beads-jffu)")
+		}
+	})
+
+	t.Run("non_audited_field_only_writes_no_trail", func(t *testing.T) {
+		// Updating only a non-audited field (title) must NOT fabricate a
+		// status/assignee/priority field_change — LogFieldChange no-ops on
+		// unchanged values, so auditIssueUpdate stays silent for absent keys.
+		p := bdProxiedInit(t, bd, "un")
+		issue := bdProxiedCreate(t, bd, p.dir, "Title only")
+
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "--title", "Renamed only")
+
+		if auditHasFieldChange(t, p.dir, issue.ID, "status", "in_progress") ||
+			auditHasFieldChange(t, p.dir, issue.ID, "assignee", "alice") ||
+			auditHasFieldChange(t, p.dir, issue.ID, "priority", "0") {
+			t.Errorf("title-only proxied update fabricated a status/assignee/priority audit field_change (beads-jffu)")
+		}
+	})
+}

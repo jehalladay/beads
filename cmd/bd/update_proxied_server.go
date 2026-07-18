@@ -103,6 +103,15 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput) (*ty
 		return nil, false
 	}
 
+	// Emit the GC-survivable audit-file field-change trail via the shared
+	// cmd-layer chokepoint, mirroring the CLI update path (cmd/bd/update.go)
+	// and the proxied close/reopen handlers. The proxied UPDATE path alone was
+	// missing this, so it dropped the audit-file trail its sibling proxied
+	// handlers keep (beads-jffu). auditIssueUpdate reads the changed fields from
+	// spec.Fields against the pre-update `current`, and LogFieldChange no-ops on
+	// unchanged values (beads-n4sn), so this is safe for any field set.
+	auditIssueUpdate(id, current, spec.Fields, actor, "")
+
 	if err := fireProxiedUpdateHooks(ctx, current, updated); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %s: %v\n", id, err)
 	}
