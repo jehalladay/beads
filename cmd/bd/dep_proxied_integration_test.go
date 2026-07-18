@@ -212,6 +212,34 @@ func TestProxiedServerDep(t *testing.T) {
 			}
 		})
 
+		// beads-epuz: re-adding an already-present same-type edge must report an
+		// honest "already present, no change" (rc=0), mirroring the direct path
+		// (bwla) — not a false "✓ Added dependency".
+		t.Run("re_add_reports_no_change", func(t *testing.T) {
+			p := bdProxiedInit(t, bd, "dpaea")
+			a := bdProxiedCreate(t, bd, p.dir, "ReAdd A", "--type", "task")
+			b := bdProxiedCreate(t, bd, p.dir, "ReAdd B", "--type", "task")
+			out := bdProxiedDep(t, bd, p.dir, "add", a.ID, b.ID)
+			if !strings.Contains(out, "Added dependency") {
+				t.Fatalf("expected first add to report Added: %s", out)
+			}
+			out = bdProxiedDep(t, bd, p.dir, "add", a.ID, b.ID)
+			if !strings.Contains(out, "already present, no change") {
+				t.Errorf("expected 'already present, no change' on re-add, got: %s", out)
+			}
+		})
+
+		t.Run("re_add_json_unchanged", func(t *testing.T) {
+			p := bdProxiedInit(t, bd, "dpaej")
+			a := bdProxiedCreate(t, bd, p.dir, "ReAdd JSON A", "--type", "task")
+			b := bdProxiedCreate(t, bd, p.dir, "ReAdd JSON B", "--type", "task")
+			bdProxiedDep(t, bd, p.dir, "add", a.ID, b.ID)
+			m := bdProxiedDepJSON(t, bd, p.dir, "add", a.ID, b.ID)
+			if m["status"] != "unchanged" {
+				t.Errorf("expected status=unchanged on re-add --json, got %v", m["status"])
+			}
+		})
+
 		t.Run("depends_on_flag", func(t *testing.T) {
 			p := bdProxiedInit(t, bd, "dpa6")
 			x := bdProxiedCreate(t, bd, p.dir, "Dependent", "--type", "task")

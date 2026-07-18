@@ -40,6 +40,25 @@ func proxiedLookupTitle(ctx context.Context, uw uow.UnitOfWork, id string) strin
 	return ""
 }
 
+// proxiedDepEdgeExistsSameType reports whether a fromID -> toID edge of the
+// given type already exists (beads-epuz). Mirrors the direct path's bwla
+// precheck: AddDependencies is idempotent (a same-type re-add just refreshes
+// metadata), so without this the proxied verb printed a false "✓ Added" on a
+// no-op. A lookup error falls through (returns false) so the normal add path
+// still runs — best-effort, never blocks (matching the direct path).
+func proxiedDepEdgeExistsSameType(ctx context.Context, uw uow.UnitOfWork, fromID, toID string, dt types.DependencyType) bool {
+	recs, err := uw.DependencyUseCase().GetIssueDependencyRecords(ctx, []string{fromID})
+	if err != nil {
+		return false
+	}
+	for _, rec := range recs[fromID] {
+		if rec != nil && rec.DependsOnID == toID && rec.Type == dt {
+			return true
+		}
+	}
+	return false
+}
+
 func proxiedWarnCycles(ctx context.Context, uw uow.UnitOfWork) {
 	cycles, err := uw.DependencyUseCase().DetectCycles(ctx)
 	if err != nil {
@@ -75,6 +94,26 @@ func runDepBlocksProxiedServer(cmd *cobra.Command, ctx context.Context, blockerI
 
 	uw := openDepProxiedUOW(ctx)
 	defer uw.Close(ctx)
+
+	// beads-epuz: bwla honest-no-op parity for the --blocks shorthand too. The
+	// blocks edge is blockedID -> blockerID (type blocks); a same-type re-add is
+	// idempotent, so guard against a false "✓ Added".
+	if proxiedDepEdgeExistsSameType(ctx, uw, blockedID, blockerID, types.DepBlocks) {
+		if jsonOutput {
+			_ = outputJSON(map[string]interface{}{
+				"status":     "unchanged",
+				"blocker_id": blockerID,
+				"blocked_id": blockedID,
+				"type":       string(types.DepBlocks),
+			})
+			return
+		}
+		fmt.Printf("%s Dependency already present, no change: %s blocks %s\n",
+			ui.RenderPass("✓"),
+			formatFeedbackIDParen(blockerID, proxiedLookupTitle(ctx, uw, blockerID)),
+			formatFeedbackIDParen(blockedID, proxiedLookupTitle(ctx, uw, blockedID)))
+		return
+	}
 
 	dep := &types.Dependency{
 		IssueID:     blockedID,
@@ -163,6 +202,29 @@ func runDepAddProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 
 	uw := openDepProxiedUOW(ctx)
 	defer uw.Close(ctx)
+
+	// beads-epuz: mirror the direct path's bwla honest-no-op report. A same-type
+	// re-add is idempotent (just refreshes metadata), so an unconditional
+	// "✓ Added" is a false success on a no-op. External refs are not resolvable
+	// via the local dep records, so skip the precheck for them (best-effort,
+	// matches the direct path's same-store-only guard).
+	if !strings.HasPrefix(toID, "external:") && proxiedDepEdgeExistsSameType(ctx, uw, fromID, toID, dt) {
+		if jsonOutput {
+			_ = outputJSON(map[string]interface{}{
+				"status":        "unchanged",
+				"issue_id":      fromID,
+				"depends_on_id": toID,
+				"type":          depType,
+			})
+			return
+		}
+		fmt.Printf("%s Dependency already present, no change: %s depends on %s (%s)\n",
+			ui.RenderPass("✓"),
+			formatFeedbackIDParen(fromID, proxiedLookupTitle(ctx, uw, fromID)),
+			formatFeedbackIDParen(toID, proxiedLookupTitle(ctx, uw, toID)),
+			depType)
+		return
+	}
 
 	dep := &types.Dependency{IssueID: fromID, DependsOnID: toID, Type: dt}
 	if _, err := uw.DependencyUseCase().AddDependencies(ctx, []*types.Dependency{dep}, actor, domain.BulkAddDepsOpts{}); err != nil {
