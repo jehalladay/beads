@@ -103,6 +103,12 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) error {
 	}
 	status, _ := cmd.Flags().GetString("status")
 	limit, _ := cmd.Flags().GetInt("limit")
+	// Reject a negative --limit up front (beads-eqi4): the SQL builders
+	// only apply filter.Limit when >0, so a negative value silently returns
+	// the full set. Shared with bd list (uh4i) via validateLimitFromCmd.
+	if err := validateLimitFromCmd(cmd); err != nil {
+		return err
+	}
 	model, _ := cmd.Flags().GetString("model")
 	if model == "" {
 		model = config.DefaultAIModel()

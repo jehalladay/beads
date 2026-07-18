@@ -62,6 +62,12 @@ By default, shows only open gates. Use --all to include closed gates.`,
 
 		allFlag, _ := cmd.Flags().GetBool("all")
 		limit, _ := cmd.Flags().GetInt("limit")
+		// Reject a negative --limit up front (beads-eqi4): the SQL builders
+		// only apply filter.Limit when >0, so a negative value silently returns
+		// the full set. Shared with bd list (uh4i) via validateLimitFromCmd.
+		if err := validateLimitFromCmd(cmd); err != nil {
+			return err
+		}
 
 		gateType := types.IssueType("gate")
 		filter := types.IssueFilter{
@@ -508,6 +514,12 @@ Examples:
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		escalateFlag, _ := cmd.Flags().GetBool("escalate")
 		limit, _ := cmd.Flags().GetInt("limit")
+		// Reject a negative --limit up front (beads-eqi4): the SQL builders
+		// only apply filter.Limit when >0, so a negative value silently returns
+		// the full set. Shared with bd list (uh4i) via validateLimitFromCmd.
+		if err := validateLimitFromCmd(cmd); err != nil {
+			return err
+		}
 
 		gateType := types.IssueType("gate")
 		filter := types.IssueFilter{

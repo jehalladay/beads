@@ -84,6 +84,14 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		}
 
 		limit, _ := cmd.Flags().GetInt("limit")
+		// Reject a negative --limit (beads-eqi4): this direct RunE reads limit raw
+		// (it does NOT go through gatherReadyInput), and the SQL builders apply
+		// filter.Limit only when >0, so a negative value silently unbounds. The
+		// proxied ready path is guarded separately in gatherReadyInput. Shared
+		// with bd list (uh4i) via validateLimitFromCmd.
+		if err := validateLimitFromCmd(cmd); err != nil {
+			return err
+		}
 		assignee, _ := cmd.Flags().GetString("assignee")
 		// beads-sabd: read-side twin of the llzt write-side trim (@7f1b7dae5).
 		// Writes now store trimmed assignees, but the read side matches only

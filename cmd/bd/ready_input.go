@@ -39,6 +39,14 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 	in.jsonOut = jsonOutput
 
 	in.limit, _ = cmd.Flags().GetInt("limit")
+	// Reject a negative --limit here (beads-eqi4): gatherReadyInput is the shared
+	// input path for BOTH direct ready and runReadyProxiedServer, so guarding it
+	// once covers both. Without it a negative --limit silently unbounds (the SQL
+	// builders apply filter.Limit only when >0). Mirrors the --offset guard below
+	// and bd list (uh4i). FatalError matches the offset guard's exit style.
+	if cmd.Flags().Changed("limit") && in.limit < 0 {
+		FatalError("--limit must be >= 0")
+	}
 	if cmd.Flags().Changed("offset") {
 		offset, _ := cmd.Flags().GetInt("offset")
 		if offset < 0 {

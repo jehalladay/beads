@@ -71,6 +71,12 @@ Use --limit or --range to view specific steps:
 		ctx := rootCtx
 		forAgent, _ := cmd.Flags().GetString("for")
 		limit, _ := cmd.Flags().GetInt("limit")
+		// Reject a negative --limit up front (beads-eqi4): the SQL builders
+		// only apply filter.Limit when >0, so a negative value silently returns
+		// the full set. Shared with bd list (uh4i) via validateLimitFromCmd.
+		if err := validateLimitFromCmd(cmd); err != nil {
+			return err
+		}
 		rangeStr, _ := cmd.Flags().GetString("range")
 
 		agent := forAgent

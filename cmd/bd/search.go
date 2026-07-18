@@ -66,6 +66,12 @@ Examples:
 		assignee, _ := cmd.Flags().GetString("assignee")
 		issueType, _ := cmd.Flags().GetString("type")
 		limit, _ := cmd.Flags().GetInt("limit")
+		// Reject a negative --limit up front (beads-eqi4): the SQL builders
+		// only apply filter.Limit when >0, so a negative value silently returns
+		// the full set. Shared with bd list (uh4i) via validateLimitFromCmd.
+		if err := validateLimitFromCmd(cmd); err != nil {
+			return err
+		}
 		labels, _ := cmd.Flags().GetStringSlice("label")
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		longFormat, _ := cmd.Flags().GetBool("long")
