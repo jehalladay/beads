@@ -868,6 +868,43 @@ func TestProxiedServerShow(t *testing.T) {
 			t.Errorf("expected the resolved id in --json stdout on partial failure, got:\n%s", stdout)
 		}
 	})
+
+	// beads-vuyx (FORMAT axis, distinct from qtw9's exit-code axis): on PARTIAL
+	// failure under --json the proxied show handlers must route the per-item
+	// error through reportItemError, which emits a STRUCTURED JSON error object
+	// to stderr (the beads-fg6 contract the direct path honors) — NOT a
+	// plain-text "Issue X not found" line. stdout stays a pure JSON array of the
+	// resolved issue so a --json 2>&1-splitting consumer can parse both streams.
+	// (Exit code is asserted separately by the qtw9 refs/children/as-of tests;
+	// the default-leg partial exit-code is tracked by beads-vuyx's follow-on.)
+	t.Run("partial_json_stderr_is_structured_error", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "vjs")
+		issue := bdProxiedCreate(t, bd, p.dir, "Real one", "--type", "task")
+		stdout, stderr, _ := bdProxiedRunBuffers(t, bd, p.dir, "show", issue.ID, "vjs-nonexistent999", "--json")
+		// stdout: pure JSON array carrying the one resolved issue.
+		out := strings.TrimSpace(stdout)
+		var arr []map[string]any
+		if jerr := json.Unmarshal([]byte(out), &arr); jerr != nil {
+			t.Fatalf("stdout must be a JSON array on partial success: %v\nstdout:\n%s", jerr, out)
+		}
+		if len(arr) != 1 {
+			t.Errorf("expected 1 found issue in stdout array, got %d\nstdout:\n%s", len(arr), out)
+		}
+		// stderr: a STRUCTURED JSON error object (has an "error" field), NOT a
+		// plain-text line — pre-fix stderr was "Issue vjs-nonexistent999 not
+		// found\n" which json.Unmarshal rejects. This is the vuyx fix.
+		errStr := strings.TrimSpace(stderr)
+		if errStr == "" {
+			t.Fatalf("expected a per-item error on stderr for the ghost id; got empty stderr")
+		}
+		var errObj map[string]any
+		if jerr := json.Unmarshal([]byte(errStr), &errObj); jerr != nil {
+			t.Fatalf("stderr must be a structured JSON error object under --json (beads-vuyx): %v\nstderr:\n%s", jerr, errStr)
+		}
+		if _, ok := errObj["error"]; !ok {
+			t.Errorf("expected an \"error\" field in the stderr JSON object, got: %s", errStr)
+		}
+	})
 }
 
 func proxiedCurrentCommit(t *testing.T, p proxiedProject) string {
