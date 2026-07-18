@@ -83,17 +83,17 @@ func TestEmbeddedConfig(t *testing.T) {
 	// ===== Set and Get =====
 
 	t.Run("config_set_and_get", func(t *testing.T) {
-		bdConfig(t, bd, dir, "set", "test.key1", "hello")
-		out := bdConfig(t, bd, dir, "get", "test.key1")
+		bdConfig(t, bd, dir, "set", "custom.key1", "hello")
+		out := bdConfig(t, bd, dir, "get", "custom.key1")
 		if !strings.Contains(out, "hello") {
 			t.Errorf("expected 'hello' in get output: %s", out)
 		}
 	})
 
 	t.Run("config_set_overwrite", func(t *testing.T) {
-		bdConfig(t, bd, dir, "set", "test.overwrite", "first")
-		bdConfig(t, bd, dir, "set", "test.overwrite", "second")
-		out := bdConfig(t, bd, dir, "get", "test.overwrite")
+		bdConfig(t, bd, dir, "set", "custom.overwrite", "first")
+		bdConfig(t, bd, dir, "set", "custom.overwrite", "second")
+		out := bdConfig(t, bd, dir, "get", "custom.overwrite")
 		if !strings.Contains(out, "second") {
 			t.Errorf("expected 'second' after overwrite: %s", out)
 		}
@@ -104,6 +104,30 @@ func TestEmbeddedConfig(t *testing.T) {
 		out := bdConfig(t, bd, dir, "get", "jira.url")
 		if !strings.Contains(out, "https://example.atlassian.net") {
 			t.Errorf("expected jira URL in output: %s", out)
+		}
+	})
+
+	// beads-71zw: an unrecognized non-custom key must FAIL LOUD (warn +
+	// non-zero exit + NOT write), not warn-then-write. custom.* stays the
+	// escape hatch for user-defined keys.
+	t.Run("config_set_unrecognized_key_rejected", func(t *testing.T) {
+		out := bdConfigFail(t, bd, dir, "set", "totally.bogus.key", "somevalue")
+		if !strings.Contains(out, "not a recognized config key") {
+			t.Errorf("expected 'not a recognized config key' in error, got: %s", out)
+		}
+		// And it must NOT have been written.
+		getOut := bdConfig(t, bd, dir, "get", "totally.bogus.key")
+		if strings.Contains(getOut, "somevalue") {
+			t.Errorf("rejected key must not be stored, but get returned: %s", getOut)
+		}
+	})
+
+	t.Run("config_set_custom_key_accepted", func(t *testing.T) {
+		// custom.* is the documented escape hatch — must still succeed.
+		bdConfig(t, bd, dir, "set", "custom.anything", "ok")
+		out := bdConfig(t, bd, dir, "get", "custom.anything")
+		if !strings.Contains(out, "ok") {
+			t.Errorf("expected custom.* key to be accepted+stored, got: %s", out)
 		}
 	})
 
@@ -131,8 +155,8 @@ func TestEmbeddedConfig(t *testing.T) {
 			t.Error("expected issue_prefix in JSON config list")
 		}
 		// Verify keys we set earlier are present
-		if v, ok := m["test.key1"]; !ok || v != "hello" {
-			t.Errorf("expected test.key1=hello, got %q", v)
+		if v, ok := m["custom.key1"]; !ok || v != "hello" {
+			t.Errorf("expected custom.key1=hello, got %q", v)
 		}
 	})
 
@@ -177,8 +201,8 @@ func TestEmbeddedConfig(t *testing.T) {
 	// not be misreported as absent (GetConfig alone can't distinguish "" from
 	// missing, so the pre-check uses membership).
 	t.Run("config_unset_empty_value_key_succeeds", func(t *testing.T) {
-		bdConfig(t, bd, dir, "set", "empty.value.key", "")
-		out := bdConfig(t, bd, dir, "unset", "empty.value.key")
+		bdConfig(t, bd, dir, "set", "custom.empty_value_key", "")
+		out := bdConfig(t, bd, dir, "unset", "custom.empty_value_key")
 		if !strings.Contains(out, "Unset") {
 			t.Errorf("expected 'Unset' for a key set to empty string: %s", out)
 		}

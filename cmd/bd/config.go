@@ -149,13 +149,16 @@ var configSetCmd = &cobra.Command{
 		}
 
 		if !isRecognizedConfigKey(key) {
+			// beads-71zw: reject an unrecognized non-custom key (fail loud) rather
+			// than warn-then-write, so a typo'd key (e.g. export.enabled for
+			// export.auto) surfaces at set-time instead of silently persisting a
+			// junk key while the intended setting is never applied. custom.* is
+			// the documented escape hatch for user-defined keys.
 			suggestion := suggestConfigKey(key)
 			if suggestion != "" {
-				fmt.Fprintf(os.Stderr, "Warning: %q is not a recognized config key. Did you mean %q?\n", key, suggestion)
-			} else {
-				fmt.Fprintf(os.Stderr, "Warning: %q is not a recognized config key. Use 'custom.*' for user-defined keys.\n", key)
+				return HandleErrorRespectJSON("%q is not a recognized config key. Did you mean %q? (use 'custom.*' for user-defined keys; run 'bd config --help' for valid namespaces)", key, suggestion)
 			}
-			fmt.Fprintf(os.Stderr, "Run 'bd config --help' for valid namespaces.\n")
+			return HandleErrorRespectJSON("%q is not a recognized config key. Use 'custom.*' for user-defined keys; run 'bd config --help' for valid namespaces", key)
 		}
 
 		// beads-8fp: reject a value whose type doesn't match a known-typed key
@@ -825,6 +828,16 @@ Examples:
 			if msg, rejected := rejectProtectedConfigKey(p.key); rejected {
 				fmt.Fprintln(os.Stderr, msg)
 				return SilentExit()
+			}
+			// Reject unrecognized non-custom keys, same as 'config set'
+			// (beads-71zw). Without this, set-many warn-then-writes a typo'd
+			// key while the intended setting never applies.
+			if !isRecognizedConfigKey(p.key) {
+				suggestion := suggestConfigKey(p.key)
+				if suggestion != "" {
+					return HandleErrorRespectJSON("%q is not a recognized config key. Did you mean %q? (use 'custom.*' for user-defined keys; run 'bd config --help' for valid namespaces)", p.key, suggestion)
+				}
+				return HandleErrorRespectJSON("%q is not a recognized config key. Use 'custom.*' for user-defined keys; run 'bd config --help' for valid namespaces", p.key)
 			}
 			// Type-validate bool/int keys, same as 'config set' (beads-9v32).
 			// Without this, set-many silently stored garbage in typed keys
