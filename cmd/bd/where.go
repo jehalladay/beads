@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
@@ -20,6 +22,8 @@ type WhereResult struct {
 	RedirectedFrom string `json:"redirected_from,omitempty"` // Original path if redirected
 	Prefix         string `json:"prefix,omitempty"`          // Issue prefix (if detectable)
 	DatabasePath   string `json:"database_path,omitempty"`   // Full path to database file
+	StorePrefix    string `json:"store_prefix,omitempty"`    // Live store issue_prefix, when it differs from Prefix (drift)
+	PrefixStale    bool   `json:"prefix_stale,omitempty"`    // True when the YAML Prefix disagrees with the live StorePrefix
 }
 
 var whereCmd = &cobra.Command{
@@ -84,10 +88,21 @@ Examples:
 		// Prefer the active workspace YAML when available. Avoid process-global
 		// config here because `bd where` may be reporting a workspace selected
 		// by BEADS_DB/BEADS_DIR rather than the caller's current repository.
-		if prefix := config.GetStringFromDir(beadsDir, "issue-prefix"); prefix != "" {
-			result.Prefix = prefix
-		} else if prefix := config.GetStringFromDir(beadsDir, "issue_prefix"); prefix != "" {
-			result.Prefix = prefix
+		yamlPrefix := config.GetStringFromDir(beadsDir, "issue-prefix")
+		if yamlPrefix == "" {
+			yamlPrefix = config.GetStringFromDir(beadsDir, "issue_prefix")
+		}
+		if yamlPrefix != "" {
+			result.Prefix = yamlPrefix
+			// A diagnostic that silently trusts a stale YAML hint defeats its
+			// own purpose. When the live store is cheaply reachable, compare
+			// and surface any drift (beads-m08v) without changing precedence.
+			if dbPath != "" {
+				if storePrefix := readStorePrefixBestEffort(dbPath); storePrefix != "" && storePrefix != yamlPrefix {
+					result.StorePrefix = storePrefix
+					result.PrefixStale = true
+				}
+			}
 		} else if dbPath != "" && shouldReadWherePrefixFromStore(beadsDir) {
 			_ = withStorage(getRootContext(), nil, dbPath, func(currentStore storage.DoltStorage) error {
 				prefix, err := currentStore.GetConfig(getRootContext(), "issue_prefix")
@@ -106,7 +121,11 @@ Examples:
 			fmt.Printf("  (via redirect from %s)\n", result.RedirectedFrom)
 		}
 		if result.Prefix != "" {
-			fmt.Printf("  prefix: %s\n", result.Prefix)
+			if result.PrefixStale {
+				fmt.Printf("  prefix: %s (config.yaml) ⚠ store: %s — STALE config.yaml\n", result.Prefix, result.StorePrefix)
+			} else {
+				fmt.Printf("  prefix: %s\n", result.Prefix)
+			}
 		}
 		if result.DatabasePath != "" {
 			fmt.Printf("  database: %s\n", result.DatabasePath)
@@ -125,6 +144,26 @@ func resolveWhereBeadsDir(cmd *cobra.Command) string {
 
 func resolveWhereDatabasePath() string {
 	return beads.FindDatabasePath()
+}
+
+// readStorePrefixBestEffort reads the live store's issue_prefix for drift
+// detection only. It is strictly best-effort: any error (server down,
+// proxied-server mode, timeout) yields "" and the caller keeps the YAML value.
+// A short timeout bounds the read so `bd where` can never hang on an
+// unreachable server (guards against the gt-hook/dolt-config hang class).
+func readStorePrefixBestEffort(dbPath string) string {
+	ctx, cancel := context.WithTimeout(getRootContext(), 3*time.Second)
+	defer cancel()
+
+	var storePrefix string
+	_ = withStorage(ctx, nil, dbPath, func(currentStore storage.DoltStorage) error {
+		prefix, err := currentStore.GetConfig(ctx, "issue_prefix")
+		if err == nil {
+			storePrefix = prefix
+		}
+		return nil
+	})
+	return storePrefix
 }
 
 func shouldReadWherePrefixFromStore(beadsDir string) bool {
