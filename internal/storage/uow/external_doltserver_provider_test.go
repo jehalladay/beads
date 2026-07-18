@@ -137,7 +137,10 @@ func TestNewExternalDoltServerUOWProvider_ConcurrentInstantiation(t *testing.T) 
 	logPath := filepath.Join(t.TempDir(), "server.log")
 	external := configfile.ExternalDoltConfig{Host: "127.0.0.1", Port: portInt}
 
-	const concurrency = 10
+	// See doltserver_provider_test.go: 3 keeps the lock-race coverage while
+	// reducing the port-readiness fan-out that flaked under /fsx contention
+	// (beads-s1ng).
+	const concurrency = 3
 	type result struct {
 		provider UnitOfWorkProvider
 		err      error

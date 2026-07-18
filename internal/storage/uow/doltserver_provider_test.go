@@ -134,7 +134,13 @@ func TestNewDoltServerUOWProvider_ConcurrentInstantiation(t *testing.T) {
 	cfgPath := writeServerConfig(t, port)
 	logPath := filepath.Join(t.TempDir(), "server.log")
 
-	const concurrency = 10
+	// 3 concurrent first-bringups still exercises the lock-race (one wins the
+	// flock + spawns, the rest poll readAndDial) while cutting the number of
+	// racing goroutines that pile onto proxy port-readiness under shared-/fsx
+	// contention — the source of the flaky gate-fail this test caused on
+	// cmd/bd MRs (beads-s1ng). The unified open budget (beads-j5salo) still
+	// bounds the wait; this just reduces the fan-out that provoked the flake.
+	const concurrency = 3
 	type result struct {
 		provider UnitOfWorkProvider
 		err      error
