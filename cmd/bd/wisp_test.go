@@ -244,3 +244,52 @@ func TestWispGCExcludeTypeAliasProtectsMolecules(t *testing.T) {
 		t.Errorf("unprotected closed task survived GC: %d tasks remain, want 0", got)
 	}
 }
+
+// makeWispGCAgeTestCmd builds a cobra.Command with the wisp gc flag schema and
+// the given --age / --force values, for driving runWispGC in a test.
+func makeWispGCAgeTestCmd(age string, force bool) *cobra.Command {
+	c := &cobra.Command{Use: "gc"}
+	c.Flags().Bool("dry-run", false, "")
+	c.Flags().String("age", age, "")
+	c.Flags().Bool("all", false, "")
+	c.Flags().Bool("closed", false, "")
+	c.Flags().BoolP("force", "f", force, "")
+	c.Flags().StringSlice("exclude-type", nil, "")
+	return c
+}
+
+// TestWispGCNegativeAgeRejected is the beads-v7lm regression test. `wisp gc
+// --age -5h` must fail loud, not delete everything. time.ParseDuration accepts
+// a negative duration, and the abandoned check (now.Sub(UpdatedAt) >
+// ageThreshold) is TRUE for every wisp when ageThreshold < 0 — so before the
+// guard, a negative --age silently turned a scoped GC into delete-all,
+// destroying even wisps updated seconds ago. The guard rejects age<0 up front.
+func TestWispGCNegativeAgeRejected(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStoreWithPrefix(t, filepath.Join(t.TempDir(), "test.db"), "test")
+	withWispTestGlobals(t, s, ctx)
+
+	// A fresh ephemeral wisp (just created — must NOT be GC'd by any sane age).
+	fresh := &types.Issue{Title: "fresh wisp", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, Ephemeral: true}
+	if err := s.CreateIssue(ctx, fresh, "test"); err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+
+	// Negative --age must be rejected with an error (not proceed to delete).
+	out, err := captureStdoutExpectErr(t, func() error {
+		return runWispGC(makeWispGCAgeTestCmd("-5h", true), nil)
+	})
+	if err == nil {
+		t.Errorf("wisp gc --age -5h should return an error, got nil (output: %q)", out)
+	}
+
+	// The fresh wisp must still exist — the negative age must NOT have deleted it.
+	tru := true
+	remaining, serr := s.SearchIssues(ctx, "", types.IssueFilter{Ephemeral: &tru})
+	if serr != nil {
+		t.Fatalf("SearchIssues: %v", serr)
+	}
+	if len(remaining) != 1 {
+		t.Errorf("negative --age deleted wisps despite the guard: %d ephemeral remain, want 1", len(remaining))
+	}
+}
