@@ -64,7 +64,7 @@ func runPour(cmd *cobra.Command, args []string) error {
 	ctx := rootCtx
 
 	if store == nil {
-		return HandleError("no database connection")
+		return HandleErrorRespectJSON("no database connection")
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -82,7 +82,7 @@ func runPour(cmd *cobra.Command, args []string) error {
 	for _, v := range varFlags {
 		parts := strings.SplitN(v, "=", 2)
 		if len(parts) != 2 {
-			return HandleError("invalid variable format '%s', expected 'key=value'", v)
+			return HandleErrorRespectJSON("invalid variable format '%s', expected 'key=value'", v)
 		}
 		vars[parts[0]] = parts[1]
 	}
@@ -119,21 +119,21 @@ func runPour(cmd *cobra.Command, args []string) error {
 		// Try to load as existing proto bead (legacy path)
 		resolvedID, err := utils.ResolvePartialID(ctx, store, args[0])
 		if err != nil {
-			return HandleError("%s not found as formula or proto ID", args[0])
+			return HandleErrorRespectJSON("%s not found as formula or proto ID", args[0])
 		}
 		protoID = resolvedID
 
 		protoIssue, err := store.GetIssue(ctx, protoID)
 		if err != nil {
-			return HandleError("loading proto %s: %v", protoID, err)
+			return HandleErrorRespectJSON("loading proto %s: %v", protoID, err)
 		}
 		if !isProto(protoIssue) {
-			return HandleError("%s is not a proto (missing '%s' label)", protoID, MoleculeLabel)
+			return HandleErrorRespectJSON("%s is not a proto (missing '%s' label)", protoID, MoleculeLabel)
 		}
 
 		subgraph, err = loadTemplateSubgraph(ctx, store, protoID)
 		if err != nil {
-			return HandleError("loading proto: %v", err)
+			return HandleErrorRespectJSON("loading proto: %v", err)
 		}
 	}
 
@@ -149,18 +149,18 @@ func runPour(cmd *cobra.Command, args []string) error {
 	for _, attachArg := range attachFlags {
 		attachID, err := utils.ResolvePartialID(ctx, store, attachArg)
 		if err != nil {
-			return HandleError("resolving attachment ID %s: %v", attachArg, err)
+			return HandleErrorRespectJSON("resolving attachment ID %s: %v", attachArg, err)
 		}
 		attachIssue, err := store.GetIssue(ctx, attachID)
 		if err != nil {
-			return HandleError("loading attachment %s: %v", attachID, err)
+			return HandleErrorRespectJSON("loading attachment %s: %v", attachID, err)
 		}
 		if !isProto(attachIssue) {
-			return HandleError("%s is not a proto (missing '%s' label)", attachID, MoleculeLabel)
+			return HandleErrorRespectJSON("%s is not a proto (missing '%s' label)", attachID, MoleculeLabel)
 		}
 		attachSubgraph, err := loadTemplateSubgraph(ctx, store, attachID)
 		if err != nil {
-			return HandleError("loading attachment subgraph %s: %v", attachID, err)
+			return HandleErrorRespectJSON("loading attachment subgraph %s: %v", attachID, err)
 		}
 		attachments = append(attachments, attachmentInfo{
 			id:       attachID,
@@ -196,7 +196,7 @@ func runPour(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if len(missingVars) > 0 {
-		return HandleErrorWithHint(
+		return HandleErrorWithHintRespectJSON(
 			fmt.Sprintf("missing required variables: %s", strings.Join(missingVars, ", ")),
 			fmt.Sprintf("Provide them with: --var %s=<value>", missingVars[0]),
 		)
@@ -224,7 +224,7 @@ func runPour(cmd *cobra.Command, args []string) error {
 
 	result, err := spawnMolecule(ctx, store, subgraph, vars, assignee, actor, false, types.IDPrefixMol)
 	if err != nil {
-		return HandleError("pouring proto: %v", err)
+		return HandleErrorRespectJSON("pouring proto: %v", err)
 	}
 
 	// Attach bonded protos
@@ -232,13 +232,13 @@ func runPour(cmd *cobra.Command, args []string) error {
 	if len(attachments) > 0 {
 		spawnedMol, err := store.GetIssue(ctx, result.NewEpicID)
 		if err != nil {
-			return HandleError("loading spawned mol: %v", err)
+			return HandleErrorRespectJSON("loading spawned mol: %v", err)
 		}
 
 		for _, attach := range attachments {
 			bondResult, err := bondProtoMol(ctx, store, attach.issue, spawnedMol, attachType, vars, "", actor, false, true)
 			if err != nil {
-				return HandleError("attaching %s: %v", attach.id, err)
+				return HandleErrorRespectJSON("attaching %s: %v", attach.id, err)
 			}
 			totalAttached += bondResult.Spawned
 		}

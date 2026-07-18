@@ -364,19 +364,19 @@ func runCook(cmd *cobra.Command, args []string) error {
 
 	flags, err := parseCookFlags(cmd, args)
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	if flags.persist {
 		CheckReadonly("cook --persist")
 		if store == nil {
-			return HandleError("no database connection")
+			return HandleErrorRespectJSON("no database connection")
 		}
 	}
 
 	resolved, err := loadAndResolveFormula(flags.formulaPath, flags.searchPaths)
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	protoID := resolved.Formula
@@ -399,13 +399,13 @@ func runCook(cmd *cobra.Command, args []string) error {
 
 	if !flags.persist {
 		if err := outputCookEphemeral(resolved, flags.runtimeMode, flags.inputVars, vars); err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 		return nil
 	}
 
 	if err := persistCookFormula(rootCtx, resolved, protoID, flags.force, vars, bondPoints); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	return nil
 }
