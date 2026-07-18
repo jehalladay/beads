@@ -310,6 +310,29 @@ func TestProxiedServerQuery(t *testing.T) {
 		}
 	})
 
+	// beads-222x / beads-s4sn: --sort combined with --limit must push the sort
+	// into the SQL query so the LIMIT window is the globally-sorted top-N, not
+	// the default-priority-order window re-sorted (which returns the wrong rows).
+	// The full sorted set's first N must equal the --limit N result.
+	t.Run("sort_before_limit_returns_global_topN", func(t *testing.T) {
+		full := bdProxiedQueryJSON(t, bd, p, "priority>=0", "--sort", "priority", "--reverse")
+		if len(full) < 3 {
+			t.Skipf("need >=3 issues to exercise sort-before-limit, got %d", len(full))
+		}
+		limited := bdProxiedQueryJSON(t, bd, p, "priority>=0", "--sort", "priority", "--reverse", "--limit", "2")
+		if len(limited) != 2 {
+			t.Fatalf("--limit 2 should return 2 rows, got %d", len(limited))
+		}
+		// The limited result must be the first 2 of the fully-sorted set (same
+		// IDs, same order) — not some other 2 rows selected before sorting.
+		for i := 0; i < 2; i++ {
+			if limited[i].ID != full[i].ID {
+				t.Errorf("sort-before-limit wrong rows: limited[%d]=%s (P%d), want full-sorted[%d]=%s (P%d)",
+					i, limited[i].ID, limited[i].Priority, i, full[i].ID, full[i].Priority)
+			}
+		}
+	})
+
 	t.Run("long_text_output", func(t *testing.T) {
 		stdout, _ := bdProxiedQueryCapture(t, bd, p, "status=open", "--long")
 		if !strings.Contains(stdout, "Found") {

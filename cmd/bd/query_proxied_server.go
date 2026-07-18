@@ -84,6 +84,17 @@ func runQueryProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 	searchFilter := result.Filter
 	searchFilter.Offset = offset
 
+	// beads-222x / beads-s4sn: push the sort into the SQL query on the
+	// non-predicate path so the LIMIT window is selected in the requested
+	// order, not default priority order then re-sorted (which returns the
+	// wrong N rows). Mirrors the direct path (cmd/bd/query.go). --sort id is
+	// excluded (natural-numeric ID compare can't be an SQL ORDER BY, so it
+	// stays client-sorted); the offset+sort combo is already rejected above.
+	if !result.RequiresPredicate && sortBy != "" && sortBy != "id" {
+		searchFilter.SortBy = sortBy
+		searchFilter.SortDesc = reverse
+	}
+
 	if jsonOutput {
 		var iwc []*types.IssueWithCounts
 		var truncated bool
