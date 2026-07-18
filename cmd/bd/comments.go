@@ -29,7 +29,12 @@ Examples:
 
   # Add a comment from a file
   bd comments add bd-123 -f notes.txt`,
-	Args:          cobra.MinimumNArgs(1),
+	// ExactArgs(1): the SHOW parent reads only args[0], so extra positional IDs
+	// (e.g. a glob/typo `bd comments a b c`) must error loudly rather than
+	// silently showing only a's comments with rc=0 (beads-uwis). Matches the
+	// sibling single-target read commands children/history. The `comments add`
+	// subcommand keeps MinimumNArgs(1) (id + optional text).
+	Args:          cobra.ExactArgs(1),
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
