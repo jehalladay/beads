@@ -47,10 +47,16 @@ func TestCreateIssuesFromMarkdown_SkippedDepWarns(t *testing.T) {
 	}
 
 	t.Run("nonexistent dependency target warns and still creates the issue", func(t *testing.T) {
+		// The target MUST share the store's prefix ("r2lq"). beads-77i6 makes a
+		// CROSS-prefix target external (ClassifyDepTarget→DepTargetExternal), which
+		// skips the local existence check entirely, so a cross-prefix "nonexistent"
+		// target is accepted as a valid external ref and never triggers the
+		// "target not found" skip-and-warn. Using a same-prefix nonexistent target
+		// exercises the local existence-check path this test is asserting (beads-2nrc).
 		md := "## Issue With Bad Dep\n\n" +
 			"Body text.\n\n" +
 			"### Dependencies\n\n" +
-			"bd-nonexistent-99999\n"
+			"r2lq-nonexistent-99999\n"
 		mdPath := setup(t, md)
 
 		out := captureStderr(t, func() {
