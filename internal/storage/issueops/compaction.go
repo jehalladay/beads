@@ -109,6 +109,25 @@ func ApplyCompactionInTx(ctx context.Context, tx *sql.Tx, issueID string, tier i
 	return nil
 }
 
+// CompactOverwriteInTx applies the destructive content overwrite AND records
+// the compaction metadata/event in ONE transaction, so the two can never split:
+// before this, the overwrite (UpdateIssue) and the mark (ApplyCompaction) were
+// separate committed txns, and a failure between them left an issue whose text
+// was compacted but whose compaction_level was still 0 — a recoverable but
+// inconsistent split state (beads-pj38). Callers MUST have already snapshotted
+// the original (SnapshotIssue) — that stays a separate prior step because it is
+// the recovery anchor. A failure here rolls back the overwrite, leaving the
+// original content intact (and the snapshot harmlessly present).
+func CompactOverwriteInTx(ctx context.Context, tx *sql.Tx, issueID string, updates map[string]interface{}, tier, originalSize int, commitHash, actor string) error {
+	if _, err := UpdateIssueInTx(ctx, tx, issueID, updates, actor); err != nil {
+		return fmt.Errorf("compact overwrite: %w", err)
+	}
+	if err := ApplyCompactionInTx(ctx, tx, issueID, tier, originalSize, commitHash, actor); err != nil {
+		return fmt.Errorf("compact overwrite: %w", err)
+	}
+	return nil
+}
+
 // SnapshotIssueInTx archives an issue's current text content into
 // compaction_snapshots before a destructive compaction overwrites it. The row
 // is tagged with the tier the issue is being compacted *to* (so a later restore

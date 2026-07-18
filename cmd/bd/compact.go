@@ -728,13 +728,12 @@ func runCompactApply(ctx context.Context, store storage.DoltStorage) {
 		"acceptance_criteria": "",
 	}
 
-	if err := store.UpdateIssue(ctx, compactID, updates, actor); err != nil {
-		FatalErrorRespectJSON("failed to update issue: %v", err)
-	}
-
+	// Overwrite + mark compaction ATOMICALLY (one tx, beads-pj38): a failure
+	// between the overwrite and the mark used to leave text compacted while
+	// compaction_level stayed 0. The snapshot above is the recovery anchor.
 	commitHash := compact.GetCurrentCommitHash()
-	if err := store.ApplyCompaction(ctx, compactID, compactTier, originalSize, compactedSize, commitHash, actor); err != nil {
-		FatalErrorRespectJSON("failed to apply compaction: %v", err)
+	if err := store.CompactOverwrite(ctx, compactID, updates, compactTier, originalSize, commitHash, actor); err != nil {
+		FatalErrorRespectJSON("failed to overwrite+mark compaction: %v", err)
 	}
 
 	savingBytes := originalSize - compactedSize

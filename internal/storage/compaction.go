@@ -12,6 +12,12 @@ type CompactionStore interface {
 	// ApplyCompaction records a compaction result and emits an EventCompacted
 	// audit event attributed to actor (beads-ehtw).
 	ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, compactedSize int, commitHash string, actor string) error
+	// CompactOverwrite applies the destructive content overwrite (updates) AND
+	// records the compaction metadata/event ATOMICALLY in one transaction, so a
+	// mid-sequence failure can't leave text compacted while compaction_level
+	// stays 0 (beads-pj38). The caller must SnapshotIssue first (the recovery
+	// anchor). A failure rolls back the overwrite.
+	CompactOverwrite(ctx context.Context, issueID string, updates map[string]interface{}, tier int, originalSize int, commitHash string, actor string) error
 	GetTier1Candidates(ctx context.Context) ([]*types.CompactionCandidate, error)
 	GetTier2Candidates(ctx context.Context) ([]*types.CompactionCandidate, error)
 

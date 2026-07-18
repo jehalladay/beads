@@ -38,6 +38,9 @@ type compactableStore interface {
 	SnapshotIssue(ctx context.Context, issueID string, tier int) error
 	UpdateIssue(ctx context.Context, issueID string, updates map[string]interface{}, actor string) error
 	ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, compactedSize int, commitHash string, actor string) error
+	// CompactOverwrite applies the overwrite + compaction mark atomically
+	// (beads-pj38) — preferred over separate UpdateIssue + ApplyCompaction.
+	CompactOverwrite(ctx context.Context, issueID string, updates map[string]interface{}, tier int, originalSize int, commitHash string, actor string) error
 	AddComment(ctx context.Context, issueID, actor, comment string) error
 }
 
@@ -137,21 +140,18 @@ func (c *Compactor) CompactTier1(ctx context.Context, issueID string) error {
 		return fmt.Errorf("failed to archive pre-compaction snapshot: %w", err)
 	}
 
-	// Update issue with summarized content
+	// Overwrite the content AND record compaction metadata ATOMICALLY (one tx,
+	// beads-pj38) so a failure can't leave text compacted while compaction_level
+	// stays 0. The snapshot above is the recovery anchor and stays separate.
 	updates := map[string]interface{}{
 		"description":         summary,
 		"design":              "",
 		"notes":               "",
 		"acceptance_criteria": "",
 	}
-	if err := c.store.UpdateIssue(ctx, issueID, updates, "compactor"); err != nil {
-		return fmt.Errorf("failed to update issue: %w", err)
-	}
-
-	// Record compaction metadata with git commit hash
 	commitHash := GetCurrentCommitHash()
-	if err := c.store.ApplyCompaction(ctx, issueID, 1, originalSize, compactedSize, commitHash, "compactor"); err != nil {
-		return fmt.Errorf("failed to apply compaction metadata: %w", err)
+	if err := c.store.CompactOverwrite(ctx, issueID, updates, 1, originalSize, commitHash, "compactor"); err != nil {
+		return fmt.Errorf("failed to overwrite+mark compaction: %w", err)
 	}
 
 	// Add comment about compaction

@@ -17,6 +17,7 @@ type stubStore struct {
 	snapshotIssueFn    func(context.Context, string, int) error
 	updateIssueFn      func(context.Context, string, map[string]interface{}, string) error
 	applyCompactionFn  func(context.Context, string, int, int, int, string) error
+	compactOverwriteFn func(context.Context, string, map[string]interface{}, int, int, string, string) error
 	addCommentFn       func(context.Context, string, string, string) error
 }
 
@@ -51,6 +52,13 @@ func (s *stubStore) UpdateIssue(ctx context.Context, issueID string, updates map
 func (s *stubStore) ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, compactedSize int, commitHash string, _ string) error {
 	if s.applyCompactionFn != nil {
 		return s.applyCompactionFn(ctx, issueID, tier, originalSize, compactedSize, commitHash)
+	}
+	return nil
+}
+
+func (s *stubStore) CompactOverwrite(ctx context.Context, issueID string, updates map[string]interface{}, tier int, originalSize int, commitHash string, actor string) error {
+	if s.compactOverwriteFn != nil {
+		return s.compactOverwriteFn(ctx, issueID, updates, tier, originalSize, commitHash, actor)
 	}
 	return nil
 }
@@ -106,23 +114,20 @@ func TestCompactTier1_Success(t *testing.T) {
 	cleanup := withGitHash(t, "deadbeef\n")
 	t.Cleanup(cleanup)
 
-	updateCalled := false
-	applyCalled := false
+	overwriteCalled := false
 	store := &stubStore{
 		checkEligibilityFn: func(context.Context, string, int) (bool, string, error) { return true, "", nil },
 		getIssueFn:         func(context.Context, string) (*types.Issue, error) { return stubIssue(), nil },
-		updateIssueFn: func(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
-			updateCalled = true
+		// CompactTier1 now applies the overwrite + compaction mark ATOMICALLY via
+		// CompactOverwrite (beads-pj38), not separate UpdateIssue+ApplyCompaction.
+		compactOverwriteFn: func(ctx context.Context, id string, updates map[string]interface{}, tier, original int, hash, actor string) error {
+			overwriteCalled = true
 			if updates["description"].(string) != "short" {
 				t.Fatalf("expected summarized description")
 			}
 			if updates["design"].(string) != "" {
 				t.Fatalf("design should be cleared")
 			}
-			return nil
-		},
-		applyCompactionFn: func(ctx context.Context, id string, tier, original, compacted int, hash string) error {
-			applyCalled = true
 			if hash != "deadbeef" {
 				t.Fatalf("unexpected hash %q", hash)
 			}
@@ -144,8 +149,8 @@ func TestCompactTier1_Success(t *testing.T) {
 	if summary.calls != 1 {
 		t.Fatalf("expected summarizer used once, got %d", summary.calls)
 	}
-	if !updateCalled || !applyCalled {
-		t.Fatalf("expected update/apply to be called")
+	if !overwriteCalled {
+		t.Fatalf("expected CompactOverwrite (atomic overwrite+mark) to be called")
 	}
 }
 
@@ -167,8 +172,8 @@ func TestCompactTier1_SnapshotBeforeOverwrite(t *testing.T) {
 			order = append(order, "snapshot")
 			return nil
 		},
-		updateIssueFn: func(context.Context, string, map[string]interface{}, string) error {
-			order = append(order, "update")
+		compactOverwriteFn: func(context.Context, string, map[string]interface{}, int, int, string, string) error {
+			order = append(order, "overwrite")
 			return nil
 		},
 	}
@@ -178,21 +183,21 @@ func TestCompactTier1_SnapshotBeforeOverwrite(t *testing.T) {
 	if err := c.CompactTier1(context.Background(), "bd-123"); err != nil {
 		t.Fatalf("CompactTier1 unexpected error: %v", err)
 	}
-	if len(order) != 2 || order[0] != "snapshot" || order[1] != "update" {
-		t.Fatalf("expected snapshot before update, got %v", order)
+	if len(order) != 2 || order[0] != "snapshot" || order[1] != "overwrite" {
+		t.Fatalf("expected snapshot before overwrite, got %v", order)
 	}
 }
 
 // TestCompactTier1_SnapshotError verifies that a failed archive aborts the
 // compaction so the original content is never overwritten without a snapshot.
 func TestCompactTier1_SnapshotError(t *testing.T) {
-	updateCalled := false
+	overwriteCalled := false
 	store := &stubStore{
 		checkEligibilityFn: func(context.Context, string, int) (bool, string, error) { return true, "", nil },
 		getIssueFn:         func(context.Context, string) (*types.Issue, error) { return stubIssue(), nil },
 		snapshotIssueFn:    func(context.Context, string, int) error { return errors.New("disk full") },
-		updateIssueFn: func(context.Context, string, map[string]interface{}, string) error {
-			updateCalled = true
+		compactOverwriteFn: func(context.Context, string, map[string]interface{}, int, int, string, string) error {
+			overwriteCalled = true
 			return nil
 		},
 	}
@@ -203,7 +208,7 @@ func TestCompactTier1_SnapshotError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "archive pre-compaction snapshot") {
 		t.Fatalf("expected snapshot error, got %v", err)
 	}
-	if updateCalled {
+	if overwriteCalled {
 		t.Fatalf("issue was overwritten despite snapshot failure")
 	}
 }
@@ -246,17 +251,21 @@ func TestCompactTier1_SummaryNotSmaller(t *testing.T) {
 }
 
 func TestCompactTier1_UpdateError(t *testing.T) {
+	// The overwrite runs via the atomic CompactOverwrite seam now (beads-pj38);
+	// an overwrite failure surfaces (and rolls back inside the tx).
 	store := &stubStore{
 		checkEligibilityFn: func(context.Context, string, int) (bool, string, error) { return true, "", nil },
 		getIssueFn:         func(context.Context, string) (*types.Issue, error) { return stubIssue(), nil },
-		updateIssueFn:      func(context.Context, string, map[string]interface{}, string) error { return errors.New("boom") },
+		compactOverwriteFn: func(context.Context, string, map[string]interface{}, int, int, string, string) error {
+			return errors.New("boom")
+		},
 	}
 	summary := &stubSummarizer{summary: "short"}
 	c := &Compactor{store: store, summarizer: summary, config: &Config{}}
 
 	err := c.CompactTier1(context.Background(), "bd-123")
-	if err == nil || !strings.Contains(err.Error(), "failed to update issue") {
-		t.Fatalf("expected update error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "failed to overwrite+mark compaction") {
+		t.Fatalf("expected overwrite error, got %v", err)
 	}
 }
 
@@ -443,11 +452,15 @@ func TestCompactTier1_ApplyCompactionError(t *testing.T) {
 	cleanup := withGitHash(t, "abc\n")
 	t.Cleanup(cleanup)
 
+	// The overwrite+mark now runs atomically via CompactOverwrite (beads-pj38);
+	// a failure there (e.g. the ApplyCompaction leg inside the tx) surfaces as
+	// the overwrite error and rolls back the content overwrite.
 	store := &stubStore{
 		checkEligibilityFn: func(context.Context, string, int) (bool, string, error) { return true, "", nil },
 		getIssueFn:         func(context.Context, string) (*types.Issue, error) { return stubIssue(), nil },
-		updateIssueFn:      func(context.Context, string, map[string]interface{}, string) error { return nil },
-		applyCompactionFn:  func(context.Context, string, int, int, int, string) error { return errors.New("apply failed") },
+		compactOverwriteFn: func(context.Context, string, map[string]interface{}, int, int, string, string) error {
+			return errors.New("apply failed")
+		},
 	}
 	summary := &stubSummarizer{summary: "short"}
 	c := &Compactor{store: store, summarizer: summary, config: &Config{}}
@@ -456,7 +469,7 @@ func TestCompactTier1_ApplyCompactionError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "failed to apply compaction metadata") {
+	if !strings.Contains(err.Error(), "failed to overwrite+mark compaction") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -541,8 +554,7 @@ func TestCompactTier1Batch_MixedResults(t *testing.T) {
 	t.Cleanup(cleanup)
 
 	var mu sync.Mutex
-	updated := make(map[string]int)
-	applied := make(map[string]int)
+	overwritten := make(map[string]int)
 	store := &stubStore{
 		checkEligibilityFn: func(ctx context.Context, id string, tier int) (bool, string, error) {
 			switch id {
@@ -559,15 +571,9 @@ func TestCompactTier1Batch_MixedResults(t *testing.T) {
 			issue.ID = id
 			return issue, nil
 		},
-		updateIssueFn: func(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
+		compactOverwriteFn: func(ctx context.Context, id string, updates map[string]interface{}, tier, original int, hash, actor string) error {
 			mu.Lock()
-			updated[id]++
-			mu.Unlock()
-			return nil
-		},
-		applyCompactionFn: func(ctx context.Context, id string, tier, original, compacted int, hash string) error {
-			mu.Lock()
-			applied[id]++
+			overwritten[id]++
 			mu.Unlock()
 			return nil
 		},
@@ -594,10 +600,10 @@ func TestCompactTier1Batch_MixedResults(t *testing.T) {
 	if res := resMap["bd-2"]; res == nil || res.Err == nil || !strings.Contains(res.Err.Error(), "not eligible") {
 		t.Fatalf("expected ineligible error for bd-2, got %+v", res)
 	}
-	if updated["bd-1"] != 1 || applied["bd-1"] != 1 {
-		t.Fatalf("expected store operations for bd-1 exactly once")
+	if overwritten["bd-1"] != 1 {
+		t.Fatalf("expected atomic CompactOverwrite for bd-1 exactly once, got %d", overwritten["bd-1"])
 	}
-	if updated["bd-2"] != 0 || applied["bd-2"] != 0 {
+	if overwritten["bd-2"] != 0 {
 		t.Fatalf("bd-2 should not be processed")
 	}
 	if summary.calls != 1 {
