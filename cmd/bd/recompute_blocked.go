@@ -45,11 +45,14 @@ Examples:
 
 		recomputer, ok := storage.UnwrapStore(store).(storage.BlockedRecomputer)
 		if !ok {
-			return HandleError("storage backend does not support is_blocked recompute")
+			// beads-927v: this runs before the `if jsonOutput` success block below,
+			// so under `bd recompute-blocked --json` a plain HandleError leaves stdout
+			// empty + stderr text — honor the --json error contract (0wp9/y2yo class).
+			return HandleErrorRespectJSON("storage backend does not support is_blocked recompute")
 		}
 		changed, err := recomputer.RecomputeAllBlocked(ctx)
 		if err != nil {
-			return HandleError("recompute is_blocked: %v", err)
+			return HandleErrorRespectJSON("recompute is_blocked: %v", err)
 		}
 
 		if jsonOutput {
