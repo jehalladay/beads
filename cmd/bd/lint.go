@@ -211,6 +211,17 @@ Examples:
 			if failedCount > 0 {
 				return &exitError{Code: 1}
 			}
+			// beads-x3jo: mirror the text-mode exit contract. Text mode returns
+			// SilentExit() (rc=1) when there are template warnings or structural
+			// inconsistencies, so a `bd lint $IDS || fail` gate trips. The --json
+			// branch previously returned nil (rc=0) on the SAME warning state, so
+			// `bd lint $IDS --json || fail` read FALSE-CLEAN — a scripted gate
+			// silently weakened by adding --json. Signal non-zero here too so both
+			// modes agree; the JSON object is already emitted above, so consumers
+			// still parse the findings.
+			if len(results) > 0 || len(inconsistencies) > 0 {
+				return &exitError{Code: 1}
+			}
 			return nil
 		}
 
