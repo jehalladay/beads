@@ -349,11 +349,18 @@ func runLinearSync(cmd *cobra.Command, args []string) error {
 	}
 	opts.DependencySources = linearPullDependencySources(relations)
 
+	// Route --type/--exclude-type through the canonical normalizer (aliases +
+	// case-fold) so `--type mr|feat|mol` resolves to the stored canonical type
+	// instead of matching nothing. engine.shouldSync compares by exact ==, so a
+	// raw/ToLower-only value silently syncs nothing (--type) or fails open
+	// (--exclude-type leaks the type into the external tracker). beads-15vj,
+	// sibling of the brxo read-side family; issueTypeFilterValue is the shared
+	// chokepoint every --type filter must route through.
 	for _, t := range typeFilters {
-		opts.TypeFilter = append(opts.TypeFilter, types.IssueType(strings.ToLower(t)))
+		opts.TypeFilter = append(opts.TypeFilter, issueTypeFilterValue(t))
 	}
 	for _, t := range excludeTypes {
-		opts.ExcludeTypes = append(opts.ExcludeTypes, types.IssueType(strings.ToLower(t)))
+		opts.ExcludeTypes = append(opts.ExcludeTypes, issueTypeFilterValue(t))
 	}
 	if !includeEphemeral {
 		opts.ExcludeEphemeral = true
