@@ -84,7 +84,11 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, forc
 	}
 	uw, err := uowProvider.NewUOW(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening unit of work for %s: %v\n", id, err)
+		// beads-vuyx: per-item errors honor the fg6 JSON-stderr contract under
+		// --json (structured JSON error object to stderr; stdout stays a pure
+		// success payload), matching the direct update path (update.go
+		// reportItemError) and the proxied show handler. Plain text otherwise.
+		reportItemError("Error opening unit of work for %s: %v", id, err)
 		return nil, false
 	}
 	defer uw.Close(ctx)
@@ -92,11 +96,11 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, forc
 	issueUC := uw.IssueUseCase()
 	current, isWisp := proxiedResolveIssueOrWisp(ctx, uw, id)
 	if current == nil {
-		fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+		reportItemError("Issue %s not found", id)
 		return nil, false
 	}
 	if err := validateIssueUpdatable(id, current); err != nil {
-		fmt.Fprintf(os.Stderr, "%s\n", err)
+		reportItemError("%s", err)
 		return nil, false
 	}
 
@@ -112,7 +116,7 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, forc
 	// overridable with --force, matching `bd close --force`.
 	if !force {
 		if err := checkProxiedUpdateCloseGuards(ctx, uw, id, current, isWisp, in.fields); err != nil {
-			fmt.Fprintf(os.Stderr, "%s\n", err)
+			reportItemError("%s", err)
 			return nil, false
 		}
 	}
@@ -125,9 +129,9 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, forc
 	updated, err := issueUC.ApplyUpdate(ctx, id, spec, actor)
 	if err != nil {
 		if errors.Is(err, storage.ErrAlreadyClaimed) || errors.Is(err, storage.ErrNotClaimable) {
-			fmt.Fprintf(os.Stderr, "Error claiming %s: %v\n", id, err)
+			reportItemError("Error claiming %s: %v", id, err)
 		} else {
-			fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, err)
+			reportItemError("Error updating %s: %v", id, err)
 		}
 		return nil, false
 	}
@@ -150,7 +154,7 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, forc
 	}
 
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: update %s", id)); err != nil && !isDoltNothingToCommit(err) {
-		fmt.Fprintf(os.Stderr, "Error committing %s: %v\n", id, err)
+		reportItemError("Error committing %s: %v", id, err)
 		return nil, false
 	}
 
