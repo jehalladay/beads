@@ -49,7 +49,13 @@ Examples:
 		if untilStr != "" {
 			t, err := timeparsing.ParseRelativeTime(untilStr, time.Now())
 			if err != nil {
-				return HandleError("invalid --until format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", untilStr)
+				// beads-v02z: defer honors --json on success (outputJSON below) and
+				// already routes its ID-resolution error through HandleErrorRespectJSON
+				// (beads-0l4c) — honor the same --json error contract on this shared
+				// validation path (runs before the direct/proxied split below) so
+				// `bd defer --until=garbage --json` emits a stdout JSON error object,
+				// not empty stdout + stderr text (0wp9/21xi class).
+				return HandleErrorRespectJSON("invalid --until format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", untilStr)
 			}
 			if t.Before(time.Now()) && !jsonOutput {
 				fmt.Fprintf(os.Stderr, "%s Defer date %q is in the past. Issue will appear in bd ready immediately.\n",
@@ -61,7 +67,8 @@ Examples:
 		reason, _ := cmd.Flags().GetString("reason")
 		reason = strings.TrimSpace(reason)
 		if cmd.Flags().Changed("reason") && reason == "" {
-			return HandleError("reason cannot be empty")
+			// beads-v02z: same --json error contract as the --until path above.
+			return HandleErrorRespectJSON("reason cannot be empty")
 		}
 
 		// beads-aocj: route to the proxied handler in proxied-server mode.
