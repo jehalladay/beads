@@ -69,6 +69,16 @@ func init() {
 	rootCmd.AddCommand(findDuplicatesCmd)
 }
 
+// validateThreshold enforces the documented 0.0-1.0 range for --threshold.
+// Out-of-range values silently misbehave: >1.0 matches nothing (false "no
+// duplicates"), <0.0 matches every pair. Fail loud instead.
+func validateThreshold(t float64) error {
+	if t < 0.0 || t > 1.0 {
+		return fmt.Errorf("--threshold must be between 0.0 and 1.0 (got %g)", t)
+	}
+	return nil
+}
+
 // duplicatePair represents a pair of potentially duplicate issues.
 type duplicatePair struct {
 	IssueA     *types.Issue `json:"issue_a"`
@@ -88,6 +98,9 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) error {
 
 	method, _ := cmd.Flags().GetString("method")
 	threshold, _ := cmd.Flags().GetFloat64("threshold")
+	if err := validateThreshold(threshold); err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
 	status, _ := cmd.Flags().GetString("status")
 	limit, _ := cmd.Flags().GetInt("limit")
 	model, _ := cmd.Flags().GetString("model")
