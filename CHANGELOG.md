@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd link <id1> <id2> --type <unknown>` now rejects unknown dependency types instead of silently storing a non-gating custom edge (beads-9v0d).**
+  `bd link` is documented as shorthand for `bd dep add`, and its `--type` help lists exactly the well-known
+  set — but it gated only on `IsValid()` (non-empty/≤32 chars) where the sibling paths (`bd dep add`, the
+  bulk `--file` reader, the proxied dep handler, and `bd create --deps`) gate on `IsWellKnown()` (beads-qfka).
+  So `bd link A B --type blockd` (a typo of `blocks`) returned rc=0 `✓ Linked` and persisted a `blockd` edge;
+  because a custom/unknown type has `AffectsReadyWork()==false`, the dependent stayed ready though a blocking
+  gate was intended — the same false-success + silent-gate-drift class as qfka. `link` now gates on
+  `IsWellKnown()` too, reusing `createDepsAcceptedTypeList()` for a consistent `unknown dependency type ...`
+  message. Programmatic/storage `IsValid()` custom-type acceptance is unchanged.
+
 - **`bd kv clear <key>` now fails loud on a key that does not exist instead of printing a false `Cleared`/`deleted:true` success (beads-v0rp).**
   `DeleteConfig` is idempotent — it issues an unconditional `DELETE` and returns nil regardless of how many
   rows matched, which programmatic cleanup callers rely on — but `bd kv clear` printed `Cleared <key>` (text)
