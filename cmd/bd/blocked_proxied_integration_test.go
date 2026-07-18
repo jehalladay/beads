@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -119,6 +120,37 @@ func TestProxiedServerBlocked(t *testing.T) {
 		}
 		if ids[outside.ID] {
 			t.Errorf("non-descendant %s leaked into --parent result", outside.ID)
+		}
+	})
+
+	// beads-wu0u: bd blocked --parent <nonexistent> must error (exit != 0) with a
+	// parseable JSON error under --json — not silently return [] exit 0. Proxied
+	// twin of the direct-path check (beads-d5jg) / bd list --parent (beads-n8lv):
+	// a typo'd epic id should be a hard error, not "nothing blocked".
+	t.Run("parent_nonexistent_errors", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "bk4")
+		bdProxiedCreate(t, bd, p.dir, "Some issue")
+		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "blocked", "--parent", "nope-not-a-real-id", "--json")
+		if err == nil {
+			t.Fatalf("bd blocked --parent <nonexistent> --json should fail; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+		s := strings.TrimSpace(stdout)
+		start := strings.IndexAny(s, "{")
+		if start < 0 {
+			t.Fatalf("expected a JSON error object on stdout, got stdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+		var obj map[string]interface{}
+		if jerr := json.Unmarshal([]byte(s[start:]), &obj); jerr != nil {
+			t.Fatalf("stdout is not valid JSON (%v): %s", jerr, s[start:])
+		}
+		if _, ok := obj["error"]; !ok {
+			t.Errorf("expected an {\"error\":...} object on stdout, got: %s", s[start:])
+		}
+		// The error references the parent id (a missing id surfaces either as
+		// "parent issue '...' not found" or the store's lookup error — both name
+		// the id and both are the hard-fail we require vs a silent empty result).
+		if !strings.Contains(fmt.Sprint(obj["error"]), "nope-not-a-real-id") {
+			t.Errorf("expected the bad parent id in the error, got: %v", obj["error"])
 		}
 	})
 }

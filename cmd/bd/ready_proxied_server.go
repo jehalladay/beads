@@ -53,6 +53,19 @@ func runBlockedProxiedServer(cmd *cobra.Command, ctx context.Context) {
 
 	var filter types.WorkFilter
 	if parentID, _ := cmd.Flags().GetString("parent"); parentID != "" {
+		// beads-wu0u: validate the parent exists before filtering — the proxied
+		// twin of the direct blocked --parent check (beads-d5jg) / bd list --parent
+		// (beads-n8lv). Without it a typo'd/nonexistent parent id silently returns
+		// [] exit 0 ("nothing blocked") instead of erroring, so a JSON consumer or
+		// "what's blocked under this epic" gate can't tell a bad id from a genuinely
+		// empty result. Now-live path since iu9f un-gated proxied-server.
+		parentIssue, perr := uw.IssueUseCase().GetIssue(ctx, parentID)
+		if perr != nil {
+			FatalErrorRespectJSON("error checking parent issue: %v", perr)
+		}
+		if parentIssue == nil {
+			FatalErrorRespectJSON("parent issue '%s' not found", parentID)
+		}
 		filter.ParentID = &parentID
 	}
 
