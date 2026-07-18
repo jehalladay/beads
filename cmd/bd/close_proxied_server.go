@@ -77,6 +77,13 @@ func runCloseProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 		outcomes = append(outcomes, outcome)
 		if in.jsonOut {
 			closedIssues = append(closedIssues, outcome.after)
+		} else if !outcome.closed {
+			// beads-8l5t: the issue was ALREADY closed (repo Close is idempotent
+			// via AlreadyClosed). Report the no-op honestly instead of claiming a
+			// "✓ Closed" transition, matching the direct path (cmd/bd/close.go
+			// "was already closed (no change)"). rc stays 0 (idempotent close).
+			fmt.Printf("%s %s was already closed (no change)\n",
+				ui.RenderInfoIcon(), formatFeedbackID(outcome.after.ID, outcome.after.Title))
 		} else {
 			fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), formatFeedbackID(outcome.after.ID, outcome.after.Title), reason)
 		}
@@ -237,11 +244,18 @@ func closeProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string, 
 		return closeProxiedOutcome{}, false
 	}
 
-	oldStatus := string(current.Status)
-	if oldStatus == "" {
-		oldStatus = "open"
+	// beads-8l5t: only emit the open→closed audit event on a REAL transition.
+	// The repo Close is idempotent (res.Closed == !AlreadyClosed); re-closing an
+	// already-closed issue must not pollute the GC-survivable audit trail with a
+	// transition that never happened (matches the direct path, which skips the
+	// close work entirely when already closed; beads-usz1 class).
+	if res.Closed {
+		oldStatus := string(current.Status)
+		if oldStatus == "" {
+			oldStatus = "open"
+		}
+		auditStatusChange(id, oldStatus, "closed", actor, reason)
 	}
-	auditStatusChange(id, oldStatus, "closed", actor, reason)
 
 	autoCloseProxiedCompletedMolecule(ctx, uw, id, actor, in.session, in.jsonOut)
 
