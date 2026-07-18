@@ -82,15 +82,24 @@ Examples:
 			return HandleErrorWithHint("database not initialized", diagHint())
 		}
 
+		// failedCount tracks ids that could not be resolved/loaded in the
+		// explicit-args path. lint is used as a gate (`bd lint $IDS || fail`),
+		// so a typo'd or deleted id must make the whole command exit non-zero
+		// rather than silently linting the ids that happened to resolve — the
+		// partial-failure exit-code class the rest of the multi-id commands
+		// already honor (beads-p3y5, matching label/show/dep list/mol burn).
+		failedCount := 0
 		if len(args) > 0 {
 			for _, id := range args {
 				issue, err := store.GetIssue(ctx, id)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error getting %s: %v\n", id, err)
+					failedCount++
 					continue
 				}
 				if issue == nil {
 					fmt.Fprintf(os.Stderr, "Issue not found: %s\n", id)
+					failedCount++
 					continue
 				}
 				issues = append(issues, issue)
@@ -189,11 +198,21 @@ Examples:
 			}
 			data, _ := json.MarshalIndent(output, "", "  ")
 			fmt.Println(string(data))
+			// Partial/total id-resolution failure: results (above) are still
+			// emitted for the ids that resolved, then signal non-zero so a
+			// scripted `bd lint $IDS --json || fail` fires on a missing id
+			// (beads-p3y5).
+			if failedCount > 0 {
+				return &exitError{Code: 1}
+			}
 			return nil
 		}
 
 		if len(results) == 0 && len(inconsistencies) == 0 {
 			fmt.Printf("✓ No template warnings found (%d issues checked)\n", len(issues))
+			if failedCount > 0 {
+				return &exitError{Code: 1}
+			}
 			return nil
 		}
 
@@ -217,6 +236,12 @@ Examples:
 			}
 		}
 
+		// Warnings/inconsistencies (above) are still printed for the ids that
+		// resolved; signal non-zero if any requested id failed to resolve so a
+		// lint gate fires on a missing id (beads-p3y5).
+		if failedCount > 0 {
+			return &exitError{Code: 1}
+		}
 		return SilentExit()
 	},
 }
