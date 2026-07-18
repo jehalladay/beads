@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd count` and `bd search` now reject invalid `--status`/`--type`/`--priority` values (beads-deud).**
+  Both commands silently accepted bogus enum values — `bd count --status bogusxyz`,
+  `--type notatype`, `--priority 99`/`-1`, and `bd search --status/--type` — returning
+  `0`/an empty result with exit 0, where the sibling `bd list` rejects the same values
+  with exit 1 and a valid-values-listing error. A typo'd filter in a script/agent gate
+  read as a legitimate empty set rather than a hard error. Both commands now validate
+  against the documented enums (mirroring `bd list`): status via `Normalize()` +
+  `IsValidWithCustom`, type via `IsValidWithCustom`, and count's `--priority` against the
+  0-4 range — using the store's custom-status/type config so custom statuses and infra
+  types still pass. `--json` emits the structured `{"error":...}` shape. Sibling of
+  beads-pbl7 (ready.go) and beads-brxo (which fixed `--type` normalization, not
+  validation, and never touched `--status`/`--priority`).
 - **`bd list --parent` now returns transitive descendants in `--json`/`--flat` (beads-wap4).**
   The flat and `--json` `--parent` output returned only direct children (plus
   dotted-ID descendants), silently dropping dep-edge grandchildren — even though

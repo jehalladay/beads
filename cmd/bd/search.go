@@ -114,8 +114,21 @@ Examples:
 			filter.SortDesc = reverse
 		}
 
+		// beads-deud: validate --status/--type against their documented enums,
+		// mirroring bd list, so an invalid value is a hard error (rc!=0) instead
+		// of a silent false-empty result. Custom sets come from store config
+		// (nil-safe) so custom statuses + infra types still pass. (search's
+		// --priority-min/max already validate via validation.ValidatePriority.)
+		searchFilterCfg, searchCfgErr := loadDirectListFilterConfig(rootCtx, store)
+		if searchCfgErr != nil {
+			return HandleErrorRespectJSON("%v", searchCfgErr)
+		}
+
 		if status != "" && status != "all" {
-			s := types.Status(status)
+			s := types.Status(status).Normalize()
+			if !s.IsValidWithCustom(searchFilterCfg.customStatusNames()) {
+				return HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(searchFilterCfg.customStatusNames()))
+			}
 			filter.Status = &s
 		} else if status != "all" {
 			// Default: exclude closed issues to reduce scan scope (hq-319).
@@ -133,6 +146,13 @@ Examples:
 
 		if issueType != "" {
 			t := issueTypeFilterValue(issueType)
+			if !t.IsValidWithCustom(searchFilterCfg.customTypes) {
+				validTypes := "bug, feature, task, epic, chore, decision"
+				if len(searchFilterCfg.customTypes) > 0 {
+					validTypes += ", " + strings.Join(searchFilterCfg.customTypes, ", ")
+				}
+				return HandleErrorRespectJSON("invalid issue type %q (valid: %s)", issueType, validTypes)
+			}
 			filter.IssueType = &t
 		}
 

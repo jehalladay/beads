@@ -462,3 +462,50 @@ func TestEmbeddedSearchConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddedSearchRejectsInvalidEnums is the beads-deud teeth: bd search must
+// reject invalid --status/--type values with rc!=0 and a valid-values-listing
+// error, mirroring bd list — not silently return an empty result exit 0.
+// (search's --priority-min/max already validate via validation.ValidatePriority;
+// search has no plain --priority flag, so status+type are the gap here.)
+func TestEmbeddedSearchRejectsInvalidEnums(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "sde")
+	bdCreate(t, bd, dir, "search enum task", "--type", "task", "--priority", "2")
+
+	cases := []struct {
+		name    string
+		args    []string
+		wantSub string
+	}{
+		{"invalid_status", []string{"search enum", "--status", "bogusxyz"}, "invalid status"},
+		{"invalid_type", []string{"search enum", "--type", "notatype"}, "invalid issue type"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(bd, append([]string{"search"}, tc.args...)...)
+			cmd.Dir = dir
+			cmd.Env = bdEnv(dir)
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("expected bd search %v to fail, but succeeded:\n%s", tc.args, out)
+			}
+			if !strings.Contains(string(out), tc.wantSub) {
+				t.Errorf("bd search %v: expected error containing %q, got:\n%s", tc.args, tc.wantSub, out)
+			}
+		})
+	}
+
+	// Valid values must still succeed (surgical — no regression).
+	if out := bdSearch(t, bd, dir, "search enum", "--status", "open"); !strings.Contains(out, "search enum task") {
+		t.Errorf("bd search --status open: expected the seeded task, got:\n%s", out)
+	}
+	if out := bdSearch(t, bd, dir, "search enum", "--type", "task"); !strings.Contains(out, "search enum task") {
+		t.Errorf("bd search --type task: expected the seeded task, got:\n%s", out)
+	}
+}
