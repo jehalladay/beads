@@ -391,6 +391,13 @@ Examples:
 		if !dt.IsValid() {
 			return HandleErrorRespectJSON("invalid dependency type %q: must be non-empty and at most 32 characters", depType)
 		}
+		// beads-qfka: reject unknown types for parity with `bd create --deps`
+		// (create.go / create_deps.go both gate on IsWellKnown). Without this a
+		// typo'd blocking type (e.g. "blockd") was silently stored rc=0 as a
+		// non-gating custom edge → the dependent stayed ready.
+		if !dt.IsWellKnown() {
+			return HandleErrorRespectJSON("unknown dependency type %q; valid types: %s", depType, createDepsAcceptedTypeList())
+		}
 
 		dep := &types.Dependency{
 			IssueID:     fromID,
@@ -658,8 +665,11 @@ func readBulkDepEdges(file string, defaultType string) ([]bulkDepEdge, error) {
 		dt := types.DependencyType(depType)
 		if !dt.IsValid() {
 			errs = append(errs, fmt.Sprintf("line %d: invalid dependency type %q: must be non-empty and at most 32 characters", lineNo, depType))
+		} else if !dt.IsWellKnown() {
+			// beads-qfka: parity with `bd dep add` / `bd create --deps`.
+			errs = append(errs, fmt.Sprintf("line %d: unknown dependency type %q; valid types: %s", lineNo, depType, createDepsAcceptedTypeList()))
 		}
-		if from == "" || to == "" || !dt.IsValid() {
+		if from == "" || to == "" || !dt.IsValid() || !dt.IsWellKnown() {
 			continue
 		}
 

@@ -198,6 +198,56 @@ func TestEmbeddedDep(t *testing.T) {
 		}
 	})
 
+	// beads-qfka: `bd dep add --type <unknown>` must reject unknown types the
+	// same way `bd create --deps <unknown>:B` does (both are user-facing dep
+	// creation). dep add previously gated only on IsValid() (non-empty/<=32) so
+	// a typo'd blocking type ('blockd') was silently stored rc=0 as a
+	// non-gating custom edge → the dependent stayed ready. Parity fix: gate on
+	// IsWellKnown() like create --deps.
+	t.Run("add_unknown_type_rejected", func(t *testing.T) {
+		u1 := bdCreate(t, bd, dir, "UnkType A", "--type", "task")
+		u2 := bdCreate(t, bd, dir, "UnkType B", "--type", "task")
+		out := bdDepFail(t, bd, dir, "add", u1.ID, u2.ID, "--type", "blockd")
+		if strings.Contains(out, "Added dependency") {
+			t.Errorf("false success: dep add stored an unknown type 'blockd': %s", out)
+		}
+		if !strings.Contains(out, "unknown dependency type") {
+			t.Errorf("expected 'unknown dependency type' error, got: %s", out)
+		}
+		// The edge must NOT have been persisted.
+		list := bdDep(t, bd, dir, "list", u1.ID)
+		if strings.Contains(list, u2.ID) {
+			t.Errorf("rejected unknown-type edge was persisted anyway: %s", list)
+		}
+	})
+
+	t.Run("add_wellknown_type_still_accepted", func(t *testing.T) {
+		w1 := bdCreate(t, bd, dir, "WkType A", "--type", "task")
+		w2 := bdCreate(t, bd, dir, "WkType B", "--type", "task")
+		out := bdDep(t, bd, dir, "add", w1.ID, w2.ID, "--type", "related")
+		if !strings.Contains(out, "Added dependency") {
+			t.Errorf("well-known type 'related' should be accepted: %s", out)
+		}
+	})
+
+	t.Run("add_file_unknown_type_rejected", func(t *testing.T) {
+		f1 := bdCreate(t, bd, dir, "FileUnk A", "--type", "task")
+		f2 := bdCreate(t, bd, dir, "FileUnk B", "--type", "task")
+		path := filepath.Join(t.TempDir(), "deps.jsonl")
+		body := fmt.Sprintf("{\"from\":%q,\"to\":%q,\"type\":\"frobnicate\"}\n", f1.ID, f2.ID)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write dep file: %v", err)
+		}
+		out := bdDepFail(t, bd, dir, "add", "--file", path)
+		if !strings.Contains(out, "unknown dependency type") {
+			t.Errorf("expected 'unknown dependency type' error from --file, got: %s", out)
+		}
+		list := bdDep(t, bd, dir, "list", f1.ID)
+		if strings.Contains(list, f2.ID) {
+			t.Errorf("rejected unknown-type --file edge was persisted anyway: %s", list)
+		}
+	})
+
 	t.Run("add_type_related", func(t *testing.T) {
 		r1 := bdCreate(t, bd, dir, "Related 1", "--type", "task")
 		r2 := bdCreate(t, bd, dir, "Related 2", "--type", "task")
