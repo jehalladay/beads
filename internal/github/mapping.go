@@ -9,6 +9,33 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// maxTitleLength is GitHub's server-side cap on an issue title. GitHub
+// 422-rejects a create/update whose title exceeds 256 characters, while a
+// local beads title may be up to 500 (see types Validate). beads-yaum.
+const maxTitleLength = 256
+
+// truncateTitle caps a title at GitHub's maxTitleLength, appending an ellipsis
+// marker so the truncation is visible on the GitHub side (beads-yaum). The
+// PUSHED copy is truncated while the local beads title is left untouched.
+// Rune-aware so a multi-byte character is never split. Mirrors the ADO
+// System.Title guard (beads-z5ys) and the GitLab title cap (beads-h266) —
+// the reusable SCM per-field-cap class.
+func truncateTitle(title string) string {
+	// GitHub counts characters (runes), not bytes; a title whose rune count
+	// already fits is fine even if its byte length overflows from multi-byte
+	// runes.
+	if len([]rune(title)) <= maxTitleLength {
+		return title
+	}
+	const marker = "..."
+	runes := []rune(title)
+	keep := maxTitleLength - len([]rune(marker))
+	if keep < 0 {
+		keep = 0
+	}
+	return string(runes[:keep]) + marker
+}
+
 // MappingConfig configures how GitHub fields map to beads fields.
 type MappingConfig struct {
 	PriorityMap  map[string]int    // priority label value -> beads priority (0-4)
@@ -131,7 +158,7 @@ func GitHubIssueToBeads(gh *Issue, config *MappingConfig) *IssueConversion {
 // BeadsIssueToGitHubFields converts a beads Issue to GitHub API update fields.
 func BeadsIssueToGitHubFields(issue *types.Issue, config *MappingConfig) map[string]interface{} {
 	fields := map[string]interface{}{
-		"title": issue.Title,
+		"title": truncateTitle(issue.Title),
 	}
 
 	// Omit an empty description so a local issue with no body does not
