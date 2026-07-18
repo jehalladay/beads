@@ -1321,3 +1321,120 @@ func TestEmbeddedUpdateStatusCloseGuards(t *testing.T) {
 		}
 	})
 }
+
+// TestEmbeddedUpdateDemoteEpicGuard verifies the beads-2hkd fix: the epic
+// open-child close-guard keys on issue_type==epic at close time, so demoting an
+// epic via `bd update --type task` used to let a subsequent close succeed with
+// children still open (no --force), reaching a closed-epic-with-open-child state
+// — the exact inconsistency the guard family (zgku/1d08) exists to prevent, via a
+// different mutation path. The fix enforces the same invariant on the demote
+// transition: refuse epic->non-epic while open children remain, overridable with
+// --force. Sibling of TestEmbeddedUpdateStatusCloseGuards.
+func TestEmbeddedUpdateDemoteEpicGuard(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "td")
+
+	// The core regression: demoting an epic with open children must be refused
+	// without --force (pre-fix it succeeded rc=0, opening the close-guard bypass).
+	t.Run("demote_epic_with_open_children_refuses_without_force", func(t *testing.T) {
+		epic := bdCreate(t, bd, dir, "Demote epic guard", "--type", "epic")
+		child := bdCreate(t, bd, dir, "Demote epic child", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, epic.ID, "--type", "parent-child")
+
+		out := bdUpdateFail(t, bd, dir, epic.ID, "--type", "task")
+		if !strings.Contains(out, "open child issue") {
+			t.Errorf("expected demote-epic-open-children guard message, got:\n%s", out)
+		}
+		// The epic must remain an epic (demote refused + rolled back).
+		got := bdShow(t, bd, dir, epic.ID)
+		if got.IssueType != types.TypeEpic {
+			t.Errorf("expected epic to remain type=epic after refused demote, got %s", got.IssueType)
+		}
+	})
+
+	// Full exploit chain proof: once the demote is refused, the epic is still an
+	// epic, so the close guard still fires — the bypass is closed end-to-end.
+	t.Run("exploit_chain_closed_end_to_end", func(t *testing.T) {
+		epic := bdCreate(t, bd, dir, "Chain epic", "--type", "epic")
+		child := bdCreate(t, bd, dir, "Chain child", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, epic.ID, "--type", "parent-child")
+
+		// Step 1 (demote) is now refused.
+		bdUpdateFail(t, bd, dir, epic.ID, "--type", "task")
+		// Step 2 (close) — the epic is still an epic, so the close guard fires.
+		out := bdUpdateFail(t, bd, dir, epic.ID, "--status", "closed")
+		if !strings.Contains(out, "open child issue") {
+			t.Errorf("expected close guard to still fire on the un-demoted epic, got:\n%s", out)
+		}
+		got := bdShow(t, bd, dir, epic.ID)
+		if got.Status == types.StatusClosed {
+			t.Error("epic must not be closed while it has an open child (close-guard bypass must stay closed)")
+		}
+		gotChild := bdShow(t, bd, dir, child.ID)
+		if gotChild.Status == types.StatusClosed {
+			t.Error("child must remain open")
+		}
+	})
+
+	// --force overrides the demote guard, matching `bd close --force`.
+	t.Run("demote_epic_with_open_children_force_succeeds", func(t *testing.T) {
+		epic := bdCreate(t, bd, dir, "Demote force epic", "--type", "epic")
+		child := bdCreate(t, bd, dir, "Demote force child", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, epic.ID, "--type", "parent-child")
+
+		bdUpdate(t, bd, dir, epic.ID, "--type", "task", "--force")
+		got := bdShow(t, bd, dir, epic.ID)
+		if got.IssueType != types.TypeTask {
+			t.Errorf("expected epic demoted to task with --force, got %s", got.IssueType)
+		}
+	})
+
+	// An epic with NO open children demotes freely (guard only fires on open kids).
+	t.Run("demote_epic_no_open_children_succeeds", func(t *testing.T) {
+		epic := bdCreate(t, bd, dir, "Empty epic", "--type", "epic")
+		bdUpdate(t, bd, dir, epic.ID, "--type", "task")
+		got := bdShow(t, bd, dir, epic.ID)
+		if got.IssueType != types.TypeTask {
+			t.Errorf("expected childless epic demoted to task, got %s", got.IssueType)
+		}
+	})
+
+	// An epic whose only child is already CLOSED demotes freely.
+	t.Run("demote_epic_closed_children_succeeds", func(t *testing.T) {
+		epic := bdCreate(t, bd, dir, "Closed-child epic", "--type", "epic")
+		child := bdCreate(t, bd, dir, "Closed child", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, epic.ID, "--type", "parent-child")
+		bdClose(t, bd, dir, child.ID)
+
+		bdUpdate(t, bd, dir, epic.ID, "--type", "task")
+		got := bdShow(t, bd, dir, epic.ID)
+		if got.IssueType != types.TypeTask {
+			t.Errorf("expected epic with only-closed-children demoted to task, got %s", got.IssueType)
+		}
+	})
+
+	// A non-epic type change (task -> bug) is never guarded.
+	t.Run("non_epic_type_change_unaffected", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "Plain type change", "--type", "task")
+		bdUpdate(t, bd, dir, issue.ID, "--type", "bug")
+		got := bdShow(t, bd, dir, issue.ID)
+		if got.IssueType != types.TypeBug {
+			t.Errorf("expected task->bug type change, got %s", got.IssueType)
+		}
+	})
+
+	// Promoting a non-epic to epic is never guarded (only epic->non-epic demote is).
+	t.Run("promote_to_epic_unaffected", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "Promote me", "--type", "task")
+		bdUpdate(t, bd, dir, issue.ID, "--type", "epic")
+		got := bdShow(t, bd, dir, issue.ID)
+		if got.IssueType != types.TypeEpic {
+			t.Errorf("expected task promoted to epic, got %s", got.IssueType)
+		}
+	})
+}
