@@ -602,6 +602,11 @@ func parseUpdateKVs(kvs []string) (map[string]interface{}, error) {
 		value := kv[eq+1:]
 		switch key {
 		case "status":
+			// Case-fold built-in statuses (OPEN->open, In_Progress->in_progress)
+			// to match `bd update --status` and the read/filter path (beads-gqvu,
+			// write sibling of beads-7wrj). Custom statuses stay case-sensitive
+			// (Status.Normalize only folds when the lowercased form is built-in).
+			value = string(types.Status(value).Normalize())
 			if !types.Status(value).IsValid() {
 				// IsValid excludes custom statuses; the transaction layer will
 				// re-validate. Still reject blatantly empty values here.

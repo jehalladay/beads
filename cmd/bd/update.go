@@ -60,6 +60,12 @@ create, update, show, or close operation).`,
 
 		if cmd.Flags().Changed("status") {
 			status, _ := cmd.Flags().GetString("status")
+			// Case-fold built-in statuses (OPEN->open, In_Progress->in_progress)
+			// so the write path accepts the same case-variants the read/filter
+			// path does (beads-gqvu, write sibling of beads-7wrj). Custom
+			// statuses stay case-sensitive: Status.Normalize only folds when the
+			// lowercased form is a built-in.
+			status = string(types.Status(status).Normalize())
 			var customStatuses []string
 			if store != nil {
 				cs, err := store.GetCustomStatuses(rootCtx)
