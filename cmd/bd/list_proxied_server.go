@@ -88,8 +88,9 @@ func runListProxiedSearch(_ *cobra.Command, ctx context.Context, in listInput) e
 	}
 
 	sortIssues(page.Items, in.sortBy, in.reverse)
+	items, truncated := trimProxiedListToEffectiveLimit(page.Items, in.effectiveLimit, page.HasMore)
 
-	return renderProxiedListText(ctx, uw, page.Items, in, page.HasMore)
+	return renderProxiedListText(ctx, uw, items, in, truncated)
 }
 
 func runListProxiedHierarchicalParent(ctx context.Context, uw uow.UnitOfWork, in listInput, filter types.IssueFilter) error {
@@ -158,8 +159,9 @@ func runListProxiedReady(_ *cobra.Command, ctx context.Context, in listInput) er
 	}
 
 	sortIssues(page.Items, in.sortBy, in.reverse)
+	items, truncated := trimProxiedListToEffectiveLimit(page.Items, in.effectiveLimit, page.HasMore)
 
-	return renderProxiedListText(ctx, uw, page.Items, in, page.HasMore)
+	return renderProxiedListText(ctx, uw, items, in, truncated)
 }
 
 func runListProxiedWatch(_ *cobra.Command, ctx context.Context, in listInput) error {
@@ -254,6 +256,16 @@ func runListProxiedWatch(_ *cobra.Command, ctx context.Context, in listInput) er
 
 func emitProxiedListJSONResult(iwc []*types.IssueWithCounts, in listInput, hasMore bool) error {
 	sortIssuesWithCounts(iwc, in.sortBy, in.reverse)
+	// beads-9jq7: apply the user-visible effectiveLimit AFTER the client-side
+	// sort, mirroring the direct path (cmd/bd/list.go). --sort id forces the
+	// use-case's SQL limit to 0 (natural-numeric ID compare can't be expressed
+	// in SQL ORDER BY), so the use-case returns ALL rows with HasMore=false;
+	// without this trim the proxied path over-returns every row. When the trim
+	// fires, the result IS truncated, so OR it into the hint.
+	if in.effectiveLimit > 0 && len(iwc) > in.effectiveLimit {
+		iwc = iwc[:in.effectiveLimit]
+		hasMore = true
+	}
 	if iwc == nil {
 		iwc = []*types.IssueWithCounts{}
 	}
@@ -268,6 +280,20 @@ func emitProxiedListJSONResult(iwc []*types.IssueWithCounts, in listInput, hasMo
 	}
 	printTruncationHint(hasMore, in.effectiveLimit)
 	return nil
+}
+
+// trimProxiedListToEffectiveLimit applies the user-visible effectiveLimit to an
+// already-sorted issue slice, mirroring the direct path's post-sort trim
+// (cmd/bd/list.go). --sort id forces the use-case's SQL limit to 0 (natural
+// ID compare can't be an SQL ORDER BY), so the use-case returns every row with
+// HasMore=false; without this trim the proxied text path over-returns
+// (beads-9jq7). Returns the trimmed slice and whether the result is truncated
+// (the incoming hasMore OR'd with a trim actually firing).
+func trimProxiedListToEffectiveLimit(items []*types.Issue, effectiveLimit int, hasMore bool) ([]*types.Issue, bool) {
+	if effectiveLimit > 0 && len(items) > effectiveLimit {
+		return items[:effectiveLimit], true
+	}
+	return items, hasMore
 }
 
 func loadDepsForIssues(ctx context.Context, uw uow.UnitOfWork, issues []*types.Issue) (map[string][]*types.Dependency, error) {

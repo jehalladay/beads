@@ -83,6 +83,18 @@ func TestProxiedServerList(t *testing.T) {
 		}
 	})
 
+	// beads-9jq7: --sort id forces sqlLimit=0 (natural-numeric ID compare can't
+	// be expressed in SQL ORDER BY), so the use-case returns ALL rows and the
+	// proxied path must re-apply effectiveLimit AFTER its client-side sort, the
+	// same trim the direct path does. Before the fix the proxied path only
+	// honored filter.Limit (=0 here) and rendered every row, over-returning.
+	t.Run("limit_with_sort_id", func(t *testing.T) {
+		issues := bdProxiedListJSON(t, bd, p, "--all", "--sort", "id", "--limit", "2")
+		if len(issues) != 2 {
+			t.Errorf("expected 2 issues with --sort id --limit 2, got %d (proxied must trim to effectiveLimit after client-sort, matching direct)", len(issues))
+		}
+	})
+
 	t.Run("id_filter", func(t *testing.T) {
 		idList := seed.openBug + "," + seed.readyTask
 		issues := bdProxiedListJSON(t, bd, p, "--id", idList)
