@@ -73,6 +73,16 @@ Example:
 
 		commandDidWrite.Store(true)
 
+		// Under --json emit the full issue object like create/todo and the
+		// proxied path (create_proxied_server.go), not a bare id — q/quick
+		// inherit the global --json flag (and advertise it in --help) but the
+		// direct path previously printed only issue.ID, byte-identical to plain
+		// output, breaking scripted json.load consumers (beads-j54e). The
+		// proxied quick path already emits outputJSON(result.Issue); this brings
+		// the direct path to parity.
+		if jsonOutput {
+			return outputJSON(issue)
+		}
 		fmt.Println(issue.ID)
 		return nil
 	},

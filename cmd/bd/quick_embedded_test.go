@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -55,6 +56,25 @@ func TestEmbeddedQuick(t *testing.T) {
 		}
 		if strings.Contains(id, " ") {
 			t.Errorf("expected ID-only output (no spaces), got %q", id)
+		}
+	})
+
+	// beads-j54e: q/quick inherit the global --json flag (advertised in --help)
+	// but the direct path printed a bare id, byte-identical to plain output, so
+	// `json.load($(bd q ... --json))` broke. --json must emit a full issue
+	// object like create/todo (and the proxied quick path already does).
+	t.Run("quick_json_emits_object", func(t *testing.T) {
+		out, err := bdRunWithFlockRetry(t, bd, dir, "q", "json quick task", "--json")
+		if err != nil {
+			t.Fatalf("bd q --json failed: %v\n%s", err, out)
+		}
+		s := strings.TrimSpace(string(out))
+		var obj map[string]interface{}
+		if jerr := json.Unmarshal([]byte(s), &obj); jerr != nil {
+			t.Fatalf("expected a JSON object from bd q --json, got %q (parse: %v)", s, jerr)
+		}
+		if _, ok := obj["id"]; !ok {
+			t.Errorf("expected an \"id\" field in the JSON object, got %q", s)
 		}
 	})
 
