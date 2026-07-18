@@ -117,14 +117,13 @@ func GetEpicsEligibleForClosureInTx(ctx context.Context, tx *sql.Tx) ([]*types.E
 		}
 	}
 
-	// Step 4: Batch-fetch all epic issues
-	epicsWithChildren := make([]string, 0)
-	for _, epicID := range epicIDs {
-		if len(epicChildMap[epicID]) > 0 {
-			epicsWithChildren = append(epicsWithChildren, epicID)
-		}
-	}
-	epicIssues, err := GetIssuesByIDsInTx(ctx, tx, epicsWithChildren, nil)
+	// Step 4: Batch-fetch ALL open epic issues (not just those with children).
+	// A childless open epic must still surface so `bd epic status` doesn't
+	// wrongly report "No open epics found" (beads-cudm); it just isn't eligible
+	// for close. Consumers that only act on eligible epics (epic close-eligible,
+	// mol_stale) already gate on EligibleForClose, so including childless epics
+	// (EligibleForClose=false) is safe for them.
+	epicIssues, err := GetIssuesByIDsInTx(ctx, tx, epicIDs, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to batch-fetch epic issues: %w", err)
 	}
@@ -137,9 +136,6 @@ func GetEpicsEligibleForClosureInTx(ctx context.Context, tx *sql.Tx) ([]*types.E
 	var results []*types.EpicStatus
 	for _, epicID := range epicIDs {
 		children := epicChildMap[epicID]
-		if len(children) == 0 {
-			continue
-		}
 
 		issue, ok := epicIssueMap[epicID]
 		if !ok || issue == nil {
