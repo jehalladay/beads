@@ -50,49 +50,69 @@ func runRename(cmd *cobra.Command, args []string) error {
 	oldID := args[0]
 	newID := args[1]
 
+	// beads-s7ey: --json is a global persistent flag, so `bd rename --json` is
+	// accepted — but this command previously emitted plain text on BOTH success
+	// and error, ignoring the flag. Route errors through HandleErrorRespectJSON
+	// (emits {"error":...} under --json) and print a JSON success payload.
 	if oldID == newID {
-		return HandleError("old and new IDs are the same")
+		return HandleErrorRespectJSON("old and new IDs are the same")
 	}
 
 	idPattern := regexp.MustCompile(`^[a-z]+-[a-zA-Z0-9._-]+$`)
 	if !idPattern.MatchString(newID) {
-		return HandleError("invalid new ID format %q: must be prefix-suffix (e.g., bd-dolt)", newID)
+		return HandleErrorRespectJSON("invalid new ID format %q: must be prefix-suffix (e.g., bd-dolt)", newID)
 	}
 
 	ctx := context.Background()
 	if err := ensureStoreActive(); err != nil {
-		return HandleError("failed to get storage: %v", err)
+		return HandleErrorRespectJSON("failed to get storage: %v", err)
 	}
 
 	oldIssue, err := store.GetIssue(ctx, oldID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return HandleError("issue %s not found", oldID)
+			return HandleErrorRespectJSON("issue %s not found", oldID)
 		}
-		return HandleError("failed to get issue %s: %v", oldID, err)
+		return HandleErrorRespectJSON("failed to get issue %s: %v", oldID, err)
 	}
 
 	_, err = store.GetIssue(ctx, newID)
 	if err == nil {
-		return HandleError("issue %s already exists", newID)
+		return HandleErrorRespectJSON("issue %s already exists", newID)
 	}
 	if !errors.Is(err, storage.ErrNotFound) {
-		return HandleError("failed to check for existing issue: %v", err)
+		return HandleErrorRespectJSON("failed to check for existing issue: %v", err)
 	}
 
 	oldIssue.ID = newID
 	actor := getActorWithGit()
 	if err := store.UpdateIssueID(ctx, oldID, newID, oldIssue, actor); err != nil {
-		return HandleError("failed to rename issue: %v", err)
+		return HandleErrorRespectJSON("failed to rename issue: %v", err)
 	}
 
+	refWarning := ""
 	if err := updateReferencesInAllIssues(ctx, store, oldID, newID, actor); err != nil {
-		fmt.Printf("Warning: failed to update some references: %v\n", err)
+		refWarning = err.Error()
+		if !jsonOutput {
+			fmt.Printf("Warning: failed to update some references: %v\n", err)
+		}
+	}
+
+	commandDidWrite.Store(true)
+
+	if jsonOutput {
+		out := map[string]interface{}{
+			"renamed": true,
+			"old_id":  oldID,
+			"new_id":  newID,
+		}
+		if refWarning != "" {
+			out["ref_update_warning"] = refWarning
+		}
+		return outputJSON(out)
 	}
 
 	fmt.Printf("Renamed %s -> %s\n", ui.RenderWarn(oldID), ui.RenderAccent(newID))
-
-	commandDidWrite.Store(true)
 
 	return nil
 }
