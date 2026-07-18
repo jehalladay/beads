@@ -168,6 +168,15 @@ var labelAddCmd = &cobra.Command{
 				return HandleErrorRespectJSON("'provides:' labels are reserved for cross-project capabilities. Hint: use 'bd ship %s' instead", strings.TrimPrefix(label, "provides:"))
 			}
 		}
+		// beads-aocj: route to the proxied handler in proxied-server mode.
+		// Without this, label add uses the direct global `store` — nil under
+		// proxiedServerMode — so `bd label add` failed "storage is nil", unlike
+		// its long form `bd update --add-label` which routes via
+		// usesProxiedServer(). The proxied core enforces the same NotTemplate
+		// guard (validateIssueUpdatable, beads-dwlg).
+		if usesProxiedServer() {
+			return runLabelAddProxiedServer(rootCtx, issueIDs, labels)
+		}
 		ctx := rootCtx
 		resolvedIDs := make([]string, 0, len(issueIDs))
 		var unresolved []string
@@ -232,6 +241,11 @@ var labelRemoveCmd = &cobra.Command{
 		}()
 
 		issueIDs, label := parseLabelArgs(args)
+		// beads-aocj: route to the proxied handler in proxied-server mode (see
+		// the label add path above — same nil-`store` gap and NotTemplate guard).
+		if usesProxiedServer() {
+			return runLabelRemoveProxiedServer(rootCtx, issueIDs, label)
+		}
 		ctx := rootCtx
 		resolvedIDs := make([]string, 0, len(issueIDs))
 		var unresolved []string
