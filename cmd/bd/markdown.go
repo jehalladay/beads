@@ -384,6 +384,15 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) error {
 			if !depType.IsValid() {
 				return HandleError("invalid dependency type '%s' for issue '%s'", depType, template.Title)
 			}
+			// Reject an unknown/typo dep-type at import (e.g. "blockd") — a custom
+			// type has AffectsReadyWork()==false, so it would silently persist a
+			// non-gating edge and leave the dependent READY though a blocking gate
+			// was intended. Mirrors the create --deps / dep add / bd link gates
+			// (beads-qfka/9v0d); beads-ed7s. Programmatic IsValid() acceptance is
+			// unchanged — only this user-facing import path fails loud.
+			if !depType.IsWellKnown() {
+				return HandleError("unknown dependency type '%s' for issue '%s'; accepted types: %s", depType, template.Title, createDepsAcceptedTypeList())
+			}
 
 			// IssueID left empty — PersistDependencies defaults it to issue.ID
 			// after ID generation.
