@@ -105,7 +105,12 @@ func processIssueSection(issue *IssueTemplate, section, content string) {
 	case "acceptance criteria", "acceptance":
 		issue.AcceptanceCriteria = content
 	case "assignee":
-		issue.Assignee = strings.TrimSpace(content)
+		// normalizeAssignee trims AND folds the "none" sentinel to unassign,
+		// matching assign/create/update (the bare TrimSpace here trimmed but
+		// left "none" as a literal assignee, diverging from every other create
+		// path — beads-ovhr, llzt markdown sibling of 7i4m). Shared by direct
+		// and proxied markdown create (both read template.Assignee from here).
+		issue.Assignee = normalizeAssignee(content)
 	case "labels":
 		issue.Labels = parseLabels(content)
 	case "dependencies", "deps":
