@@ -13,6 +13,8 @@ SKIP_FILE="$REPO_ROOT/.test-skip"
 source "$REPO_ROOT/.buildflags"
 # shellcheck source=ci/lib/test-env.sh
 source "$REPO_ROOT/scripts/ci/lib/test-env.sh"
+# shellcheck source=ci/lib/port-open.sh
+source "$REPO_ROOT/scripts/ci/lib/port-open.sh"
 
 beads_test_env_enter
 
@@ -133,22 +135,35 @@ if [[ "${BEADS_TEST_SHARED_SERVER:-}" == "1" && -z "${BEADS_DOLT_PORT:-}" ]]; th
         # Find a free port
         SHARED_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
 
+        # Readiness is probed via beads_port_open (scripts/ci/lib/port-open.sh),
+        # a portable nc → bash /dev/tcp → python3 probe. The shared-server
+        # speedup was silently DISABLED on any node without `nc` (e.g. the /fsx
+        # refinery nodes): the old `nc -z` check errored "command not found" →
+        # the probe never succeeded → test.sh fell back to per-package dolt
+        # servers (the slow ~10min gate). beads_port_open no longer hinges on
+        # `nc`, so the shared-server win actually activates (beads-l3po).
         dolt sql-server -H 127.0.0.1 -P "$SHARED_PORT" --no-auto-commit \
             --data-dir "$SHARED_DB_DIR" &>/dev/null &
         SHARED_DOLT_PID=$!
 
         # Wait for server to accept connections (up to 30s)
         for i in $(seq 1 60); do
-            if nc -z 127.0.0.1 "$SHARED_PORT" 2>/dev/null; then
+            if beads_port_open 127.0.0.1 "$SHARED_PORT"; then
                 break
             fi
             sleep 0.5
         done
 
-        if nc -z 127.0.0.1 "$SHARED_PORT" 2>/dev/null; then
+        if beads_port_open 127.0.0.1 "$SHARED_PORT"; then
             export BEADS_DOLT_PORT="$SHARED_PORT"
             export BEADS_TEST_MODE=1
             echo "Shared test Dolt server started on port $SHARED_PORT (PID $SHARED_DOLT_PID)" >&2
+            # Machine-readable outcome hook (beads-l3po): lets a caller (CI/refinery/
+            # tests) confirm the shared-server speedup actually activated rather than
+            # parsing the human-readable message above (which can interleave with the
+            # go-test stream under the EXIT trap).
+            [[ -n "${BEADS_TEST_SHARED_SERVER_OUTCOME_FILE:-}" ]] && \
+                echo "activated $SHARED_PORT" > "$BEADS_TEST_SHARED_SERVER_OUTCOME_FILE"
             cleanup_shared_server() {
                 kill "$SHARED_DOLT_PID" 2>/dev/null || true
                 wait "$SHARED_DOLT_PID" 2>/dev/null || true
@@ -157,6 +172,8 @@ if [[ "${BEADS_TEST_SHARED_SERVER:-}" == "1" && -z "${BEADS_DOLT_PORT:-}" ]]; th
             trap 'cleanup_shared_server; beads_test_env_cleanup' EXIT
         else
             echo "WARN: shared Dolt server failed to start, falling back to per-package servers" >&2
+            [[ -n "${BEADS_TEST_SHARED_SERVER_OUTCOME_FILE:-}" ]] && \
+                echo "fallback" > "$BEADS_TEST_SHARED_SERVER_OUTCOME_FILE"
             kill "$SHARED_DOLT_PID" 2>/dev/null || true
             rm -rf "$SHARED_DOLT_DIR"
         fi
