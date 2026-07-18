@@ -154,6 +154,12 @@ func runDepAddProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	if !dt.IsValid() {
 		FatalErrorRespectJSON("invalid dependency type %q: must be non-empty and at most 32 characters", depType)
 	}
+	// beads-qfka: reject unknown types for parity with the direct path and
+	// `bd create --deps` (both gate on IsWellKnown). iu9f un-gated the proxied
+	// path, so this validation asymmetry is now live.
+	if !dt.IsWellKnown() {
+		FatalErrorRespectJSON("unknown dependency type %q; valid types: %s", depType, createDepsAcceptedTypeList())
+	}
 
 	uw := openDepProxiedUOW(ctx)
 	defer uw.Close(ctx)

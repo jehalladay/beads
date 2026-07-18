@@ -181,6 +181,26 @@ func TestProxiedServerDep(t *testing.T) {
 			}
 		})
 
+		// beads-qfka: the proxied dep-add path must reject unknown types for
+		// parity with the direct path + `bd create --deps` (iu9f un-gated
+		// proxied, so this validation asymmetry is now live).
+		t.Run("unknown_type_rejected", func(t *testing.T) {
+			p := bdProxiedInit(t, bd, "dpa4u")
+			u1 := bdProxiedCreate(t, bd, p.dir, "Unk 1", "--type", "task")
+			u2 := bdProxiedCreate(t, bd, p.dir, "Unk 2", "--type", "task")
+			out := bdProxiedDepFail(t, bd, p.dir, "add", u1.ID, u2.ID, "--type", "blockd")
+			if strings.Contains(out, "Added dependency") {
+				t.Errorf("false success: proxied dep add stored unknown type 'blockd': %s", out)
+			}
+			if !strings.Contains(out, "unknown dependency type") {
+				t.Errorf("expected 'unknown dependency type' error, got: %s", out)
+			}
+			list := bdProxiedDep(t, bd, p.dir, "list", u1.ID)
+			if strings.Contains(list, u2.ID) {
+				t.Errorf("rejected unknown-type edge was persisted on proxied path: %s", list)
+			}
+		})
+
 		t.Run("blocked_by_flag", func(t *testing.T) {
 			p := bdProxiedInit(t, bd, "dpa5")
 			x := bdProxiedCreate(t, bd, p.dir, "Blocked", "--type", "task")
