@@ -31,6 +31,22 @@ func runRelateProxiedServer(ctx context.Context, args []string) error {
 		return err
 	}
 
+	// beads-hwgq: mirror the direct path's 57nt honest-no-op report.
+	// AddDependencies is idempotent, so re-relating an already-related pair would
+	// print "✓ Linked" as if something changed. Reuse the same
+	// proxiedRelatesToLinkExists helper the unrelate path uses (beads-piud) and
+	// report "Already related, no change" (rc=0) instead of a false "Linked".
+	if alreadyRelated, checkErr := proxiedRelatesToLinkExists(ctx, uw, id1, id2); checkErr == nil && alreadyRelated {
+		if jsonOutput {
+			result := map[string]interface{}{"id1": id1, "id2": id2, "related": true, "unchanged": true}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(result)
+		}
+		fmt.Printf("%s Already related, no change: %s ↔ %s\n", ui.RenderPass("✓"), id1, id2)
+		return nil
+	}
+
 	// Bidirectional relates-to, mirroring the direct path (both directions in
 	// one UOW so the relation can't end up half-created).
 	deps := []*types.Dependency{

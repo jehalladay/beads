@@ -54,4 +54,34 @@ func TestProxiedServerRelate(t *testing.T) {
 			t.Errorf("expected honest no-op error, got: %s", out)
 		}
 	})
+
+	// beads-hwgq: re-relating an already-related pair must report an honest
+	// "Already related, no change" (rc=0), mirroring the direct path (57nt) —
+	// not a false "✓ Linked" as if the edge were newly created.
+	t.Run("re_relate_reports_no_change", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "rel4")
+		a := bdProxiedCreate(t, bd, p.dir, "RR A", "--type", "task")
+		b := bdProxiedCreate(t, bd, p.dir, "RR B", "--type", "task")
+
+		out := bdProxiedDep(t, bd, p.dir, "relate", a.ID, b.ID)
+		if !strings.Contains(out, "Linked") {
+			t.Fatalf("expected first relate to Link, got: %s", out)
+		}
+
+		out = bdProxiedDep(t, bd, p.dir, "relate", a.ID, b.ID)
+		if !strings.Contains(out, "Already related, no change") {
+			t.Errorf("expected 'Already related, no change' on re-relate, got: %s", out)
+		}
+	})
+
+	t.Run("re_relate_json_unchanged", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "rel5")
+		a := bdProxiedCreate(t, bd, p.dir, "RRJ A", "--type", "task")
+		b := bdProxiedCreate(t, bd, p.dir, "RRJ B", "--type", "task")
+		bdProxiedDep(t, bd, p.dir, "relate", a.ID, b.ID)
+		m := bdProxiedDepJSON(t, bd, p.dir, "relate", a.ID, b.ID)
+		if m["unchanged"] != true {
+			t.Errorf("expected unchanged:true on re-relate --json, got: %v", m)
+		}
+	})
 }
