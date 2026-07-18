@@ -42,6 +42,19 @@ Examples:
 		id := args[0]
 		ctx := rootCtx
 
+		fieldToEdit := editFieldFromFlags(
+			cmd.Flags().Changed("title"),
+			cmd.Flags().Changed("design"),
+			cmd.Flags().Changed("notes"),
+			cmd.Flags().Changed("acceptance"),
+		)
+
+		// beads-8fm2: hub-connected (proxied-server) crew have a nil `store`;
+		// route load+write through the UOW instead of the direct store path.
+		if usesProxiedServer() {
+			return runEditProxiedServer(ctx, id, fieldToEdit)
+		}
+
 		// Resolve ID with prefix routing (supports cross-rig edits like `bd edit xe-5ls`)
 		result, err := resolveAndGetIssueForMutation(ctx, store, id)
 		if err != nil {
@@ -50,17 +63,6 @@ Examples:
 		defer result.Close()
 		id = result.ResolvedID
 		issueStore := result.Store
-
-		fieldToEdit := "description"
-		if cmd.Flags().Changed("title") {
-			fieldToEdit = "title"
-		} else if cmd.Flags().Changed("design") {
-			fieldToEdit = "design"
-		} else if cmd.Flags().Changed("notes") {
-			fieldToEdit = "notes"
-		} else if cmd.Flags().Changed("acceptance") {
-			fieldToEdit = "acceptance_criteria"
-		}
 
 		editor := os.Getenv("EDITOR")
 		if editor == "" {
