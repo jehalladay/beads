@@ -393,7 +393,13 @@ func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp) (batchO
 		if len(op.args) < 3 {
 			return result, fmt.Errorf("create requires <type> <priority> <title>")
 		}
-		issueType := types.IssueType(op.args[0])
+		// Normalize expands documented aliases (feat->feature, mol->molecule,
+		// investigation->spike, ...) and case-folds canonical names, matching
+		// `bd create -t <type>` (create.go). Without this, batch stored the raw
+		// value and a documented alias failed IsValid(), rejecting the whole
+		// batch — an asymmetry with bd create (beads-dr70). Pseudo-types like
+		// "mr" still normalize to a non-IsValid value and stay rejected below.
+		issueType := types.IssueType(op.args[0]).Normalize()
 		// Accept common custom types too; fall back to type validation by the
 		// storage layer which knows about configured custom types. We only
 		// reject obviously-empty input here.
