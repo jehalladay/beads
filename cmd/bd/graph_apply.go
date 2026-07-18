@@ -528,11 +528,15 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 			if node.Description != "" {
 				issue.Description = node.Description
 			}
-			if node.Assignee != "" {
+			// Trim/fold-"none" like assign/create/update (normalizeAssignee) so a
+			// padded "  alice  " isn't stored unmatchable and "none" unassigns
+			// (beads-7i4m, llzt graph sibling). Normalize BEFORE the empty check
+			// so a padded "  none  "/"  " correctly resolves to no assignment.
+			if assignee := normalizeAssignee(node.Assignee); assignee != "" {
 				if node.AssignAfterCreate {
-					pendingAssignees[i] = node.Assignee
+					pendingAssignees[i] = assignee
 				} else {
-					issue.Assignee = node.Assignee
+					issue.Assignee = assignee
 				}
 			}
 
