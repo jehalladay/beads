@@ -345,6 +345,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (GH#3396, sibling of beads-wap4). `GetBlockedIssuesInTx` now expands the parent
   to its full transitive descendant set via `GetDescendantIDsInTx` (the same
   recursive walk the ready path uses).
+- **`bd blocked --parent <NONEXISTENT>` now errors instead of silently returning empty (beads-d5jg).**
+  `bd blocked --parent bad-id` returned `[]` exit 0 (no parent-existence check),
+  where the sibling `bd list --parent bad-id` errors exit 1 (`parent issue not
+  found`) after beads-n8lv — so a typo'd epic id in a "what's blocked under this
+  epic" gate read as "nothing blocked" rather than a hard error. `bd blocked`
+  now validates the parent exists (mirroring `bd list`, `--json` emits the
+  structured `{"error":...}` shape); a valid childless parent still returns an
+  empty result exit 0. Existence-axis twin of beads-lxo5 (which fixes the same
+  command's dep-edge grandchild recursion). The proxied-server blocked path has
+  the same gap but is dead code behind the not-yet-implemented gate — it rides
+  the iu9f un-gate wave.
 
 - **`bd list --parent` now returns transitive descendants in `--json`/`--flat` (beads-wap4).**
   The flat and `--json` `--parent` output returned only direct children (plus

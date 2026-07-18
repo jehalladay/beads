@@ -359,6 +359,18 @@ var blockedCmd = &cobra.Command{
 		parentID, _ := cmd.Flags().GetString("parent")
 		var blockedFilter types.WorkFilter
 		if parentID != "" {
+			// beads-d5jg: validate the parent exists before filtering, mirroring
+			// bd list --parent (list.go, beads-n8lv). Without this a typo'd/
+			// nonexistent parent id silently returns [] exit 0 ("nothing blocked")
+			// instead of erroring — a JSON consumer or "what's blocked under this
+			// epic" gate can't tell a bad id from a genuinely empty result.
+			parentIssue, perr := store.GetIssue(ctx, parentID)
+			if perr != nil {
+				return HandleErrorRespectJSON("error checking parent issue: %v", perr)
+			}
+			if parentIssue == nil {
+				return HandleErrorRespectJSON("parent issue '%s' not found", parentID)
+			}
 			blockedFilter.ParentID = &parentID
 		}
 		blocked, err := store.GetBlockedIssues(ctx, blockedFilter)
