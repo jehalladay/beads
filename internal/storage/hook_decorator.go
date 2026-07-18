@@ -52,16 +52,33 @@ func NewHookFiringStore(store DoltStorage, runner *hooks.Runner) *HookFiringStor
 // (e.g., StoreLocator, RawDBAccessor).
 func (h *HookFiringStore) Inner() DoltStorage { return h.inner }
 
-// UnwrapStore returns the underlying concrete store if s is a
-// HookFiringStore decorator, otherwise returns s unchanged.
+// innerUnwrapper is implemented by any store decorator that wraps another
+// DoltStorage and exposes it (e.g. HookFiringStore, and future decorators
+// such as a telemetry-instrumented store). UnwrapStore uses this interface so
+// it transparently unwraps ANY decorator, not just *HookFiringStore — adding a
+// new decorator no longer silently breaks capability type-asserts (beads-i1ff).
+type innerUnwrapper interface {
+	Inner() DoltStorage
+}
+
+// UnwrapStore returns the underlying concrete store, recursively peeling off
+// any decorators that expose Inner() DoltStorage (hook, telemetry, or a stack
+// of them in any order), otherwise returns s unchanged.
 // Use this before type assertions to optional interfaces
 // (StoreLocator, BackupStore, Flattener, etc.) so the assertion
-// reaches the concrete store rather than the decorator.
+// reaches the concrete store rather than a decorator (beads-i1ff).
 func UnwrapStore(s DoltStorage) DoltStorage {
-	if h, ok := s.(*HookFiringStore); ok {
-		return h.inner
+	for {
+		u, ok := s.(innerUnwrapper)
+		if !ok {
+			return s
+		}
+		inner := u.Inner()
+		if inner == nil || inner == s {
+			return s
+		}
+		s = inner
 	}
-	return s
 }
 
 // ── Issue mutations ─────────────────────────────────────────────────
