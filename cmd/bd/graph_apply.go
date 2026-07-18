@@ -300,7 +300,10 @@ func emitGraphApplyDryRun(plan *GraphApplyPlan) error {
 	parentDeps := 0
 	rows := make([]GraphApplyDryRunRow, 0, len(plan.Nodes))
 	for _, node := range plan.Nodes {
-		issueType := node.Type
+		// Normalize so the dry-run preview shows the SAME canonical type the live
+		// create will store (beads-h3k5); otherwise --dry-run previews "feat"
+		// while the create stores "feature". Empty stays empty -> defaults task.
+		issueType := string(types.IssueType(node.Type).Normalize())
 		if issueType == "" {
 			issueType = string(types.TypeTask)
 		}
@@ -368,7 +371,11 @@ func validateGraphApplyPlan(plan *GraphApplyPlan, customTypes []string) error {
 			return fmt.Errorf("node %q has empty title", node.Key)
 		}
 		if node.Type != "" {
-			it := types.IssueType(node.Type)
+			// Normalize expands documented aliases (feat->feature, mol->molecule,
+			// ...) and folds canonical-name case, matching `bd create -t <type>`.
+			// Without this a documented alias in a graph node failed validation,
+			// an asymmetry with plain bd create (beads-h3k5, sibling of dr70).
+			it := types.IssueType(node.Type).Normalize()
 			if !it.IsValidWithCustom(customTypes) {
 				return fmt.Errorf("node %q: invalid type %q", node.Key, node.Type)
 			}
@@ -496,7 +503,9 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 		pendingAssignees := make(map[int]string)
 
 		for i, node := range plan.Nodes {
-			issueType := types.IssueType(node.Type)
+			// Normalize aliases/case to canonical, matching validation above and
+			// bd create -t (beads-h3k5). Empty stays empty -> defaults to task.
+			issueType := types.IssueType(node.Type).Normalize()
 			if issueType == "" {
 				issueType = types.TypeTask
 			}
