@@ -121,6 +121,46 @@ func TestEmbeddedHistory(t *testing.T) {
 		}
 	})
 
+	// ===== Negative --limit fails loud (beads-4djp) =====
+
+	// A negative --limit previously slipped past the `historyLimit > 0`
+	// truncation guard, silently returning the FULL history with rc=0 — the
+	// misleading false-green of the eqi4/r9hj negative-limit class. It must now
+	// error loudly (the shared "--limit must be >= 0" contract), on both the
+	// text and --json paths, rather than returning an unbounded set.
+	t.Run("negative_limit_fails_loud", func(t *testing.T) {
+		out := bdHistoryFail(t, bd, dir, issue.ID, "--limit", "-1")
+		if !strings.Contains(out, "--limit must be >= 0") {
+			t.Errorf("expected '--limit must be >= 0' error, got: %s", out)
+		}
+	})
+
+	t.Run("negative_limit_json_fails_loud", func(t *testing.T) {
+		cmd := exec.Command(bd, "history", "--json", "--limit", "-999", issue.ID)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("expected nonzero exit for negative --limit, got success:\n%s", out)
+		}
+		s := strings.TrimSpace(string(out))
+		var obj map[string]interface{}
+		if jerr := json.Unmarshal([]byte(s), &obj); jerr != nil {
+			t.Fatalf("expected a parseable JSON error object, got prose:\n%s\n(parse error: %v)", s, jerr)
+		}
+		if _, ok := obj["error"]; !ok {
+			t.Errorf("expected an \"error\" field in the JSON error object, got: %s", s)
+		}
+	})
+
+	// --limit 0 remains the documented "all" sentinel — must NOT error.
+	t.Run("limit_zero_is_unlimited", func(t *testing.T) {
+		entries := bdHistoryJSON(t, bd, dir, issue.ID, "--limit", "0")
+		if len(entries) < 4 {
+			t.Errorf("expected --limit 0 to return the full set (>=4), got %d", len(entries))
+		}
+	})
+
 	// ===== --json output =====
 
 	t.Run("json_output_structure", func(t *testing.T) {
