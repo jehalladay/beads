@@ -91,7 +91,11 @@ func runReadyProxiedList(ctx context.Context, uw uow.UnitOfWork, in readyInput) 
 	if in.jsonOut {
 		page, err := uw.IssueUseCase().GetReadyWorkWithCounts(ctx, in.filter)
 		if err != nil {
-			FatalError("%v", err)
+			// beads-bqpe: under --json, emit a stdout JSON {error:...} object
+			// (fg6 contract) so a --json consumer can parse the failure, matching
+			// the direct path (ready.go GetReadyWorkWithCounts → HandleErrorRespectJSON).
+			// The non-json branch below correctly keeps plain-text FatalError.
+			FatalErrorRespectJSON("%v", err)
 		}
 		results := page.Items
 		if results == nil {
