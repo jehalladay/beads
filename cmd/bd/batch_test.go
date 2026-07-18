@@ -268,6 +268,20 @@ func TestParseUpdateKVs(t *testing.T) {
 			in:      []string{"title="},
 			wantErr: true,
 		},
+		{
+			// beads-gqvu: batch update status= must case-fold built-in statuses
+			// (write sibling of beads-7wrj), matching `bd update --status` and
+			// the read/filter path. Before the fix "OPEN" stored raw and would
+			// fail the storage-layer status validation.
+			name: "status uppercase case-folded",
+			in:   []string{"status=OPEN"},
+			want: map[string]interface{}{"status": "open"},
+		},
+		{
+			name: "status mixed-case case-folded",
+			in:   []string{"status=In_Progress"},
+			want: map[string]interface{}{"status": "in_progress"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

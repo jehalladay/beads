@@ -361,6 +361,18 @@ func TestEmbeddedUpdate(t *testing.T) {
 		}
 	})
 
+	// beads-gqvu: `bd update --status` must accept case-variant built-in
+	// statuses (write sibling of beads-7wrj, which case-folds the read/filter
+	// path). Before the fix "IN_PROGRESS" hard-errored "invalid status".
+	t.Run("update_status_case_folded", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "Status case-fold test", "--type", "task")
+		bdUpdate(t, bd, dir, issue.ID, "--status", "IN_PROGRESS")
+		got := bdShow(t, bd, dir, issue.ID)
+		if got.Status != types.StatusInProgress {
+			t.Errorf("--status IN_PROGRESS should case-fold to in_progress, got %s", got.Status)
+		}
+	})
+
 	t.Run("update_title", func(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "Old title", "--type", "task")
 		bdUpdate(t, bd, dir, issue.ID, "--title", "New title")
