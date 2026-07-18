@@ -43,6 +43,13 @@ func (f *reparent94iaFake) Insert(ctx context.Context, dep *types.Dependency, ac
 	return nil
 }
 
+// CheckCycleForType is a no-op here: reparent now cycle-checks the new parent
+// edge before Insert (beads-7a6n), and these fixtures assert the
+// delete-all-old-parents behavior, not cycle rejection.
+func (f *reparent94iaFake) CheckCycleForType(ctx context.Context, dep *types.Dependency) error {
+	return nil
+}
+
 // TestReparent_RemovesAllOldParents is the beads-94ia regression: a child with
 // MORE THAN ONE parent-child edge (created via `bd dep add ... --type
 // parent-child`, which has no single-parent guard) must have ALL prior parent

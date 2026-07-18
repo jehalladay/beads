@@ -338,7 +338,12 @@ func markDirectBlockingDependencySourceInTx(ctx context.Context, tx *sql.Tx, sou
 // cycles — they break tree/epic-rollup/descendant traversal — so parent-child
 // is no longer exempt (beads-8qij). Types outside a checked family (e.g.
 // waits-for) still skip the graph walk.
-func CheckDependencyCycleInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, depTables []string) error {
+//
+// tx is a DBTX (only QueryRowContext is used), so both a *sql.Tx and a plain
+// db.Runner satisfy it — the proxied/domain dependency use-case reuses this
+// same family-aware check via the repo runner (beads-7a6n), instead of the
+// blocking-only HasCycle probe that let a parent-child cycle through.
+func CheckDependencyCycleInTx(ctx context.Context, tx DBTX, dep *types.Dependency, depTables []string) error {
 	if dep.IssueID == dep.DependsOnID {
 		return fmt.Errorf("cannot add self-dependency: %s cannot depend on itself", dep.IssueID)
 	}

@@ -76,6 +76,20 @@ func (f *fakeDepRepo) HasCycle(ctx context.Context, issueID, dependsOnID string)
 	return f.hasCycle, nil
 }
 
+// CheckCycleForType mirrors HasCycle's canned behavior so the family-aware
+// cycle check the use-case now calls (beads-7a6n) is driven by the same
+// hasCycle/hasCycleErr hooks: hasCycleErr surfaces the repo error; hasCycle
+// simulates a detected cycle.
+func (f *fakeDepRepo) CheckCycleForType(ctx context.Context, dep *types.Dependency) error {
+	if f.hasCycleErr != nil {
+		return f.hasCycleErr
+	}
+	if f.hasCycle {
+		return errors.New("adding dependency would create a cycle")
+	}
+	return nil
+}
+
 func (f *fakeDepRepo) ListByIssueIDs(ctx context.Context, issueIDs []string, opts DepListOpts) (DepBulkResult, error) {
 	if opts.UseWispsTable && f.wispListErr != nil {
 		return DepBulkResult{}, f.wispListErr

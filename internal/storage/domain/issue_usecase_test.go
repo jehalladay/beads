@@ -229,7 +229,8 @@ func (f *fakeDepRepoIUC) Insert(_ context.Context, dep *types.Dependency, _ stri
 func (f *fakeDepRepoIUC) Delete(context.Context, string, string, string, DepInsertOpts) (DepDeleteResult, error) {
 	return DepDeleteResult{}, nil
 }
-func (f *fakeDepRepoIUC) HasCycle(context.Context, string, string) (bool, error) { return false, nil }
+func (f *fakeDepRepoIUC) HasCycle(context.Context, string, string) (bool, error)     { return false, nil }
+func (f *fakeDepRepoIUC) CheckCycleForType(context.Context, *types.Dependency) error { return nil }
 func (f *fakeDepRepoIUC) ListByIssueIDs(context.Context, []string, DepListOpts) (DepBulkResult, error) {
 	return f.listResult, f.listErr
 }
@@ -239,7 +240,9 @@ func (f *fakeDepRepoIUC) ListWithIssueMetadata(context.Context, string, DepListO
 func (f *fakeDepRepoIUC) IterWithIssueMetadata(context.Context, string, DepListOpts) (storage.Iter[types.IssueWithDependencyMetadata], error) {
 	return nil, nil
 }
-func (f *fakeDepRepoIUC) CountByID(context.Context, string, DepListOpts) (int64, error) { return 0, nil }
+func (f *fakeDepRepoIUC) CountByID(context.Context, string, DepListOpts) (int64, error) {
+	return 0, nil
+}
 func (f *fakeDepRepoIUC) CountsByIssueIDs(context.Context, []string, DepCountsOpts) (map[string]*types.DependencyCounts, error) {
 	return nil, nil
 }
@@ -288,7 +291,9 @@ func (f *fakeLabelRepoIUC) Insert(_ context.Context, _, label, _ string, _ Label
 	f.inserted = append(f.inserted, label)
 	return nil
 }
-func (f *fakeLabelRepoIUC) Delete(context.Context, string, string, string, LabelOpts) error { return nil }
+func (f *fakeLabelRepoIUC) Delete(context.Context, string, string, string, LabelOpts) error {
+	return nil
+}
 func (f *fakeLabelRepoIUC) List(context.Context, string, LabelOpts) ([]string, error) {
 	return f.listResult, f.listErr
 }

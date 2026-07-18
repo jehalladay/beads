@@ -71,6 +71,12 @@ type DependencySQLRepository interface {
 	Insert(ctx context.Context, dep *types.Dependency, actor string, opts DepInsertOpts) error
 	Delete(ctx context.Context, issueID, dependsOnID, actor string, opts DepInsertOpts) (DepDeleteResult, error)
 	HasCycle(ctx context.Context, issueID, dependsOnID string) (bool, error)
+	// CheckCycleForType rejects a new edge that would close a cycle within the
+	// edge's own type family (blocks/conditional-blocks OR parent-child),
+	// matching the direct path. HasCycle only ever walks the blocking family,
+	// so parent-child edges need this instead (beads-7a6n). Returns nil for
+	// types outside a checked family.
+	CheckCycleForType(ctx context.Context, dep *types.Dependency) error
 	ListByIssueIDs(ctx context.Context, issueIDs []string, opts DepListOpts) (DepBulkResult, error)
 	ListWithIssueMetadata(ctx context.Context, sourceID string, opts DepListOpts) ([]*types.IssueWithDependencyMetadata, error)
 	IterWithIssueMetadata(ctx context.Context, sourceID string, opts DepListOpts) (storage.Iter[types.IssueWithDependencyMetadata], error)
@@ -149,14 +155,14 @@ func (u *dependencyUseCaseImpl) add(ctx context.Context, dep *types.Dependency, 
 		return fmt.Errorf("add dep: IssueID and DependsOnID must be non-empty")
 	}
 
-	if isBlockingDep(dep.Type) {
-		cycle, err := u.depRepo.HasCycle(ctx, dep.IssueID, dep.DependsOnID)
-		if err != nil {
-			return fmt.Errorf("add dep: cycle check: %w", err)
-		}
-		if cycle {
-			return fmt.Errorf("add dep: adding %s -> %s would create a cycle", dep.IssueID, dep.DependsOnID)
-		}
+	// Family-aware cycle check: blocks/conditional-blocks walk the blocking
+	// graph, parent-child walks the parent-child graph, other types skip
+	// (beads-7a6n). Previously this gated on isBlockingDep so a parent-child
+	// edge got no check and a parent-child cycle — as corrupting to
+	// tree/epic-rollup/descendant traversal as a blocks cycle (beads-8qij) —
+	// was accepted here while the direct path rejected it.
+	if err := u.depRepo.CheckCycleForType(ctx, dep); err != nil {
+		return fmt.Errorf("add dep: cycle check: %w", err)
 	}
 
 	if err := u.depRepo.Insert(ctx, dep, actor, DepInsertOpts{UseWispsTable: useWisp}); err != nil {
@@ -244,6 +250,13 @@ func (u *dependencyUseCaseImpl) reparent(ctx context.Context, childID, newParent
 			IssueID:     childID,
 			DependsOnID: newParentID,
 			Type:        types.DepParentChild,
+		}
+		// Reject a reparent that closes a parent-child cycle, matching the
+		// direct path (beads-7a6n). Old parent edges are already deleted above,
+		// so this walks the POST-delete graph — a reparent that only re-points
+		// within a chain it was part of is not spuriously rejected.
+		if err := u.depRepo.CheckCycleForType(ctx, dep); err != nil {
+			return fmt.Errorf("reparent: cycle check: %w", err)
 		}
 		if err := u.depRepo.Insert(ctx, dep, actor, opts); err != nil {
 			return fmt.Errorf("reparent: add new parent %s: %w", newParentID, err)
@@ -465,13 +478,11 @@ func (u *dependencyUseCaseImpl) addBulk(ctx context.Context, deps []*types.Depen
 		if dep.IssueID == "" || dep.DependsOnID == "" {
 			return BulkAddDepsResult{}, fmt.Errorf("add deps[%d]: IssueID and DependsOnID must be non-empty", i)
 		}
-		if !opts.SkipPerEdgeCycleCheck && isBlockingDep(dep.Type) {
-			cycle, err := u.depRepo.HasCycle(ctx, dep.IssueID, dep.DependsOnID)
-			if err != nil {
+		if !opts.SkipPerEdgeCycleCheck {
+			// Family-aware per-edge check (beads-7a6n): parent-child edges are
+			// now checked against the parent-child graph, not skipped as before.
+			if err := u.depRepo.CheckCycleForType(ctx, dep); err != nil {
 				return BulkAddDepsResult{}, fmt.Errorf("add deps[%d]: cycle check: %w", i, err)
-			}
-			if cycle {
-				return BulkAddDepsResult{}, fmt.Errorf("add deps[%d]: adding %s -> %s would create a cycle", i, dep.IssueID, dep.DependsOnID)
 			}
 		}
 		if err := u.depRepo.Insert(ctx, dep, actor, insertOpts); err != nil {
