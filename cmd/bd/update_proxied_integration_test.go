@@ -901,6 +901,27 @@ func TestProxiedServerUpdate(t *testing.T) {
 			}
 		}
 	})
+
+	// beads-cwl8: a PARTIAL-failure update (one real id + one ghost id) must
+	// exit non-zero, matching the direct path (cmd/bd/update.go returns
+	// SilentExit when processedCount < len(args), beads-4i20). Previously the
+	// proxied handler only exited non-zero when NO id succeeded, so a partial
+	// batch returned rc=0 and a `bd update a b || fail` gate read false-clean.
+	// The successful id's update must still be applied + emitted.
+	t.Run("partial_failure_exits_nonzero", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "upe")
+		real := bdProxiedCreate(t, bd, p.dir, "Real for partial", "--type", "task")
+		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir,
+			"update", real.ID, "upe-nonexistent999", "--assignee", "team")
+		if err == nil {
+			t.Fatalf("partial-failure update must exit non-zero; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+		// The real id still updated despite the partial failure.
+		got := bdProxiedShow(t, bd, p.dir, real.ID)
+		if got.Assignee != "team" {
+			t.Errorf("the resolvable id should still update on a partial batch; assignee=%q, want team", got.Assignee)
+		}
+	})
 }
 
 func TestProxiedServerUpdateHooks(t *testing.T) {

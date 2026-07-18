@@ -32,15 +32,15 @@ func runUpdateProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	var updated []*types.Issue
-	var anyUpdated bool
 	var firstUpdatedID string
+	failedCount := 0
 
 	for _, id := range args {
 		issue, ok := applyUpdateProxiedOne(ctx, id, in)
 		if !ok {
+			failedCount++
 			continue
 		}
-		anyUpdated = true
 		if firstUpdatedID == "" {
 			firstUpdatedID = issue.ID
 		}
@@ -61,7 +61,13 @@ func runUpdateProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 		SetLastTouchedID(firstUpdatedID)
 	}
 
-	if !anyUpdated {
+	// beads-cwl8: exit non-zero on ANY failed id, not only when NONE succeeded.
+	// The direct path (cmd/bd/update.go) returns SilentExit() when
+	// processedCount < len(args) (beads-4i20, matching bd close/delete), so a
+	// proxied crew scripting `bd update a b c || fail` must see a partial
+	// failure too — previously a partial batch (some ok, some bad) returned
+	// rc=0. Successes were already printed/emitted above; this only fixes rc.
+	if failedCount > 0 {
 		os.Exit(1)
 	}
 }
