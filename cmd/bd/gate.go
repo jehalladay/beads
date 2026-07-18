@@ -387,7 +387,7 @@ This is similar to 'bd show' but validates that the issue is a gate.`,
 			statusSym = "●"
 		}
 
-		fmt.Printf("%s %s - %s\n", statusSym, ui.RenderID(issue.ID), issue.Title)
+		fmt.Printf("%s %s - %s\n", statusSym, ui.RenderID(issue.ID), ui.SanitizeForTerminal(issue.Title))
 		fmt.Printf("  Status: %s\n", issue.Status)
 		fmt.Printf("  Await Type: %s\n", issue.AwaitType)
 		if issue.AwaitID != "" {
@@ -403,7 +403,7 @@ This is similar to 'bd show' but validates that the issue is a gate.`,
 			}
 		}
 		if issue.Description != "" {
-			fmt.Printf("  Description: %s\n", issue.Description)
+			fmt.Printf("  Description: %s\n", ui.SanitizeForTerminal(issue.Description))
 		}
 		return nil
 	},

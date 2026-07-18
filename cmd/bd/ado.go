@@ -16,6 +16,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
 )
 
 // ADOConfig holds Azure DevOps connection configuration.
@@ -445,7 +446,7 @@ func runADOProjects(cmd *cobra.Command, _ []string) error {
 	for _, p := range projects {
 		_, _ = fmt.Fprintf(out, "  %s\n", p.Name)
 		if p.Description != "" {
-			_, _ = fmt.Fprintf(out, "    %s\n", p.Description)
+			_, _ = fmt.Fprintf(out, "    %s\n", ui.SanitizeForTerminal(p.Description))
 		}
 	}
 
