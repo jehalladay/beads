@@ -439,6 +439,14 @@ func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp) (batchO
 		if !dt.IsValid() {
 			return result, fmt.Errorf("dep add: invalid dependency type %q", depType)
 		}
+		// beads-cqk1: batch's help says "dependency types: see bd dep add", and
+		// bd dep add (beads-qfka) requires a well-known type — so reject unknown
+		// types here too rather than store a non-gating custom edge. Bare
+		// IsWellKnown mirrors bd dep add exactly (no alias mapping there; the
+		// depends-on/blocked-by aliases are a `bd create --deps`-only convenience).
+		if !dt.IsWellKnown() {
+			return result, fmt.Errorf("dep add: unknown dependency type %q; valid types: %s", depType, createDepsAcceptedTypeList())
+		}
 		dep := &types.Dependency{
 			IssueID:     from,
 			DependsOnID: to,
