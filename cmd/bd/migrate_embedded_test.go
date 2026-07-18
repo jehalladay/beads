@@ -268,3 +268,61 @@ func TestEmbeddedMigrateConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddedMigrateIssuesRejectsInvalidEnums is the beads-ev8m teeth: bd
+// migrate issues must reject invalid --status/--type/--priority filters with
+// rc!=0 and a valid-values-listing error BEFORE selecting candidates — not
+// silently match zero issues and report "Nothing to do" exit 0 (a no-op move
+// on a MUTATING command that an operator reads as success). 4th command in the
+// enum-value-reject family (beads-deud count/search, beads-8cg2 lint, beads-pbl7
+// ready). --priority uses -1 as the unset sentinel; 5+, and negatives other
+// than -1, are typos and must be rejected like bd list.
+func TestEmbeddedMigrateIssuesRejectsInvalidEnums(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	fromDir, _, _ := bdInit(t, bd, "--prefix", "mvf")
+	toDir, _, _ := bdInit(t, bd, "--prefix", "mvt")
+	bdCreate(t, bd, fromDir, "movable bug", "--type", "bug", "--priority", "1")
+
+	cases := []struct {
+		name    string
+		args    []string
+		wantSub string
+	}{
+		{"invalid_status", []string{"--status", "bogusxyz"}, "invalid status"},
+		{"invalid_type", []string{"--type", "notatype"}, "invalid issue type"},
+		{"priority_too_high", []string{"--priority", "99"}, "invalid priority"},
+		{"priority_negative", []string{"--priority", "-5"}, "invalid priority"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := []string{"issues", "--from", fromDir, "--to", toDir, "--dry-run"}
+			out := bdMigrateFail(t, bd, fromDir, append(base, tc.args...)...)
+			if !strings.Contains(out, tc.wantSub) {
+				t.Errorf("bd migrate issues %v: expected error containing %q, got:\n%s", tc.args, tc.wantSub, out)
+			}
+			// Guard against the silent no-op: the invalid filter must NOT have
+			// reached the candidate-selection "Nothing to do" success path.
+			if strings.Contains(out, "Nothing to do") {
+				t.Errorf("bd migrate issues %v: invalid filter reached the no-op success path (should have aborted):\n%s", tc.args, out)
+			}
+		})
+	}
+
+	// Valid filters must still plan the migration (surgical — no regression).
+	for _, args := range [][]string{
+		{"--status", "open"},
+		{"--type", "bug"},
+		{"--priority", "1"},
+	} {
+		base := []string{"issues", "--from", fromDir, "--to", toDir, "--dry-run"}
+		out := bdMigrate(t, bd, fromDir, append(base, args...)...)
+		if strings.Contains(out, "invalid") {
+			t.Errorf("bd migrate issues %v: valid filter unexpectedly rejected:\n%s", args, out)
+		}
+	}
+}

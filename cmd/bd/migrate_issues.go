@@ -136,6 +136,15 @@ func executeMigrateIssues(ctx context.Context, p migrateIssuesParams) error {
 		return err
 	}
 
+	// Step 1.5 (beads-ev8m): validate the --status/--type/--priority filters
+	// against their documented enums, mirroring bd list, BEFORE selecting any
+	// candidates. Without this a typo'd filter (e.g. --type notatype) matches
+	// zero issues and the migration reports "Nothing to do" exit 0 — a silent
+	// NO-OP move that an operator reads as success. Fail loudly instead.
+	if err := validateMigrateIssuesFilters(ctx, s, p); err != nil {
+		return err
+	}
+
 	// Step 2: Build initial candidate set C using filters
 	candidates, err := findCandidateIssues(ctx, s, p)
 	if err != nil {
@@ -235,6 +244,45 @@ func validateRepos(ctx context.Context, s storage.DoltStorage, from, to string, 
 		fmt.Fprintf(os.Stderr, "Info: destination repository '%s' will be created\n", to)
 	}
 
+	return nil
+}
+
+// validateMigrateIssuesFilters (beads-ev8m) rejects invalid --status/--type/
+// --priority values with a valid-values-listing error, mirroring bd list, so a
+// typo'd filter aborts the migration loudly instead of silently selecting zero
+// issues ("Nothing to do", exit 0 — a no-op move read as success on a MUTATING
+// command). Uses the store's custom-status/type config so custom statuses and
+// infra types still pass. --priority uses the -1 sentinel for "unset".
+// Returns a plain error (mirroring validateRepos); the RunE wraps it once via
+// HandleErrorRespectJSON, so this must NOT call HandleError* itself (that would
+// double-print + break the --json error shape).
+func validateMigrateIssuesFilters(ctx context.Context, s storage.DoltStorage, p migrateIssuesParams) error {
+	cfg, err := loadDirectListFilterConfig(ctx, s)
+	if err != nil {
+		return err
+	}
+	if p.status != "" && p.status != "all" {
+		status := types.Status(p.status).Normalize()
+		if !status.IsValidWithCustom(cfg.customStatusNames()) {
+			return fmt.Errorf("invalid status %q (valid: %s)", p.status, validStatusList(cfg.customStatusNames()))
+		}
+	}
+	// -1 is the "unset" sentinel (flag default). Any other out-of-range value
+	// (5+, or a negative like -5) is a typo that the existing p.priority >= 0
+	// filter would silently treat as "unset" — reject it like bd list does.
+	if p.priority != -1 && (p.priority < 0 || p.priority > 4) {
+		return fmt.Errorf("invalid priority %q (expected 0-4 or P0-P4, not words like high/medium/low)", fmt.Sprintf("%d", p.priority))
+	}
+	if p.issueType != "" && p.issueType != "all" {
+		it := issueTypeFilterValue(p.issueType)
+		if !it.IsValidWithCustom(cfg.customTypes) {
+			validTypes := "bug, feature, task, epic, chore, decision"
+			if len(cfg.customTypes) > 0 {
+				validTypes += ", " + strings.Join(cfg.customTypes, ", ")
+			}
+			return fmt.Errorf("invalid issue type %q (valid: %s)", p.issueType, validTypes)
+		}
+	}
 	return nil
 }
 

@@ -284,6 +284,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the structured `{"error":...}` shape under `--json`. 3rd command in the
   enum-value-reject family (beads-deud count/search, beads-pbl7 ready); distinct
   from beads-brxo (which fixed `--type` normalization, not value-rejection).
+- **`bd migrate issues` now rejects invalid `--status`/`--type`/`--priority` filters (beads-ev8m).**
+  A typo'd filter (`--type notatype`, `--status bogusxyz`, `--priority 99`/`-5`)
+  silently matched zero issues and reported `Nothing to do: no issues match the
+  specified filters` exit 0 — a NO-OP migration reported as success on a *mutating*
+  command (the operator believes issues moved when nothing was touched), where the
+  sibling `bd list` rejects the same values exit 1. `bd migrate issues` now validates
+  the filters against the documented enums (mirroring `bd list`) BEFORE selecting
+  candidates, aborting loudly (`--json` emits the structured `{"error":...}` shape).
+  `--priority -1` is preserved as the "unset" sentinel. 4th command in the
+  enum-value-reject family (beads-deud count/search, beads-8cg2 lint, beads-pbl7
+  ready); distinct from beads-brxo (which fixed `--type` normalization, not
+  value-rejection).
+
 - **`bd list --parent` now returns transitive descendants in `--json`/`--flat` (beads-wap4).**
   The flat and `--json` `--parent` output returned only direct children (plus
   dotted-ID descendants), silently dropping dep-edge grandchildren — even though
