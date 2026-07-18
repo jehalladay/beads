@@ -105,11 +105,68 @@ func isEmbeddedLockOutput(out string) bool {
 		strings.Contains(out, "locked by another dolt process")
 }
 
+// proxiedTestSubprocessTimeout bounds a single embedded/proxied bd subprocess
+// invocation (beads-cine). Without a bound, a hung bd (Dolt lock/deadlock under
+// /fsx contention, or a genuine hang) blocks `go test` until the SUITE-level
+// default (10m), freezing the whole gate with no clue which test hung — as
+// observed live when the refinery bisected by hand. A per-invocation kill fails
+// THAT test fast with a named error instead. Generous by default for slow /fsx;
+// override with BEADS_TEST_SUBPROC_TIMEOUT (Go duration, e.g. "45s"; "0" or a
+// bad value disables the bound).
+func proxiedTestSubprocessTimeout() time.Duration {
+	const def = 120 * time.Second
+	v := os.Getenv("BEADS_TEST_SUBPROC_TIMEOUT")
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < 0 {
+		return def
+	}
+	return d // d==0 disables the watchdog below
+}
+
+// runCmdWithWatchdog runs cmd, returning (err, timedOut). When timeout > 0 and
+// the process outlives it, the process is killed/reaped and timedOut is true.
+// timeout <= 0 disables the bound (plain cmd.Run). Split out from
+// runCommandBuffers so the watchdog is unit-testable without t.Fatalf aborting
+// the caller (beads-cine).
+func runCmdWithWatchdog(cmd *exec.Cmd, timeout time.Duration) (err error, timedOut bool) {
+	if timeout <= 0 {
+		return cmd.Run(), false
+	}
+	if startErr := cmd.Start(); startErr != nil {
+		return startErr, false
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case err = <-done:
+		return err, false
+	case <-timer.C:
+		_ = cmd.Process.Kill()
+		<-done // reap the killed process
+		return err, true
+	}
+}
+
 func runCommandBuffers(t *testing.T, cmd *exec.Cmd) (stdout, stderr bytes.Buffer, err error) {
 	t.Helper()
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err = cmd.Run()
+
+	timeout := proxiedTestSubprocessTimeout()
+	err, timedOut := runCmdWithWatchdog(cmd, timeout)
+	if timedOut {
+		// Fail fast with a clear name instead of hanging the whole suite until
+		// the 10m default (beads-cine).
+		t.Fatalf("bd subprocess exceeded %s timeout (beads-cine hang guard); args=%v\nstdout:\n%s\nstderr:\n%s\n"+
+			"(raise BEADS_TEST_SUBPROC_TIMEOUT if this is a legitimately slow op on a contended host)",
+			timeout, cmd.Args, stdout.String(), stderr.String())
+	}
 	return stdout, stderr, err
 }
 
