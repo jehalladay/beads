@@ -321,6 +321,17 @@ func gatherListInput(cmd *cobra.Command) (listInput, error) {
 		in.sqlLimit = 0
 	}
 
+	// Mirror the --offset guard (beads-uh4i): a negative --limit was silently
+	// accepted and coerced to "no limit" — the SQL builders guard
+	// `filter.Limit > 0`, so a negative limit emits no LIMIT clause and returns
+	// the FULL result set, where the sibling --offset<0 hard-errors. --limit 0
+	// is the documented unlimited sentinel; only a negative value is invalid.
+	// Placed here (beside the offset guard, after --format json → jsonOutput is
+	// resolved) so the --json error contract is identical to --offset's.
+	if in.limitChanged && limit < 0 {
+		return in, HandleErrorRespectJSON("--limit must be >= 0")
+	}
+
 	if cmd.Flags().Changed("offset") {
 		offset, _ := cmd.Flags().GetInt("offset")
 		if offset < 0 {
