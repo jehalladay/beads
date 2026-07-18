@@ -50,7 +50,7 @@ func GetIssueByExternalRefInTx(ctx context.Context, tx *sql.Tx, externalRef stri
 // GetIssuesByLabelInTx returns issue IDs matching a label from both issues and wisps tables.
 //
 //nolint:gosec // G201: tables are hardcoded
-func GetIssuesByLabelInTx(ctx context.Context, tx *sql.Tx, label string) ([]string, error) {
+func GetIssuesByLabelInTx(ctx context.Context, tx DBTX, label string) ([]string, error) {
 	var ids []string
 
 	// Case-insensitive label match, consistent with the query filter/predicate

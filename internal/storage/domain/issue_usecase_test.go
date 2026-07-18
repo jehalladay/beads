@@ -46,6 +46,10 @@ type fakeIssueRepo struct {
 	byIDs    []*types.Issue
 	byIDsErr error
 
+	// GetIDsByLabel
+	idsByLabel    []string
+	idsByLabelErr error
+
 	// Exists (used by isWispID + mint collision loop)
 	existsResults      map[string]bool
 	existsErr          error
@@ -174,6 +178,9 @@ func (f *fakeIssueRepo) UpdateIssueID(_ context.Context, oldID, newID string, _ 
 }
 func (f *fakeIssueRepo) GetByIDs(context.Context, []string, IssueTableOpts) ([]*types.Issue, error) {
 	return f.byIDs, f.byIDsErr
+}
+func (f *fakeIssueRepo) GetIDsByLabel(context.Context, string) ([]string, error) {
+	return f.idsByLabel, f.idsByLabelErr
 }
 func (f *fakeIssueRepo) Exists(_ context.Context, id string, opts IssueTableOpts) (bool, error) {
 	f.existsCalls = append(f.existsCalls, struct {

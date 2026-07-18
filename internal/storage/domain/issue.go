@@ -58,6 +58,10 @@ type IssueSQLRepository interface {
 	// id collision (beads-mgsx). issue carries the current title/body fields.
 	UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error
 	GetByIDs(ctx context.Context, ids []string, opts IssueTableOpts) ([]*types.Issue, error)
+	// GetIDsByLabel returns issue/wisp IDs carrying the (case-insensitive)
+	// label, ordered priority ASC then created_at DESC. Used by bd ship
+	// (beads-kjda) via the UOW.
+	GetIDsByLabel(ctx context.Context, label string) ([]string, error)
 	Exists(ctx context.Context, id string, opts IssueTableOpts) (bool, error)
 	CountForPrefix(ctx context.Context, prefix string, opts IssueTableOpts) (int, error)
 	NextCounterID(ctx context.Context, prefix string) (int, error)
@@ -242,6 +246,7 @@ type UpdateSpec struct {
 type IssueUseCase interface {
 	GetIssue(ctx context.Context, id string) (*types.Issue, error)
 	GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.Issue, error)
+	GetIssuesByLabel(ctx context.Context, label string) ([]*types.Issue, error)
 	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) (SearchPage, error)
 	SearchIssuesWithCounts(ctx context.Context, query string, filter types.IssueFilter) (SearchCountsPage, error)
 	GetReadyWork(ctx context.Context, filter types.WorkFilter) (SearchPage, error)
@@ -397,6 +402,17 @@ func (u *issueUseCaseImpl) get(ctx context.Context, id string, useWisp bool) (*t
 }
 
 func (u *issueUseCaseImpl) GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.Issue, error) {
+	return u.getByIDs(ctx, ids, false)
+}
+
+func (u *issueUseCaseImpl) GetIssuesByLabel(ctx context.Context, label string) ([]*types.Issue, error) {
+	ids, err := u.issueRepo.GetIDsByLabel(ctx, label)
+	if err != nil {
+		return nil, fmt.Errorf("get issues by label %q: %w", label, err)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
 	return u.getByIDs(ctx, ids, false)
 }
 

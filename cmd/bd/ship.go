@@ -52,6 +52,16 @@ func runShip(cmd *cobra.Command, args []string) error {
 
 	ctx := rootCtx
 
+	// In proxied-server mode the global `store` is nil (main.go PersistentPreRun
+	// returns before newDoltStore), so the store.GetIssuesByLabel/GetLabels/
+	// AddLabel sequence below would fail with "storage is nil". Route through the
+	// proxied UOW stack instead (beads-kjda, fszd/aocj umbrella) — the by-label
+	// read GetIssuesByLabel was previously only on DoltStore, now also on the
+	// domain IssueUseCase (interface-extension leg).
+	if usesProxiedServer() {
+		return runShipProxiedServer(ctx, capability, force, dryRun)
+	}
+
 	exportLabel := "export:" + capability
 	providesLabel := "provides:" + capability
 

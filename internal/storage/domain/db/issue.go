@@ -853,6 +853,10 @@ func (r *issueSQLRepositoryImpl) GetNextChildID(ctx context.Context, parentID st
 	return issueops.GetNextChildIDTx(ctx, r.runner, parentID)
 }
 
+func (r *issueSQLRepositoryImpl) GetIDsByLabel(ctx context.Context, label string) ([]string, error) {
+	return issueops.GetIssuesByLabelInTx(ctx, r.runner, label)
+}
+
 func (r *issueSQLRepositoryImpl) Close(ctx context.Context, id string, params domain.CloseRowParams, actor string, opts domain.IssueTableOpts) (domain.CloseRowResult, error) {
 	res, err := issueops.CloseIssueInTx(ctx, r.runner, id, params.Reason, actor, params.Session)
 	if err != nil {
