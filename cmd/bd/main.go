@@ -1487,6 +1487,11 @@ func main() {
 	rootCmd.InitDefaultHelpCmd()
 	registerHelpAllFlag()
 
+	// Make pure parent groups ("bd label", "bd dolt", ...) reject an unknown
+	// subcommand with a non-zero exit instead of silently printing help and
+	// exiting 0 (beads-e71t). Must run after all subcommands are registered.
+	attachUnknownSubcommandGuards(rootCmd)
+
 	executedCmd, err := rootCmd.ExecuteC()
 
 	// Finalize queued metrics and detach the uploader. Shared with the os.Exit
