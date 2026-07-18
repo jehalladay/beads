@@ -12,7 +12,7 @@ import (
 )
 
 var commentsCmd = &cobra.Command{
-	Use:     "comments [issue-id]",
+	Use:     "comments <issue-id>",
 	GroupID: "issues",
 	Short:   "View or manage comments on an issue",
 	Long: `View or manage comments on an issue.
@@ -29,7 +29,13 @@ Examples:
 
   # Add a comment from a file
   bd comments add bd-123 -f notes.txt`,
-	Args:          cobra.MinimumNArgs(1),
+	// Exactly one issue id — the show path reads only args[0], so extra
+	// positionals (a typo/glob) were silently ignored with rc=0. ExactArgs(1)
+	// makes them fail loud, matching the sibling single-target read commands
+	// (children, history) rather than MinimumNArgs(1)'s lenient swallow
+	// (beads-uwis). Subcommand routing (comments add/list) is unaffected —
+	// cobra dispatches those to the subcommand's own Args validator.
+	Args:          cobra.ExactArgs(1),
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
