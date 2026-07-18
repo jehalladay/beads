@@ -41,6 +41,14 @@ Examples:
 
 		ctx := rootCtx
 
+		// beads-8csa: hub-connected (proxied-server) crew have a nil `store`;
+		// route through the UOW instead of fromStore.AddDependency. Mirrors the
+		// direct path's validation exactly (IsValid only — NOT the IsWellKnown
+		// gate; see runLinkProxiedServer).
+		if usesProxiedServer() {
+			return runLinkProxiedServer(ctx, id1, id2, depType)
+		}
+
 		// Resolve partial IDs with routing support. The source issue's store
 		// is mutated by AddDependency below, so resolve it write-intent
 		// (#4141); the dependency target is only resolved by ID and stays
