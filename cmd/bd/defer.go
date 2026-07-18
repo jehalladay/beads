@@ -64,6 +64,16 @@ Examples:
 			return HandleError("reason cannot be empty")
 		}
 
+		// beads-aocj: route to the proxied handler in proxied-server mode.
+		// Without this, defer uses the direct global `store` — nil under
+		// proxiedServerMode — so `bd defer` failed "storage is nil" (or "database
+		// not initialized" at the nil-guard below), unlike `bd update --defer`
+		// which routes via usesProxiedServer(). Parse --until/--reason first so
+		// the past-date warning + reason validation still fire identically.
+		if usesProxiedServer() {
+			return runDeferProxiedServer(rootCtx, args, deferUntil, reason)
+		}
+
 		ctx := rootCtx
 
 		_, err := utils.ResolvePartialIDs(ctx, store, args)
