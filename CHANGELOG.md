@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd rules audit --threshold` now rejects out-of-range values (beads-iwup).**
+  The `--threshold` flag is a Jaccard similarity ratio consumed via `score >= threshold`
+  in `FindMergeCandidates` — semantically identical to the `bd find-duplicates --threshold`
+  flag, which validates the documented `0.0-1.0` range. `bd rules audit` had no such check,
+  so out-of-range values silently misbehaved: `--threshold 5.0` (>1.0) matched nothing and
+  printed a false "0 merge candidates", while `--threshold -1.0` (<0.0) matched every pair
+  and printed a nonsensical `similarity > -1.00` header. The command now enforces the
+  documented `0.0-1.0` range (reusing `validateThreshold`) and fails loud with exit 1 and a
+  `--threshold must be between 0.0 and 1.0` error, honoring the `--json` error contract.
 - **`bd count` and `bd search` now reject invalid `--status`/`--type`/`--priority` values (beads-deud).**
   Both commands silently accepted bogus enum values — `bd count --status bogusxyz`,
   `--type notatype`, `--priority 99`/`-1`, and `bd search --status/--type` — returning
