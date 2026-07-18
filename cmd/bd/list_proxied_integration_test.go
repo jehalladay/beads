@@ -238,6 +238,38 @@ func TestProxiedServerList(t *testing.T) {
 		}
 	})
 
+	// beads-pcij: a nonexistent --parent must error uniformly across --json and
+	// --flat/text on the proxied path, matching the direct path (beads-n8lv) and
+	// the proxied pretty/tree branch. Before pcij, --json returned [] and
+	// text/flat returned an empty result on exit 0 — a consumer could not tell
+	// "bad parent id" from "valid parent, no children".
+	const badParent = "lst-nonexistent-parent-9999"
+
+	t.Run("bad_parent_json_errors", func(t *testing.T) {
+		out := bdProxiedListFail(t, bd, p, "--json", "--parent", badParent)
+		if !strings.Contains(out, "parent issue") {
+			t.Errorf("expected parent-issue error for bad --parent --json, got: %s", out)
+		}
+	})
+
+	t.Run("bad_parent_flat_errors", func(t *testing.T) {
+		out := bdProxiedListFail(t, bd, p, "--flat", "--parent", badParent)
+		if !strings.Contains(out, "parent issue") {
+			t.Errorf("expected parent-issue error for bad --parent --flat, got: %s", out)
+		}
+	})
+
+	t.Run("valid_childless_parent_json_stays_empty", func(t *testing.T) {
+		// Regression guard: a VALID parent with no children must still return the
+		// empty result on exit 0 (not an error) — the fix only rejects a missing
+		// parent, it does not over-error a childless one.
+		childless := bdProxiedCreate(t, bd, p.dir, "Childless parent", "--type", "epic")
+		issues := bdProxiedListJSON(t, bd, p, "--json", "--parent", childless.ID)
+		if len(issues) != 0 {
+			t.Errorf("valid childless --parent --json should be empty, got %v", listIssueIDs(issues))
+		}
+	})
+
 	t.Run("ready_parent_tree_excludes_blocked_descendants", func(t *testing.T) {
 		// TODO: re-enable once `bd dep add` is ported to proxied mode.
 		// Currently bd dep add fails with "storage is nil" under proxied

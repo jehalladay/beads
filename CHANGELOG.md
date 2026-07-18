@@ -51,7 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   actor (threaded through `ApplyCompaction`/`RestoreFromSnapshot`), so
   `bd history` records who compacted/restored an issue and when. Mirrors the
   dependency add/remove event pattern (beads-1qt9).
-
+- **Proxied-server `bd list --parent <bad>` now errors uniformly (beads-pcij).**
+  The proxied search path only validated parent existence on the pretty/tree
+  branch, so `--json` and `--flat`/text returned an empty result (exit 0) on a
+  nonexistent parent — a consumer could not distinguish "bad parent id" from
+  "valid parent, no children." A missing parent now errors across all output
+  modes, matching the direct path (beads-n8lv); a valid childless parent still
+  returns the empty result. Now live: the proxied-server init gate (beads-iu9f)
+  has landed, so the proxied path is implemented and these teeth run.
 - **Month/year relative durations no longer skew on month-end dates
   (beads-aysw).** `ParseCompactDuration` used `time.AddDate` for `m`/`y` units,
   which normalizes an impossible date forward — e.g. `Mar 31 - 1m` became

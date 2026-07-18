@@ -74,6 +74,25 @@ func runListProxiedSearch(_ *cobra.Command, ctx context.Context, in listInput) e
 		return runListProxiedHierarchicalParent(ctx, uw, in, filter)
 	}
 
+	// beads-pcij: validate the parent id exists before the --json/--flat/text
+	// branches, matching the direct path (runListCore, beads-n8lv). The
+	// pretty/tree branch above already checks this via gatherProxiedHierarchical,
+	// but --json (SearchIssuesWithCounts) and text/flat (SearchIssues) run with
+	// filter.ParentID set and would otherwise return an empty result / [] exit 0
+	// on a nonexistent parent — a consumer could not tell "bad parent id" from
+	// "valid parent, no children". A valid parent with no children still returns
+	// the empty result. Skipped for --ready (which routes to runListProxiedReady,
+	// so readyFlag is false here, but kept for parity with the direct guard).
+	if in.parentID != "" && !in.readyFlag {
+		parentIssue, perr := uw.IssueUseCase().GetIssue(ctx, in.parentID)
+		if perr != nil {
+			return HandleErrorRespectJSON("error checking parent issue: %v", perr)
+		}
+		if parentIssue == nil {
+			return HandleErrorRespectJSON("parent issue '%s' not found", in.parentID)
+		}
+	}
+
 	if jsonOutput {
 		page, err := uw.IssueUseCase().SearchIssuesWithCounts(ctx, "", filter)
 		if err != nil {
