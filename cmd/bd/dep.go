@@ -1010,6 +1010,30 @@ var depRemoveCmd = &cobra.Command{
 		fullFromID := fromID
 		fullToID := toID
 
+		// Pre-check that the edge actually exists so we report honestly
+		// (beads-w2tk). RemoveDependency is idempotent — it returns nil whether
+		// or not an edge was removed (the storage layer detects the no-op but
+		// discards the bit at the interface boundary, and other callers rely on
+		// idempotent cleanup) — so without this check `bd dep remove A C` on a
+		// nonexistent edge printed "✓ Removed" / status:removed, a false-success
+		// that a CI/agent gate reads as proof the edge is gone. Keep the
+		// idempotent contract for programmatic callers; only the CLI verb reports
+		// the distinction.
+		records, lookupErr := fromStore.GetDependencyRecords(ctx, fullFromID)
+		if lookupErr != nil {
+			return HandleErrorRespectJSON("checking dependency %s -> %s: %v", fullFromID, fullToID, lookupErr)
+		}
+		edgeExists := false
+		for _, rec := range records {
+			if rec != nil && rec.DependsOnID == fullToID {
+				edgeExists = true
+				break
+			}
+		}
+		if !edgeExists {
+			return HandleErrorRespectJSON("no dependency to remove: %s does not depend on %s", fullFromID, fullToID)
+		}
+
 		if err := fromStore.RemoveDependency(ctx, fullFromID, fullToID, actor); err != nil {
 			return HandleErrorRespectJSON("%v", err)
 		}
