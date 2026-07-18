@@ -314,11 +314,44 @@ var labelRemoveCmd = &cobra.Command{
 			}
 			return HandleErrorRespectJSON("no issue id resolved")
 		}
-		if err := processBatchLabelOperation(issueIDs, label, "removed", jsonOutput,
-			func(ctx context.Context, tx storage.Transaction, issueID, lbl, act string) error {
-				return tx.RemoveLabel(ctx, issueID, lbl, act)
-			}); err != nil {
-			return err
+		// Pre-check that each issue actually carries the label so we report
+		// honestly (beads-yaux). RemoveLabel is idempotent — RemoveLabelInTx
+		// no-ops (records no event, returns nil) when the label was never on the
+		// issue, and update/cleanup callers rely on that — so without this check
+		// `bd label remove <id> <label>` on a label the issue never had printed
+		// "✓ Removed" / status:removed, a false-success that a CI/agent gate
+		// reads as proof the label is gone. Keep the idempotent contract for
+		// programmatic callers; only the CLI verb reports the distinction.
+		// Mirrors the landed dep-remove fix (beads-w2tk). Runs on the
+		// template-molecule-filtered set (beads-dwlg above).
+		trimmedLabel := strings.TrimSpace(label)
+		present := make([]string, 0, len(issueIDs))
+		var missing []string
+		for _, id := range issueIDs {
+			labels, err := store.GetLabels(ctx, id)
+			if err != nil {
+				return HandleErrorRespectJSON("checking labels on %s: %v", id, err)
+			}
+			has := false
+			for _, l := range labels {
+				if l == trimmedLabel {
+					has = true
+					break
+				}
+			}
+			if has {
+				present = append(present, id)
+			} else {
+				missing = append(missing, id)
+			}
+		}
+		if len(present) > 0 {
+			if err := processBatchLabelOperation(present, label, "removed", jsonOutput,
+				func(ctx context.Context, tx storage.Transaction, issueID, lbl, act string) error {
+					return tx.RemoveLabel(ctx, issueID, lbl, act)
+				}); err != nil {
+				return err
+			}
 		}
 		// Partial/whole success: flush deferred per-item failures to stderr as
 		// JSON objects now that stdout carries the results array (beads-en28).
@@ -326,6 +359,10 @@ var labelRemoveCmd = &cobra.Command{
 		if len(unresolved) > 0 {
 			return HandleErrorRespectJSON("could not resolve %d of %d issue id(s): %s",
 				len(unresolved), len(unresolved)+len(issueIDs), strings.Join(unresolved, ", "))
+		}
+		if len(missing) > 0 {
+			return HandleErrorRespectJSON("no label '%s' to remove on %d issue(s): %s",
+				trimmedLabel, len(missing), strings.Join(missing, ", "))
 		}
 		return nil
 	},

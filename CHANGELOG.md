@@ -156,6 +156,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is only durable when the close also succeeds). Behavior-preserving on the success path (same hooks,
   same result); the only change is that a mid-sequence failure now leaves the issue untouched instead
   of half-linked.
+- **`bd label remove <id> <label>` now fails loud when the label was never on the issue (beads-yaux).**
+  Removing a label an issue never carried printed `✓ Removed label '<x>' from <id>` (JSON `status:removed`)
+  with exit 0 — a false success. `RemoveLabel` is intentionally idempotent (the storage no-ops when the
+  label is absent, recording no event, so update/cleanup callers can rely on it), but the CLI reported
+  success unconditionally, so a CI/agent gate running `bd label remove` to assert a label is gone read
+  exit 0 + "✓ Removed" as proof even on wrong args. The remove verb now pre-checks each issue's labels and
+  reports honestly (nonzero exit, `no label '<x>' to remove on N issue(s)`); in a batch, issues that DO
+  carry the label are still removed. Programmatic callers keep the idempotent `RemoveLabel`. Sibling of the
+  landed dep-remove fix (beads-w2tk) / ib1u / e71t.
 - **`bd count` and `bd ready` `--priority` flags now accept the documented `P0`-`P4` syntax, not just bare `0`-`4` (beads-vcpq).**
   `bd list`/`quick`/`create` register `--priority` as a `StringP` consumed via `ValidatePriority`
   (which calls `ParsePriority`), so both `--priority 2` and `--priority P2` work and the help text
