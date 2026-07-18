@@ -102,22 +102,35 @@ func runShowProxiedServer(cmd *cobra.Command, ctx context.Context, args []string
 	default:
 		runShowProxiedDefault(ctx, uw, in)
 	}
+
+	// beads-kuv1: record the last-touched marker after a successful show, the
+	// same as the direct path (cmd/bd/show.go), so a subsequent `bd show
+	// --current` can fall back to it. The dispatched handlers FatalError/os.Exit
+	// on not-found, so reaching here means the show succeeded. Guarded on an
+	// explicit id (skip for --current, which already resolved from state).
+	if len(in.ids) > 0 && !in.currentMode {
+		SetLastTouchedID(in.ids[0])
+	}
 }
 
 func resolveCurrentIssueIDProxied(ctx context.Context, uw uow.UnitOfWork) string {
 	currentActor := getActorWithGit()
-	if currentActor == "" {
-		return ""
-	}
-	for _, status := range []types.Status{types.StatusInProgress, types.StatusHooked} {
-		st := status
-		filter := types.IssueFilter{Status: &st, Assignee: &currentActor}
-		page, err := uw.IssueUseCase().SearchIssues(ctx, "", filter)
-		if err == nil && len(page.Items) > 0 {
-			return page.Items[0].ID
+	if currentActor != "" {
+		for _, status := range []types.Status{types.StatusInProgress, types.StatusHooked} {
+			st := status
+			filter := types.IssueFilter{Status: &st, Assignee: &currentActor}
+			page, err := uw.IssueUseCase().SearchIssues(ctx, "", filter)
+			if err == nil && len(page.Items) > 0 {
+				return page.Items[0].ID
+			}
 		}
 	}
-	return ""
+	// beads-kuv1: fall back to the last-touched issue, matching the direct path
+	// (cmd/bd/show.go resolveCurrentIssueID step 3). GetLastTouchedID is
+	// file-based (reads .beads/), so it works in the proxied/subprocess context
+	// too — dropping it made proxied `--current` strictly less capable (it
+	// FatalError'd right after `bd show <id>` / `bd update`, the common case).
+	return GetLastTouchedID()
 }
 
 func proxiedGetIssueOrWisp(ctx context.Context, uw uow.UnitOfWork, id string) (issue *types.Issue, isWisp bool, err error) {

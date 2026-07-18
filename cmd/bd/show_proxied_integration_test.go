@@ -50,6 +50,22 @@ func TestProxiedServerShow(t *testing.T) {
 		_ = stderr
 	})
 
+	// beads-kuv1: with no in-progress/hooked issue for the actor, `bd show
+	// --current` must fall back to the last-touched issue, matching the direct
+	// path (cmd/bd/show.go resolveCurrentIssueID step 3 = GetLastTouchedID).
+	// The proxied resolver dropped that fallback and FatalError'd instead.
+	t.Run("current_falls_back_to_last_touched", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "scl")
+		issue := bdProxiedCreate(t, bd, p.dir, "Touch me", "--type", "task")
+		// A plain `bd show <id>` records the last-touched marker (file-based,
+		// .beads/); the issue is neither in-progress nor hooked.
+		_ = bdProxiedShowRaw(t, bd, p.dir, issue.ID)
+		out := bdProxiedShowRaw(t, bd, p.dir, "--current")
+		if !strings.Contains(out, issue.ID) {
+			t.Errorf("bd show --current should fall back to last-touched %s, got: %s", issue.ID, out)
+		}
+	})
+
 	t.Run("show_no_args_errors", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "sna")
 		stdout, stderr := bdProxiedShowFail(t, bd, p.dir)
