@@ -16,6 +16,10 @@ type CommentSQLRepository interface {
 	CountsByIssueIDs(ctx context.Context, issueIDs []string, opts CommentOpts) (map[string]int, error)
 	ListByIssueIDs(ctx context.Context, issueIDs []string, opts CommentOpts) (map[string][]*types.Comment, error)
 	IterByIssueID(ctx context.Context, issueID string, opts CommentOpts) (storage.Iter[types.Comment], error)
+	// AddComment inserts a comment on an issue/wisp (routing internally by wisp
+	// status) and returns the created comment. Used by bd comments add / promote
+	// via the UOW (beads-m4vx).
+	AddComment(ctx context.Context, issueID, author, text string) (*types.Comment, error)
 }
 
 type CommentUseCase interface {
@@ -30,6 +34,9 @@ type CommentUseCase interface {
 	GetCommentsForWisp(ctx context.Context, wispID string) ([]*types.Comment, error)
 	CountCommentsForWisp(ctx context.Context, wispID string) (int64, error)
 	IterCommentsForWisp(ctx context.Context, wispID string) (storage.Iter[types.Comment], error)
+
+	// AddComment inserts a comment on an issue/wisp and returns it (beads-m4vx).
+	AddComment(ctx context.Context, issueID, author, text string) (*types.Comment, error)
 }
 
 func NewCommentUseCase(commentRepo CommentSQLRepository) CommentUseCase {
@@ -135,4 +142,15 @@ func (u *commentUseCaseImpl) list(ctx context.Context, ids []string, useWisp boo
 		return nil, fmt.Errorf("comment list: %w", err)
 	}
 	return out, nil
+}
+
+func (u *commentUseCaseImpl) AddComment(ctx context.Context, issueID, author, text string) (*types.Comment, error) {
+	if issueID == "" {
+		return nil, fmt.Errorf("add comment: issueID must not be empty")
+	}
+	c, err := u.commentRepo.AddComment(ctx, issueID, author, text)
+	if err != nil {
+		return nil, fmt.Errorf("add comment to %s: %w", issueID, err)
+	}
+	return c, nil
 }

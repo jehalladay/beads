@@ -110,14 +110,14 @@ func GetCommentCountsInTx(ctx context.Context, tx *sql.Tx, issueIDs []string) (m
 // Routes to comments or wisp_comments based on wisp status.
 //
 //nolint:gosec // G201: table names come from hardcoded constants
-func AddIssueCommentInTx(ctx context.Context, tx *sql.Tx, issueID, author, text string) (*types.Comment, error) {
+func AddIssueCommentInTx(ctx context.Context, tx DBTX, issueID, author, text string) (*types.Comment, error) {
 	return ImportIssueCommentInTx(ctx, tx, issueID, author, text, time.Now().UTC())
 }
 
 // ImportIssueCommentInTx adds a comment preserving the original timestamp.
 //
 //nolint:gosec // G201: table names come from hardcoded constants
-func ImportIssueCommentInTx(ctx context.Context, tx *sql.Tx, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
+func ImportIssueCommentInTx(ctx context.Context, tx DBTX, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
 	isWisp := IsActiveWispInTx(ctx, tx, issueID)
 	issueTable, _, _, _ := WispTableRouting(isWisp)
 	commentTable := "comments"

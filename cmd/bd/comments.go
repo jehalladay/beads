@@ -165,10 +165,21 @@ Examples:
 			author = getActorWithGit()
 		}
 
+		ctx := rootCtx
+
+		// In proxied-server mode the global `store` is nil (main.go
+		// PersistentPreRun returns before newDoltStore), so the store-backed
+		// AddIssueComment path below would fail with "storage is nil". Route
+		// through the proxied UOW stack instead (beads-m4vx, fszd/aocj umbrella)
+		// — AddComment was previously only on DoltStore, now also on the domain
+		// CommentUseCase (interface-extension leg).
+		if usesProxiedServer() {
+			return runCommentsAddProxiedServer(ctx, issueID, author, commentText)
+		}
+
 		if err := ensureStoreActive(); err != nil {
 			return HandleErrorRespectJSON("adding comment: %v", err)
 		}
-		ctx := rootCtx
 
 		result, err := resolveAndGetIssueForMutation(ctx, store, issueID)
 		if err != nil {

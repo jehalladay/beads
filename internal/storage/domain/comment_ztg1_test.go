@@ -26,6 +26,10 @@ type fakeCommentRepo struct {
 	countsCalls int
 	listCalls   int
 	iterCalls   int
+
+	addErr   error
+	addCalls int
+	lastAdd  struct{ issueID, author, text string }
 }
 
 func (f *fakeCommentRepo) CountsByIssueIDs(ctx context.Context, issueIDs []string, opts CommentOpts) (map[string]int, error) {
@@ -56,6 +60,15 @@ func (f *fakeCommentRepo) IterByIssueID(ctx context.Context, issueID string, opt
 		return nil, f.iterErr
 	}
 	return f.iter, nil
+}
+
+func (f *fakeCommentRepo) AddComment(ctx context.Context, issueID, author, text string) (*types.Comment, error) {
+	f.addCalls++
+	f.lastAdd = struct{ issueID, author, text string }{issueID, author, text}
+	if f.addErr != nil {
+		return nil, f.addErr
+	}
+	return &types.Comment{IssueID: issueID, Author: author, Text: text}, nil
 }
 
 func TestCommentUseCase_Counts(t *testing.T) {

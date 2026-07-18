@@ -7,6 +7,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/domain"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -109,4 +110,8 @@ func (r *commentSQLRepositoryImpl) IterByIssueID(ctx context.Context, issueID st
 		return nil, err
 	}
 	return storage.NewSliceIter(bulk[issueID]), nil
+}
+
+func (r *commentSQLRepositoryImpl) AddComment(ctx context.Context, issueID, author, text string) (*types.Comment, error) {
+	return issueops.AddIssueCommentInTx(ctx, r.runner, issueID, author, text)
 }
