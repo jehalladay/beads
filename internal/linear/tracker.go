@@ -190,6 +190,10 @@ func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker
 
 	priority := PriorityToLinear(issue.Priority, t.config)
 
+	// Cap the pushed title at Linear's server-side limit; the local beads title
+	// is left untouched (beads-exaq — the SCM per-field-cap class).
+	title := truncateTitle(issue.Title)
+
 	stateID, err := t.findStateID(ctx, client, issue.Status)
 	if err != nil {
 		return nil, fmt.Errorf("finding state for status %s: %w", issue.Status, err)
@@ -207,7 +211,7 @@ func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker
 	// write-back.
 	if issue.ID != "" && issue.CreatedBy != "" {
 		marker := GenerateIdempotencyMarker(issue.ID, issue.CreatedBy, issue.CreatedAt.UnixNano())
-		created, deduped, err := client.CreateIssueIdempotent(ctx, issue.Title, description, priority, stateID, nil, marker)
+		created, deduped, err := client.CreateIssueIdempotent(ctx, title, description, priority, stateID, nil, marker)
 		if err != nil {
 			return nil, err
 		}
@@ -218,7 +222,7 @@ func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker
 		return &ti, nil
 	}
 
-	created, err := client.CreateIssue(ctx, issue.Title, description, priority, stateID, nil)
+	created, err := client.CreateIssue(ctx, title, description, priority, stateID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -316,15 +320,18 @@ func (t *Tracker) BatchPush(ctx context.Context, issues []*types.Issue, forceIDs
 	if len(toCreate) > 0 {
 		// Partition into unique-title (safe for batch) and duplicate-title (single-create).
 		// Title-based result correlation is only safe when titles are unique in the batch.
+		// Count on the CAPPED title (beads-exaq): Linear echoes the truncated title it
+		// received, so correlation and dup-detection must key on the pushed form — two
+		// titles differing only past the cap collide once truncated.
 		titleCount := make(map[string]int, len(toCreate))
 		for _, issue := range toCreate {
-			titleCount[issue.Title]++
+			titleCount[truncateTitle(issue.Title)]++
 		}
 
 		var batchIssues []*types.Issue
 		var singleIssues []*types.Issue
 		for _, issue := range toCreate {
-			if titleCount[issue.Title] > 1 {
+			if titleCount[truncateTitle(issue.Title)] > 1 {
 				singleIssues = append(singleIssues, issue)
 			} else {
 				batchIssues = append(batchIssues, issue)
@@ -345,7 +352,7 @@ func (t *Tracker) BatchPush(ctx context.Context, issues []*types.Issue, forceIDs
 
 			marker := GenerateIdempotencyMarker(issue.ID, issue.CreatedBy, issue.CreatedAt.UnixNano())
 			var labelIDs []string
-			created, _, createErr := client.CreateIssueIdempotent(ctx, issue.Title, issue.Description, priority, stateID, labelIDs, marker)
+			created, _, createErr := client.CreateIssueIdempotent(ctx, truncateTitle(issue.Title), issue.Description, priority, stateID, labelIDs, marker)
 			if createErr != nil {
 				result.Errors = append(result.Errors, tracker.BatchPushError{
 					LocalID: issue.ID,
@@ -376,9 +383,10 @@ func (t *Tracker) BatchPush(ctx context.Context, issues []*types.Issue, forceIDs
 			marker := GenerateIdempotencyMarker(issue.ID, issue.CreatedBy, issue.CreatedAt.UnixNano())
 			desc := AppendIdempotencyMarker(issue.Description, marker)
 
+			capped := truncateTitle(issue.Title)
 			input := IssueCreateInput{
 				TeamID:      client.TeamID,
-				Title:       issue.Title,
+				Title:       capped,
 				Description: desc,
 				Priority:    priority,
 				StateID:     stateID,
@@ -386,7 +394,9 @@ func (t *Tracker) BatchPush(ctx context.Context, issues []*types.Issue, forceIDs
 			if client.ProjectID != "" {
 				input.ProjectID = client.ProjectID
 			}
-			titleToIssue[issue.Title] = issue
+			// Key on the pushed (capped) title so BatchCreateIssues result
+			// correlation matches Linear's echoed title (beads-exaq).
+			titleToIssue[capped] = issue
 			inputs = append(inputs, input)
 		}
 
