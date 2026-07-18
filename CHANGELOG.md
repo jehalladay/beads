@@ -337,6 +337,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enum-value-reject family (beads-deud count/search, beads-8cg2 lint, beads-pbl7
   ready); distinct from beads-brxo (which fixed `--type` normalization, not
   value-rejection).
+- **`bd blocked --parent` now includes transitive (dep-edge) descendants (beads-lxo5).**
+  Filtering blocked issues by `--parent` used a one-hop children lookup plus a
+  dotted-id prefix match, so a blocked grandchild reached purely by parent-child
+  dep edges on independent ids was silently dropped — even though `--parent`
+  promises "descendants (recursive)" and the ready-work path already recurses
+  (GH#3396, sibling of beads-wap4). `GetBlockedIssuesInTx` now expands the parent
+  to its full transitive descendant set via `GetDescendantIDsInTx` (the same
+  recursive walk the ready path uses).
 
 - **`bd list --parent` now returns transitive descendants in `--json`/`--flat` (beads-wap4).**
   The flat and `--json` `--parent` output returned only direct children (plus

@@ -333,12 +333,22 @@ func GetBlockedIssuesInTx(ctx context.Context, tx DBTX, filter types.WorkFilter)
 	if filter.ParentID != nil {
 		parentChildSet = make(map[string]bool)
 		parentID := *filter.ParentID
-		children, childErr := GetChildrenOfIssuesInTx(ctx, tx, []string{parentID})
-		if childErr == nil {
-			for _, childID := range children {
-				parentChildSet[childID] = true
+		// beads-lxo5/GH#3396: --parent must include ALL transitive descendants
+		// (recursive), matching the ready-work path and the "descendants
+		// (recursive)" contract. The previous one-hop GetChildrenOfIssuesInTx
+		// returned only DIRECT children, so a blocked dep-edge grandchild was
+		// silently dropped from `bd blocked --parent` (a dotted-id grandchild
+		// still slipped through via the HasPrefix leg below, but a descendant
+		// reached purely by parent-child dep edges did not). Use the same
+		// recursive descendant walk the ready path uses (beads-wap4 sibling).
+		descendants, descErr := GetDescendantIDsInTx(ctx, tx, parentID, 0)
+		if descErr == nil {
+			for _, id := range descendants {
+				parentChildSet[id] = true
 			}
 		}
+		// Retain the dotted-id leg as a belt-and-suspenders for descendants whose
+		// hierarchy is encoded in the id but that lack a parent-child dep edge.
 		for id := range blockerMap {
 			if strings.HasPrefix(id, parentID+".") {
 				parentChildSet[id] = true
