@@ -48,6 +48,14 @@ Examples:
 			return HandleErrorRespectJSON("%v", err)
 		}
 
+		// beads-rejl: route to the proxied handler in proxied-server mode.
+		// Without this, priority uses the direct global `store` — nil under
+		// proxiedServerMode — so `bd priority` failed "storage is nil", unlike
+		// its long form `bd update --priority` which routes via usesProxiedServer().
+		if usesProxiedServer() {
+			return runPriorityProxiedServer(rootCtx, id, priority)
+		}
+
 		ctx := rootCtx
 
 		result, err := resolveAndGetIssueForMutation(ctx, store, id)
