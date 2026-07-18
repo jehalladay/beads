@@ -62,6 +62,10 @@ type fakeIssueRepo struct {
 	countForPrefix int
 	countErr       error
 
+	// GetNextChildID
+	nextChildID  string
+	nextChildErr error
+
 	// Insert
 	insertErr    error
 	insertedWisp []bool
@@ -190,6 +194,9 @@ func (f *fakeIssueRepo) CountForPrefix(context.Context, string, IssueTableOpts) 
 }
 func (f *fakeIssueRepo) NextCounterID(context.Context, string) (int, error) {
 	return f.nextCounterID, f.nextCounterErr
+}
+func (f *fakeIssueRepo) GetNextChildID(_ context.Context, parentID string) (string, error) {
+	return f.nextChildID, f.nextChildErr
 }
 func (f *fakeIssueRepo) SearchAcrossIssuesAndWisps(context.Context, string, types.IssueFilter) (SearchPage, error) {
 	return f.searchPage, f.searchErr

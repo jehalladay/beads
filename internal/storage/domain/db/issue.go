@@ -849,6 +849,10 @@ func (r *issueSQLRepositoryImpl) UpdateIssueID(ctx context.Context, oldID, newID
 	return issueops.UpdateIssueIDInTx(ctx, r.runner, oldID, newID, issue, actor)
 }
 
+func (r *issueSQLRepositoryImpl) GetNextChildID(ctx context.Context, parentID string) (string, error) {
+	return issueops.GetNextChildIDTx(ctx, r.runner, parentID)
+}
+
 func (r *issueSQLRepositoryImpl) Close(ctx context.Context, id string, params domain.CloseRowParams, actor string, opts domain.IssueTableOpts) (domain.CloseRowResult, error) {
 	res, err := issueops.CloseIssueInTx(ctx, r.runner, id, params.Reason, actor, params.Session)
 	if err != nil {

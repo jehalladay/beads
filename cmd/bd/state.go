@@ -136,6 +136,16 @@ The --reason flag provides context for the event bead (recommended).`,
 
 		reason, _ := cmd.Flags().GetString("reason")
 
+		// In proxied-server mode the global `store` is nil (main.go
+		// PersistentPreRun returns before newDoltStore), so the multi-write
+		// store.* sequence below would fail with "storage is nil". Route through
+		// the proxied UOW stack instead (beads-nzb7, fszd/aocj umbrella) —
+		// GetNextChildID was previously only on DoltStore, now also on the domain
+		// IssueUseCase (interface-extension leg).
+		if usesProxiedServer() {
+			return runSetStateProxiedServer(ctx, issueID, dimension, newValue, reason)
+		}
+
 		var fullID string
 		var err error
 		fullID, err = utils.ResolvePartialID(ctx, store, issueID)

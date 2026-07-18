@@ -61,6 +61,10 @@ type IssueSQLRepository interface {
 	Exists(ctx context.Context, id string, opts IssueTableOpts) (bool, error)
 	CountForPrefix(ctx context.Context, prefix string, opts IssueTableOpts) (int, error)
 	NextCounterID(ctx context.Context, prefix string) (int, error)
+	// GetNextChildID mints the next hierarchical child ID (parent.N) for
+	// parentID, routing issues↔wisps and bumping past any cross-table sibling
+	// to avoid same-id collisions (beads-tnv9). Used by set-state (beads-nzb7).
+	GetNextChildID(ctx context.Context, parentID string) (string, error)
 	SearchAcrossIssuesAndWisps(ctx context.Context, query string, filter types.IssueFilter) (SearchPage, error)
 	SearchAcrossIssuesAndWispsWithCounts(ctx context.Context, query string, filter types.IssueFilter) (SearchCountsPage, error)
 	GetReadyWork(ctx context.Context, filter types.WorkFilter) (SearchPage, error)
@@ -255,6 +259,7 @@ type IssueUseCase interface {
 	CloseIssue(ctx context.Context, id string, params CloseIssueParams, actor string) (CloseIssueResult, error)
 	ReopenIssue(ctx context.Context, id string, params ReopenIssueParams, actor string) (ReopenIssueResult, error)
 	CountOpenChildren(ctx context.Context, id string) (int, error)
+	GetNextChildID(ctx context.Context, parentID string) (string, error)
 	GetNewlyUnblockedByClose(ctx context.Context, closedID string) ([]*types.Issue, error)
 	ApplyUpdate(ctx context.Context, id string, spec UpdateSpec, actor string) (*types.Issue, error)
 	ApplyIssueGraph(ctx context.Context, plan GraphPlan, actor string) (GraphApplyResult, error)
@@ -1425,6 +1430,13 @@ func (u *issueUseCaseImpl) ClaimWispIfOpen(ctx context.Context, id, actor string
 
 func (u *issueUseCaseImpl) CountOpenChildren(ctx context.Context, id string) (int, error) {
 	return u.countOpenChildren(ctx, id, false)
+}
+
+func (u *issueUseCaseImpl) GetNextChildID(ctx context.Context, parentID string) (string, error) {
+	if parentID == "" {
+		return "", fmt.Errorf("GetNextChildID: parentID must not be empty")
+	}
+	return u.issueRepo.GetNextChildID(ctx, parentID)
 }
 
 func (u *issueUseCaseImpl) CountOpenWispChildren(ctx context.Context, id string) (int, error) {
