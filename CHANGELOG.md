@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd kv clear <key>` now fails loud on a key that does not exist instead of printing a false `Cleared`/`deleted:true` success (beads-v0rp).**
+  `DeleteConfig` is idempotent — it issues an unconditional `DELETE` and returns nil regardless of how many
+  rows matched, which programmatic cleanup callers rely on — but `bd kv clear` printed `Cleared <key>` (text)
+  / `{deleted:true}` (JSON) with exit 0 even when the key was never set, a false success that a CI/agent gate
+  reads as proof the key is gone. The CLI verb now pre-checks the key's presence (via the full config map, so
+  a key set to the empty string is still recognized as existing) and returns a `no key '<key>' to clear` error
+  with a non-zero exit when it is absent; a present key still clears. The idempotent `DeleteConfig` contract is
+  unchanged for programmatic callers. Sibling of the landed dep-remove / label-remove fixes (beads-w2tk/yaux).
+
 - **`bd count` and `bd ready` `--priority` flags now accept the documented `P0`-`P4` syntax, not just bare `0`-`4` (beads-vcpq).**
   `bd list`/`quick`/`create` register `--priority` as a `StringP` consumed via `ValidatePriority`
   (which calls `ParsePriority`), so both `--priority 2` and `--priority P2` work and the help text

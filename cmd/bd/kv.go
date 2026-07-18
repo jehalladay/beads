@@ -205,6 +205,23 @@ Examples:
 		storageKey := kvPrefix + key
 
 		ctx := rootCtx
+		// Pre-check that the key actually exists so we report honestly
+		// (beads-v0rp). DeleteConfig is idempotent — DeleteConfigInTx issues an
+		// unconditional DELETE and returns nil regardless of RowsAffected, and
+		// programmatic callers rely on that — so without this check `bd kv clear
+		// <missing>` printed "Cleared" / deleted:true (rc=0), a false success a
+		// CI/agent gate reads as proof the key is gone. GetConfig can't tell a
+		// missing key from one set to "" (bd kv set k "" is allowed), so use the
+		// full config map to test presence. Keep the idempotent contract for
+		// programmatic callers; only the CLI verb reports the distinction.
+		// Mirrors the landed dep-remove / label-remove fixes (beads-w2tk/yaux).
+		all, err := store.GetAllConfig(ctx)
+		if err != nil {
+			return HandleErrorRespectJSON("checking key: %v", err)
+		}
+		if _, ok := all[storageKey]; !ok {
+			return HandleErrorRespectJSON("no key '%s' to clear", key)
+		}
 		if err := store.DeleteConfig(ctx, storageKey); err != nil {
 			return HandleErrorRespectJSON("deleting key: %v", err)
 		}
