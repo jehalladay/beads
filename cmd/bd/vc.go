@@ -42,6 +42,11 @@ Examples:
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// beads-q634: vc merge is a data-plane write (performs a Dolt merge) —
+		// honor the --readonly sandbox like vc commit, not just commit. Found
+		// scouting the vc family after guarding commit; merge was a sibling
+		// bypass not named in the original q634 list (config/import/vc-commit).
+		CheckReadonly("vc merge")
 		evt := metrics.NewCommandEvent("vc-merge")
 		defer func() {
 			if c := metrics.Global(); c != nil {
