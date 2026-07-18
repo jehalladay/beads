@@ -437,6 +437,26 @@ create, update, show, or close operation).`,
 				}
 			}
 
+			// Epic-demote close-guard bypass (beads-2hkd): the epic-with-open-
+			// children close guard (close.go:145 / the zgku guard above) keys on
+			// issue_type==epic AT CLOSE TIME. `bd update --type task` demotes the
+			// epic first, so a subsequent close no longer sees it as an epic and
+			// succeeds with children still open (no --force) — reaching a
+			// closed-epic-with-open-child state via a different mutation path than
+			// the alternate close verbs that zgku/1d08 hardened. Enforce the same
+			// invariant on the demote transition: refuse to demote an epic that
+			// still has open children (epic -> non-epic), overridable with --force
+			// to match `bd close --force`. Only guards a real epic->non-epic
+			// transition; epic->epic re-normalization and promotions are unaffected.
+			if newTypeRaw, ok := updates["issue_type"].(string); ok && !forceFlag &&
+				issue.IssueType == types.TypeEpic && types.IssueType(newTypeRaw).Normalize() != types.TypeEpic {
+				if openChildren := countEpicOpenChildren(ctx, issueStore, result.ResolvedID); openChildren > 0 {
+					reportItemError("cannot demote epic %s to %s: %d open child issue(s); close children first or use --force to override", id, newTypeRaw, openChildren)
+					closeIfUnmutated(result)
+					continue
+				}
+			}
+
 			// Handle claim operation atomically using compare-and-swap semantics
 			if claimFlag {
 				if err := issueStore.ClaimIssue(ctx, result.ResolvedID, actor); err != nil {
