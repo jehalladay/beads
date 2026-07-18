@@ -116,15 +116,12 @@ func runShowProxiedServer(cmd *cobra.Command, ctx context.Context, args []string
 		os.Exit(1)
 	}
 
-	// beads-kuv1: record the last-touched marker after a successful show, the
-	// same as the direct path (cmd/bd/show.go), so a subsequent `bd show
-	// --current` can fall back to it. The dispatched handlers FatalError/os.Exit
-	// on not-found (and the failedCount check above catches the as-of/refs/
-	// children legs), so reaching here means the show fully succeeded. Guarded
-	// on an explicit id (skip for --current, which already resolved from state).
-	if len(in.ids) > 0 && !in.currentMode {
-		SetLastTouchedID(in.ids[0])
-	}
+	// beads-87i2 (supersedes the beads-kuv1 show-sets-last-touched behavior): a
+	// read-only view must NOT arm the last-touched close/update target — a later
+	// bare `bd close`/`bd update` would otherwise silently hit the merely-viewed
+	// issue. Only create/update/close set last-touched; `bd show --current` still
+	// resolves via in-progress/hooked (primary) + that create/update/close-set
+	// fallback. Kept in lockstep with the direct path (cmd/bd/show.go).
 }
 
 func resolveCurrentIssueIDProxied(ctx context.Context, uw uow.UnitOfWork) string {

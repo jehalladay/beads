@@ -504,3 +504,46 @@ func TestEmbeddedShowConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddedShowDoesNotSetCloseTarget is the teeth for beads-87i2: a
+// read-only `bd show <id>` must NOT set the last-touched close target, so a
+// later bare `bd close` (no id) doesn't silently close the merely-viewed issue.
+// Before the fix, `bd show X; bd close` closed X (a view op making X the next
+// close victim). After: show doesn't touch last-touched, so a bare close with
+// nothing else touched fails loud ("no last touched issue") rather than closing
+// the viewed bead. bd show --current still works (in-progress/hooked primary,
+// last-touched fallback set by create/update/close — not show).
+func TestEmbeddedShowDoesNotSetCloseTarget(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "sc2")
+
+	victim := bdCreate(t, bd, dir, "Do not close me by viewing")
+	// Create a SECOND issue AFTER victim so last-touched = other (create arms it).
+	// This isolates show's effect: if `bd show victim` re-armed last-touched, a
+	// bare close would hit victim; if show is inert (the fix), it hits `other`.
+	other := bdCreate(t, bd, dir, "Throwaway close target")
+
+	// Read-only view of victim — must NOT re-arm the bare-close target.
+	_ = bdShow(t, bd, dir, victim.ID)
+
+	// Bare `bd close` must close `other` (last create/touch), NOT the viewed victim.
+	out := bdClose(t, bd, dir, "--reason", "x")
+	if strings.Contains(out, victim.ID) {
+		t.Fatalf("bare `bd close` closed the merely-VIEWED issue %s instead of %s (beads-87i2 regression):\n%s", victim.ID, other.ID, out)
+	}
+
+	// The victim must still be open; `other` should be the one closed.
+	gotVictim := bdShow(t, bd, dir, victim.ID)
+	if string(gotVictim.Status) == "closed" {
+		t.Fatalf("viewed issue %s was closed by a bare `bd close` — show must not set the close target (beads-87i2)", victim.ID)
+	}
+	gotOther := bdShow(t, bd, dir, other.ID)
+	if string(gotOther.Status) != "closed" {
+		t.Fatalf("bare close should have closed the last-touched %s (created after victim), got status %q", other.ID, gotOther.Status)
+	}
+}

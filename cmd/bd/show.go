@@ -450,15 +450,16 @@ var showCmd = &cobra.Command{
 		} else if foundCount > 0 {
 			maybeShowTip(store)
 		} else {
-			if len(args) > 0 {
-				SetLastTouchedID(args[0])
-			}
+			// beads-87i2: a read-only view must NOT set the last-touched close
+			// target — otherwise a later bare `bd close` silently closes the
+			// merely-viewed issue. Only create/update/close arm last-touched.
 			return SilentExit()
 		}
 
-		if len(args) > 0 {
-			SetLastTouchedID(args[0])
-		}
+		// beads-87i2: do NOT SetLastTouchedID here — viewing an issue must not
+		// make it the next bare-`bd close`/`bd update` victim. `bd show --current`
+		// still resolves via in-progress/hooked (primary) + the last-touched
+		// fallback that create/update/close set.
 		// Partial failure: at least one id resolved (its issue was shown/emitted)
 		// but at least one other id could not be fetched. The all-failed case
 		// already exits non-zero above (SilentExit / HandleErrorRespectJSON); this
