@@ -218,6 +218,29 @@ func TestEmbeddedLint(t *testing.T) {
 		}
 	})
 
+	// beads-x3jo: --json mode must use the SAME exit contract as text mode. A
+	// warning issue makes text-mode `bd lint` return rc=1 (exit_code_1_on_warnings
+	// above); --json previously returned rc=0 on the same state, so a scripted
+	// `bd lint $IDS --json || fail` gate read FALSE-CLEAN. Both modes must agree.
+	t.Run("json_exit_code_1_on_warnings_matches_text", func(t *testing.T) {
+		_, textCode := bdLint(t, bd, dir, bugBare.ID)
+		_, jsonCode := bdLint(t, bd, dir, bugBare.ID, "--json")
+		if textCode != 1 {
+			t.Errorf("precondition: text-mode lint of a warning issue should be rc=1, got %d", textCode)
+		}
+		if jsonCode != textCode {
+			t.Errorf("--json exit code %d must match text-mode %d for the same warning state (beads-x3jo)", jsonCode, textCode)
+		}
+	})
+
+	// beads-x3jo: --json on a CLEAN issue must still be rc=0 (agrees with text).
+	t.Run("json_exit_code_0_when_clean", func(t *testing.T) {
+		_, jsonCode := bdLint(t, bd, dir, bugGood.ID, "--json")
+		if jsonCode != 0 {
+			t.Errorf("expected --json exit code 0 for a clean issue, got %d", jsonCode)
+		}
+	})
+
 	// ===== Nonexistent issue ID =====
 
 	t.Run("nonexistent_id_graceful", func(t *testing.T) {
