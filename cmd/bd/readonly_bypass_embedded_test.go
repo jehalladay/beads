@@ -78,6 +78,12 @@ func TestReadonlyBlocksWriteChannels(t *testing.T) {
 		bdReadonlyExpectBlocked(t, bd, dir, "vc", "commit", "-m", "should be blocked")
 	})
 
+	t.Run("vc_merge_blocked", func(t *testing.T) {
+		// vc merge is a data-plane write; the branch need not exist — the
+		// readonly guard runs before any merge work (beads-q634 sibling).
+		bdReadonlyExpectBlocked(t, bd, dir, "vc", "merge", "some-branch")
+	})
+
 	// Control: a READ must still work under --readonly.
 	t.Run("read_still_allowed", func(t *testing.T) {
 		cmd := exec.Command(bd, "--readonly", "list")
