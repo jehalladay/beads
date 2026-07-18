@@ -585,6 +585,19 @@ var configUnsetCmd = &cobra.Command{
 		}
 
 		ctx := rootCtx
+		// beads-y3z2: DeleteConfig is idempotent (DELETE ... WHERE key affects 0
+		// rows → nil), so without a pre-check `bd config unset <never-set-key>`
+		// printed a false "Unset" rc=0 that a CI/agent gate reads as proof. Check
+		// membership (not GetConfig, which returns "" for BOTH absent and
+		// empty-valued keys) and fail loud when absent. Sibling of the landed
+		// false-success beads v0rp (kv clear) / w2tk (dep remove).
+		all, lookupErr := store.GetAllConfig(ctx)
+		if lookupErr != nil {
+			return HandleErrorRespectJSON("checking config key %s: %v", key, lookupErr)
+		}
+		if _, exists := all[key]; !exists {
+			return HandleErrorRespectJSON("no such config key: %s", key)
+		}
 		if err := store.DeleteConfig(ctx, key); err != nil {
 			return HandleErrorRespectJSON("deleting config: %v", err)
 		}

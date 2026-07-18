@@ -116,6 +116,17 @@ func runConfigUnsetProxiedServer(ctx context.Context, key string) {
 	uw := openConfigProxiedUOW(ctx)
 	defer uw.Close(ctx)
 
+	// beads-y3z2: fail loud on a nonexistent key for parity with the direct
+	// path (DeleteConfig is idempotent → a false "Unset" otherwise). Membership
+	// check, not GetConfig (which can't distinguish absent from empty-valued).
+	all, lookupErr := uw.ConfigUseCase().GetAllConfig(ctx)
+	if lookupErr != nil {
+		FatalErrorRespectJSON("checking config key %s: %v", key, lookupErr)
+	}
+	if _, exists := all[key]; !exists {
+		FatalErrorRespectJSON("no such config key: %s", key)
+	}
+
 	if err := uw.ConfigUseCase().DeleteConfig(ctx, key); err != nil {
 		FatalErrorRespectJSON("Error deleting config: %v", err)
 	}
