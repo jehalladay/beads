@@ -781,6 +781,10 @@ func (r *issueSQLRepositoryImpl) AsOf(ctx context.Context, id, ref string) (*typ
 	return issueops.AsOfInTx(ctx, r.runner, id, ref)
 }
 
+func (r *issueSQLRepositoryImpl) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
+	return issueops.UpdateIssueIDInTx(ctx, r.runner, oldID, newID, issue, actor)
+}
+
 func (r *issueSQLRepositoryImpl) Close(ctx context.Context, id string, params domain.CloseRowParams, actor string, opts domain.IssueTableOpts) (domain.CloseRowResult, error) {
 	res, err := issueops.CloseIssueInTx(ctx, r.runner, id, params.Reason, actor, params.Session)
 	if err != nil {

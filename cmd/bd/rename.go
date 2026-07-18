@@ -64,6 +64,16 @@ func runRename(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
+
+	// In proxied-server mode the global `store` is nil (main.go PersistentPreRun
+	// returns before newDoltStore), so the store.UpdateIssueID path below would
+	// fail with "storage is nil". Route through the proxied UOW stack instead
+	// (beads-lh54, fszd/aocj umbrella) — UpdateIssueID was previously only on
+	// DoltStore, now also on the domain IssueUseCase (RenameIssueID).
+	if usesProxiedServer() {
+		return runRenameProxiedServer(ctx, oldID, newID)
+	}
+
 	if err := ensureStoreActive(); err != nil {
 		return HandleErrorRespectJSON("failed to get storage: %v", err)
 	}

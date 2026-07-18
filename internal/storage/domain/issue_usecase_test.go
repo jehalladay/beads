@@ -35,6 +35,10 @@ type fakeIssueRepo struct {
 	asOfIssue *types.Issue
 	asOfErr   error
 
+	// UpdateIssueID (rename)
+	renameErr   error
+	renameCalls []struct{ oldID, newID string }
+
 	// GetByIDs
 	byIDs    []*types.Issue
 	byIDsErr error
@@ -153,6 +157,10 @@ func (f *fakeIssueRepo) Get(_ context.Context, id string, opts IssueTableOpts) (
 }
 func (f *fakeIssueRepo) AsOf(context.Context, string, string) (*types.Issue, error) {
 	return f.asOfIssue, f.asOfErr
+}
+func (f *fakeIssueRepo) UpdateIssueID(_ context.Context, oldID, newID string, _ *types.Issue, _ string) error {
+	f.renameCalls = append(f.renameCalls, struct{ oldID, newID string }{oldID, newID})
+	return f.renameErr
 }
 func (f *fakeIssueRepo) GetByIDs(context.Context, []string, IssueTableOpts) ([]*types.Issue, error) {
 	return f.byIDs, f.byIDsErr
