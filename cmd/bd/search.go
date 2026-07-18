@@ -125,11 +125,29 @@ Examples:
 		}
 
 		if status != "" && status != "all" {
-			s := types.Status(status).Normalize()
-			if !s.IsValidWithCustom(searchFilterCfg.customStatusNames()) {
-				return HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(searchFilterCfg.customStatusNames()))
+			// beads-ybc7: support comma-multi (OR) status like bd list
+			// (list_filter.go). A single value keeps the scalar filter.Status;
+			// two+ comma-separated values validate each and build filter.Statuses
+			// (an IN filter honored by the shared sqlbuild path). Without this,
+			// `bd search --status open,closed` failed (post-deud) as an invalid
+			// single status rather than matching both, breaking parity with bd list.
+			names := searchFilterCfg.customStatusNames()
+			statusParts := strings.Split(status, ",")
+			if len(statusParts) == 1 {
+				s := types.Status(strings.TrimSpace(statusParts[0])).Normalize()
+				if !s.IsValidWithCustom(names) {
+					return HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(names))
+				}
+				filter.Status = &s
+			} else {
+				for _, part := range statusParts {
+					s := types.Status(strings.TrimSpace(part)).Normalize()
+					if !s.IsValidWithCustom(names) {
+						return HandleErrorRespectJSON("invalid status %q in multi-status filter (valid: %s)", strings.TrimSpace(part), validStatusList(names))
+					}
+					filter.Statuses = append(filter.Statuses, s)
+				}
 			}
-			filter.Status = &s
 		} else if status != "all" {
 			// Default: exclude closed issues to reduce scan scope (hq-319).
 			// With 12K+ issues, ~60-70% are closed — excluding them lets the
