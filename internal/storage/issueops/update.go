@@ -101,6 +101,30 @@ func validateEstimatedMinutesUpdate(updates map[string]interface{}) error {
 	return nil
 }
 
+// ValidateUpdateInputs runs the input-type guards (priority range, title
+// required/≤500, estimated_minutes ≥0 integer) that updateIssueInTx applies
+// before the SQL layer silently coerces a bad value. Exported so the raw
+// domain/db update path (issueSQLRepositoryImpl.Update with Finalize) can run
+// the same guards instead of leaking a raw Dolt column error (beads-iu9f Phase
+// B / 25k6). It mirrors the pre-SQL checks in updateIssueInTx.
+func ValidateUpdateInputs(updates map[string]interface{}) error {
+	if err := validatePriorityUpdate(updates); err != nil {
+		return err
+	}
+	if err := validateTitleUpdate(updates); err != nil {
+		return err
+	}
+	return validateEstimatedMinutesUpdate(updates)
+}
+
+// FinalizeUpdatedIssueInTx is the exported entry to finalizeUpdatedIssueInTx for
+// the raw domain/db update path (issueSQLRepositoryImpl.Update with Finalize),
+// so proxied/domain updates get the same post-update ValidateWithCustom +
+// metadata-object check + content_hash recompute as the shared seam.
+func FinalizeUpdatedIssueInTx(ctx context.Context, tx DBTX, issueTable, id string) error {
+	return finalizeUpdatedIssueInTx(ctx, tx, issueTable, id)
+}
+
 // finalizeUpdatedIssueInTx re-runs the create-path finalization on the merged
 // post-update issue: full Issue.ValidateWithCustom (title/priority/status/type/
 // estimated_minutes/closed_at/metadata invariants) + content_hash recompute.

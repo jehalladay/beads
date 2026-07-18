@@ -19,6 +19,15 @@ type InsertIssueOpts struct {
 
 type IssueTableOpts struct {
 	UseWispsTable bool
+	// Finalize enforces the shared post-update invariants (title/estimate input
+	// guards + full Issue.ValidateWithCustom + content_hash recompute) that the
+	// direct/embedded path runs via issueops.updateIssueInTx. The raw
+	// issueSQLRepositoryImpl.Update path (proxied/domain UPDATE) does NOT run
+	// them otherwise, so a >500 title or non-object metadata leaks a raw Dolt
+	// error and content_hash goes stale (beads-iu9f Phase B / 25k6 / lsbu /
+	// rzx8). Only the single-issue update path sets this; graph-apply /
+	// assignee-set / ref-rewrite keep their existing behavior.
+	Finalize bool
 }
 
 type ClaimRowResult struct {
@@ -371,7 +380,11 @@ func (u *issueUseCaseImpl) update(ctx context.Context, id string, updates map[st
 			}
 		}
 	}
-	return u.issueRepo.Update(ctx, id, updates, actor, IssueTableOpts{UseWispsTable: useWisp})
+	// Finalize: enforce the shared post-update invariants (title/estimate guards
+	// + ValidateWithCustom + content_hash) on this single-issue update path so
+	// the proxied/domain UPDATE matches the direct/embedded seam (beads-iu9f
+	// Phase B). graph-apply/assignee-set/ref-rewrite deliberately do NOT set it.
+	return u.issueRepo.Update(ctx, id, updates, actor, IssueTableOpts{UseWispsTable: useWisp, Finalize: true})
 }
 
 func (u *issueUseCaseImpl) ClaimIssue(ctx context.Context, id, actor string) (ClaimResult, error) {

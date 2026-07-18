@@ -845,6 +845,30 @@ func TestProxiedServerUpdate(t *testing.T) {
 			t.Errorf("notes: got %q, want %q", updated.Notes, want)
 		}
 	})
+
+	// beads-iu9f Phase B / beads-25k6: the proxied/domain update path must enforce
+	// the same post-update invariants as the shared seam (issueops.updateIssueInTx),
+	// not leak a raw Dolt column error. Before the reroute, a >500-char title hit
+	// the raw "UPDATE ... SET title=?" and returned Error 1105 "string ... too large
+	// for column 'title'"; it must instead fail with the domain title-length
+	// validation ("title must be 500 characters or less").
+	t.Run("title_too_long_rejected_cleanly", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "utl")
+		issue := bdProxiedCreate(t, bd, p.dir, "Original")
+		longTitle := strings.Repeat("x", 501)
+		out := bdProxiedUpdateFail(t, bd, p.dir, issue.ID, "--title", longTitle)
+		if strings.Contains(out, "too large for column") || strings.Contains(out, "Error 1105") {
+			t.Errorf("title-too-long leaked a raw Dolt column error instead of clean domain validation:\n%s", out)
+		}
+		if !strings.Contains(out, "500") {
+			t.Errorf("expected a title-length (500) validation error, got:\n%s", out)
+		}
+		// The failed update must not have partially applied: title unchanged.
+		reloaded := bdProxiedShow(t, bd, p.dir, issue.ID)
+		if reloaded.Title != "Original" {
+			t.Errorf("failed title update leaked through: title=%q, want Original", reloaded.Title)
+		}
+	})
 }
 
 func TestProxiedServerUpdateHooks(t *testing.T) {
