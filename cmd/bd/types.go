@@ -49,7 +49,10 @@ Examples:
 		}()
 
 		if err := ensureDirectMode("types command requires direct database access"); err != nil {
-			return HandleError("%v", err)
+			// beads-0wp9: this runs before the `if jsonOutput` success block below,
+			// so under `bd types --json` a plain HandleError leaves stdout empty +
+			// stderr text — honor the --json error contract (xwjg/8lqh class).
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		var customTypes []string
