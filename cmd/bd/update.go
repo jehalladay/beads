@@ -832,6 +832,40 @@ func parseMetadataFieldEdits(setFlags, unsetFlags []string) (map[string]json.Raw
 
 // applyMetadataEdits applies --set-metadata and --unset-metadata edits to existing metadata.
 // Returns the merged JSON as json.RawMessage.
+// parseMetadataEdits parses --set-metadata (key=value) and --unset-metadata
+// (key) flag values into typed per-key edits WITHOUT touching existing
+// metadata. It performs the same key validation + value typing (toJSONValue) as
+// applyMetadataEdits, but returns the parsed sets/unsets rather than merging
+// them into a blob — the merge is done atomically server-side by the proxied
+// update path (beads-jibd), avoiding the concurrent-edit clobber that a
+// client-side whole-blob read-modify-write causes. A nil map is returned when
+// there are no sets (never an empty non-nil map) so downstream len() checks and
+// the UpdateSpec no-op path behave.
+func parseMetadataEdits(setFlags, unsetFlags []string) (map[string]json.RawMessage, []string, error) {
+	var sets map[string]json.RawMessage
+	for _, kv := range setFlags {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || k == "" {
+			return nil, nil, fmt.Errorf("invalid --set-metadata: expected key=value, got %q", kv)
+		}
+		if err := storage.ValidateMetadataKey(k); err != nil {
+			return nil, nil, err
+		}
+		if sets == nil {
+			sets = make(map[string]json.RawMessage, len(setFlags))
+		}
+		sets[k] = toJSONValue(v)
+	}
+	var unsets []string
+	for _, k := range unsetFlags {
+		if err := storage.ValidateMetadataKey(k); err != nil {
+			return nil, nil, err
+		}
+		unsets = append(unsets, k)
+	}
+	return sets, unsets, nil
+}
+
 func applyMetadataEdits(existing json.RawMessage, setFlags, unsetFlags []string) (json.RawMessage, error) {
 	// Parse existing metadata (or start with empty object)
 	data := make(map[string]json.RawMessage)

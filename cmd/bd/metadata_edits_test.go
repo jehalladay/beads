@@ -325,3 +325,62 @@ func TestToJSONValue(t *testing.T) {
 		})
 	}
 }
+
+// TestParseMetadataEdits_TypedSetsAndUnsets pins beads-jibd: parseMetadataEdits
+// does the SAME key-validation + value-typing as applyMetadataEdits but returns
+// per-key edits (for atomic server-side application) instead of a merged blob.
+func TestParseMetadataEdits_TypedSetsAndUnsets(t *testing.T) {
+	t.Parallel()
+	sets, unsets, err := parseMetadataEdits(
+		[]string{"team=platform", "points=5", "done=true"},
+		[]string{"old"},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(sets["team"]) != `"platform"` {
+		t.Errorf("team = %s, want quoted string", sets["team"])
+	}
+	if string(sets["points"]) != `5` {
+		t.Errorf("points = %s, want bare number 5 (toJSONValue typing)", sets["points"])
+	}
+	if string(sets["done"]) != `true` {
+		t.Errorf("done = %s, want bare bool true", sets["done"])
+	}
+	if len(unsets) != 1 || unsets[0] != "old" {
+		t.Errorf("unsets = %v, want [old]", unsets)
+	}
+}
+
+func TestParseMetadataEdits_EmptyIsNil(t *testing.T) {
+	t.Parallel()
+	sets, unsets, err := parseMetadataEdits(nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sets != nil {
+		t.Errorf("sets = %v, want nil (no non-nil empty map so len/no-op checks behave)", sets)
+	}
+	if unsets != nil {
+		t.Errorf("unsets = %v, want nil", unsets)
+	}
+}
+
+func TestParseMetadataEdits_InvalidFormatErrors(t *testing.T) {
+	t.Parallel()
+	if _, _, err := parseMetadataEdits([]string{"noequalssign"}, nil); err == nil {
+		t.Error("expected an error for a --set-metadata value without '='")
+	}
+}
+
+func TestParseMetadataEdits_InvalidKeyErrors(t *testing.T) {
+	t.Parallel()
+	// An invalid metadata key must be rejected in BOTH the set and unset legs,
+	// matching applyMetadataEdits' validation (storage.ValidateMetadataKey).
+	if _, _, err := parseMetadataEdits([]string{"bad key=v"}, nil); err == nil {
+		t.Error("expected an error for an invalid --set-metadata key")
+	}
+	if _, _, err := parseMetadataEdits(nil, []string{"bad key"}); err == nil {
+		t.Error("expected an error for an invalid --unset-metadata key")
+	}
+}

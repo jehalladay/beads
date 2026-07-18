@@ -192,6 +192,54 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 	return nil
 }
 
+// ApplyMetadataEdits applies per-key metadata sets/unsets and/or a shallow
+// object merge atomically SERVER-SIDE via issueops.MergeMetadataInTx /
+// ApplyMetadataKeyEditsInTx (a single JSON_SET/JSON_REMOVE inside r.runner's
+// tx), never a client-side whole-blob read-modify-write — so two concurrent
+// proxied metadata edits to different keys both survive (beads-jibd/fnp6).
+// Ordering matches the client-side path it replaces: merge first, then sets,
+// then unsets. On Finalize it re-runs the shared finalize (metadata-object
+// validation + content_hash recompute) in the same tx, so a bad write rolls
+// back. Records a single update event.
+func (r *issueSQLRepositoryImpl) ApplyMetadataEdits(ctx context.Context, id string, sets map[string]json.RawMessage, unsets []string, merge json.RawMessage, actor string, opts domain.IssueTableOpts) error {
+	if id == "" {
+		return errors.New("db: ApplyMetadataEdits: id must not be empty")
+	}
+	if len(sets) == 0 && len(unsets) == 0 && len(merge) == 0 {
+		return nil
+	}
+
+	table := pickIssueTable(opts.UseWispsTable)
+
+	if len(merge) > 0 {
+		if err := issueops.MergeMetadataInTx(ctx, r.runner, table, id, merge); err != nil {
+			return fmt.Errorf("db: ApplyMetadataEdits %s: merge: %w", id, err)
+		}
+	}
+	if len(sets) > 0 || len(unsets) > 0 {
+		if err := issueops.ApplyMetadataKeyEditsInTx(ctx, r.runner, table, id, sets, unsets); err != nil {
+			return fmt.Errorf("db: ApplyMetadataEdits %s: key edits: %w", id, err)
+		}
+	}
+
+	if err := r.events.Record(ctx, domain.Event{
+		IssueID: id,
+		Type:    types.EventUpdated,
+		Actor:   actor,
+	}, domain.RecordEventOpts{UseWispsTable: opts.UseWispsTable}); err != nil {
+		return err
+	}
+
+	// Re-run the shared finalize (metadata-object validation + content_hash
+	// recompute) in this same tx, matching the Update path (beads-lsbu/rzx8).
+	if opts.Finalize {
+		if err := issueops.FinalizeUpdatedIssueInTx(ctx, r.runner, table, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func coerceStatus(v any) types.Status {
 	switch s := v.(type) {
 	case string:

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -195,28 +196,32 @@ func buildUpdateSpecForIssue(current *types.Issue, in *updateInput) (domain.Upda
 		combined += in.appendNotes
 		fields["notes"] = combined
 	}
-	if len(in.mergeMetadataIn) > 0 {
-		merged, err := mergeMetadata(current.Metadata, in.mergeMetadataIn)
-		if err != nil {
-			return domain.UpdateSpec{}, fmt.Errorf("metadata merge failed for %s: %w", current.ID, err)
-		}
-		fields["metadata"] = merged
-	}
+	// Metadata edits carry as per-key slots on the spec so ApplyUpdate applies
+	// them atomically SERVER-SIDE (JSON_SET) instead of the old client-side
+	// whole-blob read-modify-write that clobbered concurrent edits (beads-jibd).
+	// The parse (key=value → typed JSON, key validation) stays client-side — it's
+	// pure and has no concurrency hazard; only the read-modify-write moves into
+	// the tx. Ordering (merge → sets → unsets) is preserved by ApplyUpdate.
+	var metaSets map[string]json.RawMessage
+	var metaUnsets []string
 	if len(in.setMetadata) > 0 || len(in.unsetMetadata) > 0 {
-		merged, err := applyMetadataEdits(current.Metadata, in.setMetadata, in.unsetMetadata)
+		var err error
+		metaSets, metaUnsets, err = parseMetadataEdits(in.setMetadata, in.unsetMetadata)
 		if err != nil {
 			return domain.UpdateSpec{}, fmt.Errorf("metadata edit failed for %s: %w", current.ID, err)
 		}
-		fields["metadata"] = merged
 	}
 
 	spec := domain.UpdateSpec{
-		Fields:       fields,
-		Claim:        in.claim,
-		AddLabels:    in.addLabels,
-		RemoveLabels: in.removeLabels,
-		SetLabels:    in.setLabels,
-		Reparent:     in.reparent,
+		Fields:         fields,
+		Claim:          in.claim,
+		AddLabels:      in.addLabels,
+		RemoveLabels:   in.removeLabels,
+		SetLabels:      in.setLabels,
+		Reparent:       in.reparent,
+		MetadataSets:   metaSets,
+		MetadataUnsets: metaUnsets,
+		MetadataMerge:  in.mergeMetadataIn,
 	}
 	return spec, nil
 }

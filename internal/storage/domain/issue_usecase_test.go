@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -67,6 +68,16 @@ type fakeIssueRepo struct {
 		wisp    bool
 	}
 
+	// ApplyMetadataEdits (beads-jibd atomic metadata routing)
+	metaEditErr   error
+	metaEditCalls []struct {
+		id     string
+		sets   map[string]json.RawMessage
+		unsets []string
+		merge  json.RawMessage
+		wisp   bool
+	}
+
 	// Search / ready / descendants
 	searchPage    SearchPage
 	searchErr     error
@@ -116,6 +127,16 @@ func (f *fakeIssueRepo) Update(_ context.Context, id string, updates map[string]
 		wisp    bool
 	}{id, updates, opts.UseWispsTable})
 	return f.updateErr
+}
+func (f *fakeIssueRepo) ApplyMetadataEdits(_ context.Context, id string, sets map[string]json.RawMessage, unsets []string, merge json.RawMessage, _ string, opts IssueTableOpts) error {
+	f.metaEditCalls = append(f.metaEditCalls, struct {
+		id     string
+		sets   map[string]json.RawMessage
+		unsets []string
+		merge  json.RawMessage
+		wisp   bool
+	}{id, sets, unsets, merge, opts.UseWispsTable})
+	return f.metaEditErr
 }
 func (f *fakeIssueRepo) Claim(context.Context, string, string, IssueTableOpts) (ClaimRowResult, error) {
 	return f.claimResult, f.claimErr
@@ -913,6 +934,57 @@ func TestIssueUseCase_ApplyUpdate(t *testing.T) {
 		r := &fakeIssueRepo{existsResults: map[string]bool{}, getErr: errBoom}
 		uc := newTestIssueUC(r, nil, nil, nil, nil)
 		if _, err := uc.ApplyUpdate(ctx, "bd-1", UpdateSpec{}, "actor"); !errors.Is(err, errBoom) {
+			t.Fatalf("want errBoom got %v", err)
+		}
+	})
+
+	// beads-jibd: metadata edits must route through the ATOMIC ApplyMetadataEdits
+	// seam (server-side JSON_SET), NOT be stuffed into Fields as a pre-merged
+	// blob. This is what makes concurrent proxied metadata edits non-clobbering.
+	t.Run("metadata edits route through atomic ApplyMetadataEdits, not Fields", func(t *testing.T) {
+		r := newRepo()
+		uc := newTestIssueUC(r, nil, nil, nil, nil)
+		spec := UpdateSpec{
+			MetadataSets:   map[string]json.RawMessage{"k": json.RawMessage(`"v"`)},
+			MetadataUnsets: []string{"old"},
+			MetadataMerge:  json.RawMessage(`{"m":1}`),
+		}
+		if _, err := uc.ApplyUpdate(ctx, "bd-1", spec, "actor"); err != nil {
+			t.Fatalf("ApplyUpdate: %v", err)
+		}
+		if len(r.metaEditCalls) != 1 {
+			t.Fatalf("want exactly one ApplyMetadataEdits call, got %d", len(r.metaEditCalls))
+		}
+		call := r.metaEditCalls[0]
+		if call.id != "bd-1" || call.wisp {
+			t.Errorf("metadata edit routed wrong: id=%q wisp=%v", call.id, call.wisp)
+		}
+		if string(call.sets["k"]) != `"v"` || len(call.unsets) != 1 || call.unsets[0] != "old" || string(call.merge) != `{"m":1}` {
+			t.Errorf("metadata edit payload wrong: sets=%v unsets=%v merge=%s", call.sets, call.unsets, call.merge)
+		}
+		// It must NOT have been flattened into a blob Update.
+		for _, u := range r.updateCalls {
+			if _, ok := u.updates["metadata"]; ok {
+				t.Error("metadata must NOT be written as a Fields blob (clobber path); it must use ApplyMetadataEdits")
+			}
+		}
+	})
+	t.Run("no metadata slots => no ApplyMetadataEdits call", func(t *testing.T) {
+		r := newRepo()
+		uc := newTestIssueUC(r, nil, nil, nil, nil)
+		if _, err := uc.ApplyUpdate(ctx, "bd-1", UpdateSpec{Fields: map[string]any{"status": "closed"}}, "actor"); err != nil {
+			t.Fatalf("ApplyUpdate: %v", err)
+		}
+		if len(r.metaEditCalls) != 0 {
+			t.Errorf("no metadata slots set, but ApplyMetadataEdits was called %d times", len(r.metaEditCalls))
+		}
+	})
+	t.Run("metadata edit error propagates", func(t *testing.T) {
+		r := newRepo()
+		r.metaEditErr = errBoom
+		uc := newTestIssueUC(r, nil, nil, nil, nil)
+		spec := UpdateSpec{MetadataSets: map[string]json.RawMessage{"k": json.RawMessage(`1`)}}
+		if _, err := uc.ApplyUpdate(ctx, "bd-1", spec, "actor"); !errors.Is(err, errBoom) {
 			t.Fatalf("want errBoom got %v", err)
 		}
 	})
