@@ -39,6 +39,11 @@ if ! git rev-parse --verify --quiet "$RATCHET_BASE" >/dev/null; then
     exit 0
 fi
 
+# BEADS_CI_STEP_TIMEOUT (beads-0lu9): this is the SECOND golangci-lint run in the
+# gate (after pr-lint.sh's full run) and has the same hang-wedge exposure — a
+# 0%-CPU hung process holding the shared /tmp/golangci-lint.lock is not bounded
+# by golangci's own --timeout. Bound it with the same OS-level external timeout.
+BEADS_CI_STEP_TIMEOUT="${BEADS_CI_LINT_TIMEOUT:-480}" \
 ci_time "golangci-lint ratchet (new violations only)" -- \
     golangci-lint run \
         --config "$REPO_ROOT/.golangci-ratchet.yml" \
