@@ -269,6 +269,28 @@ func restoreMetadata(issue *types.Issue, fields map[string]interface{}) {
 	}
 }
 
+// validateADOTags fails loud, before any ADO API call, if a label contains a
+// semicolon. ADO work-item Tags are semicolon-delimited: buildTagString joins
+// with "; " and parseTags splits on ";", so a label like "status;done" would be
+// silently SPLIT into two tags on push and round-trip back as two separate
+// labels — corrupting the label as a dedup/round-trip identity token. beads
+// labels are only edge-trimmed (utils.NormalizeLabels), so "a;b" is legal
+// locally but lossy against ADO. There is no lossless transform (dropping or
+// escaping the ";" would drift on pull-back and break dedup), so per the
+// reusable SCM per-field-constraint class the correct behavior is to reject
+// with a beads-side message naming the offending label. Mirrors the Jira
+// label-whitespace guard (beads-xcbd, validateJiraLabels) and the Notion comma
+// guard (beads-i8gh, validateNotionLabels). ADO-specific: ADO Tags DO allow
+// spaces (unlike Jira), so only the ";" delimiter is rejected. beads-pcz2.
+func validateADOTags(labels []string) error {
+	for _, l := range labels {
+		if strings.Contains(l, ";") {
+			return fmt.Errorf("label %q contains a semicolon; ADO rejects it (a semicolon is the work-item Tags delimiter) — rename or remove the semicolon before syncing", l)
+		}
+	}
+	return nil
+}
+
 // parseTags splits an ADO semicolon-separated tag string into a trimmed slice.
 // Returns nil for empty input.
 func parseTags(tagStr string) []string {

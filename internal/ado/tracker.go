@@ -210,6 +210,9 @@ func (t *Tracker) FetchIssue(ctx context.Context, identifier string) (*tracker.T
 // without a state (ADO assigns its default) and then transitioned through
 // intermediate states to reach the target.
 func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker.TrackerIssue, error) {
+	if err := validateADOTags(issue.Labels); err != nil {
+		return nil, err
+	}
 	fields := t.mapper.IssueToTracker(issue)
 	typeName, _ := t.mapper.TypeToTracker(issue.IssueType).(string)
 	if typeName == "" {
@@ -260,6 +263,9 @@ func (t *Tracker) UpdateIssue(ctx context.Context, externalID string, issue *typ
 	}
 	if id <= 0 {
 		return nil, fmt.Errorf("invalid ADO work item ID: must be positive, got %d", id)
+	}
+	if err := validateADOTags(issue.Labels); err != nil {
+		return nil, err
 	}
 
 	fields := t.mapper.IssueToTracker(issue)
