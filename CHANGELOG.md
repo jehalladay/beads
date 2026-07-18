@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a non-zero exit when it is absent; a present key still clears. The idempotent `DeleteConfig` contract is
   unchanged for programmatic callers. Sibling of the landed dep-remove / label-remove fixes (beads-w2tk/yaux).
 
+- **`bd stale --limit <negative>` now fails loud instead of silently returning the full result set (beads-r9hj).**
+  beads-eqi4 added a shared `validateLimitFromCmd` chokepoint and routed every sibling read command's
+  `--limit` through it (`ready`/`search`/`query`/`gate`/`find-duplicates`/`mol current` + the proxied
+  handlers) — but missed `bd stale`. `GetStaleIssuesInTx` emits a `LIMIT` clause only when
+  `filter.Limit > 0`, so a negative `--limit` was false → no `LIMIT` → the FULL result set with `rc=0`:
+  the same misleading false-green eqi4 fixed elsewhere. `bd stale` now routes through the same shared
+  chokepoint, so a negative `--limit` errors while `--limit 0` (the documented "unlimited" sentinel)
+  and positive values are left alone.
 - **`bd count` and `bd ready` `--priority` flags now accept the documented `P0`-`P4` syntax, not just bare `0`-`4` (beads-vcpq).**
   `bd list`/`quick`/`create` register `--priority` as a `StringP` consumed via `ValidatePriority`
   (which calls `ParsePriority`), so both `--priority 2` and `--priority P2` work and the help text

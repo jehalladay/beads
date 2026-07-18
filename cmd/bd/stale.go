@@ -36,6 +36,14 @@ This helps identify:
 		if days < 1 {
 			return HandleErrorRespectJSON("--days must be at least 1")
 		}
+		// beads-r9hj: route --limit through the shared chokepoint (beads-eqi4).
+		// eqi4 guarded every sibling read command's --limit but missed stale:
+		// GetStaleIssuesInTx emits a LIMIT clause only when filter.Limit > 0, so
+		// a negative --limit is false → no LIMIT → the FULL result set with rc=0
+		// (the same false-green eqi4 fixed for ready/search/query/gate/...).
+		if err := validateLimitFromCmd(cmd); err != nil {
+			return err
+		}
 		if status != "" && status != "open" && status != "in_progress" && status != "blocked" && status != "deferred" {
 			return HandleErrorRespectJSON("invalid status '%s'. Valid values: open, in_progress, blocked, deferred", status)
 		}
