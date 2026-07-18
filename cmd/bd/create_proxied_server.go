@@ -470,7 +470,9 @@ func buildDomainGraphPlan(plan GraphApplyPlan, in createInput) domain.GraphPlan 
 }
 
 func materializeGraphNodeIssue(n GraphApplyNode, in createInput) *types.Issue {
-	issueType := types.IssueType(n.Type)
+	// Normalize aliases/case to canonical, matching the direct graph-apply path
+	// and bd create -t (beads-h3k5). Empty stays empty -> defaults to task.
+	issueType := types.IssueType(n.Type).Normalize()
 	if issueType == "" {
 		issueType = types.TypeTask
 	}

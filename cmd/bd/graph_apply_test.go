@@ -251,6 +251,28 @@ func TestEmitGraphApplyDryRun_Counts(t *testing.T) {
 	}
 }
 
+// TestEmitGraphApplyDryRun_NormalizesTypeAlias verifies the dry-run PREVIEW
+// shows the canonical type the live create will store, not the raw alias
+// (beads-h3k5): a node typed "feat" must preview as "feature", matching the
+// validate + materialize sites. Otherwise --dry-run lies about the outcome.
+func TestEmitGraphApplyDryRun_NormalizesTypeAlias(t *testing.T) {
+	plan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "n1", Title: "Aliased", Type: "feat"},
+		},
+	}
+	out := captureStdout(t, func() error {
+		emitGraphApplyDryRun(plan)
+		return nil
+	})
+	if !strings.Contains(out, "feature") {
+		t.Errorf("dry-run should preview normalized type 'feature' for alias 'feat':\n%s", out)
+	}
+	if strings.Contains(out, "[feat]") || strings.Contains(out, " feat ") {
+		t.Errorf("dry-run should NOT show the raw alias 'feat':\n%s", out)
+	}
+}
+
 func TestGraphApplyOptionsValidateRejectsEphemeralNoHistory(t *testing.T) {
 	err := (GraphApplyOptions{Ephemeral: true, NoHistory: true}).Validate()
 	if err == nil {
