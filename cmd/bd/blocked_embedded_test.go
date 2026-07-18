@@ -123,3 +123,47 @@ func TestEmbeddedBlockedConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddedBlockedParentExistenceCheck is the beads-d5jg teeth: bd blocked
+// --parent <NONEXISTENT> must error (rc!=0, "not found") like bd list --parent
+// (beads-n8lv), not silently return [] exit 0 — a typo'd epic id in a
+// "what's blocked under this epic" gate should be a hard error, not read as
+// "nothing blocked". Existence-axis twin of beads-lxo5 (recursion) on the same
+// command.
+func TestEmbeddedBlockedParentExistenceCheck(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "bpe")
+	epic := bdCreate(t, bd, dir, "real epic", "--type", "epic")
+
+	// Nonexistent parent must error, in both text and --json.
+	for _, args := range [][]string{
+		{"blocked", "--parent", "bpe-nonexistent"},
+		{"blocked", "--parent", "bpe-nonexistent", "--json"},
+	} {
+		cmd := exec.Command(bd, args...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("bd %v: expected non-zero exit for nonexistent parent, got success:\n%s", args, out)
+		}
+		if !strings.Contains(string(out), "not found") {
+			t.Errorf("bd %v: expected 'not found' error, got:\n%s", args, out)
+		}
+	}
+
+	// A real, childless parent must NOT error — it's a valid query with an
+	// empty result (surgical: the guard only rejects missing parents).
+	cmd := exec.Command(bd, "blocked", "--parent", epic.ID)
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bd blocked --parent %s (valid childless): expected success, got %v:\n%s", epic.ID, err, out)
+	}
+}
