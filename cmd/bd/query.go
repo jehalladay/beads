@@ -116,6 +116,14 @@ Examples:
 		allFlag, _ := cmd.Flags().GetBool("all")
 		longFormat, _ := cmd.Flags().GetBool("long")
 		sortBy, _ := cmd.Flags().GetString("sort")
+		// Reject an invalid --sort field instead of silently falling back to
+		// priority order (beads-a9rk): the SQL builder (OrderByForColumns →
+		// SortDefs[""]) and the client sortIssues both default an unknown key to
+		// priority with no error, a misleading false-green. bd list already
+		// fails loud; route query through the same shared check.
+		if err := validateSortField(sortBy); err != nil {
+			return err
+		}
 		reverse, _ := cmd.Flags().GetBool("reverse")
 		parseOnly, _ := cmd.Flags().GetBool("parse-only")
 		offset, _ := cmd.Flags().GetInt("offset")

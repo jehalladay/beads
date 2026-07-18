@@ -28,6 +28,11 @@ func runQueryProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 	allFlag, _ := cmd.Flags().GetBool("all")
 	longFormat, _ := cmd.Flags().GetBool("long")
 	sortBy, _ := cmd.Flags().GetString("sort")
+	// Reject an invalid --sort field (beads-a9rk), mirroring the direct query
+	// path + bd list; an unknown key otherwise silently falls back to priority.
+	if err := validateSortField(sortBy); err != nil {
+		return err
+	}
 	reverse, _ := cmd.Flags().GetBool("reverse")
 	parseOnly, _ := cmd.Flags().GetBool("parse-only")
 	offset, _ := cmd.Flags().GetInt("offset")

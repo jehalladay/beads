@@ -254,6 +254,19 @@ func TestEmbeddedQuery(t *testing.T) {
 		}
 	})
 
+	// beads-a9rk: an invalid --sort field must fail loud, not silently fall back
+	// to priority order (as bd list already does). A valid --sort still works.
+	t.Run("invalid_sort_field_exits_nonzero", func(t *testing.T) {
+		out := bdQueryFail(t, bd, dir, "status=open", "--sort", "bananas")
+		if !strings.Contains(out, "invalid sort field") {
+			t.Errorf("expected 'invalid sort field' error, got:\n%s", out)
+		}
+	})
+	t.Run("valid_sort_field_exits_zero", func(t *testing.T) {
+		// regression guard: a documented field must still be accepted.
+		bdQuery(t, bd, dir, "status=open", "--sort", "created")
+	})
+
 	_ = taskHigh
 	_ = bugMed
 	_ = featureLow
