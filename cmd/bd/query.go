@@ -107,6 +107,12 @@ Examples:
 		queryStr := strings.Join(args, " ")
 
 		limit, _ := cmd.Flags().GetInt("limit")
+		// Reject a negative --limit up front (beads-eqi4): the SQL builders
+		// only apply filter.Limit when >0, so a negative value silently returns
+		// the full set. Shared with bd list (uh4i) via validateLimitFromCmd.
+		if err := validateLimitFromCmd(cmd); err != nil {
+			return err
+		}
 		allFlag, _ := cmd.Flags().GetBool("all")
 		longFormat, _ := cmd.Flags().GetBool("long")
 		sortBy, _ := cmd.Flags().GetString("sort")

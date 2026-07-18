@@ -34,6 +34,12 @@ func runQueryProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 	if offset < 0 {
 		return HandleErrorRespectJSON("--offset must be non-negative")
 	}
+	// Reject a negative --limit (beads-eqi4): filter.Limit is applied only when
+	// >0, so a negative value silently returns the full set. Mirrors the direct
+	// query path + bd list (uh4i).
+	if err := validateLimitFromCmd(cmd); err != nil {
+		return err
+	}
 
 	node, err := query.Parse(queryStr)
 	if err != nil {
