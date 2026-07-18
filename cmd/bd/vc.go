@@ -145,6 +145,9 @@ Examples:
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// beads-q634: vc commit is a data-plane write path — honor the --readonly
+		// sandbox rather than letting a sandboxed run touch the commit path.
+		CheckReadonly("vc commit")
 		evt := metrics.NewCommandEvent("vc-commit")
 		defer func() {
 			if c := metrics.Global(); c != nil {

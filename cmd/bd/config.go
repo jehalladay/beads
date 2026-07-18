@@ -123,6 +123,10 @@ var configSetCmd = &cobra.Command{
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(_ *cobra.Command, args []string) error {
+		// beads-q634: config set persists (dolt host/port, tokens, export
+		// settings) — a write channel that must honor the --readonly sandbox
+		// like the issue-mutation verbs, not bypass it.
+		CheckReadonly("config set")
 		evt := metrics.NewCommandEvent("config-set")
 		defer func() {
 			if c := metrics.Global(); c != nil {
@@ -520,6 +524,8 @@ var configUnsetCmd = &cobra.Command{
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// beads-q634: config unset persists — honor the --readonly sandbox.
+		CheckReadonly("config unset")
 		evt := metrics.NewCommandEvent("config-unset")
 		defer func() {
 			if c := metrics.Global(); c != nil {
@@ -790,6 +796,8 @@ Examples:
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(_ *cobra.Command, args []string) error {
+		// beads-q634: config set-many persists a batch of writes — honor --readonly.
+		CheckReadonly("config set-many")
 		evt := metrics.NewCommandEvent("config-set-many")
 		defer func() {
 			if c := metrics.Global(); c != nil {
