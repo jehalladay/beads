@@ -9,8 +9,8 @@ import (
 // input contains no OSC 8 open sequence at all.
 func TestStripOSC8Hyperlinks_NoOSC8(t *testing.T) {
 	in := "plain text with \x1b[1mSGR\x1b[0m but no hyperlinks"
-	if got := stripOSC8Hyperlinks(in); got != in {
-		t.Fatalf("stripOSC8Hyperlinks should return input unchanged, got %q", got)
+	if got := stripOSCSequences(in); got != in {
+		t.Fatalf("stripOSCSequences should return input unchanged, got %q", got)
 	}
 }
 
@@ -20,7 +20,7 @@ func TestStripOSC8Hyperlinks_NoOSC8(t *testing.T) {
 func TestStripOSC8Hyperlinks_BELTerminated(t *testing.T) {
 	// OSC 8 open (params ; URI BEL) LINKTEXT OSC 8 close (empty params BEL).
 	in := "before \x1b]8;;https://example.com\aLINKTEXT\x1b]8;;\aafter"
-	got := stripOSC8Hyperlinks(in)
+	got := stripOSCSequences(in)
 	if strings.Contains(got, "\x1b]8;") {
 		t.Fatalf("expected all OSC 8 sequences stripped, got %q", got)
 	}
@@ -34,7 +34,7 @@ func TestStripOSC8Hyperlinks_BELTerminated(t *testing.T) {
 func TestStripOSC8Hyperlinks_STTerminated(t *testing.T) {
 	// Use ESC \ (ST) instead of BEL to close each OSC 8 sequence.
 	in := "x\x1b]8;;https://example.com\x1b\\LINK\x1b]8;;\x1b\\y"
-	got := stripOSC8Hyperlinks(in)
+	got := stripOSCSequences(in)
 	if strings.Contains(got, "\x1b]8;") {
 		t.Fatalf("expected ST-terminated OSC 8 stripped, got %q", got)
 	}
@@ -52,7 +52,7 @@ func TestStripOSC8Hyperlinks_STTerminated(t *testing.T) {
 func TestStripOSC8Hyperlinks_Unterminated(t *testing.T) {
 	// No BEL and no ST after the OSC 8 open — dangling sequence.
 	in := "keep\x1b]8;;https://example.com/no-terminator"
-	got := stripOSC8Hyperlinks(in)
+	got := stripOSCSequences(in)
 	// Text before the dangling open sequence is preserved.
 	if !strings.Contains(got, "keep") {
 		t.Fatalf("expected leading text preserved, got %q", got)
@@ -64,6 +64,69 @@ func TestStripOSC8Hyperlinks_Unterminated(t *testing.T) {
 	// The malformed OSC 8 open marker must not survive.
 	if strings.Contains(got, "]8;") {
 		t.Fatalf("expected malformed OSC 8 open stripped, got %q", got)
+	}
+}
+
+// TestStripOSCSequences_NonOSC8 covers the beads-m5yu gap: OSC sequences other
+// than OSC 8 — OSC 52 (clipboard write) and OSC 0/2 (window-title set), both
+// terminal-injection vectors — must ALSO be stripped, not just hyperlinks. The
+// original OSC-8-only helper let these leak their raw ESC on the useANSI &&
+// !useHyperlinks render path (no xansi.Strip backstop there).
+func TestStripOSCSequences_NonOSC8(t *testing.T) {
+	cases := map[string]string{
+		"osc52_clipboard_BEL": "keep\x1b]52;c;ZXZpbA==\atail",
+		"osc0_title_BEL":      "keep\x1b]0;pwned\atail",
+		"osc2_title_ST":       "keep\x1b]2;pwned\x1b\\tail",
+		"osc52_unterminated":  "keep\x1b]52;c;ZXZpbA==",
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := stripOSCSequences(in)
+			if strings.ContainsRune(got, '\x1b') {
+				t.Fatalf("expected raw ESC stripped, got %q", got)
+			}
+			if strings.Contains(got, "]52;") || strings.Contains(got, "]0;") || strings.Contains(got, "]2;") {
+				t.Fatalf("expected OSC marker stripped, got %q", got)
+			}
+			if !strings.Contains(got, "keep") {
+				t.Fatalf("expected leading text preserved, got %q", got)
+			}
+		})
+	}
+}
+
+// TestStripOSCSequences_PreservesSGR asserts that stripping OSC does NOT remove
+// ANSI SGR color/style — SGR uses the CSI introducer "\x1b[" not the OSC "\x1b]",
+// so color survives while OSC injection vectors are removed (the whole point of
+// the narrow OSC-only strip on the color-capable path).
+func TestStripOSCSequences_PreservesSGR(t *testing.T) {
+	in := "\x1b[38;5;252mcolored\x1b[m and \x1b]0;title\a plain"
+	got := stripOSCSequences(in)
+	if !strings.Contains(got, "\x1b[38;5;252m") || !strings.Contains(got, "\x1b[m") {
+		t.Fatalf("expected SGR color preserved, got %q", got)
+	}
+	if strings.Contains(got, "]0;") {
+		t.Fatalf("expected OSC title stripped, got %q", got)
+	}
+}
+
+// TestRenderMarkdown_StripsOSC52OnColorPath is the end-to-end teeth for
+// beads-m5yu: on the useANSI && !useHyperlinks path (color on, hyperlinks off —
+// the common terminal case, where xansi.Strip does NOT run), a raw OSC 52
+// clipboard-write escape in user content must not survive into the output.
+func TestRenderMarkdown_StripsOSC52OnColorPath(t *testing.T) {
+	withMarkdownEnv(t, map[string]string{
+		"CLICOLOR_FORCE":  "1",   // ShouldUseColor -> true (useANSI)
+		"TERM":            "dumb", // ShouldUseHyperlinks -> false
+		"NO_COLOR":        "",
+		"FORCE_HYPERLINK": "",
+		"BD_AGENT_MODE":   "",
+		"CLAUDE_CODE":     "",
+	})
+
+	out := RenderMarkdown("safe\x1b]52;c;ZXZpbA==\atext\n")
+	if strings.Contains(out, "]52;") {
+		t.Fatalf("OSC 52 clipboard escape leaked into output: %q", out)
 	}
 }
 

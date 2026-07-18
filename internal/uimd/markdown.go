@@ -24,6 +24,17 @@ func RenderMarkdown(markdown string) string {
 		return markdown
 	}
 
+	// Strip OSC sequences from the INPUT before rendering (beads-m5yu): user
+	// content (issue Description/Notes/comments) can carry raw OSC escapes —
+	// OSC 52 (clipboard write), OSC 0/2 (window-title set) — which are
+	// terminal-injection vectors. Glamour FRAGMENTS an embedded escape (it
+	// inserts SGR resets between the ESC and its OSC body), so a post-render
+	// OSC strip can no longer see a contiguous "\x1b]" to remove; sanitizing the
+	// source first prevents the raw ESC from ever reaching the output on the
+	// useANSI && !useHyperlinks path (where the xansi.Strip backstop does not
+	// run). Glamour's OWN OSC 8 hyperlink emission is still handled post-render.
+	markdown = stripOSCSequences(markdown)
+
 	// Cap at 100 chars for readability; wider lines are harder to scan.
 	const maxReadableWidth = 100
 	wrapWidth := 80
@@ -65,7 +76,12 @@ func RenderMarkdown(markdown string) string {
 	}
 
 	if !useHyperlinks {
-		rendered = stripOSC8Hyperlinks(rendered)
+		// Strip ALL OSC sequences (not just OSC 8 hyperlinks): rendered user
+		// content can carry OSC 52 (clipboard) / OSC 0/2 (title) escapes that
+		// would otherwise leak to the terminal on the useANSI path, where the
+		// xansi.Strip backstop below does not run (beads-m5yu). SGR color is
+		// preserved (it uses "\x1b[", not the OSC "\x1b]" introducer).
+		rendered = stripOSCSequences(rendered)
 	}
 	if !useANSI && !useHyperlinks {
 		rendered = xansi.Strip(rendered)
@@ -74,26 +90,36 @@ func RenderMarkdown(markdown string) string {
 	return rendered
 }
 
-// stripOSC8Hyperlinks removes only OSC 8 hyperlink open/close sequences.
-// Glamour emits OSC 8 whenever it renders links, but OSC 8 support is separate
-// from ANSI SGR color support. We keep regular ANSI styling intact when color is
-// supported and only remove hyperlinks when ShouldUseHyperlinks says they are
-// unsafe for the current terminal.
-func stripOSC8Hyperlinks(s string) string {
-	const osc8 = "\x1b]8;"
-	if !strings.Contains(s, osc8) {
+// stripOSCSequences removes ALL OSC (Operating System Command) sequences —
+// any "\x1b]<params><BEL|ST>" — while leaving ANSI SGR color/style ("\x1b[...")
+// intact. It runs on the !useHyperlinks path.
+//
+// OSC support is separate from ANSI SGR color support, so we keep regular
+// styling when color is on and only remove OSC when ShouldUseHyperlinks says
+// the terminal is unsafe. Glamour legitimately emits only OSC 8 (hyperlinks),
+// but rendered user content (issue Description/Notes/comments) can carry OTHER
+// OSC sequences straight through — notably OSC 52 (clipboard write) and OSC 0/2
+// (window-title set), both terminal-injection vectors. The original helper
+// stripped only the "\x1b]8;" prefix, so those non-8 OSC escapes leaked their
+// raw ESC to the terminal on the useANSI && !useHyperlinks path (no xansi.Strip
+// backstop there). Stripping the whole OSC class closes that gap while
+// preserving color — mirrors internal/ui.SanitizeForTerminal's OSC handling
+// (beads-m5yu; extends the OSC-8 unterminated fix beads-uq8m).
+func stripOSCSequences(s string) string {
+	const oscIntro = "\x1b]"
+	if !strings.Contains(s, oscIntro) {
 		return s
 	}
 
 	var out strings.Builder
 	out.Grow(len(s))
 	for i := 0; i < len(s); {
-		if strings.HasPrefix(s[i:], osc8) {
-			if end := oscSequenceEnd(s, i+len(osc8)); end > i {
+		if strings.HasPrefix(s[i:], oscIntro) {
+			if end := oscSequenceEnd(s, i+len(oscIntro)); end > i {
 				i = end
 				continue
 			}
-			// Unterminated OSC 8 open (no BEL/ST): oscSequenceEnd returned -1.
+			// Unterminated OSC open (no BEL/ST): oscSequenceEnd returned -1.
 			// Strip the malformed remainder rather than emitting the raw ESC
 			// and leaking the dangling sequence — a sanitizer must not leave an
 			// unterminated escape intact (beads-uq8m). The open sequence runs to
