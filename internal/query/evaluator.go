@@ -1239,8 +1239,10 @@ func (e *Evaluator) buildSpecPredicate(comp *ComparisonNode) (func(*types.Issue)
 	// previously did an EXACT `SpecID==value` here, so `spec=abc` prefix-matched
 	// in AND/filter mode but exact-matched in an OR/predicate query — a silent
 	// context-dependent result (beads-dcww). The filter's prefix semantics are
-	// authoritative (IssueFilter/SQL express spec only as SpecIDPrefix, and the
-	// `*` wildcard is not lexable), so align the predicate to prefix.
+	// authoritative (IssueFilter/SQL express spec only as SpecIDPrefix), so
+	// align the predicate to prefix. (An explicit trailing `*` is handled by the
+	// hasWildcard branch above — both the bare and quoted forms now lex it,
+	// beads-p0hw — and this no-wildcard branch still prefix-matches regardless.)
 	switch comp.Op {
 	case OpEquals:
 		return func(i *types.Issue) bool { return strings.HasPrefix(i.SpecID, value) }, nil
