@@ -25,6 +25,20 @@ func bdHuman(t *testing.T, bd, dir string, args ...string) string {
 	return stdout.String()
 }
 
+// bdHumanFail runs "bd human" expecting a non-zero exit; returns combined output.
+func bdHumanFail(t *testing.T, bd, dir string, args ...string) string {
+	t.Helper()
+	fullArgs := append([]string{"human"}, args...)
+	cmd := exec.Command(bd, fullArgs...)
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("bd human %s expected failure but succeeded\noutput:\n%s", strings.Join(args, " "), out)
+	}
+	return string(out)
+}
+
 func TestEmbeddedHuman(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
@@ -49,6 +63,20 @@ func TestEmbeddedHuman(t *testing.T) {
 		out := bdHuman(t, bd, dir, "list")
 		// No human-labeled issues yet — should succeed without error
 		_ = out
+	})
+
+	// beads-4blh: an invalid --status must fail loud (like bd list/count/search/
+	// lint/find-duplicates), not silently return "No human-needed beads found".
+	t.Run("human_list_invalid_status_rejected", func(t *testing.T) {
+		out := bdHumanFail(t, bd, dir, "list", "--status", "bogusxyz")
+		if !strings.Contains(out, "invalid status") {
+			t.Errorf("expected invalid-status error, got: %s", out)
+		}
+	})
+
+	// A valid --status must still work (no false rejection).
+	t.Run("human_list_valid_status_ok", func(t *testing.T) {
+		_ = bdHuman(t, bd, dir, "list", "--status", "open")
 	})
 
 	// ===== Stats =====

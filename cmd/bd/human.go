@@ -125,13 +125,24 @@ Examples:
 			Labels: []string{"human"},
 		}
 
-		if status != "" {
-			s := types.Status(status)
-			filter.Status = &s
-		}
-
 		if err := ensureStoreActive(); err != nil {
 			return HandleErrorRespectJSON("listing human beads: %v", err)
+		}
+
+		if status != "" && status != "all" {
+			// Validate --status the same way bd list/count/search/lint/find-duplicates
+			// do: an invalid value must fail loud, not silently return an empty
+			// "No human-needed beads found" (a typo'd status is a user error, not
+			// "there are none"). Mirrors find_duplicates.go (beads-4blh).
+			filterCfg, cfgErr := loadDirectListFilterConfig(ctx, store)
+			if cfgErr != nil {
+				return HandleErrorRespectJSON("%v", cfgErr)
+			}
+			s := types.Status(status).Normalize()
+			if !s.IsValidWithCustom(filterCfg.customStatusNames()) {
+				return HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(filterCfg.customStatusNames()))
+			}
+			filter.Status = &s
 		}
 
 		var err error
