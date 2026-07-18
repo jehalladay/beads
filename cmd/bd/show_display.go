@@ -22,8 +22,17 @@ func displayShowIssue(ctx context.Context, issueID string) {
 
 // singleIssueSnapshot builds a comparable string from a single issue's state
 // so we can detect when the issue has changed between poll cycles.
+//
+// It includes content_hash (a SHA256 over the issue's content — title, status,
+// description, etc., recomputed on every update) IN ADDITION to updated_at.
+// updated_at alone is insufficient: the column is DATETIME (whole-second
+// granularity), so a field edit landing in the SAME wall-clock second as the
+// prior snapshot leaves updated_at unchanged and `bd show --watch` would miss
+// the edit. content_hash changes on any content change regardless of timing, so
+// a title/field edit is always detected (beads-wuk9). Status is kept for
+// belt-and-suspenders even though it's folded into content_hash.
 func singleIssueSnapshot(issue *types.Issue) string {
-	return fmt.Sprintf("%s:%s:%d", issue.ID, issue.Status, issue.UpdatedAt.UnixNano())
+	return fmt.Sprintf("%s:%s:%s:%d", issue.ID, issue.Status, issue.ContentHash, issue.UpdatedAt.UnixNano())
 }
 
 // watchIssue polls for changes to an issue and auto-refreshes the display (GH#654).
