@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd lint` now rejects invalid `--status`/`--type` values (beads-8cg2).**
+  `bd lint --type notatype` / `--status bogusxyz` silently checked 0 issues and
+  exited 0 (`✓ No template warnings found`), where the sibling `bd list` rejects
+  the same values exit 1 — so a typo'd lint gate in CI/agent flow read as a clean
+  pass rather than a hard error. `bd lint` now validates against the documented
+  enums (mirroring `bd list`, via the store's custom-status/type config) and emits
+  the structured `{"error":...}` shape under `--json`. 3rd command in the
+  enum-value-reject family (beads-deud count/search, beads-pbl7 ready); distinct
+  from beads-brxo (which fixed `--type` normalization, not value-rejection).
 - **`bd list --parent` now returns transitive descendants in `--json`/`--flat` (beads-wap4).**
   The flat and `--json` `--parent` output returned only direct children (plus
   dotted-ID descendants), silently dropping dep-edge grandchildren — even though
