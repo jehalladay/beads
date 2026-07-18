@@ -95,6 +95,9 @@ func (r *recordingStorage) GetDependencyTree(context.Context, string, int, bool,
 func (r *recordingStorage) AddLabel(context.Context, string, string, string) error {
 	return r.rec("AddLabel")
 }
+func (r *recordingStorage) SetLabels(context.Context, string, []string, string) error {
+	return r.rec("SetLabels")
+}
 func (r *recordingStorage) RemoveLabel(context.Context, string, string, string) error {
 	return r.rec("RemoveLabel")
 }
@@ -315,6 +318,7 @@ func TestInstrumentedStorageDelegationMatrix(t *testing.T) {
 
 		{"AddLabel", func(s storage.Storage) error { return s.AddLabel(ctx, "x", "l", "a") }},
 		{"RemoveLabel", func(s storage.Storage) error { return s.RemoveLabel(ctx, "x", "l", "a") }},
+		{"SetLabels", func(s storage.Storage) error { return s.SetLabels(ctx, "x", []string{"l"}, "a") }},
 		{"GetLabels", func(s storage.Storage) error { _, e := s.GetLabels(ctx, "x"); return e }},
 		{"GetIssuesByLabel", func(s storage.Storage) error { _, e := s.GetIssuesByLabel(ctx, "l"); return e }},
 

@@ -38,6 +38,23 @@ func (s *DoltStore) RemoveLabel(ctx context.Context, issueID, label, actor strin
 	return s.doltAddAndCommit(ctx, []string{"events", "labels"}, fmt.Sprintf("bd: label remove %s", issueID))
 }
 
+// SetLabels atomically replaces an issue's label set with exactly `labels`,
+// diffing inside ONE transaction (issueops.SetLabelsInTx) so unchanged labels
+// are untouched and a mid-diff failure rolls back rather than leaving a
+// half-applied set (beads-idvy).
+func (s *DoltStore) SetLabels(ctx context.Context, issueID string, labels []string, actor string) error {
+	isWisp := s.isActiveWisp(ctx, issueID)
+	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
+		return issueops.SetLabelsInTx(ctx, tx, "", "", issueID, labels, actor)
+	}); err != nil {
+		return err
+	}
+	if isWisp {
+		return nil
+	}
+	return s.doltAddAndCommit(ctx, []string{"events", "labels"}, fmt.Sprintf("bd: label set %s", issueID))
+}
+
 // GetLabels retrieves all labels for an issue
 func (s *DoltStore) GetLabels(ctx context.Context, issueID string) ([]string, error) {
 	var labels []string

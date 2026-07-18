@@ -64,6 +64,10 @@ type Storage interface {
 	// Labels
 	AddLabel(ctx context.Context, issueID, label, actor string) error
 	RemoveLabel(ctx context.Context, issueID, label, actor string) error
+	// SetLabels atomically replaces an issue's label set with exactly `labels`
+	// (diff-based: unchanged labels untouched, one transaction), so callers no
+	// longer need remove-all-then-add-all across N transactions (beads-idvy).
+	SetLabels(ctx context.Context, issueID string, labels []string, actor string) error
 	GetLabels(ctx context.Context, issueID string) ([]string, error)
 	GetIssuesByLabel(ctx context.Context, label string) ([]*types.Issue, error)
 

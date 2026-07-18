@@ -297,6 +297,17 @@ func (s *InstrumentedStorage) RemoveLabel(ctx context.Context, issueID, label, a
 	return err
 }
 
+func (s *InstrumentedStorage) SetLabels(ctx context.Context, issueID string, labels []string, actor string) error {
+	attrs := []attribute.KeyValue{
+		attribute.String("bd.issue.id", issueID),
+		attribute.Int("bd.label.count", len(labels)),
+	}
+	ctx, span, t := s.op(ctx, "SetLabels", attrs...)
+	err := s.inner.SetLabels(ctx, issueID, labels, actor)
+	s.done(ctx, span, t, err, attrs...)
+	return err
+}
+
 func (s *InstrumentedStorage) GetLabels(ctx context.Context, issueID string) ([]string, error) {
 	attrs := []attribute.KeyValue{attribute.String("bd.issue.id", issueID)}
 	ctx, span, t := s.op(ctx, "GetLabels", attrs...)
