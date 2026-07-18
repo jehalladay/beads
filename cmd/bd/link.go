@@ -73,6 +73,15 @@ Examples:
 		if !dt.IsValid() {
 			return HandleErrorRespectJSON("invalid dependency type %q: must be non-empty and at most 32 characters", depType)
 		}
+		// beads-9v0d: reject unknown types for parity with `bd dep add` (qfka),
+		// the proxied dep handler, and `bd create --deps` (all gate on
+		// IsWellKnown). link is shorthand for `dep add` and its --type help
+		// lists exactly the well-known set; without this gate a typo'd blocking
+		// type (e.g. "blockd") was silently stored rc=0 as a non-gating custom
+		// edge → the dependent stayed ready.
+		if !dt.IsWellKnown() {
+			return HandleErrorRespectJSON("unknown dependency type %q; valid types: %s", depType, createDepsAcceptedTypeList())
+		}
 
 		dep := &types.Dependency{
 			IssueID:     fromID,

@@ -541,6 +541,68 @@ func TestEmbeddedDep(t *testing.T) {
 			t.Errorf("expected no-cycle message: %s", out)
 		}
 	})
+
+	// ===== bd link dep-type parity (beads-9v0d) =====
+	// `bd link` is documented as shorthand for `bd dep add`, and its --type help
+	// lists exactly the well-known set. But link.go gated only on IsValid()
+	// (non-empty/<=32) where the qfka landing gated `dep add` single, --file
+	// bulk, AND the proxied handler on IsWellKnown(). So `bd link A B --type
+	// blockd` silently stored a non-gating custom edge rc=0 (false success +
+	// silent gate drift) — link was the one user-facing dep-creation sibling
+	// qfka's sweep missed. These prove link now rejects unknown types too.
+
+	t.Run("link_unknown_type_rejected", func(t *testing.T) {
+		l1 := bdCreate(t, bd, dir, "LinkUnk A", "--type", "task")
+		l2 := bdCreate(t, bd, dir, "LinkUnk B", "--type", "task")
+		cmd := exec.Command(bd, "link", l1.ID, l2.ID, "--type", "blockd")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("expected bd link with an unknown type to fail, but succeeded:\n%s", out)
+		}
+		if strings.Contains(string(out), "Added") {
+			t.Errorf("false success: link stored an unknown type 'blockd': %s", out)
+		}
+		if !strings.Contains(string(out), "unknown dependency type") {
+			t.Errorf("expected 'unknown dependency type' error, got: %s", out)
+		}
+		// The edge must NOT have been persisted.
+		list := bdDep(t, bd, dir, "list", l1.ID)
+		if strings.Contains(list, l2.ID) {
+			t.Errorf("rejected unknown-type link edge was persisted anyway: %s", list)
+		}
+	})
+
+	t.Run("link_wellknown_type_still_accepted", func(t *testing.T) {
+		lw1 := bdCreate(t, bd, dir, "LinkWk A", "--type", "task")
+		lw2 := bdCreate(t, bd, dir, "LinkWk B", "--type", "task")
+		cmd := exec.Command(bd, "link", lw1.ID, lw2.ID, "--type", "related")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("well-known type 'related' should be accepted by link: %v\n%s", err, out)
+		}
+		list := bdDep(t, bd, dir, "list", lw1.ID)
+		if !strings.Contains(list, lw2.ID) {
+			t.Errorf("well-known link edge was not persisted: %s", list)
+		}
+	})
+
+	t.Run("link_default_type_still_accepted", func(t *testing.T) {
+		// The default --type is "blocks" (well-known) — link with no --type must
+		// keep working.
+		ld1 := bdCreate(t, bd, dir, "LinkDef A", "--type", "task")
+		ld2 := bdCreate(t, bd, dir, "LinkDef B", "--type", "task")
+		cmd := exec.Command(bd, "link", ld1.ID, ld2.ID)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("default-type link should succeed: %v\n%s", err, out)
+		}
+	})
 }
 
 // TestEmbeddedDepConcurrent exercises dep operations concurrently.
