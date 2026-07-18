@@ -216,6 +216,36 @@ func TestEpicSuite(t *testing.T) {
 			t.Error("Epic should be eligible for close when all children are closed")
 		}
 	})
+
+	// beads-cudm: a CHILDLESS open epic must still surface in the results (so
+	// `bd epic status` doesn't wrongly print "No open epics found" when an open
+	// epic with no children exists). Before the fix, Step 5 of
+	// GetEpicsEligibleForClosureInTx `continue`d on len(children)==0, dropping
+	// childless epics entirely. It must appear with TotalChildren=0 and
+	// EligibleForClose=false (a childless epic is not "all children closed").
+	t.Run("ChildlessOpenEpicVisible", func(t *testing.T) {
+		epic := &types.Issue{
+			ID:          "test-epic-childless",
+			Title:       "Childless Open Epic",
+			Description: "Epic with no children yet",
+			Status:      types.StatusOpen,
+			Priority:    2,
+			IssueType:   types.TypeEpic,
+			CreatedAt:   time.Now(),
+		}
+		h.createIssue(t, epic)
+
+		epicStatus := h.getEpicStatus(t, "test-epic-childless")
+		if epicStatus == nil {
+			t.Fatal("childless open epic must appear in GetEpicsEligibleForClosure results (beads-cudm)")
+		}
+		if epicStatus.TotalChildren != 0 {
+			t.Errorf("Expected 0 total children, got %d", epicStatus.TotalChildren)
+		}
+		if epicStatus.EligibleForClose {
+			t.Error("a childless epic must NOT be eligible for close (no children == closed is not 'all children closed')")
+		}
+	})
 }
 
 func TestEpicCommandInit(t *testing.T) {

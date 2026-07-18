@@ -51,7 +51,13 @@ var epicStatusCmd = &cobra.Command{
 			return outputJSON(epics)
 		}
 		if len(epics) == 0 {
-			fmt.Println("No open epics found")
+			// beads-cudm: distinguish "no open epics at all" from "none eligible"
+			// so the message is factually accurate under --eligible-only.
+			if eligibleOnly {
+				fmt.Println("No epics eligible for closure")
+			} else {
+				fmt.Println("No open epics found")
+			}
 			return nil
 		}
 		for _, epicStatus := range epics {
