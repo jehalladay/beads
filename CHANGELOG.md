@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd update --pinned`/`--no-pinned` now work over the proxied server, and the pinned marker auto-clears on a status change off "pinned" (beads-n79c).**
+  Two coupled proxied-vs-direct gaps. (1) The shared `gatherUpdateInput` (used by the proxied server) never read
+  `--pinned`/`--no-pinned` — only the direct `update.go` did — so `bd update <id> --pinned` was a silent no-op
+  over the proxied path (the marker was never set/cleared). (2) The domain update path
+  (`issueSQLRepositoryImpl.Update`) omitted the shared-seam pinned auto-clear (`updateIssueInTx` clears the
+  pinned bool when status moves away from `"pinned"`), the third auto-managed field after `closed_at` (beads-h3iv)
+  and `started_at` (beads-hfb4). `gatherUpdateInput` now captures `--pinned`/`--no-pinned` (with the
+  both-flags guard), and the domain update path auto-clears the marker on a status-off-`pinned` transition
+  (preserving an explicit caller value).
+
 - **`bd update --status closed` over the proxied server now actually closes the issue instead of failing the `closed_at` invariant (beads-h3iv).**
   The domain single-issue update path (`internal/storage/domain/db` `issueSQLRepositoryImpl.Update`, used by the
   proxied server via `domain.UpdateIssue`) validated the finalized issue with `ValidateWithCustom` but never

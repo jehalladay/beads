@@ -1001,6 +1001,74 @@ func TestProxiedServerUpdate(t *testing.T) {
 			t.Errorf("started_at must be preserved across re-transition: first=%v second=%v", first.Time, second.Time)
 		}
 	})
+
+	// beads-n79c (root): `bd update --pinned` / `--no-pinned` over the proxied
+	// server must set/clear the pinned marker — before the fix gatherUpdateInput
+	// (the shared input gatherer the proxied server uses) never read these flags,
+	// so they were a silent no-op over the proxied path.
+	t.Run("update_pinned_flag_sets_marker", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "upfs")
+		issue := bdProxiedCreate(t, bd, p.dir, "Pin via flag")
+		db := openProxiedDB(t, p)
+		if readPinnedCol(t, db, issue.ID) {
+			t.Fatalf("pinned should be false on a fresh issue")
+		}
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "--pinned")
+		if !readPinnedCol(t, db, issue.ID) {
+			t.Errorf("bd update --pinned must set the marker over the proxied path (beads-n79c)")
+		}
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "--no-pinned")
+		if readPinnedCol(t, db, issue.ID) {
+			t.Errorf("bd update --no-pinned must clear the marker over the proxied path")
+		}
+	})
+
+	// beads-n79c: `bd update --status <non-pinned>` over the proxied server must
+	// auto-clear the pinned marker when status moves away from "pinned", mirroring
+	// the shared seam — before the fix the domain update path left pinned TRUE.
+	t.Run("update_status_off_pinned_clears_pinned_marker", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "uspin")
+		issue := bdProxiedCreate(t, bd, p.dir, "Pinned marker")
+		// Set the pinned bool marker and status=pinned.
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "--pinned")
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "-s", "pinned")
+		db := openProxiedDB(t, p)
+		if !readPinnedCol(t, db, issue.ID) {
+			t.Fatalf("pinned marker should be set before the status change")
+		}
+		// Move status off "pinned" → the marker must auto-clear.
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "-s", "open")
+		if readPinnedCol(t, db, issue.ID) {
+			t.Errorf("pinned marker must auto-clear when status moves off pinned (beads-n79c)")
+		}
+	})
+
+	t.Run("update_pinned_marker_survives_explicit_reset", func(t *testing.T) {
+		// A caller who explicitly passes --pinned alongside a status change keeps
+		// the marker (caller-set wins over the auto-clear), matching the shared seam.
+		p := bdProxiedInit(t, bd, "uspinx")
+		issue := bdProxiedCreate(t, bd, p.dir, "Explicit pin")
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "-s", "pinned", "--pinned")
+		db := openProxiedDB(t, p)
+		if !readPinnedCol(t, db, issue.ID) {
+			t.Fatalf("pinned marker should be set")
+		}
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "-s", "open", "--pinned")
+		if !readPinnedCol(t, db, issue.ID) {
+			t.Errorf("an explicit --pinned alongside the status change must keep the marker")
+		}
+	})
+}
+
+// readPinnedCol reads the stored pinned bool directly from the proxied DB.
+func readPinnedCol(t *testing.T, db *sql.DB, id string) bool {
+	t.Helper()
+	var pinned bool
+	if err := db.QueryRowContext(context.Background(),
+		"SELECT pinned FROM issues WHERE id = ?", id).Scan(&pinned); err != nil {
+		t.Fatalf("read pinned for %s: %v", id, err)
+	}
+	return pinned
 }
 
 // readIssueType reads the stored issue_type directly from the proxied DB, for

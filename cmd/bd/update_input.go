@@ -212,6 +212,22 @@ func gatherUpdateInput(ctx context.Context, cmd *cobra.Command) *updateInput {
 	if historyChanged {
 		in.fields["no_history"] = false
 	}
+	// beads-n79c: --pinned/--no-pinned set the Issue.Pinned context-marker bool
+	// (beads-9ynk), distinct from status="pinned". The DIRECT update.go path
+	// captured these but the shared gatherUpdateInput (used by the proxied
+	// server) did not, so `bd update --pinned`/`--no-pinned` was a silent no-op
+	// over the proxied path. Mirror the direct path's both-flags guard.
+	pinnedChanged := cmd.Flags().Changed("pinned")
+	noPinnedChanged := cmd.Flags().Changed("no-pinned")
+	if pinnedChanged && noPinnedChanged {
+		FatalErrorRespectJSON("cannot specify both --pinned and --no-pinned flags")
+	}
+	if pinnedChanged {
+		in.fields["pinned"] = true
+	}
+	if noPinnedChanged {
+		in.fields["pinned"] = false
+	}
 	if cmd.Flags().Changed("metadata") {
 		metadataValue, _ := cmd.Flags().GetString("metadata")
 		var metadataJSON string

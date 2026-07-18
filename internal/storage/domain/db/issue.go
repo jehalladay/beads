@@ -103,17 +103,18 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 
 	table := pickIssueTable(opts.UseWispsTable)
 
-	// Read the prior status (and started_at) up-front when the caller is changing
-	// the status: needed for the closed_at/started_at management below and the
-	// is_blocked recompute at the end.
+	// Read the prior status (plus started_at and pinned) up-front when the caller
+	// is changing the status: needed for the closed_at/started_at/pinned
+	// management below and the is_blocked recompute at the end.
 	var oldStatus types.Status
 	var oldStartedAt sql.NullTime
+	var oldPinned bool
 	_, statusChanging := updates["status"]
 	if statusChanging {
 		//nolint:gosec // G201: table is one of two hardcoded constants
 		if err := r.runner.QueryRowContext(ctx,
-			fmt.Sprintf("SELECT status, started_at FROM %s WHERE id = ?", table), id,
-		).Scan(&oldStatus, &oldStartedAt); err != nil {
+			fmt.Sprintf("SELECT status, started_at, pinned FROM %s WHERE id = ?", table), id,
+		).Scan(&oldStatus, &oldStartedAt, &oldPinned); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("db: Update %s: %w", id, sql.ErrNoRows)
 			}
@@ -169,6 +170,21 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 			if coerceStatus(updates["status"]) == types.StatusInProgress && !oldStartedAt.Valid {
 				setClauses = append(setClauses, "started_at = ?")
 				args = append(args, time.Now().UTC())
+			}
+		}
+
+		// beads-n79c: auto-clear the pinned marker when status transitions AWAY
+		// from "pinned", mirroring the shared seam (updateIssueInTx, update.go).
+		// The pinned bool (set via --pinned, orthogonal to status="pinned" per
+		// beads-9ynk) was left TRUE by the domain/proxied UPDATE path when the
+		// status moved off "pinned", where the direct path clears it — a pin that
+		// survived an explicit un-pinning-via-status-change. Only when the old row
+		// was pinned, the new status is not "pinned", and the caller did not set
+		// pinned explicitly. Completes the closed_at/started_at/pinned trilogy.
+		if oldPinned && coerceStatus(updates["status"]) != types.StatusPinned {
+			if _, callerSetPinned := updates["pinned"]; !callerSetPinned {
+				setClauses = append(setClauses, "`pinned` = ?")
+				args = append(args, false)
 			}
 		}
 	}
