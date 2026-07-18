@@ -105,12 +105,52 @@ func isEmbeddedLockOutput(out string) bool {
 		strings.Contains(out, "locked by another dolt process")
 }
 
+// commandBuffersTimeout bounds a single test subprocess (beads-cine). Without
+// it a hung `bd` invocation (e.g. a proxied subprocess deadlocked on a Dolt
+// lock under /fsx contention) hangs the WHOLE go-test binary until the suite
+// default (10m), and the failure names no test — the refinery then has to
+// bisect "which test hangs" by hand, stalling the merge gate. A generous
+// per-invocation bound fails the offending test fast with a clear name instead.
+// Configurable via BEADS_TEST_CMD_TIMEOUT (Go duration) for slow hosts.
+func commandBuffersTimeout() time.Duration {
+	if v := os.Getenv("BEADS_TEST_CMD_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 90 * time.Second
+}
+
 func runCommandBuffers(t *testing.T, cmd *exec.Cmd) (stdout, stderr bytes.Buffer, err error) {
 	t.Helper()
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err = cmd.Run()
-	return stdout, stderr, err
+
+	if err = cmd.Start(); err != nil {
+		return stdout, stderr, err
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	timeout := commandBuffersTimeout()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case err = <-done:
+		return stdout, stderr, err
+	case <-timer.C:
+		// beads-cine: kill the hung subprocess so it can't hang the whole suite,
+		// then fail THIS test with its name + captured output for diagnosis.
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		<-done // reap the killed process
+		t.Fatalf("command %v timed out after %s (beads-cine hang guard; set BEADS_TEST_CMD_TIMEOUT to override)\nstdout:\n%s\nstderr:\n%s",
+			cmd.Args, timeout, stdout.String(), stderr.String())
+		return stdout, stderr, fmt.Errorf("timed out after %s", timeout)
+	}
 }
 
 // bdRunWithFlockRetry runs a bd command with retry on flock contention.
