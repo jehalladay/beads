@@ -168,9 +168,12 @@ func TestGetLastShown(t *testing.T) {
 		t.Errorf("Expected zero time for never shown tip, got %v", lastShown)
 	}
 
-	// Test 2: Recently shown
+	// Test 2: Recently shown. getLastShown reads the dolt-ignored local_metadata
+	// table (GetLocalMetadata), so seed it with SetLocalMetadata — SetMetadata
+	// writes the separate synced `metadata` table that getLastShown never reads,
+	// so the value was invisible and getLastShown returned the zero time.
 	now := time.Now()
-	_ = store.SetMetadata(context.Background(), "tip_test_last_shown", now.Format(time.RFC3339))
+	_ = store.SetLocalMetadata(context.Background(), "tip_test_last_shown", now.Format(time.RFC3339))
 
 	lastShown = getLastShown(store, "test")
 	if lastShown.IsZero() {
@@ -249,6 +252,18 @@ func TestTipFrequency(t *testing.T) {
 	doltAutoCommit = ""
 	t.Cleanup(func() { doltAutoCommit = oldDoltAutoCommit })
 
+	// selectNextTip dereferences the package RNG tipRand, which is lazily
+	// initialized by initTipRand() (a sync.Once). This test calls selectNextTip
+	// directly rather than through maybeShowTip(), so without an explicit init
+	// it only passed when some *other* test in the same run had already inited
+	// the RNG first; run in isolation (or first in package order) it panics with
+	// a nil-pointer deref in math/rand. Seed + reset + init here so the test is
+	// hermetic and deterministic (matches the other tip tests above).
+	os.Setenv("BEADS_TIP_SEED", "13579")
+	defer os.Unsetenv("BEADS_TIP_SEED")
+	tipRandOnce = sync.Once{}
+	initTipRand()
+
 	store := newTestStoreWithPrefix(t, filepath.Join(t.TempDir(), "test.db"), "test")
 
 	tipsMutex.Lock()
@@ -279,9 +294,13 @@ func TestTipFrequency(t *testing.T) {
 		t.Errorf("Expected nil due to frequency limit, got %v", tip)
 	}
 
-	// Manually set last shown to past (simulate time passing)
+	// Manually set last shown to past (simulate time passing). getLastShown
+	// reads the dolt-ignored local_metadata table (GetLocalMetadata), so the
+	// override must be written with SetLocalMetadata — SetMetadata targets the
+	// separate synced `metadata` table that getLastShown never reads, so the
+	// past timestamp would be invisible and the tip would stay frequency-blocked.
 	past := time.Now().Add(-10 * time.Second)
-	_ = store.SetMetadata(context.Background(), "tip_frequent_tip_last_shown", past.Format(time.RFC3339))
+	_ = store.SetLocalMetadata(context.Background(), "tip_frequent_tip_last_shown", past.Format(time.RFC3339))
 
 	// Should show again now
 	tip = selectNextTip(store)
