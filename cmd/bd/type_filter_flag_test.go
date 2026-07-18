@@ -42,3 +42,47 @@ func TestIssueTypeFilterValueUnknownUnchanged(t *testing.T) {
 		t.Errorf("issueTypeFilterValue(unknown) = %q, want it unchanged", got)
 	}
 }
+
+// TestIssueTypeFilterValuesNormalizesExcludes pins beads-asls: the slice helper
+// used to build `wisp gc --exclude-type` protections must normalize every
+// value, so the documented `--exclude-type mol` resolves to the stored
+// canonical "molecule" and actually protects molecules from a destructive GC.
+// Before the fix, wisp gc built the exclude filter from raw IssueType(flag) —
+// IssueType("mol") never matched stored "molecule", so the protection failed
+// OPEN and the molecules the user asked to keep were deleted.
+func TestIssueTypeFilterValuesNormalizesExcludes(t *testing.T) {
+	got := issueTypeFilterValues([]string{"mol", "ENHANCEMENT", "Task"})
+	want := []types.IssueType{types.TypeMolecule, types.TypeFeature, types.TypeTask}
+	if len(got) != len(want) {
+		t.Fatalf("issueTypeFilterValues len = %d (%v), want %d (%v)", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("issueTypeFilterValues[%d] = %q, want %q (alias/case not normalized)", i, got[i], want[i])
+		}
+	}
+}
+
+// TestIssueTypeFilterValuesSplitsAndTrims confirms comma-separated and
+// whitespace-padded values are split/trimmed (matching the sibling ready/list
+// exclude-type loops), and empties are skipped so no "" exclude leaks through.
+func TestIssueTypeFilterValuesSplitsAndTrims(t *testing.T) {
+	got := issueTypeFilterValues([]string{" mol , bug ", "", "  ", "task"})
+	want := []types.IssueType{types.TypeMolecule, types.TypeBug, types.TypeTask}
+	if len(got) != len(want) {
+		t.Fatalf("issueTypeFilterValues len = %d (%v), want %d (%v)", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("issueTypeFilterValues[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestIssueTypeFilterValuesEmpty confirms an empty/nil input yields nil (no
+// spurious empty-string exclude that would match nothing / everything).
+func TestIssueTypeFilterValuesEmpty(t *testing.T) {
+	if got := issueTypeFilterValues(nil); got != nil {
+		t.Errorf("issueTypeFilterValues(nil) = %v, want nil", got)
+	}
+}

@@ -609,10 +609,13 @@ func runWispGC(cmd *cobra.Command, args []string) error {
 		return HandleErrorWithHint("no database connection", diagHint())
 	}
 
-	var excludeTypes []types.IssueType
-	for _, t := range excludeTypeStrs {
-		excludeTypes = append(excludeTypes, types.IssueType(t))
-	}
+	// Normalize exclude-type aliases/case through the shared brxo chokepoint so
+	// the documented `--exclude-type mol` resolves to the stored canonical
+	// "molecule" and actually protects molecules. Building the raw
+	// IssueType(flag) failed OPEN on this destructive command — the protection
+	// matched nothing and the molecules the user asked to keep were deleted
+	// (beads-asls).
+	excludeTypes := issueTypeFilterValues(excludeTypeStrs)
 
 	if closedMode {
 		return runWispPurgeClosed(ctx, dryRun, force, excludeTypes)
