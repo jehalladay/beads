@@ -20,6 +20,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and out-of-range/non-numeric values still error (subsuming beads-deud's `0-4` range check). `--json`
   emits the structured `{"error":...}` shape. This is the `bd count` half; the `bd ready` leg
   coordinates with beads-pbl7 (which owns `ready.go` `--priority` validation).
+- **`bd count` and `bd search` now accept comma-multi `--status` as an OR filter (beads-ybc7).**
+  `bd list --status open,closed` documents and applies a multi-status OR (IN)
+  filter, but `bd count` and `bd search` treated the whole `open,closed` string
+  as a single status value — pre-deud that silently matched nothing (count `0`,
+  exit 0), and post-deud it became a hard `invalid status "open,closed"` error.
+  Either way count/search lacked `bd list`'s documented multi-status parity.
+  Both now mirror `bd list` (list_filter.go): a single value keeps the scalar
+  filter, while two-plus comma-separated values are each validated
+  (`Normalize()` + `IsValidWithCustom`) and built into `filter.Statuses`, the
+  OR/IN filter already honored by the shared `sqlbuild` path. A typo inside the
+  list still fails loud (`--status open,bogusxyz`), and whitespace around each
+  element is trimmed. Downstream of beads-deud (which closed the single-value
+  silent-accept); this is the next layer (multi-value OR) on the same two
+  files — command-layer only, no filter/storage change.
 - **`bd count` and `bd search` now reject invalid `--status`/`--type`/`--priority` values (beads-deud).**
   Both commands silently accepted bogus enum values — `bd count --status bogusxyz`,
   `--type notatype`, `--priority 99`/`-1`, and `bd search --status/--type` — returning

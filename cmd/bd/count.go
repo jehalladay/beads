@@ -123,12 +123,30 @@ Examples:
 
 		// Direct mode
 		filter := types.IssueFilter{}
+		// beads-ybc7: support comma-multi (OR) status like bd list
+		// (list_filter.go): a single value keeps the scalar filter.Status; two+
+		// comma-separated values validate each and build filter.Statuses (an IN
+		// filter honored by the shared sqlbuild path). Without this,
+		// `bd count --status open,closed` failed (post-deud) as an invalid
+		// single status rather than counting both, breaking parity with bd list.
 		if status != "" && status != "all" {
-			s := types.Status(status).Normalize()
-			if !s.IsValidWithCustom(filterCfg.customStatusNames()) {
-				return HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(filterCfg.customStatusNames()))
+			names := filterCfg.customStatusNames()
+			statusParts := strings.Split(status, ",")
+			if len(statusParts) == 1 {
+				s := types.Status(strings.TrimSpace(statusParts[0])).Normalize()
+				if !s.IsValidWithCustom(names) {
+					return HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(names))
+				}
+				filter.Status = &s
+			} else {
+				for _, part := range statusParts {
+					s := types.Status(strings.TrimSpace(part)).Normalize()
+					if !s.IsValidWithCustom(names) {
+						return HandleErrorRespectJSON("invalid status %q in multi-status filter (valid: %s)", strings.TrimSpace(part), validStatusList(names))
+					}
+					filter.Statuses = append(filter.Statuses, s)
+				}
 			}
-			filter.Status = &s
 		}
 		if cmd.Flags().Changed("priority") {
 			// beads-vcpq: parse via ValidatePriority (accepts 0-4 AND P0-P4),
