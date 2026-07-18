@@ -697,6 +697,53 @@ func TestProxiedServerClose(t *testing.T) {
 			t.Errorf("hook marker missing issue ID; got: %q", string(data))
 		}
 	})
+
+	// beads-8l5t: re-closing an ALREADY-CLOSED issue must report the no-op
+	// honestly ("already closed (no change)"), NOT a false "✓ Closed" transition,
+	// and must NOT emit a second open→closed audit event. Mirrors the direct path
+	// (cmd/bd/close.go) + the sibling proxied reopen guard.
+	t.Run("close_already_closed_is_honest_noop", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "cac")
+		issue := bdProxiedCreate(t, bd, p.dir, "Double close")
+		bdProxiedClose(t, bd, p.dir, issue.ID)
+		// Second close: no-op. Must not falsely claim a transition.
+		out := bdProxiedClose(t, bd, p.dir, issue.ID)
+		if strings.Contains(out, "Closed "+issue.ID) || strings.Contains(out, "✓ Closed") {
+			t.Errorf("re-close of already-closed falsely reported a transition:\n%s", out)
+		}
+		if !strings.Contains(out, "already closed") {
+			t.Errorf("re-close should report 'already closed (no change)', got:\n%s", out)
+		}
+		// Audit trail must NOT contain a SECOND status open→closed field_change
+		// from the no-op re-close.
+		auditPath := filepath.Join(p.beadsDir, "interactions.jsonl")
+		data, err := os.ReadFile(auditPath)
+		if err == nil {
+			statusCloses := 0
+			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+				if line == "" {
+					continue
+				}
+				var e struct {
+					Kind  string         `json:"kind"`
+					Extra map[string]any `json:"extra"`
+				}
+				if json.Unmarshal([]byte(line), &e) != nil {
+					continue
+				}
+				if e.Kind == "field_change" {
+					if f, _ := e.Extra["field"].(string); f == "status" {
+						if nv, _ := e.Extra["new_value"].(string); nv == "closed" {
+							statusCloses++
+						}
+					}
+				}
+			}
+			if statusCloses > 1 {
+				t.Errorf("re-close emitted a spurious duplicate open→closed audit event: got %d status→closed field_changes, want 1", statusCloses)
+			}
+		}
+	})
 }
 
 func shellQuote(s string) string {
