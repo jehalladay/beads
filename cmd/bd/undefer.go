@@ -28,6 +28,14 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		CheckReadonly("undefer")
 
+		// beads-fszd/1zuh: route to the proxied handler in proxied-server mode.
+		// Without this, undefer uses the direct global store — nil under
+		// proxiedServerMode — and returned "database not initialized" for
+		// hub-connected crew instead of undeferring.
+		if usesProxiedServer() {
+			return runUndeferProxiedServer(rootCtx, args)
+		}
+
 		evt := metrics.NewCommandEvent("undefer")
 		defer func() {
 			if c := metrics.Global(); c != nil {
