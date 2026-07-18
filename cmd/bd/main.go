@@ -924,7 +924,21 @@ var rootCmd = &cobra.Command{
 				}
 
 				if cmd.Name() != "import" && cmd.Name() != "setup" {
-					// No database found - provide context-aware error message
+					// No database found - provide context-aware error message.
+					// beads-wg8i: this shared pre-dispatch guard is the single
+					// most common failure a user/JSON parser hits, yet it emitted
+					// plain-text stderr with EMPTY stdout under --json — for EVERY
+					// command, including the canonical honored-json ones
+					// (list/show/count) the beads-rg0c per-command sweep treated
+					// as gold. rg0c only touched per-command RunE error paths;
+					// this guard fires before RunE. jsonOutput is fully resolved
+					// earlier in this PersistentPreRunE, so route it through the
+					// JSON error contract (structured {error:...} on stdout).
+					if jsonOutput {
+						jsonStdoutError("no beads database found", diagHint()+"\n      or set BEADS_DIR to point to your .beads directory")
+						metrics.CloseAndFlush()
+						os.Exit(1)
+					}
 					fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
 					fmt.Fprintf(os.Stderr, "Hint: %s\n", diagHint())
 					fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")

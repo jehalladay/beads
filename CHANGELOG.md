@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd <cmd> --json` now emits a structured error on stdout (not empty) when no database is found (beads-wg8i).**
+  The shared pre-dispatch guard in `PersistentPreRunE` handles the single most common
+  failure — `no beads database found` — with plain-text on stderr and an EMPTY stdout,
+  then `os.Exit(1)`. Under `--json` that broke JSON parsers for EVERY command, including
+  the canonical honored-json commands (`bd list`/`show`/`count`) that the beads-rg0c
+  per-command sweep treated as gold (verified: all emitted empty stdout, rc=1, in a
+  db-free directory). rg0c only touched per-command `RunE` error paths
+  (compact/audit/formula/config/repo/migrate/restore); this guard fires *before* `RunE`,
+  so it was missed. `jsonOutput` is fully resolved earlier in the same `PersistentPreRunE`,
+  so the guard now routes through the JSON error contract (`{"error":...}` on stdout) under
+  `--json`; the plain-text stderr path is byte-for-byte unchanged otherwise. Shared-guard
+  sibling of the beads-rg0c error-contract class.
 - **`bd count` and `bd search` now reject invalid `--status`/`--type`/`--priority` values (beads-deud).**
   Both commands silently accepted bogus enum values — `bd count --status bogusxyz`,
   `--type notatype`, `--priority 99`/`-1`, and `bd search --status/--type` — returning
