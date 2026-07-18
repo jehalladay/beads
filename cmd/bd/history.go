@@ -45,6 +45,16 @@ Examples:
 		ctx := rootCtx
 		issueID := args[0]
 
+		// In proxied-server mode the global `store` is nil (main.go
+		// PersistentPreRun returns before newDoltStore), so the
+		// resolveAndGetIssueWithRouting(store, ...) path below would fail with
+		// "storage is nil". Route History() through the proxied UOW stack
+		// instead (beads-t3wg, fszd/aocj umbrella) — History was previously only
+		// on DoltStore, now also on the domain IssueUseCase.
+		if usesProxiedServer() {
+			return runHistoryProxiedServer(ctx, issueID)
+		}
+
 		// Verify the issue exists first (with prefix routing), so a nonexistent
 		// ID errors rc!=0 like show/comments/children — rather than being
 		// indistinguishable from an existing issue that simply has no history
