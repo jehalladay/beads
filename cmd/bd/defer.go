@@ -49,7 +49,9 @@ Examples:
 		if untilStr != "" {
 			t, err := timeparsing.ParseRelativeTime(untilStr, time.Now())
 			if err != nil {
-				return HandleError("invalid --until format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", untilStr)
+				// bd defer supports --json; respect it on flag-validation
+				// errors too, matching the ID-resolve path below (beads-xwjg).
+				return HandleErrorRespectJSON("invalid --until format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", untilStr)
 			}
 			if t.Before(time.Now()) && !jsonOutput {
 				fmt.Fprintf(os.Stderr, "%s Defer date %q is in the past. Issue will appear in bd ready immediately.\n",
@@ -61,7 +63,7 @@ Examples:
 		reason, _ := cmd.Flags().GetString("reason")
 		reason = strings.TrimSpace(reason)
 		if cmd.Flags().Changed("reason") && reason == "" {
-			return HandleError("reason cannot be empty")
+			return HandleErrorRespectJSON("reason cannot be empty")
 		}
 
 		ctx := rootCtx

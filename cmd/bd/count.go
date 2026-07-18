@@ -267,7 +267,10 @@ Examples:
 		if includeInfra, _ := cmd.Flags().GetBool("include-infra"); includeInfra {
 			cfg, err := loadDirectListFilterConfig(ctx, store)
 			if err != nil {
-				return HandleError("%v", err)
+				// Parity with every other error path in this command
+				// (all use RespectJSON): bd count supports --json, so emit a
+				// stdout JSON error object here too (beads-xwjg / beads-8lqh).
+				return HandleErrorRespectJSON("%v", err)
 			}
 			applyCountIncludeInfra(&filter, issueType, cfg)
 		} else {

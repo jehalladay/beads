@@ -46,7 +46,10 @@ Example:
 
 		allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 		if err != nil {
-			return HandleError("fetching issues: %v", err)
+			// bd duplicates supports --json (outputJSON below); a fetch failure
+			// must emit a stdout JSON error object, not plain stderr text, so
+			// --json consumers can parse the failure (beads-xwjg / beads-8lqh).
+			return HandleErrorRespectJSON("fetching issues: %v", err)
 		}
 		openIssues := make([]*types.Issue, 0, len(allIssues))
 		for _, issue := range allIssues {

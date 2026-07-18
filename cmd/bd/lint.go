@@ -135,7 +135,10 @@ Examples:
 			var err error
 			issues, err = store.SearchIssues(ctx, "", filter)
 			if err != nil {
-				return HandleError("%v", err)
+				// bd lint supports --json (see the jsonOutput block below);
+				// a search failure must emit a stdout JSON error object, not
+				// plain stderr text (beads-xwjg / beads-8lqh).
+				return HandleErrorRespectJSON("%v", err)
 			}
 		}
 
