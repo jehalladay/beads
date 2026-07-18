@@ -653,3 +653,38 @@ func TestDependencyUseCase_AddBulk(t *testing.T) {
 		t.Fatalf("AddWispDependencies: %v", err)
 	}
 }
+
+// TestDependencyUseCase_SelfLoopRejected is the teeth for beads-jg2s: a
+// self-referential edge (IssueID == DependsOnID) must be rejected at the
+// add/addBulk chokepoint for ANY type — including non-blocking types
+// (related/waits-for) that CheckCycleForType skips, which previously accepted
+// the self-loop silently. Matches `bd relate A A` and Reparent's self-guard.
+func TestDependencyUseCase_SelfLoopRejected(t *testing.T) {
+	ctx := context.Background()
+
+	// Single add: non-blocking self-loop (the previously-silent case) rejected.
+	if err := NewDependencyUseCase(&fakeDepRepo{}).AddDependency(ctx,
+		&types.Dependency{IssueID: "a", DependsOnID: "a", Type: types.DepRelated}, "act"); err == nil {
+		t.Error("add: self-related edge accepted (beads-jg2s)")
+	}
+	// Single add: blocks self-loop also rejected (was caught by cycle walk; still must fail).
+	if err := NewDependencyUseCase(&fakeDepRepo{}).AddDependency(ctx,
+		&types.Dependency{IssueID: "a", DependsOnID: "a", Type: types.DepBlocks}, "act"); err == nil {
+		t.Error("add: self-blocks edge accepted (beads-jg2s)")
+	}
+	// Bulk add: self-loop rejected.
+	if _, err := NewDependencyUseCase(&fakeDepRepo{}).AddDependencies(ctx,
+		[]*types.Dependency{{IssueID: "a", DependsOnID: "a", Type: types.DepRelated}}, "act", BulkAddDepsOpts{}); err == nil {
+		t.Error("addBulk: self-related edge accepted (beads-jg2s)")
+	}
+	// Bulk add with SkipPerEdgeCycleCheck: self-loop STILL rejected (invalid regardless).
+	if _, err := NewDependencyUseCase(&fakeDepRepo{}).AddDependencies(ctx,
+		[]*types.Dependency{{IssueID: "a", DependsOnID: "a", Type: types.DepRelated}}, "act", BulkAddDepsOpts{SkipPerEdgeCycleCheck: true}); err == nil {
+		t.Error("addBulk skip-cycle: self-related edge accepted (beads-jg2s)")
+	}
+	// A genuine distinct-endpoint related edge still succeeds (no over-tightening).
+	if err := NewDependencyUseCase(&fakeDepRepo{}).AddDependency(ctx,
+		&types.Dependency{IssueID: "a", DependsOnID: "b", Type: types.DepRelated}, "act"); err != nil {
+		t.Fatalf("add: distinct related edge should succeed, got %v", err)
+	}
+}

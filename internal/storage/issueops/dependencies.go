@@ -102,6 +102,15 @@ type AddDependencyOpts struct {
 // The caller is responsible for transaction lifecycle, dolt commits, and
 // any cache invalidation.
 func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, actor string, opts AddDependencyOpts) error {
+	// Reject a self-referential edge UNCONDITIONALLY (beads-jg2s), before the
+	// SkipCycleCheck gate below — CheckDependencyCycleInTx has the same guard but
+	// is skipped under --no-cycle-check, and its family walk skips non-blocking
+	// types entirely, so a self-loop (esp. related/waits-for or --no-cycle-check)
+	// could be committed. A self-edge is invalid for every type and every path.
+	if dep.IssueID == dep.DependsOnID {
+		return fmt.Errorf("cannot add self-dependency: %s cannot depend on itself", dep.IssueID)
+	}
+
 	// Auto-detect source routing if not provided.
 	sourceTable := opts.SourceTable
 	writeTable := opts.WriteTable

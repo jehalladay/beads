@@ -1327,11 +1327,16 @@ func TestAddDependency_SelfDependencyAllTypes(t *testing.T) {
 		t.Fatalf("failed to create issue: %v", err)
 	}
 
-	// Self-dependency should be rejected for all dependency types
+	// Self-dependency should be rejected for all dependency types, including
+	// the non-blocking types (related/relates-to) — beads-jg2s made the guard
+	// unconditional in AddDependencyInTx so it no longer depends on the
+	// cycle-check family walk (which skips non-blocking types).
 	for _, depType := range []types.DependencyType{
 		types.DepBlocks,
 		types.DepConditionalBlocks,
 		types.DepWaitsFor,
+		types.DepRelated,
+		types.DepRelatesTo,
 	} {
 		dep := &types.Dependency{
 			IssueID:     issue.ID,

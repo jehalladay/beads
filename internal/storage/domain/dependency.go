@@ -154,6 +154,15 @@ func (u *dependencyUseCaseImpl) add(ctx context.Context, dep *types.Dependency, 
 	if dep.IssueID == "" || dep.DependsOnID == "" {
 		return fmt.Errorf("add dep: IssueID and DependsOnID must be non-empty")
 	}
+	// Reject a self-referential edge at the chokepoint (beads-jg2s). The cycle
+	// check below only walks blocking/parent-child families, so a self-loop on a
+	// non-blocking type (related/waits-for) was accepted silently — inconsistent
+	// with `bd relate A A` ("cannot relate an issue to itself") and Reparent's
+	// self-parent guard. An issue can never sensibly depend on / relate to
+	// itself, for any type.
+	if dep.IssueID == dep.DependsOnID {
+		return fmt.Errorf("add dep: %s cannot depend on itself", dep.IssueID)
+	}
 
 	// Family-aware cycle check: blocks/conditional-blocks walk the blocking
 	// graph, parent-child walks the parent-child graph, other types skip
@@ -477,6 +486,13 @@ func (u *dependencyUseCaseImpl) addBulk(ctx context.Context, deps []*types.Depen
 		}
 		if dep.IssueID == "" || dep.DependsOnID == "" {
 			return BulkAddDepsResult{}, fmt.Errorf("add deps[%d]: IssueID and DependsOnID must be non-empty", i)
+		}
+		// Reject a self-referential edge (beads-jg2s) — the cycle check only
+		// covers blocking/parent-child families, so a non-blocking self-loop
+		// (related/waits-for) would otherwise be accepted silently. Enforced even
+		// when SkipPerEdgeCycleCheck is set: a self-edge is invalid regardless.
+		if dep.IssueID == dep.DependsOnID {
+			return BulkAddDepsResult{}, fmt.Errorf("add deps[%d]: %s cannot depend on itself", i, dep.IssueID)
 		}
 		if !opts.SkipPerEdgeCycleCheck {
 			// Family-aware per-edge check (beads-7a6n): parent-child edges are
