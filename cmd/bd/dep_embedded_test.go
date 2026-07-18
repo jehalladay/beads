@@ -261,6 +261,22 @@ func TestEmbeddedDep(t *testing.T) {
 		}
 	})
 
+	// beads-w2tk: removing an edge that does NOT exist must fail loud, not print
+	// a false "✓ Removed" success. RemoveDependency is idempotent (returns nil
+	// either way), so the CLI pre-checks the edge exists and reports honestly.
+	t.Run("remove_nonexistent_fails", func(t *testing.T) {
+		n1 := bdCreate(t, bd, dir, "NoEdge A", "--type", "task")
+		n2 := bdCreate(t, bd, dir, "NoEdge B", "--type", "task")
+		// No `dep add` between them — the edge never existed.
+		out := bdDepFail(t, bd, dir, "remove", n1.ID, n2.ID)
+		if strings.Contains(out, "Removed") {
+			t.Errorf("false success: removing a nonexistent edge printed 'Removed': %s", out)
+		}
+		if !strings.Contains(out, "no dependency to remove") {
+			t.Errorf("expected a 'no dependency to remove' error, got: %s", out)
+		}
+	})
+
 	t.Run("remove_rm_alias", func(t *testing.T) {
 		r1 := bdCreate(t, bd, dir, "Rm A", "--type", "task")
 		r2 := bdCreate(t, bd, dir, "Rm B", "--type", "task")
