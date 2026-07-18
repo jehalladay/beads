@@ -66,6 +66,16 @@ Examples:
 			return HandleErrorRespectJSON("note text is empty")
 		}
 
+		// beads-45xb: in proxiedServerMode the global 'store' is nil (main.go
+		// wires uowProvider and returns before store init), so the direct
+		// resolveAndGetIssueForMutation(ctx, store, ...) below fails with
+		// "storage is nil" for every hub-connected crew. Route to a UOW-based
+		// handler, mirroring `bd update --append-notes` (fszd/aocj umbrella).
+		if usesProxiedServer() {
+			runNoteProxiedServer(rootCtx, id, noteText)
+			return nil
+		}
+
 		ctx := rootCtx
 
 		result, err := resolveAndGetIssueForMutation(ctx, store, id)
