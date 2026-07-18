@@ -322,6 +322,45 @@ func TestEmbeddedLabel(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "Reserved label", "--type", "task")
 		bdLabelFail(t, bd, dir, "add", issue.ID, "provides:auth")
 	})
+
+	// beads-34ke: a partial id-resolution failure must exit non-zero so scripts
+	// (bd label add A bogus-id lbl && next) don't silently proceed. Previously
+	// only the all-ids-fail case errored; 1-of-N failures returned rc=0.
+	t.Run("label_add_partial_resolution_fail_exits_nonzero", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "Partial add", "--type", "task")
+		// One valid id + one bogus id → must fail, but the valid id still gets labeled.
+		bdLabelFail(t, bd, dir, "add", issue.ID, "ghost-does-not-exist", "partial-lbl")
+		labels := bdLabelListJSON(t, bd, dir, issue.ID)
+		found := false
+		for _, l := range labels {
+			if l == "partial-lbl" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected 'partial-lbl' applied to the resolved id despite the partial failure: %v", labels)
+		}
+	})
+
+	t.Run("label_add_all_bogus_exits_nonzero", func(t *testing.T) {
+		bdLabelFail(t, bd, dir, "add", "ghost-a", "ghost-b", "some-lbl")
+	})
+
+	t.Run("label_remove_partial_resolution_fail_exits_nonzero", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "Partial rm", "--type", "task", "--label", "rm-partial")
+		bdLabelFail(t, bd, dir, "remove", issue.ID, "ghost-does-not-exist", "rm-partial")
+		// The resolved id's label is still removed despite the partial failure.
+		labels := bdLabelListJSON(t, bd, dir, issue.ID)
+		for _, l := range labels {
+			if l == "rm-partial" {
+				t.Errorf("expected 'rm-partial' removed from the resolved id despite partial failure: %v", labels)
+			}
+		}
+	})
+
+	t.Run("label_remove_all_bogus_exits_nonzero", func(t *testing.T) {
+		bdLabelFail(t, bd, dir, "remove", "ghost-a", "ghost-b", "some-lbl")
+	})
 }
 
 // TestEmbeddedLabelConcurrent exercises label operations concurrently.

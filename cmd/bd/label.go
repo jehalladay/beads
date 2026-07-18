@@ -144,12 +144,14 @@ var labelAddCmd = &cobra.Command{
 		}
 		ctx := rootCtx
 		resolvedIDs := make([]string, 0, len(issueIDs))
+		var unresolved []string
 		for _, id := range issueIDs {
 			var fullID string
 			var err error
 			fullID, err = utils.ResolvePartialID(ctx, store, id)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+				unresolved = append(unresolved, id)
 				continue
 			}
 			resolvedIDs = append(resolvedIDs, fullID)
@@ -159,10 +161,17 @@ var labelAddCmd = &cobra.Command{
 			return HandleErrorRespectJSON("no issue id resolved")
 		}
 
-		return processBatchLabelsOperation(issueIDs, labels, "added", jsonOutput,
+		if err := processBatchLabelsOperation(issueIDs, labels, "added", jsonOutput,
 			func(ctx context.Context, tx storage.Transaction, issueID, lbl, act string) error {
 				return tx.AddLabel(ctx, issueID, lbl, act)
-			})
+			}); err != nil {
+			return err
+		}
+		if len(unresolved) > 0 {
+			return HandleErrorRespectJSON("could not resolve %d of %d issue id(s): %s",
+				len(unresolved), len(unresolved)+len(issueIDs), strings.Join(unresolved, ", "))
+		}
+		return nil
 	},
 }
 
@@ -186,21 +195,33 @@ var labelRemoveCmd = &cobra.Command{
 		issueIDs, label := parseLabelArgs(args)
 		ctx := rootCtx
 		resolvedIDs := make([]string, 0, len(issueIDs))
+		var unresolved []string
 		for _, id := range issueIDs {
 			var fullID string
 			var err error
 			fullID, err = utils.ResolvePartialID(ctx, store, id)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+				unresolved = append(unresolved, id)
 				continue
 			}
 			resolvedIDs = append(resolvedIDs, fullID)
 		}
 		issueIDs = resolvedIDs
-		return processBatchLabelOperation(issueIDs, label, "removed", jsonOutput,
+		if len(issueIDs) == 0 {
+			return HandleErrorRespectJSON("no issue id resolved")
+		}
+		if err := processBatchLabelOperation(issueIDs, label, "removed", jsonOutput,
 			func(ctx context.Context, tx storage.Transaction, issueID, lbl, act string) error {
 				return tx.RemoveLabel(ctx, issueID, lbl, act)
-			})
+			}); err != nil {
+			return err
+		}
+		if len(unresolved) > 0 {
+			return HandleErrorRespectJSON("could not resolve %d of %d issue id(s): %s",
+				len(unresolved), len(unresolved)+len(issueIDs), strings.Join(unresolved, ", "))
+		}
+		return nil
 	},
 }
 var labelListCmd = &cobra.Command{
