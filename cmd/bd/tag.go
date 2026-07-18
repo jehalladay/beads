@@ -32,6 +32,14 @@ Examples:
 			}
 		}()
 
+		// beads-aocj: route to the proxied handler in proxied-server mode.
+		// Without this, tag uses the direct global `store` — nil under
+		// proxiedServerMode — so `bd tag` failed "storage is nil", unlike its
+		// long form `bd update --add-label` which routes via usesProxiedServer().
+		if usesProxiedServer() {
+			return runTagProxiedServer(rootCtx, args)
+		}
+
 		id := args[0]
 		label := args[1]
 
