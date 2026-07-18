@@ -345,9 +345,15 @@ func TestCompactInitCommand(t *testing.T) {
 		t.Error("compactCmd should have Long description")
 	}
 
-	// Verify --json flag exists
-	jsonFlag := compactCmd.Flags().Lookup("json")
-	if jsonFlag == nil {
-		t.Error("compact command should have --json flag")
+	// Verify --json is honored on compact via the ROOT persistent flag.
+	// beads-9fww intentionally removed the command-LOCAL --json flag: a local
+	// binding shadowed the persistent flag and left --json non-functional (see
+	// compact.go init() NOTE). So --json must resolve as an INHERITED flag, and
+	// must NOT be re-registered locally (re-adding a local shadow regresses 9fww).
+	if compactCmd.InheritedFlags().Lookup("json") == nil {
+		t.Error("compact command should inherit the persistent --json flag")
+	}
+	if local := compactCmd.LocalFlags().Lookup("json"); local != nil {
+		t.Error("compact command must not register a LOCAL --json flag (shadows the persistent flag; see beads-9fww)")
 	}
 }
