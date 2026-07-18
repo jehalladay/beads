@@ -111,6 +111,17 @@ func TestNewDoltServerUOWProvider_HappyPath(t *testing.T) {
 }
 
 func TestNewDoltServerUOWProvider_ConcurrentInstantiation(t *testing.T) {
+	// beads-s1ng: this test spins 10 concurrent full dolt sql-server bring-ups.
+	// It is coverage-preserving to gate it behind the same BEADS_TEST_EMBEDDED_DOLT
+	// sentinel every other heavy embedded-dolt test uses (cmd/bd/*_embedded_test.go):
+	// the dedicated CI embedded-dolt job sets it, so the concurrency exercise still
+	// runs there, but it no longer runs on the default gate path (dolt on PATH, no
+	// sentinel) where 10 concurrent bring-ups contend for proxy port-readiness under
+	// shared-/fsx load and bleed the cmd/bd gate. The production concurrent-open path
+	// is already flock-serialized (endpoint.go); the deep proxy work is beads-s651.
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run the concurrent-instantiation test (heavy: 10 dolt server bring-ups)")
+	}
 	testutil.RequireDoltBinary(t)
 	bin, err := exec.LookPath("dolt")
 	require.NoError(t, err)

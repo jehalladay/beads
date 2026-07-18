@@ -2,6 +2,7 @@ package uow
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -116,6 +117,13 @@ func TestNewExternalDoltServerUOWProvider_EndToEnd(t *testing.T) {
 }
 
 func TestNewExternalDoltServerUOWProvider_ConcurrentInstantiation(t *testing.T) {
+	// beads-s1ng: same heavy-concurrency gate as the embedded sibling — spins
+	// concurrent server bring-ups that contend for proxy port-readiness under
+	// shared-/fsx load. Gated behind BEADS_TEST_EMBEDDED_DOLT so it still runs in
+	// the dedicated CI embedded-dolt job but not on the default cmd/bd gate path.
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run the concurrent-instantiation test (heavy: concurrent dolt server bring-ups)")
+	}
 	port := testutil.StartIsolatedDoltContainer(t)
 	portInt, err := strconv.Atoi(port)
 	require.NoError(t, err)
