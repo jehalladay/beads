@@ -361,6 +361,40 @@ func TestEmbeddedLabel(t *testing.T) {
 	t.Run("label_remove_all_bogus_exits_nonzero", func(t *testing.T) {
 		bdLabelFail(t, bd, dir, "remove", "ghost-a", "ghost-b", "some-lbl")
 	})
+
+	// beads-yaux: removing a label the issue never had must fail loud, not print
+	// a false "✓ Removed" success. RemoveLabel is idempotent (no-ops when the
+	// label was never present), so the CLI pre-checks the label exists and
+	// reports honestly. Sibling of the landed dep-remove fix (beads-w2tk).
+	t.Run("label_remove_nonexistent_fails", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "NoLabel here", "--type", "task")
+		// No label ever added — the remove targets a label that was never present.
+		out := bdLabelFail(t, bd, dir, "remove", issue.ID, "never-had-this")
+		if strings.Contains(out, "Removed") {
+			t.Errorf("false success: removing a nonexistent label printed 'Removed': %s", out)
+		}
+		if !strings.Contains(out, "no label 'never-had-this' to remove") {
+			t.Errorf("expected a 'no label ... to remove' error, got: %s", out)
+		}
+	})
+
+	// A batch where one issue has the label and one never did: the present one
+	// is still removed, but the command reports the missing one and exits nonzero.
+	t.Run("label_remove_partial_missing_label_fails", func(t *testing.T) {
+		has := bdCreate(t, bd, dir, "Has lbl", "--type", "task", "--label", "shared-lbl")
+		lacks := bdCreate(t, bd, dir, "Lacks lbl", "--type", "task")
+		out := bdLabelFail(t, bd, dir, "remove", has.ID, lacks.ID, "shared-lbl")
+		if !strings.Contains(out, "no label 'shared-lbl' to remove") {
+			t.Errorf("expected a 'no label ... to remove' error naming the missing issue, got: %s", out)
+		}
+		// The issue that DID have the label still gets it removed.
+		labels := bdLabelListJSON(t, bd, dir, has.ID)
+		for _, l := range labels {
+			if l == "shared-lbl" {
+				t.Errorf("expected 'shared-lbl' removed from %s despite the partial failure: %v", has.ID, labels)
+			}
+		}
+	})
 }
 
 // TestEmbeddedLabelConcurrent exercises label operations concurrently.
