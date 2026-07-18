@@ -73,7 +73,11 @@ WARNING: Direct database access bypasses the storage layer. Use with caution.`,
 		}()
 
 		if !usesSQLServer() {
-			return HandleError("'bd sql' is not yet supported in embedded mode")
+			// beads-y2yo: this runs before the `if jsonOutput` output block below,
+			// so under `bd sql --json` a plain HandleError leaves stdout empty +
+			// stderr text — honor the --json error contract, matching the three
+			// sibling error returns just below (0wp9/xwjg/8lqh class).
+			return HandleErrorRespectJSON("'bd sql' is not yet supported in embedded mode")
 		}
 		query := args[0]
 		csvOutput, _ := cmd.Flags().GetBool("csv")
