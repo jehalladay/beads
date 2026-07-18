@@ -286,3 +286,124 @@ func TestEmbeddedReopenConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// bdReopenFail runs "bd reopen" expecting a non-zero exit and returns combined output.
+func bdReopenFail(t *testing.T, bd, dir string, args ...string) string {
+	t.Helper()
+	fullArgs := append([]string{"reopen"}, args...)
+	cmd := exec.Command(bd, fullArgs...)
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected bd reopen %s to fail, but it succeeded:\n%s", strings.Join(args, " "), out)
+	}
+	return string(out)
+}
+
+// TestEmbeddedReopenClosedEpicParentGuard verifies the beads-b0tw fix: reopening
+// a closed child whose parent epic is itself closed recreates the
+// closed-epic-with-open-child inconsistency the close-guard family prevents. Both
+// child->open surfaces are guarded — `bd reopen` and `bd update --status open` —
+// each overridable with --force. Sibling of beads-2hkd (demote) / beads-zgku
+// (update --status closed) / beads-1d08 (batch close).
+func TestEmbeddedReopenClosedEpicParentGuard(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "rc")
+
+	// seedClosedEpicClosedChild builds an epic with one parent-child child, then
+	// closes the child and the epic — the legit precondition for the bypass.
+	seedClosedEpicClosedChild := func(t *testing.T, prefix string) (epic, child *types.Issue) {
+		epic = bdCreate(t, bd, dir, prefix+" epic", "--type", "epic")
+		child = bdCreate(t, bd, dir, prefix+" child", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, epic.ID, "--type", "parent-child")
+		bdClose(t, bd, dir, child.ID)
+		bdClose(t, bd, dir, epic.ID)
+		return epic, child
+	}
+
+	// `bd reopen <child>` must refuse when the parent epic is closed.
+	t.Run("reopen_verb_closed_epic_parent_refuses", func(t *testing.T) {
+		epic, child := seedClosedEpicClosedChild(t, "rv")
+		out := bdReopenFail(t, bd, dir, child.ID)
+		if !strings.Contains(out, "parent epic") || !strings.Contains(out, "is closed") {
+			t.Errorf("expected closed-epic-parent guard message, got:\n%s", out)
+		}
+		// Child must stay closed (guard refused + no mutation).
+		if got := bdShow(t, bd, dir, child.ID); got.Status != types.StatusClosed {
+			t.Errorf("child should remain closed after refused reopen, got %s", got.Status)
+		}
+		_ = epic
+	})
+
+	// `bd update <child> --status open` must refuse identically (parity surface).
+	t.Run("update_status_open_closed_epic_parent_refuses", func(t *testing.T) {
+		_, child := seedClosedEpicClosedChild(t, "uv")
+		out := bdUpdateFail(t, bd, dir, child.ID, "--status", "open")
+		if !strings.Contains(out, "parent epic") || !strings.Contains(out, "is closed") {
+			t.Errorf("expected closed-epic-parent guard message on update path, got:\n%s", out)
+		}
+		if got := bdShow(t, bd, dir, child.ID); got.Status != types.StatusClosed {
+			t.Errorf("child should remain closed after refused update --status open, got %s", got.Status)
+		}
+	})
+
+	// --force overrides on the reopen verb (operator escape hatch, family parity).
+	t.Run("reopen_verb_force_succeeds", func(t *testing.T) {
+		_, child := seedClosedEpicClosedChild(t, "rf")
+		bdReopen(t, bd, dir, child.ID, "--force")
+		if got := bdShow(t, bd, dir, child.ID); got.Status != types.StatusOpen {
+			t.Errorf("expected child reopened with --force, got %s", got.Status)
+		}
+	})
+
+	// --force overrides on the update --status open path too.
+	t.Run("update_status_open_force_succeeds", func(t *testing.T) {
+		_, child := seedClosedEpicClosedChild(t, "uf")
+		bdUpdate(t, bd, dir, child.ID, "--status", "open", "--force")
+		if got := bdShow(t, bd, dir, child.ID); got.Status != types.StatusOpen {
+			t.Errorf("expected child reopened via update --force, got %s", got.Status)
+		}
+	})
+
+	// If the parent epic is still OPEN, reopening a closed child is fine.
+	t.Run("open_epic_parent_reopen_succeeds", func(t *testing.T) {
+		epic := bdCreate(t, bd, dir, "oe epic", "--type", "epic")
+		child := bdCreate(t, bd, dir, "oe child", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, epic.ID, "--type", "parent-child")
+		bdClose(t, bd, dir, child.ID) // epic stays open
+		bdReopen(t, bd, dir, child.ID)
+		if got := bdShow(t, bd, dir, child.ID); got.Status != types.StatusOpen {
+			t.Errorf("expected child reopened under an open epic, got %s", got.Status)
+		}
+	})
+
+	// A closed issue with NO epic parent reopens normally (guard is scoped).
+	t.Run("no_epic_parent_reopen_succeeds", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "orphan", "--type", "task")
+		bdClose(t, bd, dir, issue.ID)
+		bdReopen(t, bd, dir, issue.ID)
+		if got := bdShow(t, bd, dir, issue.ID); got.Status != types.StatusOpen {
+			t.Errorf("expected plain closed issue reopened, got %s", got.Status)
+		}
+	})
+
+	// A child whose parent is a closed NON-epic (task parent) reopens normally —
+	// the invariant is specifically about closed EPIC parents.
+	t.Run("closed_nonepic_parent_reopen_succeeds", func(t *testing.T) {
+		parent := bdCreate(t, bd, dir, "task parent", "--type", "task")
+		child := bdCreate(t, bd, dir, "task child", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, parent.ID, "--type", "parent-child")
+		bdClose(t, bd, dir, child.ID)
+		bdClose(t, bd, dir, parent.ID)
+		bdReopen(t, bd, dir, child.ID)
+		if got := bdShow(t, bd, dir, child.ID); got.Status != types.StatusOpen {
+			t.Errorf("expected child under a closed non-epic parent to reopen, got %s", got.Status)
+		}
+	})
+}
