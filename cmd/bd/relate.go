@@ -55,6 +55,15 @@ func init() {
 func runRelate(cmd *cobra.Command, args []string) error {
 	CheckReadonly("relate")
 
+	// beads-1zuh: route to the proxied handler in proxied-server mode. Without
+	// this, runRelate uses the direct global `store` — which is nil under
+	// proxiedServerMode (PersistentPreRunE returns early before store init) —
+	// so `bd dep relate` failed "storage is nil" for every hub-connected crew,
+	// unlike every other dep/write verb which routes via usesProxiedServer().
+	if usesProxiedServer() {
+		return runRelateProxiedServer(rootCtx, args)
+	}
+
 	evt := metrics.NewCommandEvent("relate")
 	defer func() {
 		if c := metrics.Global(); c != nil {
@@ -158,6 +167,11 @@ func runRelate(cmd *cobra.Command, args []string) error {
 
 func runUnrelate(cmd *cobra.Command, args []string) error {
 	CheckReadonly("unrelate")
+
+	// beads-1zuh: route to the proxied handler in proxied-server mode (see runRelate).
+	if usesProxiedServer() {
+		return runUnrelateProxiedServer(rootCtx, args)
+	}
 
 	evt := metrics.NewCommandEvent("unrelate")
 	defer func() {
