@@ -509,3 +509,38 @@ func TestEmbeddedSearchRejectsInvalidEnums(t *testing.T) {
 		t.Errorf("bd search --type task: expected the seeded task, got:\n%s", out)
 	}
 }
+
+// TestEmbeddedSearchRejectsInvalidSortField is the beads-y04n teeth: bd search
+// must reject an invalid --sort field with rc!=0 and the "invalid sort field"
+// error, mirroring bd list — not silently fall back to the default priority
+// sort (sqlbuild.OrderByForColumns SortDefs[""]) and return results as if
+// correctly sorted (a misleading false-green).
+func TestEmbeddedSearchRejectsInvalidSortField(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "ssf")
+	bdCreate(t, bd, dir, "sortfield search task", "--type", "task", "--priority", "2")
+
+	// Invalid --sort must fail loud (rc!=0) with the documented message.
+	cmd := exec.Command(bd, "search", "sortfield", "--sort", "bogusfield")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected bd search --sort bogusfield to fail, but succeeded:\n%s", out)
+	}
+	if !strings.Contains(string(out), "invalid sort field") {
+		t.Errorf("bd search --sort bogusfield: expected 'invalid sort field' error, got:\n%s", out)
+	}
+
+	// Valid sort fields must still succeed (surgical — no regression).
+	for _, field := range []string{"priority", "created", "id", "status"} {
+		if out := bdSearch(t, bd, dir, "sortfield", "--sort", field); !strings.Contains(out, "sortfield search task") {
+			t.Errorf("bd search --sort %s: expected the seeded task, got:\n%s", field, out)
+		}
+	}
+}

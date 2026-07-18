@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd search --sort <bad>` now fails loud instead of silently falling back to the default priority sort (beads-y04n).**
+  `bd list` (and `bd query` via beads-a9rk) validate `--sort` against the documented field set and reject an
+  unknown key, but `bd search` read the flag straight into the filter — where the SQL builder
+  (`sqlbuild.OrderByForColumns` → `SortDefs[""]`) and the client-side `sortIssues` both default an unknown key
+  to priority order with no error. So `bd search "x" --sort banana` silently returned priority-ordered rows as
+  if sorted by the requested field (a misleading false-green). `bd search` now routes `--sort` through the same
+  shared `validateSortField` helper, so an invalid field is a hard error (rc!=0) matching `bd list`/`bd query`;
+  its `--sort` flag help derives from the shared `sortFieldsHelp` so the documented set can't drift. Sibling of
+  beads-a9rk (query) on the read-command sort-validation-parity axis.
+
 - **`bd kv clear <key>` now fails loud on a key that does not exist instead of printing a false `Cleared`/`deleted:true` success (beads-v0rp).**
   `DeleteConfig` is idempotent — it issues an unconditional `DELETE` and returns nil regardless of how many
   rows matched, which programmatic cleanup callers rely on — but `bd kv clear` printed `Cleared <key>` (text)
