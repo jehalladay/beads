@@ -199,3 +199,58 @@ func waitForLockHeld(t *testing.T, flockPath, lock string) {
 	}
 	t.Fatal("background holder never acquired the lock")
 }
+
+// TestPrecommitLintDegradesToWarnWhenLinterHangs (beads-fdfw): a linter run that
+// HANGS (exceeds BEADS_PRECOMMIT_LINT_RUN_TIMEOUT) must be terminated and the
+// hook degrade-to-warn (exit 0), NOT block — so a hung run can't hold the shared
+// lock forever and stall every crew's commit. Distinct from the lock-WAIT
+// degrade (beads-qre): here the run itself hangs while holding the lock.
+func TestPrecommitLintDegradesToWarnWhenLinterHangs(t *testing.T) {
+	if _, err := exec.LookPath("flock"); err != nil {
+		t.Skip("flock not available")
+	}
+	if _, err := exec.LookPath("timeout"); err != nil {
+		t.Skip("timeout not available")
+	}
+	// Stub linter sleeps far longer than the run-timeout; if the timeout wrapper
+	// works it is killed (124) and the hook warns+proceeds.
+	out, err := runPrecommitHook(t,
+		pinnedLinterStub(t, "sleep 30; exit 1"),
+		"BEADS_PRECOMMIT_LINT_LOCK="+filepath.Join(t.TempDir(), "hang.lock"),
+		"BEADS_PRECOMMIT_LINT_RUN_TIMEOUT=1",
+	)
+	if err != nil {
+		t.Fatalf("hook must degrade-to-warn (exit 0) when the linter hangs past the run-timeout: %v\n%s", err, out)
+	}
+	if !strings.Contains(strings.ToLower(out), "lint") {
+		t.Fatalf("hung-run degrade should print a warning mentioning lint; got:\n%s", out)
+	}
+}
+
+// TestPrecommitHungLinterReleasesLockForNextCommit (beads-fdfw): the run-timeout
+// must actually RELEASE the shared lock — i.e. a hung run does not leave the
+// lock held. We drive one commit whose linter hangs (killed by the timeout),
+// then confirm the lock is immediately re-acquirable (not still held).
+func TestPrecommitHungLinterReleasesLockForNextCommit(t *testing.T) {
+	flockPath, err := exec.LookPath("flock")
+	if err != nil {
+		t.Skip("flock not available")
+	}
+	if _, err := exec.LookPath("timeout"); err != nil {
+		t.Skip("timeout not available")
+	}
+	lock := filepath.Join(t.TempDir(), "reuse.lock")
+	out, err := runPrecommitHook(t,
+		pinnedLinterStub(t, "sleep 30; exit 0"),
+		"BEADS_PRECOMMIT_LINT_LOCK="+lock,
+		"BEADS_PRECOMMIT_LINT_RUN_TIMEOUT=1",
+	)
+	if err != nil {
+		t.Fatalf("hung-linter commit should degrade-to-warn (exit 0): %v\n%s", err, out)
+	}
+	// The lock must be free now — a non-blocking acquire should succeed.
+	c := exec.Command(flockPath, "-n", lock, "-c", "true")
+	if aerr := c.Run(); aerr != nil {
+		t.Fatalf("lock still held after the hung linter was timed out (beads-fdfw): %v", aerr)
+	}
+}

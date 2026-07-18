@@ -106,12 +106,42 @@ fi
 # the same philosophy as the "couldn't obtain the pinned linter" fallback above.
 # CI (make ci-pr-lint) remains the hard gate, so nothing red reaches main.
 #
+# HUNG-HOLDER SELF-BOUND (beads-fdfw): the flock -w above only bounds the wait
+# to ACQUIRE the lock, NOT how long the holder keeps it. A golangci-lint run that
+# hangs (0% CPU, seen at 40min+ and even >1 day under heavy /fsx contention)
+# holds /tmp/golangci-lint.lock indefinitely, so every OTHER crew's commit then
+# blocks its full ${LINT_LOCK_WAIT}s and degrades-to-warn — a node-wide commit
+# stall. Wrap the linter in `timeout` so a hung run is killed and RELEASES the
+# lock rather than holding it forever. CI stays the hard gate, so a killed local
+# lint never lets red reach main (same rationale as the lock-wait degrade above).
+#
 # Knobs: BEADS_PRECOMMIT_LINT_LOCK (lock path; "" disables the flock wrapper),
-# BEADS_PRECOMMIT_LINT_LOCK_WAIT (bounded wait in seconds, default 120).
+# BEADS_PRECOMMIT_LINT_LOCK_WAIT (bounded wait to acquire, seconds, default 120),
+# BEADS_PRECOMMIT_LINT_RUN_TIMEOUT (max linter RUN time while holding the lock,
+# seconds, default 180; "" or 0 disables the timeout wrapper).
 LINT_LOCK="${BEADS_PRECOMMIT_LINT_LOCK-/tmp/golangci-lint.lock}"
 LINT_LOCK_WAIT="${BEADS_PRECOMMIT_LINT_LOCK_WAIT:-120}"
+LINT_RUN_TIMEOUT="${BEADS_PRECOMMIT_LINT_RUN_TIMEOUT:-180}"
 
 run_linter() {
+    # Self-bound the RUN so a hung linter releases the shared lock (beads-fdfw).
+    # timeout exit 124 = the run was killed for exceeding LINT_RUN_TIMEOUT; treat
+    # it like the lock-wait degrade (warn + proceed, CI is the hard gate) rather
+    # than a real lint failure. Only wrap when `timeout` exists and the knob is a
+    # positive integer; otherwise fall back to a bare run (behavior unchanged).
+    if command -v timeout >/dev/null 2>&1 && [ -n "$LINT_RUN_TIMEOUT" ] && [ "$LINT_RUN_TIMEOUT" -gt 0 ] 2>/dev/null; then
+        CGO_ENABLED=0 timeout "$LINT_RUN_TIMEOUT" "$LINTER" run --new-from-rev=HEAD --allow-serial-runners --fix
+        local rc=$?
+        if [ "$rc" -eq 124 ]; then
+            cat >&2 <<EOF
+⚠️  pre-commit: golangci-lint exceeded ${LINT_RUN_TIMEOUT}s and was terminated so
+    it could not hold the shared lock (beads-fdfw). Skipping the local lint step
+    for THIS commit — CI (make ci-pr-lint) still enforces lint before merge.
+EOF
+            return 0
+        fi
+        return "$rc"
+    fi
     CGO_ENABLED=0 "$LINTER" run --new-from-rev=HEAD --allow-serial-runners --fix
 }
 
@@ -120,7 +150,10 @@ if [ -n "$LINT_LOCK" ] && command -v flock >/dev/null 2>&1; then
     # -w bounds the wait OUTSIDE golangci's timeout; -E 75 marks "lock not
     # acquired in time" distinctly from a real lint failure. flock runs
     # run_linter (exported below) once the lock is held.
-    export LINTER
+    # run_linter is serialized via `declare -f` into a fresh `bash -c`, which only
+    # inherits EXPORTED vars — so LINT_RUN_TIMEOUT must be exported too, else the
+    # subshell sees it empty and skips the timeout wrapper (beads-fdfw).
+    export LINTER LINT_RUN_TIMEOUT
     flock -w "$LINT_LOCK_WAIT" -E 75 "$LINT_LOCK" \
         bash -c "$(declare -f run_linter); run_linter"
     lint_rc=$?
