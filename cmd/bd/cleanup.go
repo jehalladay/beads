@@ -12,6 +12,19 @@ import (
 	"github.com/steveyegge/beads/internal/ui"
 )
 
+// validateOlderThan enforces that `bd admin cleanup --older-than N` is not
+// negative. The age bound is only applied when N > 0, so a negative N would
+// silently skip the bound and widen a scoped delete to "all closed issues" — a
+// destructive scope-widen on durable data. N == 0 is the documented "all
+// closed" default and stays valid. Mirrors the read-only twin `bd stale --days`
+// which rejects days < 1 (beads-93px).
+func validateOlderThan(days int) error {
+	if days < 0 {
+		return fmt.Errorf("--older-than must not be negative (got %d)", days)
+	}
+	return nil
+}
+
 // CleanupEmptyResponse is returned when there are no closed issues to delete
 type CleanupEmptyResponse struct {
 	DeletedCount int    `json:"deleted_count"`
@@ -66,6 +79,16 @@ SEE ALSO:
 		cascade, _ := cmd.Flags().GetBool("cascade")
 		olderThanDays, _ := cmd.Flags().GetInt("older-than")
 		wispOnly, _ := cmd.Flags().GetBool("ephemeral")
+
+		// Reject a negative --older-than. The age bound is only applied when
+		// olderThanDays > 0 (below), so a negative value silently SKIPS the bound
+		// and widens a scoped delete to "all closed issues" — a destructive
+		// scope-widen on durable data. Fail loud instead, mirroring the read-only
+		// twin `bd stale --days` (rejects days < 1). 0 stays the documented
+		// "all closed" default (beads-93px).
+		if err := validateOlderThan(olderThanDays); err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
 
 		if store == nil {
 			if err := ensureStoreActive(); err != nil {
