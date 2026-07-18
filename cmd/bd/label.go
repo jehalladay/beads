@@ -99,6 +99,32 @@ func collectLabelArgs(args []string, flagLabels []string) (issueIDs []string, la
 	return issueIDs, labels
 }
 
+// filterUpdatableIDs drops ids that must not be label-mutated — currently
+// template molecules, which are read-only (beads-dwlg). Rejected ids are
+// appended to *unresolved and their error printed to stderr, mirroring the
+// partial-resolution handling in the label add/remove resolve loops so a
+// mixed batch still labels the updatable ids while exiting non-zero. A fetch
+// error leaves the id in (validateIssueUpdatable treats nil as updatable, and
+// the downstream mutation reports any real store error).
+func filterUpdatableIDs(ctx context.Context, ids []string, unresolved *[]string) []string {
+	kept := ids[:0:0]
+	for _, id := range ids {
+		issue, err := store.GetIssue(ctx, id)
+		if err != nil {
+			// Could not fetch to check — let the mutation path surface it.
+			kept = append(kept, id)
+			continue
+		}
+		if verr := validateIssueUpdatable(id, issue); verr != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", verr)
+			*unresolved = append(*unresolved, id)
+			continue
+		}
+		kept = append(kept, id)
+	}
+	return kept
+}
+
 func parseLabelArgs(args []string) (issueIDs []string, label string) {
 	// beads-3bbm: trim the label to mirror the add path (collectLabelArgs). The
 	// remove DELETE is exact-match (label = ?), so a padded `bd label remove id
@@ -161,6 +187,19 @@ var labelAddCmd = &cobra.Command{
 			return HandleErrorRespectJSON("no issue id resolved")
 		}
 
+		// beads-dwlg: reject template molecules, matching the NotTemplate guard
+		// `bd tag` already enforces (tag.go). `bd tag` is documented as the
+		// shorthand for this add, so the two doors to the same mutation must
+		// agree — templates are read-only. Skip a template id (do not mutate it)
+		// but exit non-zero, mirroring the partial-resolution semantics above.
+		issueIDs = filterUpdatableIDs(ctx, issueIDs, &unresolved)
+		if len(issueIDs) == 0 {
+			if len(unresolved) > 0 {
+				return HandleErrorRespectJSON("no updatable issue id resolved: %s", strings.Join(unresolved, ", "))
+			}
+			return HandleErrorRespectJSON("no issue id resolved")
+		}
+
 		if err := processBatchLabelsOperation(issueIDs, labels, "added", jsonOutput,
 			func(ctx context.Context, tx storage.Transaction, issueID, lbl, act string) error {
 				return tx.AddLabel(ctx, issueID, lbl, act)
@@ -209,6 +248,15 @@ var labelRemoveCmd = &cobra.Command{
 		}
 		issueIDs = resolvedIDs
 		if len(issueIDs) == 0 {
+			return HandleErrorRespectJSON("no issue id resolved")
+		}
+		// beads-dwlg: reject template molecules (read-only), matching the
+		// NotTemplate guard `bd tag` enforces — see the add path above.
+		issueIDs = filterUpdatableIDs(ctx, issueIDs, &unresolved)
+		if len(issueIDs) == 0 {
+			if len(unresolved) > 0 {
+				return HandleErrorRespectJSON("no updatable issue id resolved: %s", strings.Join(unresolved, ", "))
+			}
 			return HandleErrorRespectJSON("no issue id resolved")
 		}
 		if err := processBatchLabelOperation(issueIDs, label, "removed", jsonOutput,
