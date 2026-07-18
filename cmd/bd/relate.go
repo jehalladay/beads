@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -181,6 +182,24 @@ func runUnrelate(cmd *cobra.Command, args []string) error {
 		return HandleErrorRespectJSON("issue not found: %s", id2)
 	}
 
+	// Pre-check that a relates-to link actually exists (in EITHER direction) so
+	// we report honestly (beads-piud, w2tk-class). RemoveDependency is idempotent
+	// — it returns nil whether or not an edge was removed (the storage layer
+	// detects the no-op but discards the bit at the interface, and other callers
+	// rely on idempotent cleanup) — so without this check `bd unrelate A B` on a
+	// never-related pair printed "✓ Unlinked" / unrelated:true, a false-success
+	// that a CI/agent gate reads as proof the link is gone. Scope the check to
+	// the relates-to TYPE so a blocks/parent edge between the same pair doesn't
+	// mask a missing relates-to link. Keep RemoveDependency idempotent for
+	// programmatic callers; only the CLI verb reports the distinction.
+	linkExists, checkErr := relatesToLinkExists(ctx, id1, id2)
+	if checkErr != nil {
+		return HandleErrorRespectJSON("checking relates-to link %s <-> %s: %v", id1, id2, checkErr)
+	}
+	if !linkExists {
+		return HandleErrorRespectJSON("no relates-to link to remove: %s is not related to %s", id1, id2)
+	}
+
 	// Remove relates-to dependency in both directions
 	// Per Decision 004, relates-to links are now stored in dependencies table.
 	// Both directions are removed in ONE transaction so unrelate is atomic —
@@ -211,6 +230,35 @@ func runUnrelate(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("%s Unlinked %s ↔ %s\n", ui.RenderPass("✓"), id1, id2)
 	return nil
+}
+
+// relatesToLinkExists reports whether a relates-to dependency edge exists
+// between id1 and id2 in EITHER direction. Used by unrelate to distinguish a
+// real removal from a no-op (beads-piud). Scoped to types.DepRelatesTo so an
+// unrelated blocks/parent edge between the same pair is not mistaken for a
+// relates-to link.
+func relatesToLinkExists(ctx context.Context, id1, id2 string) (bool, error) {
+	recs, err := store.GetDependencyRecords(ctx, id1)
+	if err != nil {
+		return false, err
+	}
+	for _, rec := range recs {
+		if rec != nil && rec.DependsOnID == id2 && rec.Type == types.DepRelatesTo {
+			return true, nil
+		}
+	}
+	// Check the reciprocal direction too: a half-removed link (only one
+	// direction present) should still be treated as removable, not a no-op.
+	recs, err = store.GetDependencyRecords(ctx, id2)
+	if err != nil {
+		return false, err
+	}
+	for _, rec := range recs {
+		if rec != nil && rec.DependsOnID == id1 && rec.Type == types.DepRelatesTo {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Note: contains, remove, formatRelatesTo functions removed per Decision 004
