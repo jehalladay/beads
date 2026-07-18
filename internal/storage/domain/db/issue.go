@@ -91,6 +91,16 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 		return nil
 	}
 
+	// beads-iu9f Phase B / 25k6: on the update path (Finalize), run the same
+	// input-type guards the shared seam does BEFORE the SQL, so a >500 title or
+	// negative estimate fails with a clean domain error instead of a raw Dolt
+	// column error. Skipped for graph-apply/assignee/ref-rewrite callers.
+	if opts.Finalize {
+		if err := issueops.ValidateUpdateInputs(updates); err != nil {
+			return err
+		}
+	}
+
 	setClauses := make([]string, 0, len(updates))
 	args := make([]any, 0, len(updates)+1)
 	for key, value := range updates {
@@ -144,6 +154,17 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 		Actor:   actor,
 	}, domain.RecordEventOpts{UseWispsTable: opts.UseWispsTable}); err != nil {
 		return err
+	}
+
+	// beads-iu9f Phase B / 25k6 / lsbu / rzx8: on the update path (Finalize),
+	// re-run the shared finalize — full Issue.ValidateWithCustom on the merged
+	// persisted state (rejects >500 title / non-object metadata) + content_hash
+	// recompute — in this same runner tx. A validation failure rolls back the
+	// caller's transaction, so an invalid write never commits.
+	if opts.Finalize {
+		if err := issueops.FinalizeUpdatedIssueInTx(ctx, r.runner, table, id); err != nil {
+			return err
+		}
 	}
 
 	if statusChanging {
