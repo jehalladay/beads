@@ -169,3 +169,78 @@ func TestWispCreateDryRunFanoutMessage(t *testing.T) {
 		}
 	})
 }
+
+// makeWispGCTestCmd builds a cobra.Command with the same flag schema as the
+// real `bd mol wisp gc` command, with the given flag values set as defaults so
+// runWispGC reads them back without arg parsing.
+func makeWispGCTestCmd(closed, force bool, excludeType []string) *cobra.Command {
+	c := &cobra.Command{Use: "gc"}
+	c.Flags().Bool("dry-run", false, "")
+	c.Flags().String("age", "1h", "")
+	c.Flags().Bool("all", false, "")
+	c.Flags().Bool("closed", closed, "")
+	c.Flags().BoolP("force", "f", force, "")
+	c.Flags().StringSlice("exclude-type", excludeType, "")
+	return c
+}
+
+// countEphemeralOfType returns the number of ephemeral issues of the given
+// canonical type in the store.
+func countEphemeralOfType(t *testing.T, ctx context.Context, s *dolt.DoltStore, it types.IssueType) int {
+	t.Helper()
+	tru := true
+	results, err := s.SearchIssues(ctx, "", types.IssueFilter{Ephemeral: &tru})
+	if err != nil {
+		t.Fatalf("SearchIssues: %v", err)
+	}
+	n := 0
+	for _, r := range results {
+		if r.IssueType == it {
+			n++
+		}
+	}
+	return n
+}
+
+// TestWispGCExcludeTypeAliasProtectsMolecules is the end-to-end beads-asls
+// regression test. The documented protect-command `bd mol wisp gc --closed
+// --force --exclude-type mol` must actually protect molecule wisps from
+// deletion. Before the fix, the exclude filter was built from the raw flag
+// (`IssueType("mol")`), which never matched stored canonical "molecule" rows,
+// so the protection failed OPEN and deleted the very molecules the user asked
+// to keep — a silent destructive bug (molecule is NOT infra-protected, so
+// --exclude-type is its ONLY protection).
+func TestWispGCExcludeTypeAliasProtectsMolecules(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStoreWithPrefix(t, filepath.Join(t.TempDir(), "test.db"), "test")
+	withWispTestGlobals(t, s, ctx)
+
+	// A closed ephemeral molecule (the thing --exclude-type mol must protect)
+	// and a closed ephemeral task (an unprotected wisp that SHOULD be deleted,
+	// proving GC still runs and the exclude is narrow).
+	mol := &types.Issue{Title: "keepme molecule", Status: types.StatusClosed, Priority: 2, IssueType: types.TypeMolecule, Ephemeral: true}
+	task := &types.Issue{Title: "purge task", Status: types.StatusClosed, Priority: 2, IssueType: types.TypeTask, Ephemeral: true}
+	for _, iss := range []*types.Issue{mol, task} {
+		if err := s.CreateIssue(ctx, iss, "test"); err != nil {
+			t.Fatalf("CreateIssue(%s): %v", iss.Title, err)
+		}
+	}
+
+	if got := countEphemeralOfType(t, ctx, s, types.TypeMolecule); got != 1 {
+		t.Fatalf("setup: expected 1 ephemeral molecule, got %d", got)
+	}
+
+	// The documented protect-command: delete closed wisps EXCEPT the "mol" alias.
+	_ = captureStdout(t, func() error {
+		return runWispGC(makeWispGCTestCmd(true, true, []string{"mol"}), nil)
+	})
+
+	// The molecule must survive (alias resolved to canonical "molecule").
+	if got := countEphemeralOfType(t, ctx, s, types.TypeMolecule); got != 1 {
+		t.Errorf("molecule was deleted despite --exclude-type mol (protection failed open): %d molecules remain, want 1", got)
+	}
+	// The unprotected task must be gone (GC still ran; exclude is narrow).
+	if got := countEphemeralOfType(t, ctx, s, types.TypeTask); got != 0 {
+		t.Errorf("unprotected closed task survived GC: %d tasks remain, want 0", got)
+	}
+}
