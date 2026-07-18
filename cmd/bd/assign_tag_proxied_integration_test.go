@@ -84,4 +84,34 @@ func TestProxiedServerAssignTag(t *testing.T) {
 			t.Errorf("label after proxied tag = %v, want to contain needs-review", got.Labels)
 		}
 	})
+
+	// beads-qxu4: a label containing a comma/newline must be REJECTED over the
+	// proxied server too, matching the direct-path AddLabelInTx guard (beads-pqzx).
+	// The proxied AddLabels path goes through the domain use-case (addMany ->
+	// labelRepo.Insert), which previously skipped the delimiter check — so a
+	// comma-bearing label was stored verbatim and the markdown "### Labels"
+	// round-trip re-split it into multiple labels (identity corruption).
+	t.Run("tag_comma_label_rejected", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "tagcx")
+		a := bdProxiedCreate(t, bd, p.dir, "Tag comma", "--type", "task")
+
+		out, err := bdProxiedRun(t, bd, p.dir, "tag", a.ID, "a,b")
+		s := string(out)
+		if err == nil {
+			t.Fatalf("proxied tag with a comma label should fail; got success:\n%s", s)
+		}
+		if strings.Contains(s, "storage is nil") {
+			t.Fatalf("proxied tag hit the nil-store path (beads-aocj regression): %s", s)
+		}
+		if !strings.Contains(s, "comma or newline") {
+			t.Errorf("expected a 'comma or newline' delimiter-reject error, got: %s", s)
+		}
+		// The corrupt label must NOT have been stored.
+		got := bdProxiedShow(t, bd, p.dir, a.ID)
+		for _, l := range got.Labels {
+			if strings.Contains(l, ",") {
+				t.Errorf("comma-bearing label leaked into storage: %v", got.Labels)
+			}
+		}
+	})
 }

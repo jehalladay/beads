@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 type LabelOpts struct {
@@ -42,6 +43,25 @@ func NewLabelUseCase(labelRepo LabelSQLRepository) LabelUseCase {
 	return &labelUseCaseImpl{labelRepo: labelRepo}
 }
 
+// validateLabelValue trims a label and rejects an interior comma/newline,
+// mirroring the direct/embedded AddLabelInTx chokepoint (beads-13zc trim,
+// beads-pqzx delimiter reject). The proxied server drives label mutations
+// through this domain use-case (add/addMany/setMany -> labelRepo.Insert), which
+// otherwise skipped both checks — so 'bd tag <id> a,b' / '--add-label $'x\ny”
+// over the proxied server stored a comma/newline label that the markdown
+// "### Labels" round-trip then re-splits into MULTIPLE labels (identity
+// corruption). Centralizing the check here keeps the proxied leg in lockstep
+// with the direct leg and stops the domain Insert callers from drifting again
+// (beads-qxu4). Returns the trimmed label and ok=false only for an interior
+// delimiter (empty is handled by callers via the returned trimmed value).
+func validateLabelValue(label string) (string, error) {
+	label = strings.TrimSpace(label)
+	if strings.ContainsAny(label, ",\n\r") {
+		return label, fmt.Errorf("label %q must not contain a comma or newline (these are reserved as label delimiters)", label)
+	}
+	return label, nil
+}
+
 type labelUseCaseImpl struct {
 	labelRepo LabelSQLRepository
 }
@@ -59,6 +79,10 @@ func (u *labelUseCaseImpl) AddWispLabel(ctx context.Context, wispID, label, acto
 func (u *labelUseCaseImpl) add(ctx context.Context, id, label, actor string, useWisp bool) error {
 	if id == "" {
 		return fmt.Errorf("add label: id must not be empty")
+	}
+	label, err := validateLabelValue(label)
+	if err != nil {
+		return fmt.Errorf("add label: %w", err)
 	}
 	if label == "" {
 		return fmt.Errorf("add label: label must not be empty")
@@ -104,6 +128,10 @@ func (u *labelUseCaseImpl) addMany(ctx context.Context, id string, labels []stri
 	}
 	opts := LabelOpts{UseWispsTable: useWisp}
 	for _, label := range labels {
+		label, err := validateLabelValue(label)
+		if err != nil {
+			return fmt.Errorf("add labels: %w", err)
+		}
 		if label == "" {
 			continue
 		}
@@ -157,6 +185,10 @@ func (u *labelUseCaseImpl) setMany(ctx context.Context, id string, labels []stri
 	}
 	desired := make(map[string]bool, len(labels))
 	for _, l := range labels {
+		l, err := validateLabelValue(l)
+		if err != nil {
+			return fmt.Errorf("set labels: %w", err)
+		}
 		if l != "" {
 			desired[l] = true
 		}
