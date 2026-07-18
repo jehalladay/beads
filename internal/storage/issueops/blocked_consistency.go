@@ -195,15 +195,13 @@ func shouldBeBlockedDisjunction(alias, depTable string) string {
 		      SELECT 1 FROM %[2]s d
 		      JOIN issues t ON t.id = d.depends_on_issue_id
 		      WHERE d.issue_id = %[1]s.id
-		        AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
-		        AND t.status <> 'closed' AND t.status <> 'pinned'
+		        AND %[4]s
 		    )
 		    OR EXISTS (
 		      SELECT 1 FROM %[2]s d
 		      JOIN wisps t ON t.id = d.depends_on_wisp_id
 		      WHERE d.issue_id = %[1]s.id
-		        AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
-		        AND t.status <> 'closed' AND t.status <> 'pinned'
+		        AND %[4]s
 		    )
 		    OR EXISTS (
 		      SELECT 1 FROM %[2]s d
@@ -224,7 +222,7 @@ func shouldBeBlockedDisjunction(alias, depTable string) string {
 		      WHERE d.issue_id = %[1]s.id AND d.type = 'waits-for'
 		        AND (%[3]s)
 		    )
-	`, alias, depTable, waitsForGateBlockedSQL)
+	`, alias, depTable, waitsForGateBlockedSQL, activeBlockerSQL("d", "t"))
 }
 
 // countRows runs a single COUNT(*) query and returns the scalar.

@@ -149,15 +149,13 @@ func markBlockedTemplateForIssues() string {
 		      SELECT 1 FROM dependencies d
 		      JOIN issues t ON t.id = d.depends_on_issue_id
 		      WHERE d.issue_id = i.id
-		        AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
-		        AND t.status <> 'closed' AND t.status <> 'pinned'
+		        AND %s
 		    )
 		    OR EXISTS (
 		      SELECT 1 FROM dependencies d
 		      JOIN wisps t ON t.id = d.depends_on_wisp_id
 		      WHERE d.issue_id = i.id
-		        AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
-		        AND t.status <> 'closed' AND t.status <> 'pinned'
+		        AND %s
 		    )
 		    OR EXISTS (
 		      SELECT 1 FROM dependencies d
@@ -179,7 +177,7 @@ func markBlockedTemplateForIssues() string {
 		        AND (%s)
 		    )
 		  )
-	`, waitsForGateBlockedSQL)
+	`, activeBlockerSQL("d", "t"), activeBlockerSQL("d", "t"), waitsForGateBlockedSQL)
 }
 
 func unmarkBlockedTemplateForIssues() string {
@@ -194,15 +192,13 @@ func unmarkBlockedTemplateForIssues() string {
 		        SELECT 1 FROM dependencies d
 		        JOIN issues t ON t.id = d.depends_on_issue_id
 		        WHERE d.issue_id = i.id
-		          AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
-		          AND t.status <> 'closed' AND t.status <> 'pinned'
+		          AND %s
 		      )
 		      AND NOT EXISTS (
 		        SELECT 1 FROM dependencies d
 		        JOIN wisps t ON t.id = d.depends_on_wisp_id
 		        WHERE d.issue_id = i.id
-		          AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
-		          AND t.status <> 'closed' AND t.status <> 'pinned'
+		          AND %s
 		      )
 		      AND NOT EXISTS (
 		        SELECT 1 FROM dependencies d
@@ -225,7 +221,7 @@ func unmarkBlockedTemplateForIssues() string {
 		      )
 		    )
 		  )
-	`, waitsForGateBlockedSQL)
+	`, activeBlockerSQL("d", "t"), activeBlockerSQL("d", "t"), waitsForGateBlockedSQL)
 }
 
 //nolint:gosec // G201: SQL templates are constant; only IN-clause placeholders are formatted in.
@@ -255,15 +251,13 @@ func markBlockedTemplateForWisps() string {
 		      SELECT 1 FROM wisp_dependencies d
 		      JOIN issues t ON t.id = d.depends_on_issue_id
 		      WHERE d.issue_id = w.id
-		        AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
-		        AND t.status <> 'closed' AND t.status <> 'pinned'
+		        AND %s
 		    )
 		    OR EXISTS (
 		      SELECT 1 FROM wisp_dependencies d
 		      JOIN wisps t ON t.id = d.depends_on_wisp_id
 		      WHERE d.issue_id = w.id
-		        AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
-		        AND t.status <> 'closed' AND t.status <> 'pinned'
+		        AND %s
 		    )
 		    OR EXISTS (
 		      SELECT 1 FROM wisp_dependencies d
@@ -285,7 +279,7 @@ func markBlockedTemplateForWisps() string {
 		        AND (%s)
 		    )
 		  )
-	`, waitsForGateBlockedSQL)
+	`, activeBlockerSQL("d", "t"), activeBlockerSQL("d", "t"), waitsForGateBlockedSQL)
 }
 
 func unmarkBlockedTemplateForWisps() string {
@@ -300,15 +294,13 @@ func unmarkBlockedTemplateForWisps() string {
 		        SELECT 1 FROM wisp_dependencies d
 		        JOIN issues t ON t.id = d.depends_on_issue_id
 		        WHERE d.issue_id = w.id
-		          AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
-		          AND t.status <> 'closed' AND t.status <> 'pinned'
+		          AND %s
 		      )
 		      AND NOT EXISTS (
 		        SELECT 1 FROM wisp_dependencies d
 		        JOIN wisps t ON t.id = d.depends_on_wisp_id
 		        WHERE d.issue_id = w.id
-		          AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
-		          AND t.status <> 'closed' AND t.status <> 'pinned'
+		          AND %s
 		      )
 		      AND NOT EXISTS (
 		        SELECT 1 FROM wisp_dependencies d
@@ -331,7 +323,7 @@ func unmarkBlockedTemplateForWisps() string {
 		      )
 		    )
 		  )
-	`, waitsForGateBlockedSQL)
+	`, activeBlockerSQL("d", "t"), activeBlockerSQL("d", "t"), waitsForGateBlockedSQL)
 }
 
 //nolint:gosec // G201: callers pass constant templates; only IN-clause placeholders are formatted in.

@@ -472,18 +472,114 @@ func loadStatusByIDInTx(ctx context.Context, tx DBTX, ids []string) (map[string]
 	return statusByID, nil
 }
 
+// targetState is the status + close_reason of a dependency target, used by the
+// reason-aware conditional-blocks logic in the display query (beads-a3hm).
+type targetState struct {
+	status      types.Status
+	closeReason string
+}
+
+// loadStatusAndReasonByIDInTx is loadStatusByIDInTx plus the close_reason column
+// (both issues and wisps carry it). Needed so the --suggest-next display can
+// apply the same failure-vs-success close semantics as the is_blocked recompute
+// for conditional-blocks edges (beads-a3hm).
+func loadStatusAndReasonByIDInTx(ctx context.Context, tx DBTX, ids []string) (map[string]targetState, error) {
+	stateByID := make(map[string]targetState)
+	if len(ids) == 0 {
+		return stateByID, nil
+	}
+
+	sourceByID := make(map[string]string)
+	for _, issueTable := range []string{"issues", "wisps"} {
+		for start := 0; start < len(ids); start += queryBatchSize {
+			end := start + queryBatchSize
+			if end > len(ids) {
+				end = len(ids)
+			}
+			placeholders, args := buildSQLInClause(ids[start:end])
+			//nolint:gosec // G201: issueTable is a hardcoded constant.
+			rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+				SELECT id, status, close_reason FROM %s WHERE id IN (%s)
+			`, issueTable, placeholders), args...)
+			if err != nil {
+				if optionalBlockedTable(issueTable) && isTableNotExistError(err) {
+					break
+				}
+				return nil, fmt.Errorf("status+reason from %s: %w", issueTable, err)
+			}
+			for rows.Next() {
+				var id string
+				var status types.Status
+				var closeReason sql.NullString
+				if err := rows.Scan(&id, &status, &closeReason); err != nil {
+					_ = rows.Close()
+					return nil, fmt.Errorf("scan status+reason: %w", err)
+				}
+				// Prefer wisps-table row on cross-table dup (be-iabdi):
+				// tables iterate issues→wisps so the second encounter is wisps.
+				sourceByID[id] = issueTable
+				stateByID[id] = targetState{status: status, closeReason: closeReason.String}
+			}
+			_ = rows.Close()
+			if err := rows.Err(); err != nil {
+				return nil, fmt.Errorf("status+reason rows from %s: %w", issueTable, err)
+			}
+		}
+	}
+	return stateByID, nil
+}
+
+// isActiveConditionalOrHardBlocker is the Go mirror of activeBlockerSQL: given a
+// dependency edge type and the target's current state, reports whether that edge
+// should still hold the dependent blocked. Kept in lockstep with activeBlockerSQL
+// (blocked_state.go / blocked_consistency.go) so the --suggest-next display and
+// the authoritative is_blocked recompute agree on conditional-blocks close
+// semantics (beads-a3hm).
+func isActiveConditionalOrHardBlocker(depType types.DependencyType, ts targetState) bool {
+	open := ts.status != types.StatusClosed && ts.status != types.StatusPinned
+	switch depType {
+	case types.DepBlocks:
+		return open
+	case types.DepConditionalBlocks:
+		// Blocks while the target is open, and ALSO while it is closed with a
+		// non-failure (success) reason — a success close means "B runs only if
+		// A fails" is never satisfied, so B stays blocked.
+		return open || (ts.status == types.StatusClosed && !types.IsFailureClose(ts.closeReason))
+	default:
+		return false
+	}
+}
+
 // GetNewlyUnblockedByCloseInTx finds issues that become unblocked when the
 // given issue is closed. Works within an existing transaction.
 // Returns full issue objects for the newly-unblocked issues.
 //
 //nolint:gosec // G201: table names come from hardcoded constants
 func GetNewlyUnblockedByCloseInTx(ctx context.Context, tx DBTX, closedIssueID string) ([]*types.Issue, error) {
+	// beads-a3hm: conditional-blocks ("B runs only if A FAILS") candidates
+	// depend on HOW A was closed. If A closed with a FAILURE reason the edge no
+	// longer blocks B (B's condition is met → newly unblocked, include it); if A
+	// closed with SUCCESS the edge STILL blocks B (B can never run → not newly
+	// unblocked, exclude it). Load A's close state once up front. Plain 'blocks'
+	// edges unblock on ANY close (reason-independent, unchanged).
+	closedState, err := loadStatusAndReasonByIDInTx(ctx, tx, []string{closedIssueID})
+	if err != nil {
+		return nil, fmt.Errorf("load closed issue state: %w", err)
+	}
+	includeConditional := types.IsFailureClose(closedState[closedIssueID].closeReason)
+
+	candidateTypes := "type = 'blocks'"
+	if includeConditional {
+		candidateTypes = "(type = 'blocks' OR type = 'conditional-blocks')"
+	}
+
 	candidateSet := make(map[string]bool)
 	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+		//nolint:gosec // G201: depTable and candidateTypes are hardcoded constants.
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 			SELECT issue_id FROM %s
-			WHERE %s AND type = 'blocks'
-		`, depTable, depTargetEquals("")), closedIssueID)
+			WHERE %s AND %s
+		`, depTable, depTargetEquals(""), candidateTypes), closedIssueID)
 		if err != nil {
 			if optionalBlockedTable(depTable) && isTableNotExistError(err) {
 				continue
@@ -539,13 +635,23 @@ func GetNewlyUnblockedByCloseInTx(ctx context.Context, tx DBTX, closedIssueID st
 		batch := candidateIDs[start:end]
 		placeholders, batchArgs := buildSQLInClause(batch)
 
-		remainingByCandidate := make(map[string][]string, len(batch))
+		// beads-a3hm: a candidate is only "newly unblocked" if it has NO other
+		// still-active blocker. Consider both 'blocks' and 'conditional-blocks'
+		// edges to blockers OTHER than the one just closed, and judge each with
+		// the same reason-aware rule as the recompute (isActiveConditionalOrHardBlocker).
+		type remainingEdge struct {
+			blockerID string
+			depType   types.DependencyType
+		}
+		remainingByCandidate := make(map[string][]remainingEdge, len(batch))
 		remainingBlockerSet := make(map[string]struct{})
 		for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
 			//nolint:gosec // G201: depTable is hardcoded.
 			depRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-				SELECT issue_id, %s AS depends_on_id FROM %s
-				WHERE issue_id IN (%s) AND type = 'blocks' AND %s != ?
+				SELECT issue_id, %s AS depends_on_id, type FROM %s
+				WHERE issue_id IN (%s)
+				  AND (type = 'blocks' OR type = 'conditional-blocks')
+				  AND %s != ?
 			`, DepTargetExpr, depTable, placeholders, DepTargetExpr), append(batchArgs, closedIssueID)...)
 			if err != nil {
 				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
@@ -555,11 +661,12 @@ func GetNewlyUnblockedByCloseInTx(ctx context.Context, tx DBTX, closedIssueID st
 			}
 			for depRows.Next() {
 				var candidateID, blockerID string
-				if err := depRows.Scan(&candidateID, &blockerID); err != nil {
+				var depType types.DependencyType
+				if err := depRows.Scan(&candidateID, &blockerID, &depType); err != nil {
 					_ = depRows.Close()
 					return nil, fmt.Errorf("scan remaining blocker: %w", err)
 				}
-				remainingByCandidate[candidateID] = append(remainingByCandidate[candidateID], blockerID)
+				remainingByCandidate[candidateID] = append(remainingByCandidate[candidateID], remainingEdge{blockerID: blockerID, depType: depType})
 				remainingBlockerSet[blockerID] = struct{}{}
 			}
 			_ = depRows.Close()
@@ -573,14 +680,14 @@ func GetNewlyUnblockedByCloseInTx(ctx context.Context, tx DBTX, closedIssueID st
 			remainingBlockerIDs = append(remainingBlockerIDs, blockerID)
 		}
 		sort.Strings(remainingBlockerIDs)
-		statusByID, err := loadStatusByIDInTx(ctx, tx, remainingBlockerIDs)
+		stateByID, err := loadStatusAndReasonByIDInTx(ctx, tx, remainingBlockerIDs)
 		if err != nil {
-			return nil, fmt.Errorf("check remaining blocker status: %w", err)
+			return nil, fmt.Errorf("check remaining blocker state: %w", err)
 		}
-		for candidateID, blockerIDs := range remainingByCandidate {
-			for _, blockerID := range blockerIDs {
-				status, ok := statusByID[blockerID]
-				if ok && status != types.StatusClosed && status != types.StatusPinned {
+		for candidateID, edges := range remainingByCandidate {
+			for _, e := range edges {
+				ts, ok := stateByID[e.blockerID]
+				if ok && isActiveConditionalOrHardBlocker(e.depType, ts) {
 					stillBlocked[candidateID] = true
 					break
 				}
