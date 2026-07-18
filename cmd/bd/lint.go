@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
@@ -34,7 +35,7 @@ type LintResult struct {
 type InconsistencyResult struct {
 	ID           string   `json:"id"`
 	Title        string   `json:"title"`
-	Kind         string   `json:"kind"`  // e.g. "closed_epic_with_open_children"
+	Kind         string   `json:"kind"` // e.g. "closed_epic_with_open_children"
 	OpenChildren []string `json:"open_children,omitempty"`
 }
 
@@ -97,16 +98,37 @@ Examples:
 		} else {
 			filter := types.IssueFilter{}
 
+			// beads-8cg2: validate --status/--type against their documented
+			// enums, mirroring bd list, so an invalid value is a hard error
+			// (rc!=0) instead of silently linting 0 issues (a false-clean pass
+			// a typo'd CI/agent lint gate would read as success). Custom sets
+			// come from store config so custom statuses + infra types pass.
+			// (store is guaranteed non-nil by the guard above.)
+			lintFilterCfg, lintCfgErr := loadDirectListFilterConfig(ctx, store)
+			if lintCfgErr != nil {
+				return HandleError("%v", lintCfgErr)
+			}
+
 			if statusFilter == "" || statusFilter == "open" {
 				s := types.StatusOpen
 				filter.Status = &s
 			} else if statusFilter != "all" {
-				s := types.Status(statusFilter)
+				s := types.Status(statusFilter).Normalize()
+				if !s.IsValidWithCustom(lintFilterCfg.customStatusNames()) {
+					return HandleErrorRespectJSON("invalid status %q (valid: %s)", statusFilter, validStatusList(lintFilterCfg.customStatusNames()))
+				}
 				filter.Status = &s
 			}
 
 			if typeFilter != "" {
 				t := issueTypeFilterValue(typeFilter)
+				if !t.IsValidWithCustom(lintFilterCfg.customTypes) {
+					validTypes := "bug, feature, task, epic, chore, decision"
+					if len(lintFilterCfg.customTypes) > 0 {
+						validTypes += ", " + strings.Join(lintFilterCfg.customTypes, ", ")
+					}
+					return HandleErrorRespectJSON("invalid issue type %q (valid: %s)", typeFilter, validTypes)
+				}
 				filter.IssueType = &t
 			}
 
