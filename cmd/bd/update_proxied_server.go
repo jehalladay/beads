@@ -32,6 +32,7 @@ func runUpdateProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	var updated []*types.Issue
 	var anyUpdated bool
+	var firstUpdatedID string
 
 	for _, id := range args {
 		issue, ok := applyUpdateProxiedOne(ctx, id, in)
@@ -39,6 +40,9 @@ func runUpdateProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 			continue
 		}
 		anyUpdated = true
+		if firstUpdatedID == "" {
+			firstUpdatedID = issue.ID
+		}
 		if jsonOut {
 			updated = append(updated, issue)
 		} else {
@@ -49,6 +53,13 @@ func runUpdateProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	if jsonOut && len(updated) > 0 {
 		_ = outputJSON(updated)
 	}
+
+	// Record last-touched so `bd show --current` fallback works after a proxied
+	// update, matching the direct update path (update.go) (beads-gw7s).
+	if firstUpdatedID != "" {
+		SetLastTouchedID(firstUpdatedID)
+	}
+
 	if !anyUpdated {
 		os.Exit(1)
 	}

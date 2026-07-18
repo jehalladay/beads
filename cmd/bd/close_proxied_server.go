@@ -140,6 +140,16 @@ func runCloseProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 		}
 	}
 
+	// Record last-touched so `bd show --current` fallback works after a proxied
+	// close, matching the direct close path (close.go): prefer the auto-claimed
+	// next issue (the work you'd continue), else the first closed issue (beads-gw7s).
+	switch {
+	case claimedNextIssue != nil:
+		SetLastTouchedID(claimedNextIssue.ID)
+	case len(closedIssues) > 0:
+		SetLastTouchedID(closedIssues[0].ID)
+	}
+
 	if len(args) > 0 && len(outcomes) == 0 {
 		os.Exit(1)
 	}
