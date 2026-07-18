@@ -485,6 +485,58 @@ func TestEmbeddedList(t *testing.T) {
 		}
 	})
 
+	// beads-wap4/GH#3396: the plain (non-ready) --parent path must ALSO return
+	// transitive descendants across --json AND --flat, matching --ready --parent
+	// (above) and --tree. The hierarchy is built via explicit parent-child DEP
+	// EDGES on INDEPENDENT ids (not dotted child ids) so the grandchild is one
+	// the legacy one-hop clause's dotted-id leg (id LIKE parent.%) would NOT
+	// catch — it is dropped purely because the recursion was missing. The parent
+	// itself is not in the result set.
+	t.Run("parent_filter_json_includes_dep_edge_grandchildren", func(t *testing.T) {
+		parent := bdCreate(t, bd, dir, "wap4 dep parent json", "--type", "epic")
+		child := bdCreate(t, bd, dir, "wap4 dep child json", "--type", "task")
+		grandchild := bdCreate(t, bd, dir, "wap4 dep grandchild json", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, parent.ID, "--type", "parent-child")
+		bdDepAdd(t, bd, dir, grandchild.ID, child.ID, "--type", "parent-child")
+
+		issues := bdListJSON(t, bd, dir, "--parent", parent.ID, "--limit", "0")
+		if !containsID(issues, child.ID) {
+			t.Errorf("--parent --json should include direct child %s, got %v", child.ID, listIssueIDs(issues))
+		}
+		if !containsID(issues, grandchild.ID) {
+			t.Errorf("--parent --json should include dep-edge grandchild %s (beads-wap4/GH#3396), got %v", grandchild.ID, listIssueIDs(issues))
+		}
+		if containsID(issues, parent.ID) {
+			t.Errorf("--parent should NOT include the parent itself %s, got %v", parent.ID, listIssueIDs(issues))
+		}
+	})
+
+	t.Run("parent_filter_flat_includes_dep_edge_grandchildren", func(t *testing.T) {
+		parent := bdCreate(t, bd, dir, "wap4 dep parent flat", "--type", "epic")
+		child := bdCreate(t, bd, dir, "wap4 dep child flat", "--type", "task")
+		grandchild := bdCreate(t, bd, dir, "wap4 dep grandchild flat", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, parent.ID, "--type", "parent-child")
+		bdDepAdd(t, bd, dir, grandchild.ID, child.ID, "--type", "parent-child")
+
+		out := bdList(t, bd, dir, "--parent", parent.ID, "--flat", "--limit", "0", "--no-pager")
+		if !strings.Contains(out, child.ID) {
+			t.Errorf("--parent --flat should include direct child %s:\n%s", child.ID, out)
+		}
+		if !strings.Contains(out, grandchild.ID) {
+			t.Errorf("--parent --flat should include dep-edge grandchild %s (beads-wap4/GH#3396):\n%s", grandchild.ID, out)
+		}
+	})
+
+	t.Run("parent_filter_childless_valid_parent_stays_empty", func(t *testing.T) {
+		// Regression guard: a VALID parent with no children returns empty exit 0
+		// (not an error). The n8lv missing-parent error path is separate.
+		childless := bdCreate(t, bd, dir, "wap4 childless parent", "--type", "epic")
+		issues := bdListJSON(t, bd, dir, "--parent", childless.ID, "--limit", "0")
+		if len(issues) != 0 {
+			t.Errorf("valid childless --parent --json should be empty, got %v", listIssueIDs(issues))
+		}
+	})
+
 	t.Run("flat", func(t *testing.T) {
 		// --flat disables tree format, uses legacy flat list
 		out := bdList(t, bd, dir, "--flat")

@@ -566,6 +566,33 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	// beads-wap4: the flat/--json/--format --parent path must return all
+	// transitive descendants (recursive), matching --tree (getHierarchicalChildren)
+	// and bd ready --parent, and the documented "descendants (recursive)"
+	// contract (GH#3396). The shared SearchIssues core applies a one-hop
+	// ParentID clause (direct children only) and has 20+ callers that rely on
+	// that direct-only semantics, so the recursion is composed HERE at the
+	// command layer by reusing findAllDescendants (the same helper --tree uses):
+	// gather the descendant id set and constrain the query to it. When there are
+	// no descendants the original one-hop ParentID filter already yields the
+	// correct empty result, so it is left untouched. Skipped when the user also
+	// passed --id (rare --id+--parent combo keeps its existing one-hop behavior)
+	// and for the pretty/tree path (which already recurses below).
+	if in.parentID != "" && !in.readyFlag && !in.prettyFormat && len(filter.IDs) == 0 {
+		descendants := make(map[string]*types.Issue)
+		if err := findAllDescendants(ctx, activeStore, "", in.parentID, filter, descendants); err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
+		if len(descendants) > 0 {
+			ids := make([]string, 0, len(descendants))
+			for id := range descendants {
+				ids = append(ids, id)
+			}
+			filter.IDs = ids
+			filter.ParentID = nil
+		}
+	}
+
 	if jsonOutput {
 		var iwc []*types.IssueWithCounts
 		var err error
