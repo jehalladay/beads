@@ -282,10 +282,24 @@ func restoreMetadata(issue *types.Issue, fields map[string]interface{}) {
 // label-whitespace guard (beads-xcbd, validateJiraLabels) and the Notion comma
 // guard (beads-i8gh, validateNotionLabels). ADO-specific: ADO Tags DO allow
 // spaces (unlike Jira), so only the ";" delimiter is rejected. beads-pcz2.
+//
+// It also rejects labels carrying the reserved "beads:" prefix. ADO round-trip
+// smuggles beads' own control state through FieldTags as "beads:*" tags
+// (beads:blocked, beads:priority:N — see IssueToTracker). A user label with the
+// same prefix is indistinguishable from those markers and corrupts the
+// round-trip: filterBeadsTags SILENTLY DROPS any "beads:"-prefixed tag on pull,
+// and priorityFromTags lets a "beads:priority:N" label HIJACK the issue's
+// priority. The prefix check mirrors filterBeadsTags's HasPrefix semantics
+// exactly (so a normal label like "team:beads" or "status:in_progress" is never
+// false-rejected). Distinct axis from the semicolon delimiter but the same SCM
+// per-field-constraint fail-loud class. beads-sdmy.
 func validateADOTags(labels []string) error {
 	for _, l := range labels {
 		if strings.Contains(l, ";") {
 			return fmt.Errorf("label %q contains a semicolon; ADO rejects it (a semicolon is the work-item Tags delimiter) — rename or remove the semicolon before syncing", l)
+		}
+		if strings.HasPrefix(l, "beads:") {
+			return fmt.Errorf("label %q uses the reserved \"beads:\" prefix; ADO round-trip reserves \"beads:*\" tags for internal state (blocked/priority) and would silently drop or misread it — rename the label before syncing", l)
 		}
 	}
 	return nil
