@@ -72,7 +72,11 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput) (*ty
 	}
 	uw, err := uowProvider.NewUOW(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening unit of work for %s: %v\n", id, err)
+		// beads-vuyx: per-item failures route through reportItemError so that
+		// under --json they emit a structured JSON error object on stderr (the
+		// beads-fg6 partial-success contract the direct update path honors),
+		// not plain text.
+		reportItemError("Error opening unit of work for %s: %v", id, err)
 		return nil, false
 	}
 	defer uw.Close(ctx)
@@ -84,15 +88,15 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput) (*ty
 		if wispErr == nil && wispCurrent != nil {
 			current = wispCurrent
 		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+			reportItemError("Error resolving %s: %v", id, err)
 			return nil, false
 		} else {
-			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+			reportItemError("Issue %s not found", id)
 			return nil, false
 		}
 	}
 	if err := validateIssueUpdatable(id, current); err != nil {
-		fmt.Fprintf(os.Stderr, "%s\n", err)
+		reportItemError("%s", err)
 		return nil, false
 	}
 
@@ -104,9 +108,9 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput) (*ty
 	updated, err := issueUC.ApplyUpdate(ctx, id, spec, actor)
 	if err != nil {
 		if errors.Is(err, storage.ErrAlreadyClaimed) || errors.Is(err, storage.ErrNotClaimable) {
-			fmt.Fprintf(os.Stderr, "Error claiming %s: %v\n", id, err)
+			reportItemError("Error claiming %s: %v", id, err)
 		} else {
-			fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, err)
+			reportItemError("Error updating %s: %v", id, err)
 		}
 		return nil, false
 	}
@@ -129,7 +133,7 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput) (*ty
 	}
 
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: update %s", id)); err != nil && !isDoltNothingToCommit(err) {
-		fmt.Fprintf(os.Stderr, "Error committing %s: %v\n", id, err)
+		reportItemError("Error committing %s: %v", id, err)
 		return nil, false
 	}
 

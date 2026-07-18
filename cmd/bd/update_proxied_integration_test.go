@@ -869,6 +869,38 @@ func TestProxiedServerUpdate(t *testing.T) {
 			t.Errorf("failed title update leaked through: title=%q, want Original", reloaded.Title)
 		}
 	})
+
+	// beads-vuyx: when a proxied update under --json fails to resolve an id, the
+	// per-item error must be a structured JSON object on stderr (the beads-fg6
+	// contract the direct path honors via reportItemError), NOT a plain-text
+	// line. Uses an all-ghost run so the handler's !anyUpdated os.Exit(1) fires
+	// (a non-zero exit) — this isolates the ERROR-FORMAT contract; the separate
+	// partial-success exit-code axis is not asserted here.
+	t.Run("json_stderr_error_is_json_not_plaintext", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "ujse")
+		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir,
+			"update", "ujse-nonexistent999", "--assignee", "team", "--json")
+		if err == nil {
+			t.Fatalf("expected non-zero exit when no id resolves; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+		s := strings.TrimSpace(stderr)
+		if !strings.HasPrefix(s, "{") {
+			t.Errorf("fg6: --json stderr per-item error must be a JSON object, got plain text:\n%s", stderr)
+		}
+		var obj map[string]interface{}
+		if jerr := json.Unmarshal([]byte(s), &obj); jerr != nil {
+			t.Errorf("fg6: stderr is not valid JSON (%v):\n%s", jerr, stderr)
+		} else {
+			_, top := obj["error"]
+			nested := false
+			if data, ok := obj["data"].(map[string]interface{}); ok {
+				_, nested = data["error"]
+			}
+			if !top && !nested {
+				t.Errorf("fg6: stderr JSON missing an \"error\" field:\n%s", stderr)
+			}
+		}
+	})
 }
 
 func TestProxiedServerUpdateHooks(t *testing.T) {
