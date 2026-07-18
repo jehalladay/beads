@@ -541,14 +541,22 @@ var configUnsetCmd = &cobra.Command{
 		if config.IsYamlOnlyKey(key) {
 			location := "config.yaml"
 			var unsetErr error
+			var present bool
 			if config.IsUserGlobalKey(key) {
-				unsetErr = config.UnsetUserYamlConfig(key)
+				present, unsetErr = config.UnsetUserYamlConfig(key)
 				location = config.UserConfigYamlPath()
 			} else {
-				unsetErr = config.UnsetYamlConfig(key)
+				present, unsetErr = config.UnsetYamlConfig(key)
 			}
 			if unsetErr != nil {
 				return HandleErrorRespectJSON("unsetting config: %v", unsetErr)
+			}
+			// beads-o8h2: commentOutYamlKey no-ops silently when the key was
+			// never in config.yaml; without this check the branch printed a
+			// false "Unset" rc=0 that a CI/agent gate reads as proof. Fail loud
+			// for parity with the DB/proxied paths (beads-y3z2).
+			if !present {
+				return HandleErrorRespectJSON("no such config key: %s", key)
 			}
 
 			if jsonOutput {

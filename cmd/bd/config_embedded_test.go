@@ -231,6 +231,50 @@ func TestEmbeddedConfig(t *testing.T) {
 	})
 }
 
+// TestEmbeddedConfigUnsetYamlOnlyKey covers the beads-o8h2 YAML-only-key branch
+// of `bd config unset` (config.IsYamlOnlyKey → UnsetYamlConfig →
+// commentOutYamlKey). commentOutYamlKey no-ops silently when the key was never
+// present, so the branch used to print a false "Unset" rc=0 that a CI/agent
+// gate reads as proof. Distinct file-parsing surface from the DB/proxied paths
+// fixed by beads-y3z2.
+func TestEmbeddedConfigUnsetYamlOnlyKey(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "tcy")
+
+	// export.auto is a project-scoped yaml-only key (export.* prefix).
+	t.Run("unset_yaml_only_never_set_fails", func(t *testing.T) {
+		out := bdConfigFail(t, bd, dir, "unset", "export.auto")
+		if strings.Contains(out, "Unset") {
+			t.Errorf("false success: unsetting a never-set yaml-only key printed 'Unset': %s", out)
+		}
+		if !strings.Contains(out, "no such config key") {
+			t.Errorf("expected 'no such config key' error, got: %s", out)
+		}
+	})
+
+	// A yaml-only key that IS set must unset successfully; a second unset of
+	// the now-commented-out key must fail loud (matched=false).
+	t.Run("unset_yaml_only_set_then_double_unset", func(t *testing.T) {
+		bdConfig(t, bd, dir, "set", "export.auto", "true")
+		out := bdConfig(t, bd, dir, "unset", "export.auto")
+		if !strings.Contains(out, "Unset") {
+			t.Errorf("expected 'Unset' for a set yaml-only key: %s", out)
+		}
+		out2 := bdConfigFail(t, bd, dir, "unset", "export.auto")
+		if strings.Contains(out2, "Unset") {
+			t.Errorf("false success: second unset of an already-unset key printed 'Unset': %s", out2)
+		}
+		if !strings.Contains(out2, "no such config key") {
+			t.Errorf("expected 'no such config key' on second unset, got: %s", out2)
+		}
+	})
+}
+
 // TestEmbeddedConfigConcurrent exercises config operations concurrently.
 func TestEmbeddedConfigConcurrent(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {

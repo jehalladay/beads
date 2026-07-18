@@ -906,42 +906,53 @@ func TestCheckSecretKeyGitSafety_AllowsNonSecretKeyOnTrackedConfig(t *testing.T)
 
 func TestCommentOutYamlKey(t *testing.T) {
 	tests := []struct {
-		name     string
-		content  string
-		key      string
-		expected string
+		name        string
+		content     string
+		key         string
+		expected    string
+		wantMatched bool
 	}{
 		{
-			name:     "comment out existing key",
-			content:  "backup.enabled: false\nother: value",
-			key:      "backup.enabled",
-			expected: "# backup.enabled: false\nother: value",
+			name:        "comment out existing key",
+			content:     "backup.enabled: false\nother: value",
+			key:         "backup.enabled",
+			expected:    "# backup.enabled: false\nother: value",
+			wantMatched: true,
 		},
 		{
-			name:     "already commented - no change",
-			content:  "# backup.enabled: false\nother: value",
-			key:      "backup.enabled",
-			expected: "# backup.enabled: false\nother: value",
+			// beads-o8h2: an already-commented line no longer matches the
+			// key pattern (it starts with "#"), so matched=false — a second
+			// unset of the same key correctly reports "not present".
+			name:        "already commented - no change",
+			content:     "# backup.enabled: false\nother: value",
+			key:         "backup.enabled",
+			expected:    "# backup.enabled: false\nother: value",
+			wantMatched: false,
 		},
 		{
-			name:     "key not found - no change",
-			content:  "other: value",
-			key:      "backup.enabled",
-			expected: "other: value",
+			name:        "key not found - no change",
+			content:     "other: value",
+			key:         "backup.enabled",
+			expected:    "other: value",
+			wantMatched: false,
 		},
 		{
-			name:     "preserve indentation",
-			content:  "  backup.enabled: true\nother: value",
-			key:      "backup.enabled",
-			expected: "  # backup.enabled: true\nother: value",
+			name:        "preserve indentation",
+			content:     "  backup.enabled: true\nother: value",
+			key:         "backup.enabled",
+			expected:    "  # backup.enabled: true\nother: value",
+			wantMatched: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := commentOutYamlKey(tt.content, tt.key)
+			got, matched := commentOutYamlKey(tt.content, tt.key)
 			if got != tt.expected {
-				t.Errorf("commentOutYamlKey() =\n%q\nwant:\n%q", got, tt.expected)
+				t.Errorf("commentOutYamlKey() content =\n%q\nwant:\n%q", got, tt.expected)
+			}
+			if matched != tt.wantMatched {
+				t.Errorf("commentOutYamlKey() matched = %v, want %v", matched, tt.wantMatched)
 			}
 		})
 	}
@@ -989,8 +1000,10 @@ other-setting: value
 	defer os.Chdir(oldWd)
 
 	// Test UnsetYamlConfig
-	if err := UnsetYamlConfig("backup.enabled"); err != nil {
+	if present, err := UnsetYamlConfig("backup.enabled"); err != nil {
 		t.Fatalf("UnsetYamlConfig() error = %v", err)
+	} else if !present {
+		t.Fatalf("UnsetYamlConfig() present = false, want true for a set key")
 	}
 
 	// Read back and verify
@@ -1115,8 +1128,10 @@ func TestSetAndUnsetYamlConfig_WithBEADS_DIR_FromOutsideRepo(t *testing.T) {
 		t.Fatalf("expected runtime config to contain no-git-ops: true, got:\n%s", contentStr)
 	}
 
-	if err := UnsetYamlConfig("no-git-ops"); err != nil {
+	if present, err := UnsetYamlConfig("no-git-ops"); err != nil {
 		t.Fatalf("UnsetYamlConfig() error = %v", err)
+	} else if !present {
+		t.Fatalf("UnsetYamlConfig() present = false, want true for a set key")
 	}
 	content, err = os.ReadFile(configPath)
 	if err != nil {

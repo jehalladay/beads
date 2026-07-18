@@ -341,8 +341,10 @@ func TestUserYamlConfigRoundTrip(t *testing.T) {
 	}
 
 	// Unset comments the key out → subsequent read is empty.
-	if err := UnsetUserYamlConfig(key); err != nil {
+	if present, err := UnsetUserYamlConfig(key); err != nil {
 		t.Fatalf("UnsetUserYamlConfig: %v", err)
+	} else if !present {
+		t.Fatalf("UnsetUserYamlConfig present = false, want true for a set key")
 	}
 	if got := GetUserYamlConfig(key); got != "" {
 		t.Errorf("GetUserYamlConfig after unset = %q, want empty", got)
@@ -358,8 +360,11 @@ func TestUnsetUserYamlConfig_MissingFile(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
 
-	if err := UnsetUserYamlConfig("metrics.endpoint"); err != nil {
+	if present, err := UnsetUserYamlConfig("metrics.endpoint"); err != nil {
 		t.Errorf("UnsetUserYamlConfig on missing file = %v, want nil", err)
+	} else if present {
+		// beads-o8h2: no file → the key was never present.
+		t.Errorf("UnsetUserYamlConfig on missing file present = true, want false")
 	}
 }
 
@@ -658,8 +663,10 @@ func TestSetUnsetYamlConfigViaBeadsDir(t *testing.T) {
 		t.Errorf("config.yaml missing set value; got:\n%s", content)
 	}
 
-	if err := UnsetYamlConfig("ai.model"); err != nil {
+	if present, err := UnsetYamlConfig("ai.model"); err != nil {
 		t.Fatalf("UnsetYamlConfig: %v", err)
+	} else if !present {
+		t.Fatalf("UnsetYamlConfig present = false, want true for a set key")
 	}
 	content, err = os.ReadFile(configPath)
 	if err != nil {

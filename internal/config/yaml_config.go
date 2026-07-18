@@ -372,28 +372,36 @@ func MetricsNoticeShownByUserConfig() bool {
 	return shown
 }
 
-func UnsetUserYamlConfig(key string) error {
+// UnsetUserYamlConfig removes key from the user-level config.yaml. It returns
+// present=true iff the key was actually defined in the file before this call
+// (beads-o8h2: a missing file or an absent key yields present=false so the CLI
+// can fail loud instead of printing a false "Unset"). A missing file is not an
+// error — nothing to unset.
+func UnsetUserYamlConfig(key string) (present bool, err error) {
 	configPath := UserConfigYamlPath()
 	normalizedKey := normalizeYamlKey(key)
 
 	content, err := os.ReadFile(configPath) //nolint:gosec // configPath is from UserConfigYamlPath
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("failed to read user config.yaml: %w", err)
+		return false, fmt.Errorf("failed to read user config.yaml: %w", err)
 	}
 
-	newContent := commentOutYamlKey(string(content), normalizedKey)
+	newContent, matched := commentOutYamlKey(string(content), normalizedKey)
+	if !matched {
+		return false, nil
+	}
 
 	// Preserve the owner-private 0600 posture every other user-global writer
 	// uses (SetUserYamlConfig, setYamlConfigAtPath, the metrics bootstrap);
 	// rewriting at 0644 would relax this shared user config to world-readable.
 	if err := os.WriteFile(configPath, []byte(newContent), 0o600); err != nil { //nolint:gosec // configPath is from UserConfigYamlPath
-		return fmt.Errorf("failed to write user config.yaml: %w", err)
+		return false, fmt.Errorf("failed to write user config.yaml: %w", err)
 	}
 
-	return nil
+	return true, nil
 }
 
 func SetUserYamlConfig(key, value string) error {
@@ -452,26 +460,32 @@ func GetYamlConfig(key string) string {
 
 // UnsetYamlConfig removes a configuration value from the project's config.yaml file.
 // The key line is commented out (prefixed with "# ") to preserve it as documentation.
-func UnsetYamlConfig(key string) error {
+// It returns present=true iff the key was actually defined in the file before this
+// call (beads-o8h2: an absent key yields present=false so the CLI can fail loud
+// instead of printing a false "Unset").
+func UnsetYamlConfig(key string) (present bool, err error) {
 	configPath, err := findProjectConfigYaml()
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	normalizedKey := normalizeYamlKey(key)
 
 	content, err := os.ReadFile(configPath) //nolint:gosec // configPath is from findProjectConfigYaml
 	if err != nil {
-		return fmt.Errorf("failed to read config.yaml: %w", err)
+		return false, fmt.Errorf("failed to read config.yaml: %w", err)
 	}
 
-	newContent := commentOutYamlKey(string(content), normalizedKey)
+	newContent, matched := commentOutYamlKey(string(content), normalizedKey)
+	if !matched {
+		return false, nil
+	}
 
 	if err := os.WriteFile(configPath, []byte(newContent), 0600); err != nil { //nolint:gosec // configPath is validated
-		return fmt.Errorf("failed to write config.yaml: %w", err)
+		return false, fmt.Errorf("failed to write config.yaml: %w", err)
 	}
 
-	return nil
+	return true, nil
 }
 
 // findProjectConfigYaml finds the active config.yaml path for YAML-only config writes.
@@ -734,10 +748,15 @@ func scalarStyleFor(value string) yaml.Style {
 	return 0
 }
 
-func commentOutYamlKey(content, key string) string {
+// commentOutYamlKey comments out the line(s) defining key in content. It
+// returns the rewritten content and matched=true iff at least one line was
+// actually commented out — beads-o8h2: the Unset callers use matched to fail
+// loud on a key that was never present instead of printing a false "Unset".
+func commentOutYamlKey(content, key string) (string, bool) {
 	keyPattern := regexp.MustCompile(`^(\s*)` + regexp.QuoteMeta(key) + `\s*:`)
 
 	var result []string
+	matched := false
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -749,12 +768,13 @@ func commentOutYamlKey(content, key string) string {
 			}
 			// Comment out the line, preserving indentation
 			result = append(result, indent+"# "+strings.TrimLeft(line, " \t"))
+			matched = true
 		} else {
 			result = append(result, line)
 		}
 	}
 
-	return strings.Join(result, "\n")
+	return strings.Join(result, "\n"), matched
 }
 
 // formatYamlValue formats a value appropriately for YAML.
