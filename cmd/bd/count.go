@@ -114,14 +114,30 @@ Examples:
 
 		ctx := rootCtx
 
+		// beads-deud: validate --status/--type/--priority against their
+		// documented enums, mirroring bd list (list_filter.go) so an invalid
+		// value is a hard error (rc!=0) instead of a silent false-zero. The
+		// custom-status/type sets come from the store's config (nil-safe), so
+		// custom statuses + infra types (convoy/merge-request/...) still pass.
+		filterCfg, cfgErr := loadDirectListFilterConfig(ctx, store)
+		if cfgErr != nil {
+			return HandleErrorRespectJSON("%v", cfgErr)
+		}
+
 		// Direct mode
 		filter := types.IssueFilter{}
 		if status != "" && status != "all" {
-			s := types.Status(status)
+			s := types.Status(status).Normalize()
+			if !s.IsValidWithCustom(filterCfg.customStatusNames()) {
+				return HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(filterCfg.customStatusNames()))
+			}
 			filter.Status = &s
 		}
 		if cmd.Flags().Changed("priority") {
 			priority, _ := cmd.Flags().GetInt("priority")
+			if priority < 0 || priority > 4 {
+				return HandleErrorRespectJSON("invalid priority %q (expected 0-4 or P0-P4, not words like high/medium/low)", fmt.Sprintf("%d", priority))
+			}
 			filter.Priority = &priority
 		}
 		// beads-sabd: trim read-side assignee (write side trims via llzt
@@ -131,6 +147,13 @@ Examples:
 		}
 		if issueType != "" {
 			t := issueTypeFilterValue(issueType)
+			if !t.IsValidWithCustom(filterCfg.customTypes) {
+				validTypes := "bug, feature, task, epic, chore, decision"
+				if len(filterCfg.customTypes) > 0 {
+					validTypes += ", " + strings.Join(filterCfg.customTypes, ", ")
+				}
+				return HandleErrorRespectJSON("invalid issue type %q (valid: %s)", issueType, validTypes)
+			}
 			filter.IssueType = &t
 		}
 		if len(labels) > 0 {

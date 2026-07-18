@@ -662,3 +662,50 @@ func TestEmbeddedCountConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddedCountRejectsInvalidEnums is the beads-deud teeth: bd count must
+// reject invalid --status/--type/--priority values with rc!=0 and a
+// valid-values-listing error, mirroring bd list — not silently return 0 exit 0
+// (the false-zero that a typo'd script/agent gate would read as an empty set).
+// Sibling of beads-pbl7 (ready.go) and beads-brxo (normalize-only, count/search).
+func TestEmbeddedCountRejectsInvalidEnums(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "cde")
+	bdCreate(t, bd, dir, "count enum task", "--type", "task", "--priority", "2")
+
+	cases := []struct {
+		name    string
+		args    []string
+		wantSub string
+	}{
+		{"invalid_status", []string{"--status", "bogusxyz"}, "invalid status"},
+		{"invalid_type", []string{"--type", "notatype"}, "invalid issue type"},
+		{"priority_too_high", []string{"--priority", "99"}, "invalid priority"},
+		{"priority_negative", []string{"--priority", "-1"}, "invalid priority"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := bdCountFail(t, bd, dir, tc.args...)
+			if !strings.Contains(out, tc.wantSub) {
+				t.Errorf("bd count %v: expected error containing %q, got:\n%s", tc.args, tc.wantSub, out)
+			}
+		})
+	}
+
+	// Valid values must still succeed (surgical — no regression).
+	for _, args := range [][]string{
+		{"--status", "open"},
+		{"--type", "task"},
+		{"--priority", "2"},
+	} {
+		out := strings.TrimSpace(bdCount(t, bd, dir, args...))
+		if out == "" {
+			t.Errorf("bd count %v: expected a numeric count, got empty", args)
+		}
+	}
+}
