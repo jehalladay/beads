@@ -16,14 +16,11 @@ type deleteInput struct {
 	ids        []string
 	force      bool
 	dryRun     bool
+	cascade    bool
 	jsonOutput bool
 }
 
 func gatherDeleteInput(cmd *cobra.Command, args []string) (*deleteInput, error) {
-	if cmd.Flags().Changed("cascade") {
-		return nil, fmt.Errorf("--cascade is not supported in proxied-server mode (delete always cascades)")
-	}
-
 	in := &deleteInput{}
 	in.ids = append(in.ids, args...)
 
@@ -38,6 +35,7 @@ func gatherDeleteInput(cmd *cobra.Command, args []string) (*deleteInput, error) 
 
 	in.force, _ = cmd.Flags().GetBool("force")
 	in.dryRun, _ = cmd.Flags().GetBool("dry-run")
+	in.cascade, _ = cmd.Flags().GetBool("cascade")
 	in.jsonOutput = jsonOutput
 	return in, nil
 }
@@ -79,6 +77,7 @@ func runDeleteProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	res, err := issueUC.DeleteIssues(ctx, domain.DeleteIssuesParams{
 		IDs:                  in.ids,
 		UpdateTextReferences: true,
+		Cascade:              in.cascade,
 	}, actor)
 	if err != nil {
 		FatalErrorRespectJSON("delete: %v", err)
@@ -105,8 +104,9 @@ func runDeleteProxiedPreview(ctx context.Context, issueUC domain.IssueUseCase, i
 	}
 
 	res, err := issueUC.DeleteIssues(ctx, domain.DeleteIssuesParams{
-		IDs:    in.ids,
-		DryRun: true,
+		IDs:     in.ids,
+		DryRun:  true,
+		Cascade: in.cascade,
 	}, actor)
 	if err != nil {
 		FatalErrorRespectJSON("preview counts: %v", err)
@@ -138,7 +138,11 @@ func renderDeletePreview(in *deleteInput, preview domain.DeletePreview, res doma
 		}
 		fmt.Printf("  %s: %s\n", id, title)
 	}
-	fmt.Printf("\nCascade is always enabled — dependent issues will be removed.\n")
+	if in.cascade {
+		fmt.Printf("\nCascade enabled — dependent issues will also be removed.\n")
+	} else {
+		fmt.Printf("\nDependent issues are preserved (use --cascade to remove them too).\n")
+	}
 	fmt.Printf("\nWould remove:\n")
 	fmt.Printf("  %d issue(s) total\n", res.DeletedCount)
 	fmt.Printf("  %d dependency link(s)\n", res.DependenciesCount)

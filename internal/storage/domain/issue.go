@@ -101,6 +101,13 @@ type DeleteIssuesParams struct {
 	IDs                  []string
 	DryRun               bool
 	UpdateTextReferences bool
+	// Cascade, when true, recursively expands the deletion set to all transitive
+	// dependents (FindAllDependents). When false, only the named IDs are deleted
+	// and their dependents survive (refs rewritten to [deleted:X] if
+	// UpdateTextReferences is set). This mirrors the direct-mode --cascade default
+	// (opt-in). See beads-rir3: proxied delete used to always cascade, silently
+	// deleting dependents.
+	Cascade bool
 }
 
 type DeleteIssuesResult struct {
