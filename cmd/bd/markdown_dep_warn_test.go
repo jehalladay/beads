@@ -60,7 +60,7 @@ func TestCreateIssuesFromMarkdown_SkippedDepWarns(t *testing.T) {
 		mdPath := setup(t, md)
 
 		out := captureStderr(t, func() {
-			if err := createIssuesFromMarkdown(nil, mdPath); err != nil {
+			if err := createIssuesFromMarkdown(nil, mdPath, false); err != nil {
 				t.Fatalf("createIssuesFromMarkdown returned error (expected skip-and-warn, not fail): %v", err)
 			}
 		})
@@ -92,7 +92,7 @@ func TestCreateIssuesFromMarkdown_SkippedDepWarns(t *testing.T) {
 		mdPath := setup(t, md)
 
 		out := captureStderr(t, func() {
-			if err := createIssuesFromMarkdown(nil, mdPath); err != nil {
+			if err := createIssuesFromMarkdown(nil, mdPath, false); err != nil {
 				t.Fatalf("createIssuesFromMarkdown returned error (expected skip-and-warn): %v", err)
 			}
 		})

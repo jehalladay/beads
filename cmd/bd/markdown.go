@@ -323,7 +323,42 @@ func parseMarkdownFile(path string) ([]*IssueTemplate, error) {
 }
 
 // createIssuesFromMarkdown parses a markdown file and creates multiple issues from it
-func createIssuesFromMarkdown(_ *cobra.Command, filepath string) error {
+// dryRunMarkdownBatch prints the issues a `bd create --file <f> --dry-run` WOULD
+// create (titles/types/priorities/labels/deps) and creates nothing (beads-9rb6).
+// It never touches the store, so it works before init. Honors --json.
+func dryRunMarkdownBatch(templates []*IssueTemplate, filepath string) error {
+	if jsonOutput {
+		preview := make([]map[string]interface{}, 0, len(templates))
+		for _, t := range templates {
+			preview = append(preview, map[string]interface{}{
+				"title":        t.Title,
+				"issue_type":   string(t.IssueType),
+				"priority":     t.Priority,
+				"assignee":     t.Assignee,
+				"labels":       t.Labels,
+				"dependencies": t.Dependencies,
+				"dry_run":      true,
+			})
+		}
+		return outputJSON(preview)
+	}
+	fmt.Printf("%s [DRY RUN] Would create %d issue(s) from %s:\n", ui.RenderWarn("⚠"), len(templates), filepath)
+	for _, t := range templates {
+		fmt.Printf("  %s [P%d, %s]\n", t.Title, t.Priority, t.IssueType)
+		if t.Assignee != "" {
+			fmt.Printf("    Assignee: %s\n", t.Assignee)
+		}
+		if len(t.Labels) > 0 {
+			fmt.Printf("    Labels: %s\n", strings.Join(t.Labels, ", "))
+		}
+		if len(t.Dependencies) > 0 {
+			fmt.Printf("    Dependencies: %s\n", strings.Join(t.Dependencies, ", "))
+		}
+	}
+	return nil
+}
+
+func createIssuesFromMarkdown(_ *cobra.Command, filepath string, dryRun bool) error {
 	templates, err := parseMarkdownFile(filepath)
 	if err != nil {
 		return HandleError("parsing markdown file: %v", err)
@@ -331,6 +366,14 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) error {
 
 	if len(templates) == 0 {
 		return HandleError("no issues found in markdown file")
+	}
+
+	// beads-9rb6: --dry-run previews the batch (the case where a preview is most
+	// valuable — N issues + dep edges are easy to typo) and creates nothing.
+	// Mirrors the single-create dry-run and the --graph --dry-run path; requires
+	// no store since it never writes.
+	if dryRun {
+		return dryRunMarkdownBatch(templates, filepath)
 	}
 
 	if store == nil {
