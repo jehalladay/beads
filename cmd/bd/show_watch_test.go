@@ -23,7 +23,10 @@ func TestSingleIssueSnapshot(t *testing.T) {
 	}
 
 	snap1 := singleIssueSnapshot(issue)
-	expected := fmt.Sprintf("test-001:open:%d", now.UnixNano())
+	// Format is ID:Status:ContentHash:UpdatedAtNano (content_hash added for
+	// beads-wuk9 so a same-second content edit is still detected). This issue
+	// has no ContentHash set, so that segment is empty.
+	expected := fmt.Sprintf("test-001:open:%s:%d", issue.ContentHash, now.UnixNano())
 	if snap1 != expected {
 		t.Errorf("snapshot = %q, want %q", snap1, expected)
 	}
