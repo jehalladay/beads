@@ -738,6 +738,22 @@ func PersistDependenciesWithOptionsResult(ctx context.Context, tx *sql.Tx, issue
 				return result, fmt.Errorf("dependency for %s is missing 'depends_on_id'", dep.IssueID)
 			}
 
+			// Every interactive dep-creation path (dep add / link / create /
+			// bulk dep-file) enforces DependencyType.IsValid() — non-empty and
+			// <=32 chars. Import once skipped this, so an empty-type edge could
+			// persist; worse, the cycle guard only fires for blocking types, so
+			// an empty-type 2-cycle survived import that dep add rejects in
+			// every direction (beads-3rk4). Validate here, mirroring the empty
+			// depends_on_id skip above, so import stays consistent with the
+			// interactive paths.
+			if !dep.Type.IsValid() {
+				if opts.SkipDependencyValidationErrors {
+					recordSkippedDependency(opts, dep, fmt.Sprintf("invalid dependency type %q: must be non-empty and at most 32 characters", dep.Type))
+					continue
+				}
+				return result, fmt.Errorf("dependency %s -> %s has invalid type %q: must be non-empty and at most 32 characters", dep.IssueID, dep.DependsOnID, dep.Type)
+			}
+
 			kind := ClassifyDepTarget(ctx, tx, dep, false)
 
 			if kind != DepTargetExternal {

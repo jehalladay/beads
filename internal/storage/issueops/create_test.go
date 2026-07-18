@@ -551,3 +551,90 @@ func TestPersistDependenciesReportsEmptyTargetWithActionableReason(t *testing.T)
 		t.Fatalf("unmet expectations: %v", err)
 	}
 }
+
+// TestPersistDependenciesSkipsEmptyTypeWithActionableReason is the beads-3rk4
+// containment: an imported edge with an empty "type" must not persist. Every
+// interactive dep-creation path enforces DependencyType.IsValid() (non-empty,
+// <=32 chars); import bypassed it, so an empty-type edge slipped in — and
+// because the cycle guard only fires for blocking types, an empty-type 2-cycle
+// survived import that dep add rejects in every direction. Under
+// SkipDependencyValidationErrors the empty-type edge must be skipped with a
+// reason naming the missing "type" field, before any target lookup.
+func TestPersistDependenciesSkipsEmptyTypeWithActionableReason(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+	issue := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "target",
+			Type:        "", // missing type
+		}},
+	}
+	var skipped []string
+
+	// No mock.ExpectQuery: the empty-type guard must fire before any lookup.
+
+	result, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{issue}, "tester", storage.BatchCreateOptions{
+		SkipDependencyValidationErrors: true,
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			skipped = append(skipped, issueID+" -> "+dependsOnID+": "+reason)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = %v, want nil", err)
+	}
+	if len(result.ChangedTables) != 0 {
+		t.Fatalf("ChangedTables = %#v, want none", result.ChangedTables)
+	}
+	if len(skipped) != 1 {
+		t.Fatalf("skipped = %#v, want exactly one skipped edge", skipped)
+	}
+	if !strings.Contains(skipped[0], "type") {
+		t.Errorf("skipped reason should name the invalid dependency type field; got: %s", skipped[0])
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// TestPersistDependenciesErrorsOnEmptyTypeWhenNotSkipping asserts the strict
+// (non-import-tolerant) contract: without SkipDependencyValidationErrors an
+// empty-type edge is a hard error, mirroring dep add / link / create (beads-3rk4).
+func TestPersistDependenciesErrorsOnEmptyTypeWhenNotSkipping(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+	issue := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "target",
+			Type:        "", // missing type
+		}},
+	}
+
+	// No mock.ExpectQuery: the empty-type guard must fire before any lookup.
+
+	_, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{issue}, "tester", storage.BatchCreateOptions{})
+	if err == nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = nil, want error for empty dependency type")
+	}
+	if !strings.Contains(err.Error(), "type") {
+		t.Errorf("error should name the invalid dependency type field; got: %v", err)
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
