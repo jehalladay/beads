@@ -295,12 +295,16 @@ func TestRecomputeAllIsBlocked_LockstepConditionalBlocks(t *testing.T) {
 		t.Fatalf("after mark-side repair: want 0 inconsistencies, got %d", n)
 	}
 
-	// Now the unmark side: close the blocker "remotely" (raw SQL, no write path),
-	// leaving the dependent stuck is_blocked = 1 with no live conditional-blocks
-	// reason. The count's unmark branch must catch it and the recompute clear it.
-	// This is the assertion that guards conditional-blocks in the unmark template.
-	if _, err := store.db.ExecContext(ctx, "UPDATE issues SET status = 'closed' WHERE id = 'hpmw-cb-blocker'"); err != nil {
-		t.Fatalf("simulate merged close of blocker: %v", err)
+	// Now the unmark side: close the blocker "remotely" (raw SQL, no write path)
+	// with a FAILURE close_reason, leaving the dependent stuck is_blocked = 1 with
+	// no live conditional-blocks reason. The count's unmark branch must catch it
+	// and the recompute clear it. This guards conditional-blocks in the unmark
+	// template. beads-a3hm made this reason-aware: a conditional-blocks dependent
+	// only unblocks on a FAILURE close of its target (a success close keeps it
+	// blocked forever — "runs only if A fails"), so the reason must be a failure
+	// close ('failed') for the unmark path to be eligible here.
+	if _, err := store.db.ExecContext(ctx, "UPDATE issues SET status = 'closed', close_reason = 'failed' WHERE id = 'hpmw-cb-blocker'"); err != nil {
+		t.Fatalf("simulate merged failure-close of blocker: %v", err)
 	}
 	if !isBlocked(ctx, t, store.db, "hpmw-cb-dependent") {
 		t.Fatal("setup: dependent must still read blocked before recompute (the stale flag is the bug)")

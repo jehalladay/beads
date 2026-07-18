@@ -25,7 +25,13 @@ func TestMarkBlockedTemplateForIssues(t *testing.T) {
 		"FROM dependencies d",
 		"JOIN issues t ON t.id = d.depends_on_issue_id",
 		"JOIN wisps t ON t.id = d.depends_on_wisp_id",
-		"d.type = 'blocks' OR d.type = 'conditional-blocks'",
+		// beads-a3hm: the blocks/conditional-blocks legs are now the reason-aware
+		// activeBlockerSQL fragment. It still references both edge types, and the
+		// conditional-blocks leg keeps a success-closed target blocking via the
+		// failure-close INSTR guard.
+		"d.type = 'blocks'",
+		"d.type = 'conditional-blocks'",
+		"INSTR(LOWER(t.close_reason)",
 		"d.type = 'parent-child'",
 		"d.type = 'waits-for'",
 	} {
