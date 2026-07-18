@@ -99,18 +99,41 @@ func outputFormattedList(issues []*types.Issue, depsByIssueID map[string][]*type
 		return outputDotFormat(issues, depsByIssueID)
 	}
 
-	// Built-in format presets
-	presets := map[string]string{
-		"digraph": "{{.IssueID}} {{.DependsOnID}}",
+	// 'digraph' is a graph-EDGE preset (one line per dependency edge), whose
+	// template fields are edge-level (.IssueID/.DependsOnID/.Type). Any other
+	// --format value is a user Go template rendered PER ISSUE against the issue
+	// struct, so .ID/.Title/.IssueType/etc. resolve (beads-ibud: previously ALL
+	// --format templates ran the per-edge path, so a documented per-issue
+	// template like '{{.ID}}' saw only edge keys → "<no value>" for every field,
+	// and issues with no deps produced no output at all).
+	if formatStr == "digraph" {
+		return outputEdgeTemplate(issues, depsByIssueID, "{{.IssueID}} {{.DependsOnID}}")
 	}
+	return outputIssueTemplate(issues, formatStr)
+}
 
-	// Check if it's a preset
-	templateStr, isPreset := presets[formatStr]
-	if !isPreset {
-		templateStr = formatStr
+// outputIssueTemplate renders a user-supplied Go template once per issue with
+// the issue struct as data, so exported fields (.ID, .Title, .IssueType,
+// .Priority, .Status, .Assignee, .Description, ...) resolve by name (beads-ibud).
+func outputIssueTemplate(issues []*types.Issue, formatStr string) error {
+	tmpl, err := template.New("format").Parse(formatStr)
+	if err != nil {
+		return fmt.Errorf("invalid format template: %w", err)
 	}
+	for _, issue := range issues {
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, issue); err != nil {
+			return fmt.Errorf("template execution error: %w", err)
+		}
+		fmt.Println(buf.String())
+	}
+	return nil
+}
 
-	// Parse template
+// outputEdgeTemplate renders one line per in-filter dependency edge, exposing
+// edge-level fields (.IssueID/.DependsOnID/.Type) plus the full .Issue and
+// .Dependency for the digraph preset and edge-oriented custom formats.
+func outputEdgeTemplate(issues []*types.Issue, depsByIssueID map[string][]*types.Dependency, templateStr string) error {
 	tmpl, err := template.New("format").Parse(templateStr)
 	if err != nil {
 		return fmt.Errorf("invalid format template: %w", err)

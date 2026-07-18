@@ -76,6 +76,12 @@ func TestOutputFormattedList_DigraphPreset(t *testing.T) {
 }
 
 func TestOutputFormattedList_CustomTemplate(t *testing.T) {
+	// beads-ibud: an arbitrary --format value is a PER-ISSUE Go template rendered
+	// against the issue struct, so exported fields (.ID/.Title/...) resolve by name
+	// and EVERY issue produces a line — regardless of dependencies. (Edge-oriented
+	// output is the 'digraph' preset; see TestOutputFormattedList_DigraphPreset.)
+	// Previously all --format values ran the per-edge path, so a documented
+	// per-issue template like '{{.ID}}' saw only edge-map keys → "<no value>".
 	issues := []*types.Issue{
 		{ID: "bd-1", Title: "root", Status: types.StatusOpen},
 		{ID: "bd-2", Title: "child", Status: types.StatusOpen},
@@ -84,10 +90,17 @@ func TestOutputFormattedList_CustomTemplate(t *testing.T) {
 		"bd-2": {{IssueID: "bd-2", DependsOnID: "bd-1", Type: "blocks"}},
 	}
 	out := captureStdout(t, func() error {
-		return outputFormattedList(issues, deps, "{{.IssueID}}->{{.DependsOnID}} ({{.Type}})")
+		return outputFormattedList(issues, deps, "{{.ID}}|{{.Title}}")
 	})
-	if !strings.Contains(out, "bd-2->bd-1 (blocks)") {
-		t.Errorf("custom template output = %q", out)
+	// Both issues render (not just the one with a dependency), with real fields.
+	if !strings.Contains(out, "bd-1|root") {
+		t.Errorf("custom per-issue template missing bd-1: %q", out)
+	}
+	if !strings.Contains(out, "bd-2|child") {
+		t.Errorf("custom per-issue template missing bd-2: %q", out)
+	}
+	if strings.Contains(out, "<no value>") {
+		t.Errorf("custom per-issue template rendered <no value> (beads-ibud regression): %q", out)
 	}
 }
 
@@ -105,8 +118,9 @@ func TestOutputFormattedList_InvalidTemplate(t *testing.T) {
 }
 
 func TestOutputFormattedList_TemplateExecError(t *testing.T) {
-	// A template calling a method with the wrong arg count fails at execution
-	// time (not parse time), exercising the Execute error branch.
+	// A template that indexes a scalar issue field fails at execution time (not
+	// parse time), exercising the per-issue Execute error branch (beads-ibud:
+	// arbitrary --format now renders per-issue against the issue struct).
 	issues := []*types.Issue{
 		{ID: "bd-1", Title: "root", Status: types.StatusOpen},
 		{ID: "bd-2", Title: "child", Status: types.StatusOpen},
@@ -115,8 +129,8 @@ func TestOutputFormattedList_TemplateExecError(t *testing.T) {
 		"bd-2": {{IssueID: "bd-2", DependsOnID: "bd-1", Type: "blocks"}},
 	}
 	err := withSuppressedStdout(t, func() error {
-		// index on a struct pointer is an execution-time error.
-		return outputFormattedList(issues, deps, "{{index .Issue 1}}")
+		// index with too many args on a string field is an execution-time error.
+		return outputFormattedList(issues, deps, "{{index .Title 1 2}}")
 	})
 	if err == nil {
 		t.Fatal("expected template execution error")

@@ -709,6 +709,30 @@ func TestEmbeddedList(t *testing.T) {
 		}
 	})
 
+	// beads-ibud: a user Go template must render PER ISSUE against the issue
+	// struct — .ID/.Title/etc. resolve to real values, not "<no value>", and
+	// every issue produces a line (previously --format ran the per-edge path,
+	// so field refs were empty and dep-less issues produced nothing).
+	t.Run("format_go_template_ID", func(t *testing.T) {
+		out := bdList(t, bd, dir, "--format", "{{.ID}}", "--flat", "--all")
+		if strings.Contains(out, "<no value>") {
+			t.Errorf("{{.ID}} rendered <no value> (beads-ibud regression): %s", out)
+		}
+		if !strings.Contains(out, seed.openBug) {
+			t.Errorf("{{.ID}} should render real ids incl %s, got: %s", seed.openBug, out)
+		}
+	})
+
+	t.Run("format_go_template_multi_field", func(t *testing.T) {
+		out := bdList(t, bd, dir, "--format", "{{.ID}}|{{.Title}}|{{.IssueType}}", "--flat", "--all")
+		if strings.Contains(out, "<no value>") {
+			t.Errorf("multi-field template rendered <no value> (beads-ibud): %s", out)
+		}
+		if !strings.Contains(out, seed.openBug+"|") {
+			t.Errorf("template should render '%s|<title>|<type>', got: %s", seed.openBug, out)
+		}
+	})
+
 	t.Run("compact_default", func(t *testing.T) {
 		out := bdList(t, bd, dir, "--flat")
 		if !strings.Contains(out, seed.openBug) {
