@@ -167,6 +167,19 @@ func TestProxiedServerConfig(t *testing.T) {
 		}
 	})
 
+	// beads-y3z2: the proxied unset path must fail loud on a nonexistent key
+	// for parity with the direct path (iu9f un-gated proxied).
+	t.Run("config_unset_nonexistent_fails", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "pcun")
+		out := bdProxiedConfigFail(t, bd, p.dir, "unset", "never.set.key.xyz")
+		if strings.Contains(out, "Unset") {
+			t.Errorf("false success: proxied unset of a nonexistent key printed 'Unset': %s", out)
+		}
+		if !strings.Contains(out, "no such config key") {
+			t.Errorf("expected 'no such config key' error, got: %s", out)
+		}
+	})
+
 	t.Run("config_set_no_args", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "pcsna")
 		bdProxiedConfigFail(t, bd, p.dir, "set")

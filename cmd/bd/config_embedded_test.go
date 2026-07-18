@@ -159,6 +159,31 @@ func TestEmbeddedConfig(t *testing.T) {
 		}
 	})
 
+	// beads-y3z2: unsetting a key that was never set must fail loud, not print
+	// a false "Unset" success. DeleteConfig is idempotent (DELETE ... WHERE key
+	// affects 0 rows → nil), so the CLI pre-checks existence and reports
+	// honestly. Sibling of beads-v0rp (kv clear) / beads-w2tk (dep remove).
+	t.Run("config_unset_nonexistent_fails", func(t *testing.T) {
+		out := bdConfigFail(t, bd, dir, "unset", "never.set.key.xyz")
+		if strings.Contains(out, "Unset") {
+			t.Errorf("false success: unsetting a nonexistent key printed 'Unset': %s", out)
+		}
+		if !strings.Contains(out, "no such config key") {
+			t.Errorf("expected 'no such config key' error, got: %s", out)
+		}
+	})
+
+	// A key set to the empty string is still SET — unsetting it must succeed,
+	// not be misreported as absent (GetConfig alone can't distinguish "" from
+	// missing, so the pre-check uses membership).
+	t.Run("config_unset_empty_value_key_succeeds", func(t *testing.T) {
+		bdConfig(t, bd, dir, "set", "empty.value.key", "")
+		out := bdConfig(t, bd, dir, "unset", "empty.value.key")
+		if !strings.Contains(out, "Unset") {
+			t.Errorf("expected 'Unset' for a key set to empty string: %s", out)
+		}
+	})
+
 	// ===== Validate =====
 	// Note: config validate checks dolt server connectivity which doesn't
 	// apply to embedded mode, so we skip it here.
