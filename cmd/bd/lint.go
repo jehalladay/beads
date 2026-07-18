@@ -115,7 +115,11 @@ Examples:
 			// (store is guaranteed non-nil by the guard above.)
 			lintFilterCfg, lintCfgErr := loadDirectListFilterConfig(ctx, store)
 			if lintCfgErr != nil {
-				return HandleError("%v", lintCfgErr)
+				// beads-21xi: runs before the `if jsonOutput` block below, so under
+				// `bd lint --json` a plain HandleError left stdout empty + stderr text
+				// — honor the --json error contract, matching the sibling status/type
+				// validation returns just below (0wp9/yw6g class).
+				return HandleErrorRespectJSON("%v", lintCfgErr)
 			}
 
 			if statusFilter == "" || statusFilter == "open" {
@@ -144,7 +148,9 @@ Examples:
 			var err error
 			issues, err = store.SearchIssues(ctx, "", filter)
 			if err != nil {
-				return HandleError("%v", err)
+				// beads-21xi: honor the --json error contract on this store-error
+				// path too (empty stdout + stderr text under `bd lint --json`).
+				return HandleErrorRespectJSON("%v", err)
 			}
 		}
 
