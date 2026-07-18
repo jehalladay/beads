@@ -76,6 +76,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the sibling read commands. Note `dot`/`digraph` are valid for `bd list --format` but not for `bd dep tree`. The
   `mermaid` render is now matched case-insensitively (parity with the existing `json` check). Fixed on both the
   direct and proxied-server paths.
+- **`bd doctor` no longer false-warns "Federation remotesapi: Server not running" for a hub-connected (server/proxied) crew (beads-a164).**
+  `CheckFederationRemotesAPI` decided server-liveness only from the LOCAL pid file (`doltserver.IsRunning`), so a
+  crew connected to a running REMOTE dolt server (no local pid file) read as "no server" and got a misleading
+  `Server not running (N peers configured)` warning plus "start a sql-server" advice — noise that trains crew to
+  ignore doctor warnings. In server/proxied mode the check now probes the CONFIGURED remote host:port (the same
+  server-mode-aware approach `bd dolt status` uses): reachable → OK ("Connected to remote dolt server"),
+  unreachable → an honest error pointing at the remote config, instead of the local-mode "start a server" advice.
+  Embedded/local mode is unchanged.
 
 - **`bd kv clear <key>` now fails loud on a key that does not exist instead of printing a false `Cleared`/`deleted:true` success (beads-v0rp).**
   `DeleteConfig` is idempotent — it issues an unconditional `DELETE` and returns nil regardless of how many

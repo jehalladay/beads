@@ -15,6 +15,26 @@ import (
 	"github.com/steveyegge/beads/internal/storage/doltutil"
 )
 
+// federationDialTimeout controls the TCP dial timeout for the server-mode
+// remote-server reachability probe (beads-a164). Tests may reduce it to avoid
+// slow unreachable-host hangs.
+var federationDialTimeout = 3 * time.Second
+
+// federationDialServer reports whether a TCP connection to host:port succeeds
+// within federationDialTimeout. It is the server-mode-aware liveness probe used
+// when the dolt server is remote (a hub) rather than a local pid-file process.
+func federationDialServer(host string, port int) bool {
+	if host == "" || port == 0 {
+		return false
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, fmt.Sprintf("%d", port)), federationDialTimeout)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
 // doltDatabaseName returns the configured Dolt database name for the given beads directory.
 // Falls back to the default ("beads") if config cannot be read.
 func doltDatabaseName(beadsDir string) string {
@@ -178,6 +198,35 @@ func CheckFederationRemotesAPI(path string) DoctorCheck {
 			Name:     "Federation remotesapi",
 			Status:   StatusOK,
 			Message:  "N/A (non-Dolt backend)",
+			Category: CategoryFederation,
+		}
+	}
+
+	// beads-a164: in server/proxied mode the dolt server is REMOTE (a hub) with
+	// no local pid file — the local-pidfile + local-doltDir + 127.0.0.1
+	// remotesapi-port logic below all read as "server not running" and emit a
+	// false "Server not running / start a sql-server" warning to every
+	// hub-connected crew. Handle server mode up front by probing the CONFIGURED
+	// remote host:port (the same server-mode-aware pattern bd dolt status uses),
+	// instead of the local pid file.
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil &&
+		(cfg.IsDoltServerMode() || cfg.IsDoltProxiedServerMode()) {
+		host := cfg.GetDoltServerHost()
+		port := cfg.GetDoltServerPort()
+		if federationDialServer(host, port) {
+			return DoctorCheck{
+				Name:     "Federation remotesapi",
+				Status:   StatusOK,
+				Message:  fmt.Sprintf("Connected to remote dolt server %s:%d", host, port),
+				Category: CategoryFederation,
+			}
+		}
+		return DoctorCheck{
+			Name:     "Federation remotesapi",
+			Status:   StatusError,
+			Message:  fmt.Sprintf("Configured remote dolt server %s:%d not reachable", host, port),
+			Detail:   "Server mode is configured but the remote dolt server did not accept a TCP connection",
+			Fix:      "Verify the remote dolt sql-server is running and reachable (check dolt.server-host/port)",
 			Category: CategoryFederation,
 		}
 	}
