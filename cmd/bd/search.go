@@ -78,6 +78,17 @@ Examples:
 		sortBy, _ := cmd.Flags().GetString("sort")
 		reverse, _ := cmd.Flags().GetBool("reverse")
 
+		// beads-y04n: validate --sort against the shared key set bd list/query
+		// enforce. Without this, an invalid --sort silently fell back to the
+		// default priority sort (sqlbuild.OrderByForColumns → SortDefs[""], and
+		// the client sortIssues default) instead of failing loud like bd list —
+		// a misleading false-green where the user believes results are sorted by
+		// their (typo'd) field. Route search through the same shared check
+		// (beads-a9rk helper).
+		if err := validateSortField(sortBy); err != nil {
+			return err
+		}
+
 		// Date range flags
 		createdAfter, _ := cmd.Flags().GetString("created-after")
 		createdBefore, _ := cmd.Flags().GetString("created-before")
@@ -409,7 +420,7 @@ func init() {
 	searchCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE)")
 	searchCmd.Flags().IntP("limit", "n", 50, "Limit results (default: 50)")
 	searchCmd.Flags().Bool("long", false, "Show detailed multi-line output for each issue")
-	searchCmd.Flags().String("sort", "", "Sort by field: priority, created, updated, closed, status, id, title, type, assignee")
+	searchCmd.Flags().String("sort", "", "Sort by field: "+sortFieldsHelp)
 	searchCmd.Flags().BoolP("reverse", "r", false, "Reverse sort order")
 
 	// Date range flags
