@@ -414,6 +414,47 @@ func TestProxiedServerDep(t *testing.T) {
 				t.Errorf("expected status=removed, got %v", m["status"])
 			}
 		})
+
+		// beads-byh6: removing a NONEXISTENT edge on the proxied path must fail
+		// (rc!=0, no false "✓ Removed") — mirroring the direct path's w2tk
+		// guard. RemoveDependency is idempotent-nil, so without a precheck the
+		// proxied verb printed success on a no-op.
+		t.Run("nonexistent_edge_fails", func(t *testing.T) {
+			p := bdProxiedInit(t, bd, "dpr4")
+			a := bdProxiedCreate(t, bd, p.dir, "NoEdge A", "--type", "task")
+			b := bdProxiedCreate(t, bd, p.dir, "NoEdge B", "--type", "task")
+			// no edge added between a and b
+			out := bdProxiedDepFail(t, bd, p.dir, "remove", a.ID, b.ID)
+			if strings.Contains(out, "Removed") {
+				t.Errorf("false success: proxied dep remove on nonexistent edge reported Removed: %s", out)
+			}
+			if !strings.Contains(out, "no dependency to remove") {
+				t.Errorf("expected 'no dependency to remove' error, got: %s", out)
+			}
+		})
+
+		t.Run("nonexistent_edge_fails_json", func(t *testing.T) {
+			p := bdProxiedInit(t, bd, "dpr5")
+			a := bdProxiedCreate(t, bd, p.dir, "NoEdge JSON A", "--type", "task")
+			b := bdProxiedCreate(t, bd, p.dir, "NoEdge JSON B", "--type", "task")
+			out := bdProxiedDepFail(t, bd, p.dir, "remove", a.ID, b.ID, "--json")
+			if strings.Contains(out, "\"status\": \"removed\"") || strings.Contains(out, "\"status\":\"removed\"") {
+				t.Errorf("false success: proxied dep remove --json on nonexistent edge reported status=removed: %s", out)
+			}
+		})
+
+		t.Run("real_edge_still_removes_after_guard", func(t *testing.T) {
+			p := bdProxiedInit(t, bd, "dpr6")
+			a := bdProxiedCreate(t, bd, p.dir, "Guard A", "--type", "task")
+			b := bdProxiedCreate(t, bd, p.dir, "Guard B", "--type", "task")
+			bdProxiedDep(t, bd, p.dir, "add", a.ID, b.ID)
+			out := bdProxiedDep(t, bd, p.dir, "remove", a.ID, b.ID)
+			if !strings.Contains(out, "Removed") {
+				t.Errorf("expected real edge removal to still succeed: %s", out)
+			}
+			// removing again (now nonexistent) must fail
+			bdProxiedDepFail(t, bd, p.dir, "remove", a.ID, b.ID)
+		})
 	})
 
 	t.Run("List", func(t *testing.T) {

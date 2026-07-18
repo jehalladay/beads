@@ -274,6 +274,29 @@ func runDepRemoveProxiedServer(_ *cobra.Command, ctx context.Context, args []str
 	uw := openDepProxiedUOW(ctx)
 	defer uw.Close(ctx)
 
+	// beads-byh6: mirror the direct path's w2tk guard. RemoveDependency is
+	// idempotent-nil (the domain removeDep discards depRepo.Delete's count and
+	// returns nil whether or not an edge existed), so without a precheck a
+	// nonexistent edge printed "✓ Removed" / status:removed rc=0 on a hub-
+	// connected crew — a false success a CI/agent gate reads as proof the edge
+	// is gone (the direct path guards this at cmd/bd/dep.go). Keep the
+	// idempotent contract for programmatic callers; only the CLI verb reports
+	// the distinction.
+	depRecords, lookupErr := uw.DependencyUseCase().GetIssueDependencyRecords(ctx, []string{fromID})
+	if lookupErr != nil {
+		FatalErrorRespectJSON("checking dependency %s -> %s: %v", fromID, toID, lookupErr)
+	}
+	edgeExists := false
+	for _, rec := range depRecords[fromID] {
+		if rec != nil && rec.DependsOnID == toID {
+			edgeExists = true
+			break
+		}
+	}
+	if !edgeExists {
+		FatalErrorRespectJSON("no dependency to remove: %s does not depend on %s", fromID, toID)
+	}
+
 	if err := uw.DependencyUseCase().RemoveDependency(ctx, fromID, toID, actor); err != nil {
 		FatalErrorRespectJSON("%v", err)
 	}
