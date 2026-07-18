@@ -196,19 +196,23 @@ var doneTodoCmd = &cobra.Command{
 		}
 
 		var closedIDs []string
+		failedCount := 0
 		for _, issueID := range args {
 			issue, err := getStore().GetIssue(ctx, issueID)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to get issue %s: %v\n", issueID, err)
+				failedCount++
 				continue
 			}
 			if issue == nil {
 				fmt.Fprintf(os.Stderr, "Error: issue %s not found\n", issueID)
+				failedCount++
 				continue
 			}
 
 			if err := getStore().CloseIssue(ctx, issueID, reason, getActorWithGit(), ""); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to close %s: %v\n", issueID, err)
+				failedCount++
 				continue
 			}
 			closedIDs = append(closedIDs, issueID)
@@ -227,10 +231,21 @@ var doneTodoCmd = &cobra.Command{
 				return HandleError("failed to marshal JSON: %v", err)
 			}
 			fmt.Println(string(data))
+			// Closed set already emitted; signal non-zero if any id failed so
+			// `bd todo done $ids || ...` guards fire on a missing/typo'd id
+			// rather than silently proceeding when nothing was closed (beads-xi35).
+			if failedCount > 0 {
+				return &exitError{Code: 1}
+			}
 			return nil
 		}
 		for _, id := range closedIDs {
 			fmt.Printf("Closed %s\n", ui.RenderID(id))
+		}
+		// Closed set already displayed; signal non-zero on any per-id failure so
+		// scripts don't proceed on a partial/total close failure (beads-xi35).
+		if failedCount > 0 {
+			return &exitError{Code: 1}
 		}
 		return nil
 	},
