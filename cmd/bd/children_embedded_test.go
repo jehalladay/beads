@@ -226,3 +226,54 @@ func TestEmbeddedChildrenConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddedChildrenExcludesEvents is the teeth for beads-yx7k: bd children
+// must NOT list or count type:event audit beads (the <id>.N records bd set-state
+// mints). Events are filtered from bd ready/list, but children uses --status all
+// which surfaces the closed event via the ID-prefix parent match, inflating the
+// "N issues" count. children should exclude type:event by default (matching
+// ready/list), with an --include-events opt-in to restore access.
+func TestEmbeddedChildrenExcludesEvents(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "ce")
+
+	parent := bdCreate(t, bd, dir, "Parent with state", "--type", "task")
+	// set-state mints a type:event audit bead <parent>.1 (closed, no parent link).
+	bdSetState(t, bd, dir, parent.ID, "review=started", "--reason", "x")
+
+	// Default children must NOT show the event bead.
+	out := bdChildren(t, bd, dir, parent.ID)
+	if strings.Contains(out, "State change") || strings.Contains(out, parent.ID+".1") {
+		t.Errorf("bd children must not list the type:event audit bead (beads-yx7k), got:\n%s", out)
+	}
+
+	// JSON: the child array must be empty (0 real children, event excluded).
+	cmd := exec.Command(bd, "children", parent.ID, "--json")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd children --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	s := strings.TrimSpace(stdout.String())
+	if start := strings.Index(s, "["); start >= 0 {
+		var issues []map[string]interface{}
+		if uerr := json.Unmarshal([]byte(s[start:]), &issues); uerr != nil {
+			t.Fatalf("parse children JSON: %v\n%s", uerr, s)
+		}
+		if len(issues) != 0 {
+			t.Errorf("expected 0 children (event excluded), got %d: %s", len(issues), s)
+		}
+	}
+
+	// The --include-events opt-in must restore the event.
+	withEvents := bdChildren(t, bd, dir, parent.ID, "--include-events")
+	if !strings.Contains(withEvents, "State change") {
+		t.Errorf("--include-events must surface the event bead, got:\n%s", withEvents)
+	}
+}
