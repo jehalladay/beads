@@ -59,7 +59,7 @@ SEE ALSO:
 		}()
 
 		if err := requireServerMode("cleanup"); err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 		force, _ := cmd.Flags().GetBool("force")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -69,7 +69,7 @@ SEE ALSO:
 
 		if store == nil {
 			if err := ensureStoreActive(); err != nil {
-				return HandleError("%v", err)
+				return HandleErrorRespectJSON("%v", err)
 			}
 		}
 
@@ -92,7 +92,7 @@ SEE ALSO:
 
 		closedIssues, err := store.SearchIssues(ctx, "", filter)
 		if err != nil {
-			return HandleError("listing issues: %v", err)
+			return HandleErrorRespectJSON("listing issues: %v", err)
 		}
 
 		pinnedCount := 0
@@ -153,7 +153,7 @@ SEE ALSO:
 		if cascade {
 			expanded, skippedOpen, err := expandClosedOnlyCascade(ctx, store, issueIDs)
 			if err != nil {
-				return HandleError("expanding cascade set: %v", err)
+				return HandleErrorRespectJSON("expanding cascade set: %v", err)
 			}
 			issueIDs = expanded
 			if len(skippedOpen) > 0 && !jsonOutput {
@@ -170,7 +170,7 @@ SEE ALSO:
 			if wispOnly {
 				issueType = "closed wisp"
 			}
-			return HandleErrorWithHint(
+			return HandleErrorWithHintRespectJSON(
 				fmt.Sprintf("would delete %d %s issue(s)", len(issueIDs), issueType),
 				"Use --force to confirm or --dry-run to preview.")
 		}
@@ -192,7 +192,7 @@ SEE ALSO:
 		}
 
 		if err := deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput, false, "cleanup"); err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 		return nil
 	},
