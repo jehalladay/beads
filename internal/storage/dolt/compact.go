@@ -53,6 +53,14 @@ func (s *DoltStore) ApplyCompaction(ctx context.Context, issueID string, tier in
 	})
 }
 
+// CompactOverwrite runs the destructive overwrite + compaction mark/event in
+// ONE tx so they can't split into an inconsistent state (beads-pj38).
+func (s *DoltStore) CompactOverwrite(ctx context.Context, issueID string, updates map[string]interface{}, tier int, originalSize int, commitHash string, actor string) error {
+	return s.withRetryTx(ctx, func(tx *sql.Tx) error {
+		return issueops.CompactOverwriteInTx(ctx, tx, issueID, updates, tier, originalSize, commitHash, actor)
+	})
+}
+
 // SnapshotIssue archives an issue's current text content before a destructive
 // compaction overwrites it. See issueops.SnapshotIssueInTx.
 func (s *DoltStore) SnapshotIssue(ctx context.Context, issueID string, tier int) error {
