@@ -189,6 +189,24 @@ func PushIssueFromIssue(issue *types.Issue, config *MappingConfig) (*PushIssue, 
 	return pushIssue, nil
 }
 
+// validateNotionLabels fails loud, before any Notion API call, if a label
+// contains a comma. Notion stores labels as multi_select option names, and a
+// comma is Notion's option-name delimiter — the API 400-rejects a create/update
+// whose option name contains one, failing the WHOLE page push. beads labels are
+// only edge-trimmed (utils.NormalizeLabels), so "a,b" is legal locally but would
+// fail the push with an opaque API 400. Mirrors the Jira label-whitespace guard
+// (beads-xcbd, validateJiraLabels) — the reusable SCM per-field-constraint class:
+// a label is a dedup/round-trip identity token, so reject-with-clear-error
+// (never silently mangle it). beads-i8gh.
+func validateNotionLabels(labels []string) error {
+	for _, l := range labels {
+		if strings.Contains(l, ",") {
+			return fmt.Errorf("label %q contains a comma; Notion rejects it (a comma is the multi_select option delimiter) — rename or remove the comma before syncing", l)
+		}
+	}
+	return nil
+}
+
 func BuildPageProperties(pushIssue *PushIssue) map[string]interface{} {
 	labels := make([]map[string]interface{}, 0, len(pushIssue.Labels))
 	for _, label := range pushIssue.Labels {
