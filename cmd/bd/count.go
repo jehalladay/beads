@@ -10,6 +10,7 @@ import (
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 var countCmd = &cobra.Command{
@@ -68,10 +69,6 @@ Examples:
 		emptyDesc, _ := cmd.Flags().GetBool("empty-description")
 		noAssignee, _ := cmd.Flags().GetBool("no-assignee")
 		noLabels, _ := cmd.Flags().GetBool("no-labels")
-
-		// Priority range flags
-		priorityMin, _ := cmd.Flags().GetInt("priority-min")
-		priorityMax, _ := cmd.Flags().GetInt("priority-max")
 
 		// Group by flags
 		byStatus, _ := cmd.Flags().GetBool("by-status")
@@ -134,9 +131,13 @@ Examples:
 			filter.Status = &s
 		}
 		if cmd.Flags().Changed("priority") {
-			priority, _ := cmd.Flags().GetInt("priority")
-			if priority < 0 || priority > 4 {
-				return HandleErrorRespectJSON("invalid priority %q (expected 0-4 or P0-P4, not words like high/medium/low)", fmt.Sprintf("%d", priority))
+			// beads-vcpq: parse via ValidatePriority (accepts 0-4 AND P0-P4),
+			// mirroring bd list (list_input.go). Subsumes deud's 0-4 range check
+			// — ParsePriority already rejects out-of-range and non-numeric.
+			priorityStr, _ := cmd.Flags().GetString("priority")
+			priority, err := validation.ValidatePriority(priorityStr)
+			if err != nil {
+				return HandleErrorRespectJSON("%v", err)
 			}
 			filter.Priority = &priority
 		}
@@ -226,12 +227,23 @@ Examples:
 		filter.NoAssignee = noAssignee
 		filter.NoLabels = noLabels
 
-		// Priority range
+		// Priority range (beads-vcpq: String + ValidatePriority, mirroring bd
+		// list's --priority-min/max so P0-P4 is accepted here too).
 		if cmd.Flags().Changed("priority-min") {
-			filter.PriorityMin = &priorityMin
+			s, _ := cmd.Flags().GetString("priority-min")
+			p, err := validation.ValidatePriority(s)
+			if err != nil {
+				return HandleErrorRespectJSON("parsing --priority-min: %v", err)
+			}
+			filter.PriorityMin = &p
 		}
 		if cmd.Flags().Changed("priority-max") {
-			filter.PriorityMax = &priorityMax
+			s, _ := cmd.Flags().GetString("priority-max")
+			p, err := validation.ValidatePriority(s)
+			if err != nil {
+				return HandleErrorRespectJSON("parsing --priority-max: %v", err)
+			}
+			filter.PriorityMax = &p
 		}
 
 		if includeInfra, _ := cmd.Flags().GetBool("include-infra"); includeInfra {
@@ -357,7 +369,11 @@ func applyCountIncludeInfra(filter *types.IssueFilter, issueType string, cfg lis
 func init() {
 	// Filter flags (same as list command)
 	countCmd.Flags().StringP("status", "s", "", "Filter by stored status (open, in_progress, blocked, deferred, closed). Note: dependency-blocked issues use 'bd blocked'")
-	countCmd.Flags().IntP("priority", "p", 0, "Filter by priority (0-4: 0=critical, 1=high, 2=medium, 3=low, 4=backlog)")
+	// beads-vcpq: mirror bd list's priority flag (StringP + ValidatePriority)
+	// so the documented P0-P4 syntax is accepted, not just bare 0-4. An IntP
+	// flag rejected "P2" with a raw cobra ParseInt error before any beads code
+	// ran, breaking cross-command parity with the form bd list documents.
+	registerPriorityFlag(countCmd, "")
 	countCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
 	countCmd.Flags().StringP("type", "t", "", "Filter by type (bug, feature, task, epic, chore, decision, merge-request, molecule, gate)")
 	countCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL)")
@@ -384,8 +400,8 @@ func init() {
 	countCmd.Flags().Bool("no-labels", false, "Filter issues with no labels")
 
 	// Priority ranges
-	countCmd.Flags().Int("priority-min", 0, "Filter by minimum priority (inclusive)")
-	countCmd.Flags().Int("priority-max", 0, "Filter by maximum priority (inclusive)")
+	countCmd.Flags().String("priority-min", "", "Filter by minimum priority (inclusive, 0-4 or P0-P4)")
+	countCmd.Flags().String("priority-max", "", "Filter by maximum priority (inclusive, 0-4 or P0-P4)")
 
 	// Wisps tier (GH#4387): mirrors bd list's flag of the same name so
 	// `bd count --include-infra <filters>` returns exactly the cardinality of

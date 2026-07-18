@@ -709,3 +709,70 @@ func TestEmbeddedCountRejectsInvalidEnums(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddedCountPriorityPPrefix is the beads-vcpq regression: bd count's
+// --priority / --priority-min / --priority-max must accept the documented
+// P0-P4 syntax (not just bare 0-4), mirroring bd list. Previously these were
+// IntP/Int flags, so "bd count --priority P2" failed with a raw cobra
+// strconv.ParseInt error before any beads code ran — a cross-command
+// syntax-parity break on a form bd list documents+accepts. P-prefix must
+// resolve identically to the numeric form; out-of-range / non-numeric still
+// error (subsuming deud's 0-4 range check via ValidatePriority/ParsePriority).
+func TestEmbeddedCountPriorityPPrefix(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "cpp")
+	bdCreate(t, bd, dir, "cpp p1", "--type", "task", "--priority", "1")
+	bdCreate(t, bd, dir, "cpp p2", "--type", "task", "--priority", "2")
+
+	// P-prefix must resolve identically to the numeric form.
+	t.Run("priority_pprefix_equals_numeric", func(t *testing.T) {
+		gotP := strings.TrimSpace(bdCount(t, bd, dir, "--priority", "P2"))
+		gotN := strings.TrimSpace(bdCount(t, bd, dir, "--priority", "2"))
+		if gotP != gotN {
+			t.Errorf("bd count --priority P2 (%s) != --priority 2 (%s)", gotP, gotN)
+		}
+		if gotP == "" || gotP == "0" {
+			t.Errorf("expected --priority P2 to count the P2 issue, got %q", gotP)
+		}
+	})
+
+	// --priority-min / --priority-max must accept P-prefix too.
+	t.Run("priority_min_pprefix_accepted", func(t *testing.T) {
+		gotP := strings.TrimSpace(bdCount(t, bd, dir, "--priority-min", "P1"))
+		gotN := strings.TrimSpace(bdCount(t, bd, dir, "--priority-min", "1"))
+		if gotP != gotN {
+			t.Errorf("bd count --priority-min P1 (%s) != --priority-min 1 (%s)", gotP, gotN)
+		}
+	})
+	t.Run("priority_max_pprefix_accepted", func(t *testing.T) {
+		gotP := strings.TrimSpace(bdCount(t, bd, dir, "--priority-max", "P2"))
+		gotN := strings.TrimSpace(bdCount(t, bd, dir, "--priority-max", "2"))
+		if gotP != gotN {
+			t.Errorf("bd count --priority-max P2 (%s) != --priority-max 2 (%s)", gotP, gotN)
+		}
+	})
+
+	// Invalid values still error (parity with bd list; subsumes the 0-4 range).
+	for _, tc := range []struct {
+		name string
+		flag string
+		val  string
+	}{
+		{"priority_bogus", "--priority", "bogus"},
+		{"priority_out_of_range", "--priority", "99"},
+		{"priority_min_bogus", "--priority-min", "P9"},
+		{"priority_max_bogus", "--priority-max", "notapriority"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := bdCountFail(t, bd, dir, tc.flag, tc.val)
+			if !strings.Contains(out, "invalid priority") {
+				t.Errorf("bd count %s %s: expected 'invalid priority' error, got:\n%s", tc.flag, tc.val, out)
+			}
+		})
+	}
+}
