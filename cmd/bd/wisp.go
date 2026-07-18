@@ -603,6 +603,14 @@ func runWispGC(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return HandleErrorRespectJSON("invalid --age duration: %v", err)
 		}
+		// Reject a negative threshold: time.ParseDuration accepts "-5h", but a
+		// negative age makes the abandoned check (now.Sub(UpdatedAt) > ageThreshold)
+		// TRUE for every wisp — even one updated seconds ago — so ALL live wisps
+		// are flagged abandoned and deleted. Fail loud instead of silently
+		// widening a destructive GC to delete-everything (beads-v7lm).
+		if ageThreshold < 0 {
+			return HandleErrorRespectJSON("--age must not be negative (got %s)", ageStr)
+		}
 	}
 
 	if store == nil {
