@@ -3,6 +3,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/config"
@@ -63,6 +64,25 @@ func TestFormatFeedbackID(t *testing.T) {
 		want := "bd-abc — Short title"
 		if got != want {
 			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	// beads-j8li: a title can carry terminal-escape sequences (from an untrusted
+	// SCM/JSONL/markdown import, which store the raw title). applyTitleConfig is
+	// the single chokepoint for feedback-line display, so it must sanitize —
+	// otherwise an OSC 52 (clipboard) / OSC 0 (title) escape reaches the terminal
+	// on every bd close/create/comment feedback line.
+	t.Run("strips terminal escape sequences from title", func(t *testing.T) {
+		got := formatFeedbackID("bd-abc", "safe\x1b]52;c;ZXZpbA==\atail")
+		if strings.ContainsRune(got, '\x1b') {
+			t.Errorf("expected escape stripped, got %q", got)
+		}
+		if strings.Contains(got, "]52;") {
+			t.Errorf("expected OSC marker stripped, got %q", got)
+		}
+		// The safe visible text is preserved.
+		if !strings.Contains(got, "safe") || !strings.Contains(got, "tail") {
+			t.Errorf("expected visible text preserved, got %q", got)
 		}
 	})
 }

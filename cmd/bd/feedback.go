@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
 )
 
 // formatFeedbackID returns "id — title" or just "id" based on output.title-length config.
@@ -25,10 +26,21 @@ func formatFeedbackIDParen(id, title string) string {
 
 // applyTitleConfig applies the output.title-length config to a title string.
 // Returns empty string when titles should be hidden (<= 0).
+//
+// The title is sanitized for terminal display first (beads-j8li): a title can
+// originate from an untrusted external source (SCM/JSONL/markdown import, which
+// store the raw title without sanitizing) and is echoed here on local feedback
+// lines (create/close/comment/dep via formatFeedbackID). SanitizeForTerminal
+// strips CSI/OSC/C0/C1 escapes — notably OSC 52 (clipboard) / OSC 0 (title) —
+// so a malicious imported title can't inject terminal escapes when redisplayed.
+// This is display-only: the STORED title is untouched, preserving SCM
+// round-trip fidelity. applyTitleConfig is the single chokepoint both
+// formatFeedbackID and formatFeedbackIDParen route through.
 func applyTitleConfig(title string) string {
 	if title == "" {
 		return ""
 	}
+	title = ui.SanitizeForTerminal(title)
 	maxLen := config.GetInt("output.title-length")
 	switch {
 	case maxLen <= 0:
