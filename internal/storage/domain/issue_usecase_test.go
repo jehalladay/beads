@@ -35,6 +35,10 @@ type fakeIssueRepo struct {
 	asOfIssue *types.Issue
 	asOfErr   error
 
+	// History
+	historyEntries []*storage.HistoryEntry
+	historyErr     error
+
 	// GetByIDs
 	byIDs    []*types.Issue
 	byIDsErr error
@@ -153,6 +157,9 @@ func (f *fakeIssueRepo) Get(_ context.Context, id string, opts IssueTableOpts) (
 }
 func (f *fakeIssueRepo) AsOf(context.Context, string, string) (*types.Issue, error) {
 	return f.asOfIssue, f.asOfErr
+}
+func (f *fakeIssueRepo) History(context.Context, string) ([]*storage.HistoryEntry, error) {
+	return f.historyEntries, f.historyErr
 }
 func (f *fakeIssueRepo) GetByIDs(context.Context, []string, IssueTableOpts) ([]*types.Issue, error) {
 	return f.byIDs, f.byIDsErr
