@@ -98,6 +98,22 @@ func runRelate(cmd *cobra.Command, args []string) error {
 		return HandleErrorRespectJSON("issue not found: %s", id2)
 	}
 
+	// beads-57nt: AddDependency is idempotent, so re-relating an already-related
+	// pair would print "✓ Linked" as if it changed something. Report an honest
+	// "already related, no change" (rc=0 — a benign no-op, the relate-side
+	// sibling of the unrelate fix beads-piud above and the bwla dep-add re-add
+	// case), reusing the same relatesToLinkExists helper the unrelate path uses.
+	if alreadyRelated, checkErr := relatesToLinkExists(ctx, id1, id2); checkErr == nil && alreadyRelated {
+		if jsonOutput {
+			result := map[string]interface{}{"id1": id1, "id2": id2, "related": true, "unchanged": true}
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(result)
+		}
+		fmt.Printf("%s Already related, no change: %s ↔ %s\n", ui.RenderPass("✓"), id1, id2)
+		return nil
+	}
+
 	// Add relates-to dependency: id1 -> id2 (bidirectional, so also id2 -> id1)
 	// Per Decision 004, relates-to links are now stored in dependencies table.
 	// Both directions are written in ONE transaction so the relation is
