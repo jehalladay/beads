@@ -474,26 +474,37 @@ func TestCompactTier1_ApplyCompactionError(t *testing.T) {
 	}
 }
 
+// beads-ezng: a failure to record the COSMETIC post-compaction comment must NOT
+// fail CompactTier1 — CompactOverwrite already committed the overwrite +
+// compaction_level=1 durably (beads-pj38), so the compaction SUCCEEDED. Returning
+// an error here reported a false FAILURE for already-compacted data (and a retry
+// hits the "would increase size" skip). This test previously asserted the buggy
+// error-return; it now asserts success + that the durable overwrite ran.
 func TestCompactTier1_AddCommentError(t *testing.T) {
 	cleanup := withGitHash(t, "abc\n")
 	t.Cleanup(cleanup)
 
+	overwriteCalled := false
 	store := &stubStore{
 		checkEligibilityFn: func(context.Context, string, int) (bool, string, error) { return true, "", nil },
 		getIssueFn:         func(context.Context, string) (*types.Issue, error) { return stubIssue(), nil },
 		updateIssueFn:      func(context.Context, string, map[string]interface{}, string) error { return nil },
 		applyCompactionFn:  func(context.Context, string, int, int, int, string) error { return nil },
-		addCommentFn:       func(context.Context, string, string, string) error { return errors.New("comment failed") },
+		compactOverwriteFn: func(context.Context, string, map[string]interface{}, int, int, string, string) error {
+			overwriteCalled = true
+			return nil
+		},
+		addCommentFn: func(context.Context, string, string, string) error { return errors.New("comment failed") },
 	}
 	summary := &stubSummarizer{summary: "short"}
 	c := &Compactor{store: store, summarizer: summary, config: &Config{}}
 
 	err := c.CompactTier1(context.Background(), "bd-123")
-	if err == nil {
-		t.Fatal("expected error")
+	if err != nil {
+		t.Fatalf("post-commit comment failure must NOT fail the compaction (beads-ezng), got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "failed to add compaction comment") {
-		t.Errorf("unexpected error: %v", err)
+	if !overwriteCalled {
+		t.Error("expected CompactOverwrite to have committed the compaction before the comment step")
 	}
 }
 
