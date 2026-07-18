@@ -179,10 +179,33 @@ Examples:
 				return HandleErrorRespectJSON("cannot add dependency: %s is already a child of %s. Children inherit dependency on parent completion via hierarchy. Adding an explicit dependency would create a deadlock", fromID, toID)
 			}
 
+			dt := types.DependencyType(depType)
 			dep := &types.Dependency{
 				IssueID:     fromID,
 				DependsOnID: toID,
-				Type:        types.DependencyType(depType),
+				Type:        dt,
+			}
+
+			// beads-bwla: honest re-add on the root --blocks path (mirrors the
+			// `dep add` path). AddDependency is idempotent; re-adding an identical
+			// edge is a benign no-op → report "already present, no change" instead
+			// of a false "✓ Added".
+			if records, lookupErr := fromStore.GetDependencyRecords(ctx, fromID); lookupErr == nil {
+				for _, rec := range records {
+					if rec != nil && rec.DependsOnID == toID && rec.Type == dt {
+						if jsonOutput {
+							return outputJSON(map[string]interface{}{
+								"status":     "unchanged",
+								"blocker_id": toID,
+								"blocked_id": fromID,
+								"type":       depType,
+							})
+						}
+						fmt.Printf("%s Dependency already present, no change: %s blocks %s\n",
+							ui.RenderPass("✓"), formatFeedbackIDParen(toID, lookupTitle(toID)), formatFeedbackIDParen(fromID, lookupTitle(fromID)))
+						return nil
+					}
+				}
 			}
 
 			if err := fromStore.AddDependency(ctx, dep, actor); err != nil {
@@ -393,6 +416,33 @@ Examples:
 				parent.IssueType == types.TypeEpic && parent.Status == types.StatusClosed &&
 				child.Status != types.StatusClosed {
 				return HandleErrorRespectJSON("cannot add %s as a child of closed epic %s: it would leave the closed epic with an open child; reopen the epic, close the child first, or use --force to override", fromID, toID)
+			}
+		}
+
+		// beads-bwla: AddDependency is idempotent — re-adding an edge that already
+		// exists updates metadata and returns nil, so the CLI would print a false
+		// "✓ Added dependency" as if a change occurred. Pre-check and report
+		// honestly. Unlike `dep remove` on a nonexistent edge (w2tk, an error), a
+		// re-add is a benign no-op → rc=0 with an "already present, no change"
+		// message (JSON status:unchanged). Only guards same-store edges; a lookup
+		// error falls through to the normal add path (best-effort, never blocks).
+		if !isExternalRef {
+			if records, lookupErr := fromStore.GetDependencyRecords(ctx, fromID); lookupErr == nil {
+				for _, rec := range records {
+					if rec != nil && rec.DependsOnID == toID && rec.Type == dt {
+						if jsonOutput {
+							return outputJSON(map[string]interface{}{
+								"status":        "unchanged",
+								"issue_id":      fromID,
+								"depends_on_id": toID,
+								"type":          depType,
+							})
+						}
+						fmt.Printf("%s Dependency already present, no change: %s depends on %s (%s)\n",
+							ui.RenderPass("✓"), formatFeedbackIDParen(fromID, lookupTitle(fromID)), formatFeedbackIDParen(toID, lookupTitle(toID)), depType)
+						return nil
+					}
+				}
 			}
 		}
 

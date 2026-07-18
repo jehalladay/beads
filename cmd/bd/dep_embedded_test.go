@@ -150,6 +150,54 @@ func TestEmbeddedDep(t *testing.T) {
 		}
 	})
 
+	// beads-bwla: re-adding an edge that ALREADY exists must not print a false
+	// "✓ Added dependency" success as if a change occurred. AddDependency is
+	// idempotent (storage updates metadata + returns nil either way), so the CLI
+	// pre-checks and reports honestly. Unlike `dep remove` on a nonexistent edge
+	// (w2tk, an error), a re-add is a benign no-op → rc=0 with an honest
+	// "already present, no change" message.
+	t.Run("add_existing_reports_no_change", func(t *testing.T) {
+		e1 := bdCreate(t, bd, dir, "ReAdd A", "--type", "task")
+		e2 := bdCreate(t, bd, dir, "ReAdd B", "--type", "task")
+		first := bdDep(t, bd, dir, "add", e1.ID, e2.ID)
+		if !strings.Contains(first, "Added dependency") {
+			t.Fatalf("first add should report Added: %s", first)
+		}
+		// Second add of the same edge: idempotent no-op — must NOT claim it added.
+		second := bdDep(t, bd, dir, "add", e1.ID, e2.ID)
+		if strings.Contains(second, "Added dependency") {
+			t.Errorf("false success: re-adding an existing edge printed 'Added dependency': %s", second)
+		}
+		if !strings.Contains(second, "already present") {
+			t.Errorf("expected an 'already present, no change' message on re-add, got: %s", second)
+		}
+	})
+
+	t.Run("add_existing_json_reports_unchanged", func(t *testing.T) {
+		j1 := bdCreate(t, bd, dir, "ReAddJSON A", "--type", "task")
+		j2 := bdCreate(t, bd, dir, "ReAddJSON B", "--type", "task")
+		bdDep(t, bd, dir, "add", j1.ID, j2.ID)
+		m := bdDepJSON(t, bd, dir, "add", j1.ID, j2.ID)
+		if m["status"] != "unchanged" {
+			t.Errorf("expected status=unchanged on re-add, got %v", m["status"])
+		}
+	})
+
+	// beads-bwla: the root `dep A --blocks B` path shares the same idempotent
+	// AddDependency and must also report honestly on a re-add.
+	t.Run("blocks_flag_reexisting_reports_no_change", func(t *testing.T) {
+		b1 := bdCreate(t, bd, dir, "BlkReAdd A", "--type", "task")
+		b2 := bdCreate(t, bd, dir, "BlkReAdd B", "--type", "task")
+		bdDep(t, bd, dir, b1.ID, "--blocks", b2.ID)
+		second := bdDep(t, bd, dir, b1.ID, "--blocks", b2.ID)
+		if strings.Contains(second, "Added dependency") {
+			t.Errorf("false success: re-adding an existing --blocks edge printed 'Added dependency': %s", second)
+		}
+		if !strings.Contains(second, "already present") {
+			t.Errorf("expected 'already present, no change' on --blocks re-add, got: %s", second)
+		}
+	})
+
 	t.Run("add_type_related", func(t *testing.T) {
 		r1 := bdCreate(t, bd, dir, "Related 1", "--type", "task")
 		r2 := bdCreate(t, bd, dir, "Related 2", "--type", "task")
