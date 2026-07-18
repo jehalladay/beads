@@ -152,6 +152,17 @@ func AddLabelInTx(ctx context.Context, tx DBTX, labelTable, eventTable, issueID,
 	if len(label) > maxLabelLen {
 		return fmt.Errorf("label must be %d characters or less (got %d)", maxLabelLen, len(label))
 	}
+	// Reject interior delimiter chars (beads-pqzx): the markdown "### Labels"
+	// round-trip splits that section on ',' and newlines (parseLabels,
+	// cmd/bd/markdown.go), so a stored label containing ',' / '\n' / '\r'
+	// re-imports as MULTIPLE labels — round-trip identity corruption, the
+	// native leg of the SCM label-delimiter-collision class (ADO ';',
+	// Notion ','). Spaces stay legal (beads-ehw7: parseLabels never splits on
+	// spaces). This is the single AddLabel chokepoint, so it guards tag +
+	// label add + every other caller.
+	if strings.ContainsAny(label, ",\n\r") {
+		return fmt.Errorf("label %q must not contain a comma or newline (these are reserved as label delimiters)", label)
+	}
 	if labelTable == "" || eventTable == "" {
 		isWisp := IsActiveWispInTx(ctx, tx, issueID)
 		_, lt, et, _ := WispTableRouting(isWisp)
