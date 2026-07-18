@@ -68,33 +68,33 @@ func runRelate(cmd *cobra.Command, args []string) error {
 	var err error
 	id1, err = utils.ResolvePartialID(ctx, store, args[0])
 	if err != nil {
-		return fmt.Errorf("failed to resolve %s: %w", args[0], err)
+		return HandleErrorRespectJSON("failed to resolve %s: %v", args[0], err)
 	}
 	id2, err = utils.ResolvePartialID(ctx, store, args[1])
 	if err != nil {
-		return fmt.Errorf("failed to resolve %s: %w", args[1], err)
+		return HandleErrorRespectJSON("failed to resolve %s: %v", args[1], err)
 	}
 
 	if id1 == id2 {
-		return fmt.Errorf("cannot relate an issue to itself")
+		return HandleErrorRespectJSON("cannot relate an issue to itself")
 	}
 
 	// Get both issues
 	var issue1, issue2 *types.Issue
 	issue1, err = store.GetIssue(ctx, id1)
 	if err != nil {
-		return fmt.Errorf("failed to get issue %s: %w", id1, err)
+		return HandleErrorRespectJSON("failed to get issue %s: %v", id1, err)
 	}
 	issue2, err = store.GetIssue(ctx, id2)
 	if err != nil {
-		return fmt.Errorf("failed to get issue %s: %w", id2, err)
+		return HandleErrorRespectJSON("failed to get issue %s: %v", id2, err)
 	}
 
 	if issue1 == nil {
-		return fmt.Errorf("issue not found: %s", id1)
+		return HandleErrorRespectJSON("issue not found: %s", id1)
 	}
 	if issue2 == nil {
-		return fmt.Errorf("issue not found: %s", id2)
+		return HandleErrorRespectJSON("issue not found: %s", id2)
 	}
 
 	// Add relates-to dependency: id1 -> id2 (bidirectional, so also id2 -> id1)
@@ -121,7 +121,7 @@ func runRelate(cmd *cobra.Command, args []string) error {
 		}
 		return nil
 	}); err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	if jsonOutput {
@@ -156,29 +156,29 @@ func runUnrelate(cmd *cobra.Command, args []string) error {
 	var err error
 	id1, err = utils.ResolvePartialID(ctx, store, args[0])
 	if err != nil {
-		return fmt.Errorf("failed to resolve %s: %w", args[0], err)
+		return HandleErrorRespectJSON("failed to resolve %s: %v", args[0], err)
 	}
 	id2, err = utils.ResolvePartialID(ctx, store, args[1])
 	if err != nil {
-		return fmt.Errorf("failed to resolve %s: %w", args[1], err)
+		return HandleErrorRespectJSON("failed to resolve %s: %v", args[1], err)
 	}
 
 	// Get both issues
 	var issue1, issue2 *types.Issue
 	issue1, err = store.GetIssue(ctx, id1)
 	if err != nil {
-		return fmt.Errorf("failed to get issue %s: %w", id1, err)
+		return HandleErrorRespectJSON("failed to get issue %s: %v", id1, err)
 	}
 	issue2, err = store.GetIssue(ctx, id2)
 	if err != nil {
-		return fmt.Errorf("failed to get issue %s: %w", id2, err)
+		return HandleErrorRespectJSON("failed to get issue %s: %v", id2, err)
 	}
 
 	if issue1 == nil {
-		return fmt.Errorf("issue not found: %s", id1)
+		return HandleErrorRespectJSON("issue not found: %s", id1)
 	}
 	if issue2 == nil {
-		return fmt.Errorf("issue not found: %s", id2)
+		return HandleErrorRespectJSON("issue not found: %s", id2)
 	}
 
 	// Remove relates-to dependency in both directions
@@ -195,7 +195,7 @@ func runUnrelate(cmd *cobra.Command, args []string) error {
 		}
 		return nil
 	}); err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	if jsonOutput {
