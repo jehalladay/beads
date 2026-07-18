@@ -114,4 +114,26 @@ func TestProxiedServerAssignTag(t *testing.T) {
 			}
 		}
 	})
+
+	// beads-qxu4: a label exceeding the VARCHAR(255) column width must be
+	// rejected with a clean length error over the proxied server too, matching
+	// the direct AddLabelInTx guard — not left to fail as a raw DB truncation/
+	// insert error. Mirrors the domain validateLabelValue maxDomainLabelLen bound.
+	t.Run("tag_overlong_label_rejected", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "tagln")
+		a := bdProxiedCreate(t, bd, p.dir, "Tag long", "--type", "task")
+
+		long := strings.Repeat("x", 256)
+		out, err := bdProxiedRun(t, bd, p.dir, "tag", a.ID, long)
+		s := string(out)
+		if err == nil {
+			t.Fatalf("proxied tag with a 256-char label should fail; got success:\n%s", s)
+		}
+		if strings.Contains(s, "storage is nil") {
+			t.Fatalf("proxied tag hit the nil-store path (beads-aocj regression): %s", s)
+		}
+		if !strings.Contains(s, "characters or less") {
+			t.Errorf("expected a 'characters or less' length error, got: %s", s)
+		}
+	})
 }

@@ -56,11 +56,22 @@ func NewLabelUseCase(labelRepo LabelSQLRepository) LabelUseCase {
 // delimiter (empty is handled by callers via the returned trimmed value).
 func validateLabelValue(label string) (string, error) {
 	label = strings.TrimSpace(label)
+	if len(label) > maxDomainLabelLen {
+		return label, fmt.Errorf("label must be %d characters or less (got %d)", maxDomainLabelLen, len(label))
+	}
 	if strings.ContainsAny(label, ",\n\r") {
 		return label, fmt.Errorf("label %q must not contain a comma or newline (these are reserved as label delimiters)", label)
 	}
 	return label, nil
 }
+
+// maxDomainLabelLen mirrors issueops.maxLabelLen (the width of the label
+// VARCHAR(255) column). It is duplicated here — like the other issueops
+// constants in this domain layer (see adaptive.go) — to keep the domain package
+// decoupled from issueops. Without this bound the proxied label path would let a
+// >255-char label reach the DB and fail as a raw truncation/insert error instead
+// of the clean length error the direct AddLabelInTx path returns (beads-qxu4).
+const maxDomainLabelLen = 255
 
 type labelUseCaseImpl struct {
 	labelRepo LabelSQLRepository
