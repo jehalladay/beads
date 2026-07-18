@@ -31,9 +31,49 @@ func processBatchLabelOperation(issueIDs []string, label string, operation strin
 // inside a SINGLE transaction. This keeps N-labels-on-M-issues to one process/one commit,
 // which is what lets callers (e.g. gt prime's mail delivery-ack) avoid a per-label exec
 // storm (beads-9c7).
+// labelChanged reports whether applying operation (add/remove) of label to the
+// issue's current label set is a real mutation (true) or a no-op (false). Used
+// to report honestly on no-ops (beads-huu7): AddLabel is idempotent (INSERT
+// IGNORE) and RemoveLabel is a no-op when the label is absent, so the storage
+// layer records no event and nothing changes — but the CLI used to print a
+// false "✓ Added"/"✓ Removed" regardless. present==label-in-set.
+func labelIsNoOp(operation string, present bool) bool {
+	if operation == "removed" {
+		return !present // removing an absent label changes nothing
+	}
+	return present // adding an already-present label changes nothing
+}
+
 func processBatchLabelsOperation(issueIDs []string, labels []string, operation string, jsonOut bool,
 	txFunc func(context.Context, storage.Transaction, string, string, string) error) error {
 	ctx := rootCtx
+
+	// beads-huu7: classify each (issue,label) pair as a real change or a no-op
+	// BEFORE mutating, so we can report honestly. The op stays idempotent
+	// (rc=0, no duplicate/no error) — matching the label_add_duplicate_idempotent
+	// contract — but a no-op must not print a false "✓ Added"/"✓ Removed" or emit
+	// a JSON status implying a mutation. A GetLabels failure degrades gracefully:
+	// treat as "changed" so the existing (pre-huu7) behavior is preserved.
+	type pair struct {
+		issueID string
+		label   string
+		noop    bool
+	}
+	pairs := make([]pair, 0, len(issueIDs)*len(labels))
+	for _, issueID := range issueIDs {
+		cur, gerr := store.GetLabels(ctx, issueID)
+		has := make(map[string]bool, len(cur))
+		if gerr == nil {
+			for _, l := range cur {
+				has[l] = true
+			}
+		}
+		for _, label := range labels {
+			np := gerr == nil && labelIsNoOp(operation, has[label])
+			pairs = append(pairs, pair{issueID: issueID, label: label, noop: np})
+		}
+	}
+
 	commitMsg := fmt.Sprintf("bd: label %s %d label(s) on %d issue(s)", operation, len(labels), len(issueIDs))
 	err := transactHonoringAutoCommit(ctx, store, commitMsg, func(tx storage.Transaction) error {
 		for _, issueID := range issueIDs {
@@ -50,15 +90,17 @@ func processBatchLabelsOperation(issueIDs []string, labels []string, operation s
 	}
 	commandDidWrite.Store(true)
 	if jsonOut {
-		results := make([]map[string]interface{}, 0, len(issueIDs)*len(labels))
-		for _, issueID := range issueIDs {
-			for _, label := range labels {
-				results = append(results, map[string]interface{}{
-					"status":   operation,
-					"issue_id": issueID,
-					"label":    label,
-				})
+		results := make([]map[string]interface{}, 0, len(pairs))
+		for _, p := range pairs {
+			status := operation // "added" / "removed"
+			if p.noop {
+				status = "unchanged"
 			}
+			results = append(results, map[string]interface{}{
+				"status":   status,
+				"issue_id": p.issueID,
+				"label":    p.label,
+			})
 		}
 		return outputJSON(results)
 	}
@@ -68,10 +110,18 @@ func processBatchLabelsOperation(issueIDs []string, labels []string, operation s
 		verb = "Removed"
 		prep = "from"
 	}
-	for _, issueID := range issueIDs {
-		for _, label := range labels {
-			fmt.Printf("%s %s label '%s' %s %s\n", ui.RenderPass("✓"), verb, label, prep, issueID)
+	for _, p := range pairs {
+		if p.noop {
+			// Honest no-op: the label was already present (add) / already absent
+			// (remove). No mutation happened, so no success glyph.
+			state := "already present"
+			if operation == "removed" {
+				state = "not present"
+			}
+			fmt.Printf("• label '%s' %s on %s — no change\n", p.label, state, p.issueID)
+			continue
 		}
+		fmt.Printf("%s %s label '%s' %s %s\n", ui.RenderPass("✓"), verb, p.label, prep, p.issueID)
 	}
 	return nil
 }

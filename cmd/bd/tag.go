@@ -58,6 +58,20 @@ Examples:
 			return HandleErrorRespectJSON("%s", err)
 		}
 
+		// beads-huu7: detect a no-op (label already present) BEFORE the
+		// idempotent AddLabel so we can report honestly instead of a false
+		// "✓ Added". A GetLabels failure degrades to the prior behavior (treat
+		// as a real add). rc stays 0 — adding a present label is not an error.
+		alreadyPresent := false
+		if cur, gerr := issueStore.GetLabels(ctx, result.ResolvedID); gerr == nil {
+			for _, l := range cur {
+				if l == label {
+					alreadyPresent = true
+					break
+				}
+			}
+		}
+
 		if err := issueStore.AddLabel(ctx, result.ResolvedID, label, actor); err != nil {
 			return HandleErrorRespectJSON("adding label to %s: %v", id, err)
 		}
@@ -79,6 +93,12 @@ Examples:
 			if updatedIssue != nil {
 				return outputJSON(updatedIssue)
 			}
+			return nil
+		}
+		if alreadyPresent {
+			// Honest no-op: the label was already on the issue, so AddLabel
+			// changed nothing. Do not print the "✓ Added" success glyph.
+			fmt.Printf("• label %q already present on %s — no change\n", label, formatFeedbackID(result.ResolvedID, title))
 			return nil
 		}
 		fmt.Printf("%s Added label %q to %s\n", ui.RenderPass("✓"), label, formatFeedbackID(result.ResolvedID, title))
