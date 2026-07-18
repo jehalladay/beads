@@ -56,6 +56,16 @@ Example:
 			Labels:    mergeCreateLabels(labels, nil),
 		}
 
+		// beads-eh0z: in proxiedServerMode the global 'store' is nil (main.go
+		// wires uowProvider and returns before store init), so store.CreateIssue
+		// below fails with "storage is nil" for every hub-connected crew. Route
+		// to a UOW-based handler mirroring `bd create` (create_proxied_server.go),
+		// the fszd/aocj proxied-routing umbrella.
+		if usesProxiedServer() {
+			runQuickProxiedServer(rootCtx, issue, labels)
+			return nil
+		}
+
 		ctx := rootCtx
 		if err := store.CreateIssue(ctx, issue, actor); err != nil {
 			return HandleError("%v", err)
