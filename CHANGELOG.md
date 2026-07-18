@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd stale --status` no longer over-rejects valid statuses like `closed`/`pinned`/custom (beads-de4r).**
+  `bd stale --status` validated against a HARDCODED literal set (`open`, `in_progress`,
+  `blocked`, `deferred`), rejecting `closed`, `pinned`, `hooked`, and any repo-configured
+  custom status — all valid `Status` values that `bd list --status <x>` accepts and that
+  the storage layer applies fine (a plain `status = ?` clause). This is the mirror image of
+  the enum-reject family (a valid status was rejected, rather than an invalid one silently
+  accepted); `bd stale` was the last read command still on a divergent hardcoded set. It now
+  validates via the shared custom-status-aware set (`IsValidWithCustom` + `validStatusList`,
+  matching `bd list`/`count`/`search`/`lint`/`human list`), and `--status all` correctly means
+  no status filter.
 - **`bd count` and `bd search` now reject invalid `--status`/`--type`/`--priority` values (beads-deud).**
   Both commands silently accepted bogus enum values — `bd count --status bogusxyz`,
   `--type notatype`, `--priority 99`/`-1`, and `bd search --status/--type` — returning

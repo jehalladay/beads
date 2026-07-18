@@ -36,15 +36,33 @@ This helps identify:
 		if days < 1 {
 			return HandleErrorRespectJSON("--days must be at least 1")
 		}
-		if status != "" && status != "open" && status != "in_progress" && status != "blocked" && status != "deferred" {
-			return HandleErrorRespectJSON("invalid status '%s'. Valid values: open, in_progress, blocked, deferred", status)
+		ctx := rootCtx
+
+		// beads-de4r: validate --status via the shared custom-status-aware set
+		// (bd list/count/search/lint/human list), NOT a hardcoded literal list.
+		// The old guard hardcoded open/in_progress/blocked/deferred, which
+		// OVER-rejected closed/pinned/hooked and any repo-configured custom
+		// status — all valid Status values that bd list accepts and that the
+		// storage layer (issueops/stale.go, a plain `status = ?` clause) handles
+		// fine. 'all' means no status filter, matching the other read commands.
+		if status == "all" {
+			status = ""
+		} else if status != "" {
+			staleFilterCfg, cfgErr := loadDirectListFilterConfig(ctx, store)
+			if cfgErr != nil {
+				return HandleErrorRespectJSON("%v", cfgErr)
+			}
+			s := types.Status(status).Normalize()
+			if !s.IsValidWithCustom(staleFilterCfg.customStatusNames()) {
+				return HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(staleFilterCfg.customStatusNames()))
+			}
+			status = string(s)
 		}
 		filter := types.StaleFilter{
 			Days:   days,
 			Status: status,
 			Limit:  limit,
 		}
-		ctx := rootCtx
 
 		issues, err := store.GetStaleIssues(ctx, filter)
 		if err != nil {
