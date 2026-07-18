@@ -196,12 +196,12 @@ func runShowProxiedAsOf(ctx context.Context, uw uow.UnitOfWork, in *showProxiedI
 	for idx, id := range in.ids {
 		issue, err := uw.IssueUseCase().AsOf(ctx, id, in.asOfRef)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error fetching %s as of %s: %v\n", id, in.asOfRef, err)
+			reportItemError("Error fetching %s as of %s: %v", id, in.asOfRef, err)
 			failedCount++
 			continue
 		}
 		if issue == nil {
-			fmt.Fprintf(os.Stderr, "Issue %s did not exist at %s\n", id, in.asOfRef)
+			reportItemError("Issue %s did not exist at %s", id, in.asOfRef)
 			failedCount++
 			continue
 		}
@@ -237,18 +237,18 @@ func runShowProxiedRefs(ctx context.Context, uw uow.UnitOfWork, in *showProxiedI
 	for _, id := range in.ids {
 		issue, isWisp, err := proxiedGetIssueOrWisp(ctx, uw, id)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+			reportItemError("Error resolving %s: %v", id, err)
 			failedCount++
 			continue
 		}
 		if issue == nil {
-			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+			reportItemError("Issue %s not found", id)
 			failedCount++
 			continue
 		}
 		refs, err := proxiedListDeps(ctx, uw, id, isWisp, domain.DepListFilter{Direction: domain.DepDirectionIn})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting refs for %s: %v\n", id, err)
+			reportItemError("Error getting refs for %s: %v", id, err)
 			failedCount++
 			continue
 		}
@@ -299,12 +299,12 @@ func runShowProxiedChildren(ctx context.Context, uw uow.UnitOfWork, in *showProx
 	for _, id := range in.ids {
 		issue, isWisp, err := proxiedGetIssueOrWisp(ctx, uw, id)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+			reportItemError("Error resolving %s: %v", id, err)
 			failedCount++
 			continue
 		}
 		if issue == nil {
-			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+			reportItemError("Issue %s not found", id)
 			failedCount++
 			continue
 		}
@@ -313,7 +313,7 @@ func runShowProxiedChildren(ctx context.Context, uw uow.UnitOfWork, in *showProx
 			Direction: domain.DepDirectionIn,
 		})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting children for %s: %v\n", id, err)
+			reportItemError("Error getting children for %s: %v", id, err)
 			failedCount++
 			continue
 		}
@@ -477,11 +477,11 @@ func runShowProxiedDefault(ctx context.Context, uw uow.UnitOfWork, in *showProxi
 	for idx, id := range in.ids {
 		issue, isWisp, err := proxiedGetIssueOrWisp(ctx, uw, id)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
+			reportItemError("Error fetching %s: %v", id, err)
 			continue
 		}
 		if issue == nil {
-			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+			reportItemError("Issue %s not found", id)
 			continue
 		}
 		foundCount++
