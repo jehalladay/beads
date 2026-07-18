@@ -1701,6 +1701,85 @@ func TestGetBlockedIssues_IncludesChildrenOfBlockedParents(t *testing.T) {
 	}
 }
 
+// TestGetBlockedIssues_ParentFilterIncludesDepEdgeGrandchildren verifies that
+// GetBlockedIssues with WorkFilter.ParentID returns ALL transitive descendants
+// (recursive), not just direct children — matching the ready-work path and the
+// "descendants (recursive)" contract. Regression for beads-lxo5 (GH#3396/wap4
+// sibling): the ParentID filter used a one-hop GetChildrenOfIssuesInTx plus a
+// dotted-id HasPrefix leg, so a blocked grandchild reached purely by parent-child
+// DEP EDGES on independent (non-dotted) ids was silently dropped from
+// `bd blocked --parent`.
+func TestGetBlockedIssues_ParentFilterIncludesDepEdgeGrandchildren(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Independent ids (NOT dotted) linked via parent-child DEP EDGES, so the
+	// grandchild is one the legacy dotted-id HasPrefix leg would NOT catch.
+	epic := &types.Issue{ID: "bpg-epic", Title: "Epic", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic}
+	child := &types.Issue{ID: "bpg-child", Title: "Child", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	grandchild := &types.Issue{ID: "bpg-grandchild", Title: "Grandchild", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	blocker := &types.Issue{ID: "bpg-blocker", Title: "Blocker", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+
+	for _, iss := range []*types.Issue{epic, child, grandchild, blocker} {
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("failed to create issue %s: %v", iss.ID, err)
+		}
+	}
+
+	// epic <- child <- grandchild via parent-child dep edges (independent ids).
+	for _, dep := range []*types.Dependency{
+		{IssueID: child.ID, DependsOnID: epic.ID, Type: types.DepParentChild},
+		{IssueID: grandchild.ID, DependsOnID: child.ID, Type: types.DepParentChild},
+		// grandchild is blocked by blocker.
+		{IssueID: grandchild.ID, DependsOnID: blocker.ID, Type: types.DepBlocks},
+	} {
+		if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("failed to add dep %s->%s (%s): %v", dep.IssueID, dep.DependsOnID, dep.Type, err)
+		}
+	}
+
+	// Control: the grandchild IS blocked (appears in the unfiltered blocked set).
+	allBlocked, err := store.GetBlockedIssues(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatalf("GetBlockedIssues(all): %v", err)
+	}
+	if !blockedContainsID(allBlocked, grandchild.ID) {
+		t.Fatalf("precondition: grandchild %s should be blocked in the unfiltered set, got %v", grandchild.ID, blockedIDs(allBlocked))
+	}
+
+	// The bug: filtering blocked issues by the epic parent must still include the
+	// transitive (dep-edge) grandchild.
+	parentID := epic.ID
+	filtered, err := store.GetBlockedIssues(ctx, types.WorkFilter{ParentID: &parentID})
+	if err != nil {
+		t.Fatalf("GetBlockedIssues(--parent): %v", err)
+	}
+	if !blockedContainsID(filtered, grandchild.ID) {
+		t.Errorf("blocked --parent %s should include transitive dep-edge grandchild %s (beads-lxo5/GH#3396), got %v",
+			epic.ID, grandchild.ID, blockedIDs(filtered))
+	}
+}
+
+func blockedContainsID(blocked []*types.BlockedIssue, id string) bool {
+	for _, bi := range blocked {
+		if bi.Issue.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func blockedIDs(blocked []*types.BlockedIssue) []string {
+	ids := make([]string, len(blocked))
+	for i, bi := range blocked {
+		ids[i] = bi.Issue.ID
+	}
+	return ids
+}
+
 // =============================================================================
 // SearchIssues tests
 // =============================================================================
