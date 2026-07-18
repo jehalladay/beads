@@ -261,3 +261,26 @@ func TestIssueText(t *testing.T) {
 		t.Errorf("issueText() = %q, want %q", text2, "Just title")
 	}
 }
+
+func TestValidateThreshold(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   float64
+		wantErr bool
+	}{
+		{"lower bound 0.0 valid", 0.0, false},
+		{"upper bound 1.0 valid", 1.0, false},
+		{"mid-range valid", 0.5, false},
+		{"just above 1 invalid", 1.0001, true},
+		{"far above 1 invalid (false-negative no-dupes)", 5.0, true},
+		{"negative invalid (all-pairs)", -0.1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateThreshold(tt.value)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateThreshold(%v) err = %v, wantErr %v", tt.value, err, tt.wantErr)
+			}
+		})
+	}
+}
