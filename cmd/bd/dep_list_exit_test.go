@@ -63,4 +63,22 @@ func TestEmbeddedDepListExitCode(t *testing.T) {
 		// not turn a clean batch into a failure).
 		bdDep(t, bd, dir, "list", a.ID, b.ID)
 	})
+
+	// beads-etz9: an invalid --direction must fail loud, not silently behave as
+	// "down". dep list only branches on == "down" / == "up", so a typo'd value
+	// used to fall through as the down default and return wrong-direction results
+	// with rc=0 (bd dep tree already validated this; dep list did not).
+	t.Run("invalid_direction_exits_nonzero", func(t *testing.T) {
+		out := bdDepFail(t, bd, dir, "list", a.ID, "--direction", "sideways")
+		if !strings.Contains(out, "direction") {
+			t.Errorf("expected an invalid-direction error mentioning 'direction', got:\n%s", out)
+		}
+	})
+
+	t.Run("valid_directions_exit_zero", func(t *testing.T) {
+		// both accepted values still work (regression guard: the validation must
+		// not reject the legitimate up/down).
+		bdDep(t, bd, dir, "list", a.ID, "--direction", "down")
+		bdDep(t, bd, dir, "list", a.ID, "--direction", "up")
+	})
 }

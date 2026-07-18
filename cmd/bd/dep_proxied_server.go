@@ -300,6 +300,12 @@ func runDepListProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 	if direction == "" {
 		direction = "down"
 	}
+	// Reject an invalid --direction (mirrors the direct path, beads-etz9): dep
+	// list only branches on == "down" / == "up", so a typo'd value silently
+	// returned wrong-direction results with rc=0. Valid set is {down, up}.
+	if direction != "down" && direction != "up" {
+		FatalErrorRespectJSON("--direction must be 'down' or 'up'")
+	}
 
 	uw := openDepProxiedUOW(ctx)
 	defer uw.Close(ctx)

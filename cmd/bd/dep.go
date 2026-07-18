@@ -763,6 +763,15 @@ Examples:
 		if direction == "" {
 			direction = "down"
 		}
+		// Reject an invalid --direction instead of silently treating it as the
+		// default "down". dep list only branches on == "down" / == "up", so a
+		// typo'd value ("sideways", "both") fell through as down and returned
+		// wrong-direction results with rc=0 — a silent false-green. bd dep tree
+		// already validates this; dep list did not (beads-etz9). Valid set is
+		// {down, up} — dep list has no "both" traversal.
+		if direction != "down" && direction != "up" {
+			return HandleErrorRespectJSON("--direction must be 'down' or 'up'")
+		}
 
 		type resolvedID struct {
 			fullID string
