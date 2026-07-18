@@ -49,6 +49,14 @@ func TestLexerBareTrailingWildcard(t *testing.T) {
 			t.Errorf("Tokenize(spec=foo-*) = %v, want nil", err)
 		}
 	})
+
+	t.Run("mid-value star still errors (only a TRAILING star is a wildcard)", func(t *testing.T) {
+		// A '*' with more value after it is not a wildcard; it must still error
+		// at the '*' (the pre-p0hw behavior), not silently split into two tokens.
+		if _, err := NewLexer("id=be*ads").Tokenize(); err == nil {
+			t.Error("Tokenize(id=be*ads) = nil, want an error at the mid-value '*'")
+		}
+	})
 }
 
 // TestLexerBareWildcardMatchesQuoted is the parity teeth: the bare and quoted
