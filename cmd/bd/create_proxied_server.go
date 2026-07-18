@@ -27,7 +27,7 @@ func resolveProxiedCustomTypes(dbTypes []string) []string {
 
 func runCreateProxiedServer(cmd *cobra.Command, ctx context.Context, in createInput) {
 	if in.repoOverrideSet {
-		FatalError("--repo is not supported with --proxied-server")
+		FatalErrorRespectJSON("--repo is not supported with --proxied-server")
 	}
 	switch {
 	case in.graphFile != "":
@@ -41,16 +41,16 @@ func runCreateProxiedServer(cmd *cobra.Command, ctx context.Context, in createIn
 
 func proxiedOpenUOW(ctx context.Context) (uow.UnitOfWork, domain.CreateContext) {
 	if uowProvider == nil {
-		FatalError("proxied-server UOW provider not initialized")
+		FatalErrorRespectJSON("proxied-server UOW provider not initialized")
 	}
 	uw, err := uowProvider.NewUOW(ctx)
 	if err != nil {
-		FatalError("open unit of work: %v", err)
+		FatalErrorRespectJSON("open unit of work: %v", err)
 	}
 	cctx, err := uw.ConfigUseCase().LoadCreateContext(ctx)
 	if err != nil {
 		uw.Close(ctx)
-		FatalError("load create context: %v", err)
+		FatalErrorRespectJSON("load create context: %v", err)
 	}
 	return uw, cctx
 }
@@ -59,37 +59,37 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 	runCreateLintIssue(in)
 	if in.explicitID != "" {
 		if _, err := validation.ValidateIDFormat(in.explicitID); err != nil {
-			FatalError("%v", err)
+			FatalErrorRespectJSON("%v", err)
 		}
 	}
 	deps, err := parseDepSpecs(in.deps)
 	if err != nil {
-		FatalError("%v", err)
+		FatalErrorRespectJSON("%v", err)
 	}
 	waitsFor, err := buildWaitsFor(in.waitsFor, in.waitsForGate)
 	if err != nil {
-		FatalError("%v", err)
+		FatalErrorRespectJSON("%v", err)
 	}
 
 	if in.dryRun {
 		previewLabels := in.labels
 		if in.parentID != "" {
 			if uowProvider == nil {
-				FatalError("proxied-server UOW provider not initialized")
+				FatalErrorRespectJSON("proxied-server UOW provider not initialized")
 			}
 			dryUW, err := uowProvider.NewUOW(ctx)
 			if err != nil {
-				FatalError("open unit of work: %v", err)
+				FatalErrorRespectJSON("open unit of work: %v", err)
 			}
 			if _, err := dryUW.IssueUseCase().GetIssue(ctx, in.parentID); err != nil {
 				dryUW.Close(ctx)
-				FatalError("parent issue %s not found: %v", in.parentID, err)
+				FatalErrorRespectJSON("parent issue %s not found: %v", in.parentID, err)
 			}
 			if !in.noInheritLabels {
 				inherited, lerr := dryUW.LabelUseCase().GetLabels(ctx, in.parentID)
 				if lerr != nil {
 					dryUW.Close(ctx)
-					FatalError("dry-run inherit labels: %v", lerr)
+					FatalErrorRespectJSON("dry-run inherit labels: %v", lerr)
 				}
 				previewLabels = mergeCreateLabels(in.labels, inherited)
 			}
@@ -114,7 +114,7 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 	if in.issueType != "" {
 		it := types.IssueType(in.issueType).Normalize()
 		if !it.IsValidWithCustom(customTypes) {
-			FatalError("invalid type %q (allowed: built-ins plus configured custom types)", in.issueType)
+			FatalErrorRespectJSON("invalid type %q (allowed: built-ins plus configured custom types)", in.issueType)
 		}
 	}
 	if in.explicitID != "" {
@@ -123,7 +123,7 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 		// rejected (beads-xevo).
 		dbPrefix, allowed := resolvePrefixValidation(cctx.IssuePrefix, cctx.AllowedPrefixes)
 		if err := validation.ValidateIDPrefixAllowed(in.explicitID, dbPrefix, allowed, in.force); err != nil {
-			FatalError("%v", err)
+			FatalErrorRespectJSON("%v", err)
 		}
 	}
 
@@ -153,7 +153,7 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 		}
 		return fmt.Sprintf("bd: create %s", result.Issue.ID), nil
 	}); err != nil {
-		FatalError("%v", err)
+		FatalErrorRespectJSON("%v", err)
 	}
 
 	switch {
@@ -186,7 +186,7 @@ func runCreateLintIssue(in createInput) {
 	}
 	if err := validation.LintIssue(lintIssue); err != nil {
 		if in.validationMode == "error" {
-			FatalError("%v", err)
+			FatalErrorRespectJSON("%v", err)
 		}
 		fmt.Fprintf(os.Stderr, "%s %v\n", ui.RenderWarn("⚠"), err)
 	}
@@ -225,10 +225,10 @@ func buildCreateIssueFromInput(in createInput) *types.Issue {
 func runCreateProxiedMarkdown(_ *cobra.Command, ctx context.Context, in createInput) {
 	templates, err := parseMarkdownFile(in.markdownFile)
 	if err != nil {
-		FatalError("parsing markdown file: %v", err)
+		FatalErrorRespectJSON("parsing markdown file: %v", err)
 	}
 	if len(templates) == 0 {
-		FatalError("no issues found in markdown file")
+		FatalErrorRespectJSON("no issues found in markdown file")
 	}
 
 	if in.validationMode == "error" || in.validationMode == "warn" {
@@ -240,7 +240,7 @@ func runCreateProxiedMarkdown(_ *cobra.Command, ctx context.Context, in createIn
 			}
 			if err := validation.LintIssue(lintIssue); err != nil {
 				if in.validationMode == "error" {
-					FatalError("template %q: %v", t.Title, err)
+					FatalErrorRespectJSON("template %q: %v", t.Title, err)
 				}
 				fmt.Fprintf(os.Stderr, "%s template %q: %v\n", ui.RenderWarn("⚠"), t.Title, err)
 			}
@@ -256,7 +256,7 @@ func runCreateProxiedMarkdown(_ *cobra.Command, ctx context.Context, in createIn
 	for _, t := range templates {
 		deps, err := parseMarkdownDepSpecs(t.Dependencies, t.Title)
 		if err != nil {
-			FatalError("%v", err)
+			FatalErrorRespectJSON("%v", err)
 		}
 		builds = append(builds, templateBuild{template: t, deps: deps})
 	}
@@ -270,7 +270,7 @@ func runCreateProxiedMarkdown(_ *cobra.Command, ctx context.Context, in createIn
 			continue
 		}
 		if !b.template.IssueType.IsValidWithCustom(customTypes) {
-			FatalError("template %q: invalid type %q", b.template.Title, b.template.IssueType)
+			FatalErrorRespectJSON("template %q: invalid type %q", b.template.Title, b.template.IssueType)
 		}
 	}
 
@@ -311,7 +311,7 @@ func runCreateProxiedMarkdown(_ *cobra.Command, ctx context.Context, in createIn
 		}
 		return fmt.Sprintf("bd: create %d issue(s) from %s", len(result.Issues), in.markdownFile), nil
 	}); err != nil {
-		FatalError("creating issues from markdown: %v", err)
+		FatalErrorRespectJSON("creating issues from markdown: %v", err)
 	}
 
 	if in.jsonOutput {
@@ -363,7 +363,7 @@ func parseMarkdownDepSpecs(deps []string, templateTitle string) ([]domain.Depend
 func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput) {
 	data, err := os.ReadFile(in.graphFile) // #nosec G304 -- user-provided path is intentional
 	if err != nil {
-		FatalError("reading graph plan: %v", err)
+		FatalErrorRespectJSON("reading graph plan: %v", err)
 	}
 	if unknown := detectUnknownGraphFields(data); len(unknown) > 0 {
 		warnUnknownGraphFields(os.Stderr, unknown)
@@ -371,24 +371,24 @@ func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput
 
 	var plan GraphApplyPlan
 	if err := json.Unmarshal(data, &plan); err != nil {
-		FatalError("parsing graph plan: %v", err)
+		FatalErrorRespectJSON("parsing graph plan: %v", err)
 	}
 
 	if in.dryRun {
 		if uowProvider == nil {
-			FatalError("proxied-server UOW provider not initialized")
+			FatalErrorRespectJSON("proxied-server UOW provider not initialized")
 		}
 		dryUW, err := uowProvider.NewUOW(ctx)
 		if err != nil {
-			FatalError("open unit of work: %v", err)
+			FatalErrorRespectJSON("open unit of work: %v", err)
 		}
 		cctx, err := dryUW.ConfigUseCase().LoadCreateContext(ctx)
 		dryUW.Close(ctx)
 		if err != nil {
-			FatalError("load create context: %v", err)
+			FatalErrorRespectJSON("load create context: %v", err)
 		}
 		if err := validateGraphApplyPlan(&plan, resolveProxiedCustomTypes(cctx.CustomTypes)); err != nil {
-			FatalError("invalid graph plan: %v", err)
+			FatalErrorRespectJSON("invalid graph plan: %v", err)
 		}
 		if err := emitGraphApplyDryRun(&plan); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -400,7 +400,7 @@ func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput
 	defer uw.Close(ctx)
 
 	if err := validateGraphApplyPlan(&plan, resolveProxiedCustomTypes(cctx.CustomTypes)); err != nil {
-		FatalError("invalid graph plan: %v", err)
+		FatalErrorRespectJSON("invalid graph plan: %v", err)
 	}
 
 	domainPlan := buildDomainGraphPlan(plan, in)
@@ -412,7 +412,7 @@ func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput
 		result, err = uw.IssueUseCase().ApplyIssueGraph(ctx, domainPlan, in.createdBy)
 	}
 	if err != nil {
-		FatalError("graph create: %v", err)
+		FatalErrorRespectJSON("graph create: %v", err)
 	}
 
 	commitMsg := plan.CommitMessage
@@ -421,7 +421,7 @@ func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput
 	}
 
 	if err := uw.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
-		FatalError("commit: %v", err)
+		FatalErrorRespectJSON("commit: %v", err)
 	}
 
 	if in.jsonOutput {
@@ -489,7 +489,7 @@ func materializeGraphNodeIssue(n GraphApplyNode, in createInput) *types.Issue {
 	if len(n.Metadata) > 0 {
 		raw, err := json.Marshal(n.Metadata)
 		if err != nil {
-			FatalError("node %q: marshaling metadata: %v", n.Key, err)
+			FatalErrorRespectJSON("node %q: marshaling metadata: %v", n.Key, err)
 		}
 		metadataJSON = raw
 	}
