@@ -348,8 +348,23 @@ func showDoltBackupStatusJSON() map[string]interface{} {
 	return result
 }
 
-// doltBackupSize returns the approximate size of the Dolt data directory in bytes.
+// dbSizeRemoteSentinel is returned by doltBackupSize in server/proxied mode,
+// where the authoritative database lives on a remote hub and the local Dolt
+// dir is just a stub. Walking the local dir would sum to ~0 and render a
+// misleading "0 B" (beads-dnuk); callers render this sentinel as "unknown
+// (remote server)" instead.
+const dbSizeRemoteSentinel int64 = -1
+
+// doltBackupSize returns the approximate size of the Dolt data directory in
+// bytes. In server/proxied mode it returns dbSizeRemoteSentinel because the
+// real DB is remote (the local dir is a stub) — see beads-dnuk.
 func doltBackupSize() (int64, error) {
+	// beads-dnuk: in server/proxied mode the local .beads/dolt dir is a stub
+	// (the real data is on the remote hub), so dirSize would report a
+	// misleading "0 B". Signal "remote/unknown" instead of walking the stub.
+	if usesSQLServer() {
+		return dbSizeRemoteSentinel, nil
+	}
 	beadsDir := beads.FindBeadsDir()
 	if beadsDir == "" {
 		return 0, fmt.Errorf("%s", activeWorkspaceNotFoundError())
@@ -379,6 +394,10 @@ func showDBSize() {
 	if err != nil {
 		return
 	}
+	if size == dbSizeRemoteSentinel {
+		fmt.Printf("  Database size: unknown (remote server)\n")
+		return
+	}
 	fmt.Printf("  Database size: %s\n", formatBytes(size))
 }
 
@@ -387,6 +406,15 @@ func showDBSizeJSON() map[string]interface{} {
 	size, err := doltBackupSize()
 	if err != nil {
 		return nil
+	}
+	if size == dbSizeRemoteSentinel {
+		// Remote (server/proxied) mode: the local dir is a stub, so size is
+		// unknown here rather than 0 (beads-dnuk). Emit null bytes + a human
+		// label instead of a misleading 0.
+		return map[string]interface{}{
+			"bytes": nil,
+			"human": "unknown (remote server)",
+		}
 	}
 	return map[string]interface{}{
 		"bytes": size,

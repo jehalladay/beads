@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd backup status` no longer reports a misleading "Database size: 0 B" for a hub-connected (server/proxied) crew (beads-dnuk).**
+  `doltBackupSize` summed the LOCAL Dolt data dir, which in server/proxied mode is a ~33K stub (the authoritative
+  database lives on the remote hub), so a workspace with 800+ issues reported `0 B` (and `"bytes": 0` in `--json`) —
+  misleading for exactly the server-mode audience that runs it. In server/proxied mode `bd backup status` now
+  reports `Database size: unknown (remote server)` (text) and `{"bytes": null, "human": "unknown (remote server)"}`
+  (JSON) instead of walking the local stub. Embedded/local-mode workspaces (real local `.dolt`) still report the
+  correct size. Same server-vs-local blind-spot family as beads-a164 (doctor federation check).
+
 - **`bd search --sort <bad>` now fails loud instead of silently falling back to the default priority sort (beads-y04n).**
   `bd list` (and `bd query` via beads-a9rk) validate `--sort` against the documented field set and reject an
   unknown key, but `bd search` read the flag straight into the filter — where the SQL builder
