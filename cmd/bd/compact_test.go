@@ -345,9 +345,12 @@ func TestCompactInitCommand(t *testing.T) {
 		t.Error("compactCmd should have Long description")
 	}
 
-	// Verify --json flag exists
-	jsonFlag := compactCmd.Flags().Lookup("json")
+	// Verify --json flag is inherited from rootCmd as a persistent flag.
+	// compact's local --json flag was removed in beads-9fww (flag-shadow fix);
+	// it now inherits the honored persistent --json, so the lookup must use
+	// InheritedFlags() — mirroring staleCmd (see stale_test.go).
+	jsonFlag := compactCmd.InheritedFlags().Lookup("json")
 	if jsonFlag == nil {
-		t.Error("compact command should have --json flag")
+		t.Error("compact command should inherit --json flag from rootCmd")
 	}
 }
