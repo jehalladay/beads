@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/validation"
 )
@@ -18,6 +20,22 @@ type LintResult struct {
 	Type     string   `json:"type"`
 	Missing  []string `json:"missing,omitempty"`
 	Warnings int      `json:"warnings"`
+}
+
+// InconsistencyResult flags a structural invariant violation on a single issue,
+// separate from the template-section warnings above. beads-4u7d: a closed epic
+// that still has one or more open (non-closed) parent-child children violates the
+// "a closed epic has no open children" invariant. The guard family (beads-2hkd
+// demote, beads-b0tw child-reopen, beads-eth8 dep-add, epic-close in close.go)
+// prevents that state being REACHED going forward, but this lint FLAGS any
+// existing instance regardless of how it arose — reached via --force operator
+// override, a not-yet-guarded mutation path, or a pre-existing row from before the
+// guards landed.
+type InconsistencyResult struct {
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	Kind         string   `json:"kind"`  // e.g. "closed_epic_with_open_children"
+	OpenChildren []string `json:"open_children,omitempty"`
 }
 
 var lintCmd = &cobra.Command{
@@ -99,6 +117,12 @@ Examples:
 			}
 		}
 
+		// Structural inconsistency scan (beads-4u7d), orthogonal to the template
+		// warnings below. When explicit IDs were given, only those are checked;
+		// otherwise scan every closed epic (not just the default open template set).
+		inconsistencies := scanClosedEpicsWithOpenChildren(ctx,
+			store, closedEpicsToScan(ctx, store, issues, len(args) > 0))
+
 		var results []LintResult
 		totalWarnings := 0
 
@@ -131,35 +155,112 @@ Examples:
 
 		if jsonOutput {
 			output := struct {
-				Total   int          `json:"total"`
-				Issues  int          `json:"issues"`
-				Results []LintResult `json:"results"`
+				Total           int                   `json:"total"`
+				Issues          int                   `json:"issues"`
+				Results         []LintResult          `json:"results"`
+				Inconsistencies []InconsistencyResult `json:"inconsistencies,omitempty"`
 			}{
-				Total:   totalWarnings,
-				Issues:  len(results),
-				Results: results,
+				Total:           totalWarnings,
+				Issues:          len(results),
+				Results:         results,
+				Inconsistencies: inconsistencies,
 			}
 			data, _ := json.MarshalIndent(output, "", "  ")
 			fmt.Println(string(data))
 			return nil
 		}
 
-		if len(results) == 0 {
+		if len(results) == 0 && len(inconsistencies) == 0 {
 			fmt.Printf("✓ No template warnings found (%d issues checked)\n", len(issues))
 			return nil
 		}
 
-		fmt.Printf("Template warnings (%d issues, %d warnings):\n\n", len(results), totalWarnings)
-		for _, r := range results {
-			fmt.Printf("%s [%s]: %s\n", r.ID, r.Type, r.Title)
-			for _, m := range r.Missing {
-				fmt.Printf("  ⚠ Missing: %s\n", m)
+		if len(results) > 0 {
+			fmt.Printf("Template warnings (%d issues, %d warnings):\n\n", len(results), totalWarnings)
+			for _, r := range results {
+				fmt.Printf("%s [%s]: %s\n", r.ID, r.Type, r.Title)
+				for _, m := range r.Missing {
+					fmt.Printf("  ⚠ Missing: %s\n", m)
+				}
+				fmt.Println()
 			}
-			fmt.Println()
+		}
+
+		if len(inconsistencies) > 0 {
+			fmt.Printf("Structural inconsistencies (%d):\n\n", len(inconsistencies))
+			for _, inc := range inconsistencies {
+				fmt.Printf("%s [epic]: %s\n", inc.ID, inc.Title)
+				fmt.Printf("  ✗ closed epic with %d open child issue(s): %v\n", len(inc.OpenChildren), inc.OpenChildren)
+				fmt.Println()
+			}
 		}
 
 		return SilentExit()
 	},
+}
+
+// openChildIDsOfEpic returns the IDs of an epic's open (non-closed) parent-child
+// children. It is the ID-returning sibling of countEpicOpenChildren (close.go),
+// which returns only a count; the lint surfaces the offending child IDs so the
+// operator can act. Best-effort: a lookup error yields no children (fail-open),
+// matching countEpicOpenChildren's posture.
+func openChildIDsOfEpic(ctx context.Context, s storage.DoltStorage, epicID string) []string {
+	dependents, err := s.GetDependentsWithMetadata(ctx, epicID)
+	if err != nil {
+		return nil
+	}
+	var open []string
+	for _, dep := range dependents {
+		if dep.DependencyType == types.DepParentChild && dep.Issue.Status != types.StatusClosed {
+			open = append(open, dep.Issue.ID)
+		}
+	}
+	return open
+}
+
+// scanClosedEpicsWithOpenChildren finds every closed epic in the given issue set
+// that still has at least one open parent-child child (beads-4u7d). The caller
+// passes the issue set to scan: when the user lints specific IDs, only those are
+// checked; otherwise the lint command scans ALL closed epics (independent of the
+// template --status/--type filter, since a closed epic is invisible under the
+// default --status=open scan). Returns one InconsistencyResult per offending epic.
+func scanClosedEpicsWithOpenChildren(ctx context.Context, s storage.DoltStorage, issues []*types.Issue) []InconsistencyResult {
+	var results []InconsistencyResult
+	for _, issue := range issues {
+		if issue.IssueType != types.TypeEpic || issue.Status != types.StatusClosed {
+			continue
+		}
+		openChildren := openChildIDsOfEpic(ctx, s, issue.ID)
+		if len(openChildren) == 0 {
+			continue
+		}
+		results = append(results, InconsistencyResult{
+			ID:           issue.ID,
+			Title:        issue.Title,
+			Kind:         "closed_epic_with_open_children",
+			OpenChildren: openChildren,
+		})
+	}
+	return results
+}
+
+// closedEpicsToScan returns the set of closed epics the inconsistency scan should
+// check. When explicit args were given, the scan is limited to those (already in
+// `issues`); otherwise it queries every closed epic, independent of the template
+// lint's --status/--type filter — a closed epic never appears under the default
+// --status=open scan, so relying on the template issue set would make beads-4u7d
+// silently no-op in the common case.
+func closedEpicsToScan(ctx context.Context, s storage.DoltStorage, explicitIssues []*types.Issue, hadArgs bool) []*types.Issue {
+	if hadArgs {
+		return explicitIssues
+	}
+	closed := types.StatusClosed
+	epic := types.TypeEpic
+	closedEpics, err := s.SearchIssues(ctx, "", types.IssueFilter{Status: &closed, IssueType: &epic})
+	if err != nil {
+		return nil
+	}
+	return closedEpics
 }
 
 func init() {
