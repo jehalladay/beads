@@ -199,13 +199,29 @@ func TestProxiedServerDelete(t *testing.T) {
 		}
 	})
 
-	t.Run("delete_force_cascades_dependents", func(t *testing.T) {
+	// beads-rir3: --force without --cascade orphans dependents (deletes only the
+	// named issue), matching direct-mode semantics. It no longer cascades.
+	t.Run("delete_force_without_cascade_preserves_dependents", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "dfc")
 		parent := bdProxiedCreate(t, bd, p.dir, "Force parent", "-t", "task")
 		child := bdProxiedCreate(t, bd, p.dir, "Force child", "-t", "task",
 			"--deps", "depends-on:"+parent.ID)
 
 		bdProxiedDelete(t, bd, p.dir, parent.ID, "--force")
+
+		db := openProxiedDB(t, p)
+		assertRowAbsent(t, db, "issues", parent.ID)
+		assertRowExists(t, db, "issues", child.ID)
+	})
+
+	// beads-rir3: --cascade --force expands to dependents (opt-in).
+	t.Run("delete_cascade_flag_removes_dependents", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "dcf")
+		parent := bdProxiedCreate(t, bd, p.dir, "Cascade parent", "-t", "task")
+		child := bdProxiedCreate(t, bd, p.dir, "Cascade child", "-t", "task",
+			"--deps", "depends-on:"+parent.ID)
+
+		bdProxiedDelete(t, bd, p.dir, parent.ID, "--cascade", "--force")
 
 		db := openProxiedDB(t, p)
 		assertRowAbsent(t, db, "issues", parent.ID)
@@ -234,7 +250,11 @@ func TestProxiedServerDelete(t *testing.T) {
 		}
 	})
 
-	t.Run("delete_always_cascades_dependents", func(t *testing.T) {
+	// beads-rir3: parent-child (epic→task) dependents are ALSO preserved without
+	// --cascade — the always-cascade behavior is gone. The parent-child edge is a
+	// dependent relationship, so a bare --force delete of the parent leaves the
+	// child alive.
+	t.Run("delete_without_cascade_preserves_parent_child", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "dac")
 		parent := bdProxiedCreate(t, bd, p.dir, "Parent", "-t", "epic")
 		child := bdProxiedCreate(t, bd, p.dir, "Child", "-t", "task",
@@ -244,7 +264,7 @@ func TestProxiedServerDelete(t *testing.T) {
 
 		db := openProxiedDB(t, p)
 		assertRowAbsent(t, db, "issues", parent.ID)
-		assertRowAbsent(t, db, "issues", child.ID)
+		assertRowExists(t, db, "issues", child.ID)
 	})
 
 	t.Run("delete_cascade_spans_all_dep_types", func(t *testing.T) {
@@ -255,7 +275,7 @@ func TestProxiedServerDelete(t *testing.T) {
 		c := bdProxiedCreate(t, bd, p.dir, "C", "-t", "task",
 			"--parent", b.ID)
 
-		bdProxiedDelete(t, bd, p.dir, a.ID, "--force")
+		bdProxiedDelete(t, bd, p.dir, a.ID, "--cascade", "--force")
 
 		db := openProxiedDB(t, p)
 		for _, id := range []string{a.ID, b.ID, c.ID} {
@@ -271,7 +291,7 @@ func TestProxiedServerDelete(t *testing.T) {
 		c := bdProxiedCreate(t, bd, p.dir, "Chain C", "-t", "task",
 			"--deps", "depends-on:"+b.ID)
 
-		got := bdProxiedDeleteJSON(t, bd, p.dir, "--json", a.ID, "--force")
+		got := bdProxiedDeleteJSON(t, bd, p.dir, "--json", a.ID, "--cascade", "--force")
 
 		count, ok := got["deleted_count"].(float64)
 		if !ok {
@@ -285,6 +305,29 @@ func TestProxiedServerDelete(t *testing.T) {
 		for _, id := range []string{a.ID, b.ID, c.ID} {
 			assertRowAbsent(t, db, "issues", id)
 		}
+	})
+
+	// beads-rir3: a bare delete of the head of a chain (no --cascade) removes ONLY
+	// the head; the rest of the chain survives.
+	t.Run("delete_json_counts_without_cascade_is_one", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "djn")
+		a := bdProxiedCreate(t, bd, p.dir, "Solo A", "-t", "task")
+		b := bdProxiedCreate(t, bd, p.dir, "Solo B", "-t", "task",
+			"--deps", "depends-on:"+a.ID)
+
+		got := bdProxiedDeleteJSON(t, bd, p.dir, "--json", a.ID, "--force")
+
+		count, ok := got["deleted_count"].(float64)
+		if !ok {
+			t.Fatalf("deleted_count not a number: %T %v", got["deleted_count"], got["deleted_count"])
+		}
+		if int(count) != 1 {
+			t.Errorf("deleted_count: got %v, want 1 (only A, no cascade)", count)
+		}
+
+		db := openProxiedDB(t, p)
+		assertRowAbsent(t, db, "issues", a.ID)
+		assertRowExists(t, db, "issues", b.ID)
 	})
 
 	t.Run("delete_dry_run_does_not_mutate", func(t *testing.T) {
@@ -445,17 +488,17 @@ func TestProxiedServerDelete(t *testing.T) {
 		}
 	})
 
-	t.Run("delete_cascade_flag_is_error", func(t *testing.T) {
+	// beads-rir3: --cascade is now ACCEPTED in proxied-server mode (previously
+	// rejected because delete always cascaded). It deletes the named issue with no
+	// dependents just like a bare delete.
+	t.Run("delete_cascade_flag_accepted", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "dcn")
 		issue := bdProxiedCreate(t, bd, p.dir, "Cascade flag", "-t", "task")
 
-		out := bdProxiedDeleteFail(t, bd, p.dir, issue.ID, "--force", "--cascade")
-		if !strings.Contains(out, "--cascade") {
-			t.Errorf("expected error mentioning --cascade, got: %s", out)
-		}
+		bdProxiedDelete(t, bd, p.dir, issue.ID, "--force", "--cascade")
 
 		db := openProxiedDB(t, p)
-		assertRowExists(t, db, "issues", issue.ID)
+		assertRowAbsent(t, db, "issues", issue.ID)
 	})
 }
 
@@ -548,8 +591,22 @@ func TestProxiedServerDeleteWisp(t *testing.T) {
 		}
 	})
 
-	t.Run("delete_wisp_cascades_dependents", func(t *testing.T) {
+	// beads-rir3: wisp delete honors --cascade the same way; without it, dependents survive.
+	t.Run("delete_wisp_cascade_removes_dependents", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "dwc")
+		parent := bdProxiedCreate(t, bd, p.dir, "Wisp parent", "--ephemeral")
+		child := bdProxiedCreate(t, bd, p.dir, "Wisp child", "--ephemeral",
+			"--deps", "depends-on:"+parent.ID)
+
+		bdProxiedDelete(t, bd, p.dir, parent.ID, "--cascade", "--force")
+
+		db := openProxiedDB(t, p)
+		assertRowAbsent(t, db, "wisps", parent.ID)
+		assertRowAbsent(t, db, "wisps", child.ID)
+	})
+
+	t.Run("delete_wisp_without_cascade_preserves_dependents", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "dwp")
 		parent := bdProxiedCreate(t, bd, p.dir, "Wisp parent", "--ephemeral")
 		child := bdProxiedCreate(t, bd, p.dir, "Wisp child", "--ephemeral",
 			"--deps", "depends-on:"+parent.ID)
@@ -558,7 +615,7 @@ func TestProxiedServerDeleteWisp(t *testing.T) {
 
 		db := openProxiedDB(t, p)
 		assertRowAbsent(t, db, "wisps", parent.ID)
-		assertRowAbsent(t, db, "wisps", child.ID)
+		assertRowExists(t, db, "wisps", child.ID)
 	})
 
 	t.Run("delete_wisp_cascade_spans_all_dep_types", func(t *testing.T) {
@@ -569,7 +626,7 @@ func TestProxiedServerDeleteWisp(t *testing.T) {
 		c := bdProxiedCreate(t, bd, p.dir, "Wisp C", "--ephemeral",
 			"--parent", b.ID)
 
-		bdProxiedDelete(t, bd, p.dir, a.ID, "--force")
+		bdProxiedDelete(t, bd, p.dir, a.ID, "--cascade", "--force")
 
 		db := openProxiedDB(t, p)
 		for _, id := range []string{a.ID, b.ID, c.ID} {

@@ -20,6 +20,8 @@ func (s *testSuite) TestIssueUseCase_Delete() {
 		s.Run("DryRunCountsButDoesNotDelete", s.iucDeleteIssuesDryRun)
 		s.Run("CleansLabelsAndEvents", s.iucDeleteCleansAuxiliaryTables)
 		s.Run("UpdateTextReferencesFalseLeavesRefs", s.iucDeleteSkipsRefsWhenFlagOff)
+		s.Run("CascadeFalseLeavesDependents", s.iucDeleteIssuesNoCascadeKeepsDependents)
+		s.Run("CascadeTrueRemovesDependents", s.iucDeleteIssuesCascadeRemovesDependents)
 	})
 	s.Run("DeleteWisp", func() {
 		s.Run("DispatchesToWispsTable", s.iucDeleteWispDispatches)
@@ -184,6 +186,60 @@ func (s *testSuite) iucDeleteSkipsRefsWhenFlagOff() {
 	survived, err := s.issueRepo().Get(s.Ctx(), "bd-iuc-noref-neighbor", domain.IssueTableOpts{})
 	s.Require().NoError(err)
 	s.Equal(original, survived.Description, "description must be untouched when flag is off")
+}
+
+// iucDeleteIssuesNoCascadeKeepsDependents is the beads-rir3 regression guard:
+// DeleteIssues with Cascade=false must delete ONLY the named IDs and leave
+// dependents alive (rewriting their refs to [deleted:X]), matching direct-mode
+// default semantics. Before the fix, deleteMany always FindAllDependents-expanded
+// so the dependent was also deleted (silent data loss).
+func (s *testSuite) iucDeleteIssuesNoCascadeKeepsDependents() {
+	s.seedOpenIssue("bd-iuc-nocas-root")
+	s.seedOpenIssue("bd-iuc-nocas-dependent")
+	s.Require().NoError(s.depRepo().Insert(s.Ctx(),
+		newDep("bd-iuc-nocas-dependent", "bd-iuc-nocas-root", types.DepBlocks),
+		"tester", domain.DepInsertOpts{}))
+
+	res, err := s.issueUseCase().DeleteIssues(s.Ctx(), domain.DeleteIssuesParams{
+		IDs:                  []string{"bd-iuc-nocas-root"},
+		UpdateTextReferences: true,
+		Cascade:              false,
+	}, "tester")
+	s.Require().NoError(err)
+	s.Equal(1, res.DeletedCount, "only the named root must be deleted, not the dependent")
+
+	var rootRows, depRows int
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT COUNT(*) FROM issues WHERE id = ?", "bd-iuc-nocas-root").Scan(&rootRows))
+	s.Equal(0, rootRows, "root should be deleted")
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT COUNT(*) FROM issues WHERE id = ?", "bd-iuc-nocas-dependent").Scan(&depRows))
+	s.Equal(1, depRows, "dependent must survive a non-cascade delete (beads-rir3)")
+}
+
+// iucDeleteIssuesCascadeRemovesDependents proves Cascade=true still expands to
+// dependents (the opt-in cascade path remains intact).
+func (s *testSuite) iucDeleteIssuesCascadeRemovesDependents() {
+	s.seedOpenIssue("bd-iuc-cas2-root")
+	s.seedOpenIssue("bd-iuc-cas2-dependent")
+	s.Require().NoError(s.depRepo().Insert(s.Ctx(),
+		newDep("bd-iuc-cas2-dependent", "bd-iuc-cas2-root", types.DepBlocks),
+		"tester", domain.DepInsertOpts{}))
+
+	res, err := s.issueUseCase().DeleteIssues(s.Ctx(), domain.DeleteIssuesParams{
+		IDs:                  []string{"bd-iuc-cas2-root"},
+		UpdateTextReferences: true,
+		Cascade:              true,
+	}, "tester")
+	s.Require().NoError(err)
+	s.Equal(2, res.DeletedCount, "root + dependent under cascade")
+
+	for _, id := range []string{"bd-iuc-cas2-root", "bd-iuc-cas2-dependent"} {
+		var rows int
+		s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+			"SELECT COUNT(*) FROM issues WHERE id = ?", id).Scan(&rows))
+		s.Equal(0, rows, "%s should be deleted under cascade", id)
+	}
 }
 
 func (s *testSuite) iucDeleteWispDispatches() {
