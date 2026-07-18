@@ -103,15 +103,17 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 
 	table := pickIssueTable(opts.UseWispsTable)
 
-	// Read the prior status up-front when the caller is changing it: needed both
-	// for the closed_at management below and the is_blocked recompute at the end.
+	// Read the prior status (and started_at) up-front when the caller is changing
+	// the status: needed for the closed_at/started_at management below and the
+	// is_blocked recompute at the end.
 	var oldStatus types.Status
+	var oldStartedAt sql.NullTime
 	_, statusChanging := updates["status"]
 	if statusChanging {
 		//nolint:gosec // G201: table is one of two hardcoded constants
 		if err := r.runner.QueryRowContext(ctx,
-			fmt.Sprintf("SELECT status FROM %s WHERE id = ?", table), id,
-		).Scan(&oldStatus); err != nil {
+			fmt.Sprintf("SELECT status, started_at FROM %s WHERE id = ?", table), id,
+		).Scan(&oldStatus, &oldStartedAt); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("db: Update %s: %w", id, sql.ErrNoRows)
 			}
@@ -151,6 +153,22 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 			case newStatus != types.StatusClosed && oldStatus == types.StatusClosed:
 				setClauses = append(setClauses, "closed_at = ?")
 				args = append(args, nil)
+			}
+		}
+
+		// beads-hfb4: auto-manage started_at on a transition INTO in_progress,
+		// mirroring the shared seam (issueops.ManageStartedAt, wired into
+		// UpdateIssueInTx for the direct/embedded path). Without this the
+		// domain/proxied UPDATE path left started_at NULL after
+		// `bd update --status in_progress` (the --claim path sets it, a bare
+		// status update did not) — a silent data-fidelity gap vs the direct path
+		// (started_at feeds cycle-time/age/stale metrics). An existing started_at
+		// is preserved and an explicit caller value is respected, matching
+		// ManageStartedAt.
+		if _, callerSetStartedAt := updates["started_at"]; !callerSetStartedAt {
+			if coerceStatus(updates["status"]) == types.StatusInProgress && !oldStartedAt.Valid {
+				setClauses = append(setClauses, "started_at = ?")
+				args = append(args, time.Now().UTC())
 			}
 		}
 	}

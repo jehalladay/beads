@@ -948,6 +948,59 @@ func TestProxiedServerUpdate(t *testing.T) {
 			t.Errorf("epic must stay an epic after a guarded demote, got %q", got)
 		}
 	})
+
+	// beads-hfb4: `bd update --status in_progress` over the proxied server must
+	// auto-set started_at (mirroring the shared seam's ManageStartedAt) — before
+	// the fix the domain update path left it NULL, a silent data-fidelity gap.
+	t.Run("update_in_progress_sets_started_at", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "uipsa")
+		issue := bdProxiedCreate(t, bd, p.dir, "Start me")
+		db := openProxiedDB(t, p)
+		var before sql.NullTime
+		if err := db.QueryRowContext(context.Background(),
+			"SELECT started_at FROM issues WHERE id = ?", issue.ID).Scan(&before); err != nil {
+			t.Fatalf("read started_at before: %v", err)
+		}
+		if before.Valid {
+			t.Fatalf("started_at should be NULL before in_progress, got %v", before.Time)
+		}
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "-s", "in_progress")
+		var after sql.NullTime
+		if err := db.QueryRowContext(context.Background(),
+			"SELECT started_at FROM issues WHERE id = ?", issue.ID).Scan(&after); err != nil {
+			t.Fatalf("read started_at after: %v", err)
+		}
+		if !after.Valid {
+			t.Errorf("update --status in_progress must set started_at, got NULL")
+		}
+	})
+
+	t.Run("update_in_progress_preserves_existing_started_at", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "uipse")
+		issue := bdProxiedCreate(t, bd, p.dir, "Started already")
+		// First transition sets started_at.
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "-s", "in_progress")
+		db := openProxiedDB(t, p)
+		var first sql.NullTime
+		if err := db.QueryRowContext(context.Background(),
+			"SELECT started_at FROM issues WHERE id = ?", issue.ID).Scan(&first); err != nil {
+			t.Fatalf("read started_at after first: %v", err)
+		}
+		if !first.Valid {
+			t.Fatalf("started_at should be set after first in_progress")
+		}
+		// Bounce to blocked and back to in_progress — the original started_at must survive.
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "-s", "blocked")
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "-s", "in_progress")
+		var second sql.NullTime
+		if err := db.QueryRowContext(context.Background(),
+			"SELECT started_at FROM issues WHERE id = ?", issue.ID).Scan(&second); err != nil {
+			t.Fatalf("read started_at after re-transition: %v", err)
+		}
+		if !second.Valid || !second.Time.Equal(first.Time) {
+			t.Errorf("started_at must be preserved across re-transition: first=%v second=%v", first.Time, second.Time)
+		}
+	})
 }
 
 // readIssueType reads the stored issue_type directly from the proxied DB, for

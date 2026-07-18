@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   open→closed transition and clears it on closed→open, unless the caller set `closed_at` explicitly — matching
   the shared seam. (Surfaced by the previously-red gated test `close_unblocks_dependents`.)
 
+- **`bd update --status in_progress` over the proxied server now sets `started_at` instead of leaving it NULL (beads-hfb4).**
+  The shared seam (`issueops.UpdateIssueInTx`) auto-manages both `closed_at` (beads-h3iv) and `started_at` via
+  `ManageStartedAt` — the latter sets `started_at` on a transition into `in_progress` (preserving an existing
+  value). The domain single-issue update path (`issueSQLRepositoryImpl.Update`, used by the proxied server)
+  managed neither on a bare status update; h3iv added `closed_at`, and this adds `started_at`. So
+  `bd update <id> --status in_progress` over the proxied server left `started_at` NULL (the `--claim` path set
+  it; a plain status update did not) — a silent data-fidelity gap versus the direct path, since `started_at`
+  feeds cycle-time/age/stale metrics. The domain update path now sets `started_at` on a real transition into
+  `in_progress` when the issue has none, preserving an existing value and any explicit caller value.
+
 - **`bd reopen` over the proxied server now enforces the closed-epic-parent guard (beads-6fns).**
   The direct reopen path (`cmd/bd/reopen.go`) refuses to reopen a closed child whose parent epic is itself
   closed (beads-b0tw) — that would recreate the closed-epic-with-open-child inconsistency the close-guard family
