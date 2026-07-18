@@ -427,6 +427,14 @@ func validateGraphApplyPlan(plan *GraphApplyPlan, customTypes []string) error {
 			if !dt.IsValid() {
 				return fmt.Errorf("edge %d: invalid dependency type %q", i, edge.Type)
 			}
+			// beads-0kno: reject unknown types for parity with `bd dep add`
+			// (beads-qfka) and `bd create --deps`. Without this a typo'd blocking
+			// type (e.g. "blockd") was accepted and stored as a non-gating custom
+			// edge, silently defeating the intended block. Mirrors the node-type
+			// membership check at validateGraphApplyPlan (IsValidWithCustom).
+			if !dt.IsWellKnown() {
+				return fmt.Errorf("edge %d: unknown dependency type %q; valid types: %s", i, edge.Type, createDepsAcceptedTypeList())
+			}
 		}
 	}
 
