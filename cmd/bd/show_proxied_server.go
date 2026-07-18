@@ -90,24 +90,38 @@ func runShowProxiedServer(cmd *cobra.Command, ctx context.Context, args []string
 		FatalErrorRespectJSON("at least one issue ID is required (use positional args, --id flag, or --current)")
 	}
 
+	// beads-qtw9: the as-of/refs/children legs render the ids that DID resolve
+	// but must still signal a non-zero exit on ANY id-resolution failure, to
+	// match the direct paths (show_refs.go/show_children.go/show.go all return
+	// exitError{Code:1} on any failed id) and the proxied default/thread legs
+	// (which FatalError/os.Exit). Those three return a failed-id count; the
+	// others FatalError/os.Exit internally so they report 0 here.
+	failedCount := 0
 	switch {
 	case in.asOfRef != "":
-		runShowProxiedAsOf(ctx, uw, in)
+		failedCount = runShowProxiedAsOf(ctx, uw, in)
 	case in.thread:
 		runShowProxiedThread(ctx, uw, in)
 	case in.refs:
-		runShowProxiedRefs(ctx, uw, in)
+		failedCount = runShowProxiedRefs(ctx, uw, in)
 	case in.children:
-		runShowProxiedChildren(ctx, uw, in)
+		failedCount = runShowProxiedChildren(ctx, uw, in)
 	default:
 		runShowProxiedDefault(ctx, uw, in)
+	}
+
+	// beads-qtw9: any id-resolution failure -> rc!=0 (partial success still
+	// printed the resolved items above), matching the direct-path contract.
+	if failedCount > 0 {
+		os.Exit(1)
 	}
 
 	// beads-kuv1: record the last-touched marker after a successful show, the
 	// same as the direct path (cmd/bd/show.go), so a subsequent `bd show
 	// --current` can fall back to it. The dispatched handlers FatalError/os.Exit
-	// on not-found, so reaching here means the show succeeded. Guarded on an
-	// explicit id (skip for --current, which already resolved from state).
+	// on not-found (and the failedCount check above catches the as-of/refs/
+	// children legs), so reaching here means the show fully succeeded. Guarded
+	// on an explicit id (skip for --current, which already resolved from state).
 	if len(in.ids) > 0 && !in.currentMode {
 		SetLastTouchedID(in.ids[0])
 	}
@@ -176,16 +190,19 @@ func proxiedCountComments(ctx context.Context, uw uow.UnitOfWork, id string, isW
 	return uw.CommentUseCase().CountCommentsForIssue(ctx, id)
 }
 
-func runShowProxiedAsOf(ctx context.Context, uw uow.UnitOfWork, in *showProxiedInput) {
+func runShowProxiedAsOf(ctx context.Context, uw uow.UnitOfWork, in *showProxiedInput) int {
+	failedCount := 0
 	var jsonIssues []*types.Issue
 	for idx, id := range in.ids {
 		issue, err := uw.IssueUseCase().AsOf(ctx, id, in.asOfRef)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error fetching %s as of %s: %v\n", id, in.asOfRef, err)
+			failedCount++
 			continue
 		}
 		if issue == nil {
 			fmt.Fprintf(os.Stderr, "Issue %s did not exist at %s\n", id, in.asOfRef)
+			failedCount++
 			continue
 		}
 
@@ -211,23 +228,28 @@ func runShowProxiedAsOf(ctx context.Context, uw uow.UnitOfWork, in *showProxiedI
 	if jsonOutput && len(jsonIssues) > 0 {
 		_ = outputJSON(jsonIssues)
 	}
+	return failedCount
 }
 
-func runShowProxiedRefs(ctx context.Context, uw uow.UnitOfWork, in *showProxiedInput) {
+func runShowProxiedRefs(ctx context.Context, uw uow.UnitOfWork, in *showProxiedInput) int {
+	failedCount := 0
 	allRefs := make(map[string][]*types.IssueWithDependencyMetadata, len(in.ids))
 	for _, id := range in.ids {
 		issue, isWisp, err := proxiedGetIssueOrWisp(ctx, uw, id)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+			failedCount++
 			continue
 		}
 		if issue == nil {
 			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+			failedCount++
 			continue
 		}
 		refs, err := proxiedListDeps(ctx, uw, id, isWisp, domain.DepListFilter{Direction: domain.DepDirectionIn})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting refs for %s: %v\n", id, err)
+			failedCount++
 			continue
 		}
 		allRefs[id] = refs
@@ -235,7 +257,7 @@ func runShowProxiedRefs(ctx context.Context, uw uow.UnitOfWork, in *showProxiedI
 
 	if jsonOutput {
 		_ = outputJSON(allRefs)
-		return
+		return failedCount
 	}
 	for id, refs := range allRefs {
 		if len(refs) == 0 {
@@ -268,18 +290,22 @@ func runShowProxiedRefs(ctx context.Context, uw uow.UnitOfWork, in *showProxiedI
 		}
 		fmt.Println()
 	}
+	return failedCount
 }
 
-func runShowProxiedChildren(ctx context.Context, uw uow.UnitOfWork, in *showProxiedInput) {
+func runShowProxiedChildren(ctx context.Context, uw uow.UnitOfWork, in *showProxiedInput) int {
+	failedCount := 0
 	allChildren := make(map[string][]*types.IssueWithDependencyMetadata, len(in.ids))
 	for _, id := range in.ids {
 		issue, isWisp, err := proxiedGetIssueOrWisp(ctx, uw, id)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+			failedCount++
 			continue
 		}
 		if issue == nil {
 			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+			failedCount++
 			continue
 		}
 		kids, err := proxiedListDeps(ctx, uw, id, isWisp, domain.DepListFilter{
@@ -288,6 +314,7 @@ func runShowProxiedChildren(ctx context.Context, uw uow.UnitOfWork, in *showProx
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting children for %s: %v\n", id, err)
+			failedCount++
 			continue
 		}
 		if kids == nil {
@@ -298,7 +325,7 @@ func runShowProxiedChildren(ctx context.Context, uw uow.UnitOfWork, in *showProx
 
 	if jsonOutput {
 		_ = outputJSON(allChildren)
-		return
+		return failedCount
 	}
 	for id, kids := range allChildren {
 		if len(kids) == 0 {
@@ -315,6 +342,7 @@ func runShowProxiedChildren(ctx context.Context, uw uow.UnitOfWork, in *showProx
 		}
 		fmt.Println()
 	}
+	return failedCount
 }
 
 func runShowProxiedThread(ctx context.Context, uw uow.UnitOfWork, in *showProxiedInput) {
