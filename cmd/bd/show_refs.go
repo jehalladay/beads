@@ -26,10 +26,12 @@ func showIssueRefs(ctx context.Context, args []string, jsonOut bool) error {
 	}
 
 	// Process each arg via routing-aware resolution
+	failedCount := 0
 	for _, id := range args {
 		result, err := resolveAndGetIssueWithRouting(ctx, store, id)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+			failedCount++
 			continue
 		}
 		if result == nil || result.Issue == nil {
@@ -37,17 +39,27 @@ func showIssueRefs(ctx context.Context, args []string, jsonOut bool) error {
 				result.Close()
 			}
 			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+			failedCount++
 			continue
 		}
 		if err := processIssue(result.ResolvedID, result.Store); err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting refs for %s: %v\n", id, err)
+			failedCount++
 		}
 		result.Close()
 	}
 
 	// Output results
 	if jsonOut {
-		return outputJSON(allRefs)
+		if jerr := outputJSON(allRefs); jerr != nil {
+			return jerr
+		}
+		// Partial/total failure: emit results (above) then signal non-zero so
+		// scripts don't silently proceed on a missing id (beads-2svv).
+		if failedCount > 0 {
+			return &exitError{Code: 1}
+		}
+		return nil
 	}
 
 	// Display refs grouped by issue and relationship type
@@ -89,6 +101,11 @@ func showIssueRefs(ctx context.Context, args []string, jsonOut bool) error {
 			}
 		}
 		fmt.Println()
+	}
+	// Found refs have already been displayed; signal non-zero if any id failed
+	// so `bd show --refs $a $b || ...` guards fire on a missing id (beads-2svv).
+	if failedCount > 0 {
+		return &exitError{Code: 1}
 	}
 	return nil
 }
