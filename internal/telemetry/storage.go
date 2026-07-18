@@ -219,6 +219,18 @@ func (s *InstrumentedStorage) AddDependency(ctx context.Context, dep *types.Depe
 	return err
 }
 
+func (s *InstrumentedStorage) LinkAndClose(ctx context.Context, dep *types.Dependency, actor string) error {
+	attrs := []attribute.KeyValue{
+		attribute.String("bd.dep.from", dep.IssueID),
+		attribute.String("bd.dep.to", dep.DependsOnID),
+		attribute.String("bd.dep.type", string(dep.Type)),
+	}
+	ctx, span, t := s.op(ctx, "LinkAndClose", attrs...)
+	err := s.inner.LinkAndClose(ctx, dep, actor)
+	s.done(ctx, span, t, err, attrs...)
+	return err
+}
+
 func (s *InstrumentedStorage) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
 	attrs := []attribute.KeyValue{
 		attribute.String("bd.dep.from", issueID),

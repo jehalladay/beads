@@ -161,6 +161,19 @@ func (h *HookFiringStore) AddDependency(ctx context.Context, dep *types.Dependen
 	return nil
 }
 
+// LinkAndClose adds a dependency edge and closes the source issue atomically,
+// then fires on_update for the issue — behavior-preserving with the prior
+// two-call path (AddDependency fired on_update; the close ran via UpdateIssue,
+// which also fires on_update, not on_close). The atomic seam collapses those
+// two identical hook fires into one.
+func (h *HookFiringStore) LinkAndClose(ctx context.Context, dep *types.Dependency, actor string) error {
+	if err := h.inner.LinkAndClose(ctx, dep, actor); err != nil {
+		return err
+	}
+	h.fireDependencyHookByID(ctx, hooks.EventUpdate, dep.IssueID)
+	return nil
+}
+
 // RemoveDependency removes a dependency and fires on_update for the issue.
 func (h *HookFiringStore) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
 	if err := h.inner.RemoveDependency(ctx, issueID, dependsOnID, actor); err != nil {
