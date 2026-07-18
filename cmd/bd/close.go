@@ -691,3 +691,29 @@ func countEpicOpenChildren(ctx context.Context, s storage.DoltStorage, epicID st
 	}
 	return count
 }
+
+// closedEpicParents returns the IDs of any CLOSED epic parents of childID (its
+// parent-child dependencies whose parent is an epic in the closed state). It is
+// the child-side mirror of countEpicOpenChildren: the "a closed epic has no open
+// children" invariant is enforced at epic-close time, but a child transitioning
+// back to open (via `bd reopen` or `bd update --status open`) would silently
+// recreate a closed-epic-with-open-child state. Callers use this to refuse such a
+// reopen unless --force (beads-b0tw, the child-reopen sibling of the beads-2hkd
+// close-guard family). Best-effort: a lookup error yields no parents (fail-open
+// to the normal reopen rather than blocking on a transient query error), matching
+// countEpicOpenChildren's error posture.
+func closedEpicParents(ctx context.Context, s storage.DoltStorage, childID string) []string {
+	deps, err := s.GetDependenciesWithMetadata(ctx, childID)
+	if err != nil {
+		return nil
+	}
+	var parents []string
+	for _, dep := range deps {
+		if dep.DependencyType == types.DepParentChild &&
+			dep.Issue.IssueType == types.TypeEpic &&
+			dep.Issue.Status == types.StatusClosed {
+			parents = append(parents, dep.Issue.ID)
+		}
+	}
+	return parents
+}

@@ -36,6 +36,7 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 		}
 
 		reason, _ := cmd.Flags().GetString("reason")
+		forceFlag, _ := cmd.Flags().GetBool("force")
 		ctx := rootCtx
 
 		reopenedIssues := []*types.Issue{}
@@ -72,6 +73,22 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 				result.Close()
 				continue
 			}
+			// Closed-epic-parent guard (beads-b0tw): reopening a closed child
+			// whose parent epic is itself closed silently recreates the
+			// closed-epic-with-open-child inconsistency the close-guard family
+			// prevents ("a closed epic has no open children" is enforced only at
+			// epic-close, not at child-reopen). Refuse unless --force, mirroring
+			// `bd close --force`. This is a real closed->open transition (the
+			// guard above returned for every non-closed status).
+			if !forceFlag {
+				if closedEpics := closedEpicParents(ctx, issueStore, fullID); len(closedEpics) > 0 {
+					fmt.Fprintf(os.Stderr, "cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override\n", fullID, closedEpics)
+					hasError = true
+					result.Close()
+					continue
+				}
+			}
+
 			if err := issueStore.ReopenIssue(ctx, fullID, reason, actor); err != nil {
 				fmt.Fprintf(os.Stderr, "Error reopening %s: %v\n", fullID, err)
 				hasError = true
@@ -140,6 +157,7 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 
 func init() {
 	reopenCmd.Flags().StringP("reason", "r", "", "Reason for reopening")
+	reopenCmd.Flags().Bool("force", false, "Override the closed-epic-parent guard (reopening a child whose parent epic is closed); recreates a closed-epic-with-open-child state")
 	reopenCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(reopenCmd)
 }

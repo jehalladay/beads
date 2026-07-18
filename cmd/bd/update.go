@@ -457,6 +457,23 @@ create, update, show, or close operation).`,
 				}
 			}
 
+			// Child-reopen close-guard bypass (beads-b0tw): reopening a closed
+			// child whose parent epic is itself closed (via `update --status open`)
+			// silently recreates the closed-epic-with-open-child state — the same
+			// invariant the close-guard family enforces, bypassed at the child
+			// status->open transition rather than at epic close. Mirrors the
+			// `bd reopen` guard. Only a real closed->open transition triggers it
+			// (issue was closed, new status is open) and it is overridable with
+			// --force, matching `bd close --force`.
+			if newStatus, ok := updates["status"].(string); ok && !forceFlag &&
+				types.Status(newStatus) == types.StatusOpen && issue.Status == types.StatusClosed {
+				if closedEpics := closedEpicParents(ctx, issueStore, result.ResolvedID); len(closedEpics) > 0 {
+					reportItemError("cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override", id, closedEpics)
+					closeIfUnmutated(result)
+					continue
+				}
+			}
+
 			// Handle claim operation atomically using compare-and-swap semantics
 			if claimFlag {
 				if err := issueStore.ClaimIssue(ctx, result.ResolvedID, actor); err != nil {
