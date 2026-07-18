@@ -72,6 +72,9 @@ func (r *recordingStorage) SearchIssuesWithCounts(context.Context, string, types
 func (r *recordingStorage) AddDependency(context.Context, *types.Dependency, string) error {
 	return r.rec("AddDependency")
 }
+func (r *recordingStorage) LinkAndClose(context.Context, *types.Dependency, string) error {
+	return r.rec("LinkAndClose")
+}
 func (r *recordingStorage) RemoveDependency(context.Context, string, string, string) error {
 	return r.rec("RemoveDependency")
 }
@@ -309,6 +312,7 @@ func TestInstrumentedStorageDelegationMatrix(t *testing.T) {
 		}},
 
 		{"AddDependency", func(s storage.Storage) error { return s.AddDependency(ctx, &types.Dependency{}, "a") }},
+		{"LinkAndClose", func(s storage.Storage) error { return s.LinkAndClose(ctx, &types.Dependency{}, "a") }},
 		{"RemoveDependency", func(s storage.Storage) error { return s.RemoveDependency(ctx, "x", "y", "a") }},
 		{"GetDependencies", func(s storage.Storage) error { _, e := s.GetDependencies(ctx, "x"); return e }},
 		{"GetDependents", func(s storage.Storage) error { _, e := s.GetDependents(ctx, "x"); return e }},

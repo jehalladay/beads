@@ -94,23 +94,16 @@ func runDuplicate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("canonical issue not found: %s", canonicalID)
 	}
 
-	// Add a "duplicates" dependency edge (duplicate → canonical)
+	// Add a "duplicates" dependency edge (duplicate → canonical) AND close the
+	// duplicate atomically (beads-njnw): a mid-sequence failure must not leave
+	// the edge added while the issue stays open.
 	dep := &types.Dependency{
 		IssueID:     duplicateID,
 		DependsOnID: canonicalID,
 		Type:        types.DepDuplicates,
 	}
-	if err := store.AddDependency(ctx, dep, actor); err != nil {
-		return fmt.Errorf("failed to add duplicate link: %w", err)
-	}
-
-	// Close the duplicate issue
-	closedStatus := string(types.StatusClosed)
-	updates := map[string]interface{}{
-		"status": closedStatus,
-	}
-	if err := store.UpdateIssue(ctx, duplicateID, updates, actor); err != nil {
-		return fmt.Errorf("failed to close duplicate: %w", err)
+	if err := store.LinkAndClose(ctx, dep, actor); err != nil {
+		return fmt.Errorf("failed to mark duplicate: %w", err)
 	}
 
 	commandDidWrite.Store(true)
@@ -164,23 +157,16 @@ func runSupersede(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("replacement issue not found: %s", newID)
 	}
 
-	// Add a "supersedes" dependency edge (old → new)
+	// Add a "supersedes" dependency edge (old → new) AND close the superseded
+	// issue atomically (beads-njnw): a mid-sequence failure must not leave the
+	// edge added while the issue stays open.
 	dep := &types.Dependency{
 		IssueID:     oldID,
 		DependsOnID: newID,
 		Type:        types.DepSupersedes,
 	}
-	if err := store.AddDependency(ctx, dep, actor); err != nil {
-		return fmt.Errorf("failed to add supersede link: %w", err)
-	}
-
-	// Close the superseded issue
-	closedStatus := string(types.StatusClosed)
-	updates := map[string]interface{}{
-		"status": closedStatus,
-	}
-	if err := store.UpdateIssue(ctx, oldID, updates, actor); err != nil {
-		return fmt.Errorf("failed to close superseded issue: %w", err)
+	if err := store.LinkAndClose(ctx, dep, actor); err != nil {
+		return fmt.Errorf("failed to mark superseded: %w", err)
 	}
 
 	commandDidWrite.Store(true)

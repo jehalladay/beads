@@ -266,6 +266,28 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	return nil
 }
 
+// LinkAndCloseInTx adds a dependency edge AND closes dep.IssueID in ONE
+// transaction, so the two can never split into an inconsistent state. Before
+// this, bd duplicate / bd supersede ran AddDependency and UpdateIssue(closed)
+// as two SEPARATE committed transactions: a failure between them left the
+// duplicate/supersede edge added while the issue stayed OPEN — a
+// recoverable-but-inconsistent split state (the issue reads as linked yet
+// remains active in ready/list, and a re-run re-adds the edge). Same class as
+// the compaction overwrite+mark split fixed by CompactOverwriteInTx (beads-pj38).
+//
+// A failure in either step rolls the whole transaction back, so the edge is
+// only durable when the close also succeeds (beads-njnw).
+func LinkAndCloseInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, actor string, opts AddDependencyOpts) error {
+	if err := AddDependencyInTx(ctx, tx, dep, actor, opts); err != nil {
+		return err
+	}
+	updates := map[string]interface{}{"status": string(types.StatusClosed)}
+	if _, err := UpdateIssueInTx(ctx, tx, dep.IssueID, updates, actor); err != nil {
+		return fmt.Errorf("close after link %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
+	}
+	return nil
+}
+
 // RemoveSourceFromAffected drops the dep source from the affected-ID sets
 // after a direct is_blocked mark, so the follow-up Mark/Recompute pass does
 // not redo it. Shared with the domain/db dependency repository.
