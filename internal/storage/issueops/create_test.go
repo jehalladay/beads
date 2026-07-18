@@ -439,6 +439,64 @@ func TestPersistDependenciesSameKindReimportIsCleanNoOp(t *testing.T) {
 	}
 }
 
+// TestPersistDependenciesPreservesCrossPrefixTarget verifies that an imported
+// dependency edge whose target lives in another rig's database (a bare
+// cross-prefix ID like "other-999", NOT the "external:" form) is preserved,
+// not dropped. Every interactive path (dep add / link) computes
+// IsCrossPrefix = ExtractPrefix(source) != ExtractPrefix(target) and treats
+// such a target as external, skipping the local-existence check. Import once
+// hardcoded ClassifyDepTarget(..., false), so a cross-prefix target was
+// validated against the LOCAL issues table, missed, and was silently skipped
+// as "target not found" — losing a legitimate edge that dep add accepts and
+// export emits (beads-77i6, lossy export->import round-trip). The import path
+// must derive cross-prefix the same way. A cross-prefix target must therefore
+// issue NO wisps/issues existence query and INSERT into depends_on_external.
+func TestPersistDependenciesPreservesCrossPrefixTarget(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+
+	source := &types.Issue{
+		ID:        "foo-1",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "other-999", // different prefix -> lives in another rig's DB
+			Type:        types.DepRelated,
+		}},
+	}
+
+	// No wisps/issues existence query: a cross-prefix target is external, so the
+	// local-existence check must be skipped (exactly as the interactive paths do).
+	mock.ExpectExec("INSERT INTO dependencies").
+		WithArgs(depid.New("foo-1", "other-999"), "foo-1", "other-999", types.DepRelated, "tester", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	var skipped []string
+	result, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{source}, "tester", storage.BatchCreateOptions{
+		SkipDependencyValidationErrors: true,
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			skipped = append(skipped, issueID+" -> "+dependsOnID+": "+reason)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = %v, want nil", err)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("skipped = %#v, want none — a cross-prefix edge must be preserved, not dropped", skipped)
+	}
+	if !result.ChangedTables["dependencies"] {
+		t.Fatalf("ChangedTables = %#v, want dependencies changed (cross-prefix edge inserted)", result.ChangedTables)
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 // TestPrepareIssueForInsert_InvalidTypeError verifies the invalid-type failure
 // surfaces the valid-type hint and, when the issue has no ID yet, labels it by
 // title instead of producing a bare "issue :" fragment (beads-4fh).
