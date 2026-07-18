@@ -67,15 +67,15 @@ var auditRecordCmd = &cobra.Command{
 		if auditRecordStdin || (stdinPiped && noFieldsProvided) {
 			b, err := readAllLimited(os.Stdin, "stdin")
 			if err != nil {
-				return HandleError("failed to read stdin: %v", err)
+				return HandleErrorRespectJSON("failed to read stdin: %v", err)
 			}
 			e, err = parseAuditEntryFromStdin(b, actor)
 			if err != nil {
-				return HandleError("%v", err)
+				return HandleErrorRespectJSON("%v", err)
 			}
 		} else {
 			if auditRecordKind == "" {
-				return HandleError("--kind is required")
+				return HandleErrorRespectJSON("--kind is required")
 			}
 			e = audit.Entry{
 				Kind:     auditRecordKind,
@@ -95,7 +95,7 @@ var auditRecordCmd = &cobra.Command{
 
 		id, err := audit.Append(&e)
 		if err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		if jsonOutput {
@@ -145,7 +145,7 @@ var auditLabelCmd = &cobra.Command{
 
 		parentID := args[0]
 		if auditLabelValue == "" {
-			return HandleError("--label is required")
+			return HandleErrorRespectJSON("--label is required")
 		}
 		e := audit.Entry{
 			Kind:     "label",
@@ -157,7 +157,7 @@ var auditLabelCmd = &cobra.Command{
 
 		id, err := audit.Append(&e)
 		if err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		if jsonOutput {
