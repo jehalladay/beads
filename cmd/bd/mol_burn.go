@@ -135,9 +135,18 @@ func burnMultipleMolecules(ctx context.Context, moleculeIDs []string, dryRun, fo
 
 	if len(wispIDs) == 0 && len(persistentIDs) == 0 {
 		if jsonOutput {
-			return outputJSON(BatchBurnResult{FailedCount: len(failedResolve)})
+			_ = outputJSON(BatchBurnResult{FailedCount: len(failedResolve)})
+			if len(failedResolve) > 0 {
+				return &exitError{Code: 1}
+			}
+			return nil
 		}
 		fmt.Println("No valid molecules to burn")
+		if len(failedResolve) > 0 {
+			// Every id failed to resolve/load: exit non-zero so scripts don't
+			// silently treat an all-failed burn as success (beads-uscf).
+			return &exitError{Code: 1}
+		}
 		return nil
 	}
 
@@ -162,6 +171,11 @@ func burnMultipleMolecules(ctx context.Context, moleculeIDs []string, dryRun, fo
 					fmt.Printf("  - %s\n", id)
 				}
 			}
+		}
+		if len(failedResolve) > 0 {
+			// A dry-run that couldn't resolve every id exits non-zero too, matching
+			// the single-molecule path (which errors at resolve) (beads-uscf).
+			return &exitError{Code: 1}
 		}
 		return nil
 	}
@@ -225,12 +239,20 @@ func burnMultipleMolecules(ctx context.Context, moleculeIDs []string, dryRun, fo
 	}
 
 	if jsonOutput {
-		return outputJSON(batchResult)
+		_ = outputJSON(batchResult)
+		if batchResult.FailedCount > 0 {
+			return &exitError{Code: 1}
+		}
+		return nil
 	}
 
 	fmt.Printf("%s Burned %d molecule(s): %d issues deleted\n", ui.RenderPass("✓"), len(wispIDs)+len(persistentIDs), batchResult.TotalDeleted)
 	if batchResult.FailedCount > 0 {
 		fmt.Printf("  %d failed\n", batchResult.FailedCount)
+		// Partial failure (some ids failed to resolve/load or a subgraph failed
+		// to load): the valid molecules were still burned, but exit non-zero so
+		// scripts don't proceed as if everything succeeded (beads-uscf).
+		return &exitError{Code: 1}
 	}
 	return nil
 }
