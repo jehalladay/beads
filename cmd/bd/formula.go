@@ -196,6 +196,14 @@ func runFormulaShow(cmd *cobra.Command, args []string) error {
 
 	f, err := parser.LoadByName(name)
 	if err != nil {
+		// Under --json, a SilentExit here leaves stdout EMPTY (only stderr
+		// text), breaking JSON parsers. Route through HandleErrorRespectJSON
+		// so the failure is emitted as a JSON object on stdout, matching the
+		// honored-json commands (list/show/update/close). Plain-text mode
+		// keeps the helpful search-paths hint.
+		if jsonOutput {
+			return HandleErrorRespectJSON("%v", err)
+		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		fmt.Fprintf(os.Stderr, "\nSearch paths:\n")
 		for _, p := range getFormulaSearchPaths() {
