@@ -247,10 +247,25 @@ func truncateSummary(title string) string {
 // dedup), so per beads-xcbd the correct behavior is to reject with a beads-side
 // message naming the offending label, rather than silently drop or transform
 // it. Jira-specific: GitLab labels allow spaces and ADO Tags are "; "-joined.
+//
+// It also rejects a label equal to the reserved beadsDeferredLabel marker. Jira
+// round-trip preserves beads' "deferred" status through the labels array as a
+// "bd:status:deferred" marker (see beadsDeferredLabel). A user label equal to
+// it is indistinguishable from the internal marker: on pull stripLabel SILENTLY
+// DROPS it and hasLabel lets it HIJACK the issue's status to deferred. It has no
+// whitespace, so it clears the guard above. The check is exact-match (mirroring
+// hasLabel/stripLabel), so a near-miss like "bd:status:deferredx" is never
+// false-rejected. Sibling of the ADO "beads:" prefix guard (validateADOTags,
+// beads-sdmy) and the GitLab "bd:estimate:" guard (validateGitLabLabels,
+// beads-yl92) — the reserved-marker-in-label collision axis, distinct from the
+// whitespace/delimiter guards. beads-nqu1.
 func validateJiraLabels(labels []string) error {
 	for _, l := range labels {
 		if strings.IndexFunc(l, unicode.IsSpace) >= 0 {
 			return fmt.Errorf("label %q contains whitespace; Jira rejects it — rename or remove internal spaces before syncing", l)
+		}
+		if l == beadsDeferredLabel {
+			return fmt.Errorf("label %q equals the reserved %q marker; Jira round-trip reserves it for internal deferred-status preservation and would silently drop or misread it — rename the label before syncing", l, beadsDeferredLabel)
 		}
 	}
 	return nil
