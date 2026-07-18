@@ -33,6 +33,15 @@ Examples:
 			}
 		}()
 
+		// Reject a negative --limit up front (beads-4djp): the shared
+		// negative-limit contract (eqi4/r9hj). The truncation at history.go:72
+		// only fires when historyLimit > 0, so a negative value silently returns
+		// the FULL history with rc=0 — a misleading false-green. --limit 0
+		// (documented "all") and positives are unchanged.
+		if err := validateLimitFromCmd(cmd); err != nil {
+			return err
+		}
+
 		ctx := rootCtx
 		issueID := args[0]
 
