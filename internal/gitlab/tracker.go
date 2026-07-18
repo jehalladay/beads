@@ -187,6 +187,10 @@ func (t *Tracker) FetchIssue(ctx context.Context, identifier string) (*tracker.T
 }
 
 func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker.TrackerIssue, error) {
+	if err := validateGitLabLabels(issue.Labels); err != nil {
+		return nil, err
+	}
+
 	// Epic → milestone
 	if issue.IssueType == types.TypeEpic {
 		return t.createMilestone(ctx, issue)
@@ -221,6 +225,10 @@ func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker
 }
 
 func (t *Tracker) UpdateIssue(ctx context.Context, externalID string, issue *types.Issue) (*tracker.TrackerIssue, error) {
+	if err := validateGitLabLabels(issue.Labels); err != nil {
+		return nil, err
+	}
+
 	// Epic → milestone
 	if issue.IssueType == types.TypeEpic {
 		return t.updateMilestone(ctx, externalID, issue)
