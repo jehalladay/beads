@@ -103,6 +103,18 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) error {
 				"  / `--pattern '<glob>'` to narrow the deletion.")
 	}
 
+	// beads-cpss: validate the glob UPFRONT so a malformed --pattern (e.g. an
+	// unclosed bracket) fails loud instead of silently matching nothing. The
+	// per-issue filepath.Match below discards its error (`ok, _ :=`), so without
+	// this a typo'd pattern on a DESTRUCTIVE command reports "No beads to purge"
+	// (rc=0) and masks the user's mistake. Match against an empty string purely
+	// to surface ErrBadPattern; the result bool is irrelevant.
+	if pattern != "" {
+		if _, err := filepath.Match(pattern, ""); err != nil {
+			return HandleErrorRespectJSON("invalid --pattern %q: %v", pattern, err)
+		}
+	}
+
 	if store == nil {
 		if err := ensureStoreActive(); err != nil {
 			return HandleErrorRespectJSON("%v", err)
