@@ -204,6 +204,12 @@ Examples:
 				return HandleErrorRespectJSON("invalid issue type %q (valid: %s)", issueType, validTypes)
 			}
 			filter.IssueType = &t
+			// beads-y06e: canonicalize issueType so the secondary consumer
+			// applyCountIncludeInfra sees the normalized value. Otherwise
+			// `bd count --include-infra -t GATE` sets IssueType="gate" (normalized)
+			// but the raw "GATE" != "gate" appends "gate" to ExcludeTypes ->
+			// filter requires gate AND excludes gate -> always 0. Residual of brxo.
+			issueType = string(t)
 		}
 		if len(labels) > 0 {
 			filter.Labels = labels

@@ -572,6 +572,44 @@ func TestEmbeddedCountIncludeInfra(t *testing.T) {
 	})
 }
 
+// TestEmbeddedCountIncludeInfraGateCaseFold is the beads-y06e regression:
+// `bd count --include-infra --type <mixed-case gate>` must return the same count
+// as the exact-case `--type gate`. The filter build site normalized the type
+// inline (brxo) but did not reassign issueType, so the secondary consumer
+// applyCountIncludeInfra saw the raw flag: for a non-exact "GATE" it appended
+// "gate" to ExcludeTypes while IssueType was normalized to "gate" — requiring
+// gate AND excluding gate -> always 0. The fix canonicalizes issueType so both
+// consumers agree.
+func TestEmbeddedCountIncludeInfraGateCaseFold(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "ci")
+
+	// Seed a couple of gate issues (an internal-use type).
+	bdCreate(t, bd, dir, "Gate issue one", "--type", "gate")
+	bdCreate(t, bd, dir, "Gate issue two", "--type", "gate")
+
+	countOf := func(args ...string) int {
+		t.Helper()
+		m := bdCountJSON(t, bd, dir, args...)
+		return int(m["count"].(float64))
+	}
+
+	exact := countOf("--include-infra", "--type", "gate")
+	if exact == 0 {
+		t.Fatalf("precondition: bd count --include-infra --type gate = 0, expected the 2 seeded gate issues")
+	}
+	for _, mixed := range []string{"GATE", "Gate"} {
+		if got := countOf("--include-infra", "--type", mixed); got != exact {
+			t.Errorf("bd count --include-infra --type %q = %d, want %d (== exact 'gate'); raw-vs-normalized type divergence -> require-gate-AND-exclude-gate = always 0", mixed, got, exact)
+		}
+	}
+}
+
 // TestEmbeddedCountConcurrent exercises count operations concurrently.
 func TestEmbeddedCountConcurrent(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {

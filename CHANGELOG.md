@@ -123,6 +123,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (JSON) instead of walking the local stub. Embedded/local-mode workspaces (real local `.dolt`) still report the
   correct size. Same server-vs-local blind-spot family as beads-a164 (doctor federation check).
 
+- **`bd count --include-infra --type <mixed-case gate>` now counts correctly instead of always returning 0 (beads-y06e).**
+  The count filter-build site normalized the `--type` value inline (beads-brxo) but did not reassign the `issueType`
+  variable, so the secondary consumer `applyCountIncludeInfra` still received the raw flag. For a non-exact spelling
+  like `-t GATE`, `filter.IssueType` was set to the normalized `"gate"` while the raw `"GATE" != "gate"` appended
+  `"gate"` to `filter.ExcludeTypes` — the filter then simultaneously required and excluded `gate`, so the count was
+  always 0 (exact `-t gate` worked). `bd count` now canonicalizes `issueType` after validation so both consumers see
+  the same normalized value, matching the already-clean `bd list` path. Residual of beads-brxo on the intra-command
+  raw-vs-normalized type-parity axis.
+
 - **`bd search --sort <bad>` now fails loud instead of silently falling back to the default priority sort (beads-y04n).**
   `bd list` (and `bd query` via beads-a9rk) validate `--sort` against the documented field set and reject an
   unknown key, but `bd search` read the flag straight into the filter — where the SQL builder
