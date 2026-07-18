@@ -51,6 +51,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   element is trimmed. Downstream of beads-deud (which closed the single-value
   silent-accept); this is the next layer (multi-value OR) on the same two
   files — command-layer only, no filter/storage change.
+- **`bd lint <id...>` now exits non-zero on partial/all id-resolution failure (beads-p3y5).**
+  `bd lint <valid-id> <typo-id>` returned exit 0 even though the typo'd id was
+  never resolved — the explicit-args loop printed `Issue not found: <id>` to
+  stderr, `continue`d, and every terminal return (clean lint / warnings /
+  `--json`) was rc=0. A CI or agent gate `bd lint $IDS || fail` read false-clean
+  when a requested id was missing or deleted. lint now tracks a `failedCount`
+  and returns a non-zero exit at each terminal return when any requested id
+  failed to resolve, while still linting and displaying the ids that resolved
+  (partial lint preserved) and keeping the `--json` object on stdout. All-valid
+  input stays rc=0; a clean lint of only-valid ids is unchanged. Member of the
+  partial-failure exit-code class (beads-34ke label, beads-sw7l/2svv show,
+  beads-116e dep list, beads-xi35 todo done, beads-uscf mol burn). Unlike
+  `bd defer`, lint has no `ResolvePartialIDs` fail-fast pre-check, so the guard
+  is at the exit decision.
 - **`bd count` and `bd search` now reject invalid `--status`/`--type`/`--priority` values (beads-deud).**
   Both commands silently accepted bogus enum values — `bd count --status bogusxyz`,
   `--type notatype`, `--priority 99`/`-1`, and `bd search --status/--type` — returning
