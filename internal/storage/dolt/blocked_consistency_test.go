@@ -177,3 +177,147 @@ func TestRecomputeAllIsBlocked_CascadesThroughParentChild(t *testing.T) {
 		t.Fatalf("after repair: want 0 inconsistencies, got %d", n)
 	}
 }
+
+// TestRecomputeAllIsBlocked_LockstepWaitsForGate (beads-hpmw) closes the
+// test-gap where the lockstep invariant was only ever exercised on the
+// parent-child and blocks branches of shouldBeBlockedDisjunction — never on the
+// waits-for gate branch, which is the most drift-prone: the count predicate and
+// the mark/unmark recompute templates share the ~35-line waitsForGateBlockedSQL
+// constant by string interpolation, so a future edit that inlines it in one path
+// but not the other would silently break lockstep with zero test signal. This
+// seeds an ungated (any-children) waits-for spawner with an open child — the
+// waiter SHOULD be blocked — then corrupts its flag and asserts the count
+// detects it, the recompute fixes it, and the two agree at 0 (idempotent).
+func TestRecomputeAllIsBlocked_LockstepWaitsForGate(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// waiter waits-for spawner under an any-children gate; spawner has one open
+	// child, so the gate is UNsatisfied and the waiter should be blocked. All
+	// maintained by the normal write path (which recomputes is_blocked on add).
+	createPerm(t, ctx, store, "hpmw-wf-waiter")
+	createPerm(t, ctx, store, "hpmw-wf-spawner")
+	createPerm(t, ctx, store, "hpmw-wf-child")
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID: "hpmw-wf-child", DependsOnID: "hpmw-wf-spawner", Type: types.DepParentChild,
+	}, "tester"); err != nil {
+		t.Fatalf("seed parent-child: %v", err)
+	}
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID: "hpmw-wf-waiter", DependsOnID: "hpmw-wf-spawner",
+		Type: types.DepWaitsFor, Metadata: `{"gate":"any-children"}`,
+	}, "tester"); err != nil {
+		t.Fatalf("seed waits-for any-children: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'seed waits-for gate')"); err != nil && !isDoltNothingToCommit(err) {
+		t.Fatalf("commit seed: %v", err)
+	}
+	if !isBlocked(ctx, t, store.db, "hpmw-wf-waiter") {
+		t.Fatal("precondition: waiter should be blocked (any-children gate unsatisfied, one open child)")
+	}
+	if n := countInconsistencies(ctx, t, store.db); n != 0 {
+		t.Fatalf("consistent waits-for graph: want 0 inconsistencies, got %d", n)
+	}
+
+	// Corrupt: clear the waiter's flag with no recompute (the merge-bypass shape).
+	if _, err := store.db.ExecContext(ctx, "UPDATE issues SET is_blocked = 0 WHERE id = 'hpmw-wf-waiter'"); err != nil {
+		t.Fatalf("corrupt is_blocked: %v", err)
+	}
+	// This is the load-bearing assertion: the COUNT predicate's waits-for branch
+	// (via waitsForGateBlockedSQL) must catch the stale flag. Deleting that
+	// OR-branch from shouldBeBlockedDisjunction makes this go to 0 = RED (teeth).
+	if n := countInconsistencies(ctx, t, store.db); n != 1 {
+		t.Fatalf("after corruption: want 1 inconsistency on the waits-for branch, got %d", n)
+	}
+
+	if changed := recomputeAll(ctx, t, store.db); changed != 1 {
+		t.Fatalf("repair: want 1 row corrected, got %d", changed)
+	}
+	if !isBlocked(ctx, t, store.db, "hpmw-wf-waiter") {
+		t.Fatal("after repair: waiter must read blocked again")
+	}
+	if n := countInconsistencies(ctx, t, store.db); n != 0 {
+		t.Fatalf("after repair: want 0 inconsistencies, got %d", n)
+	}
+	if again := recomputeAll(ctx, t, store.db); again != 0 {
+		t.Fatalf("repair must be idempotent: want 0 on second run, got %d", again)
+	}
+}
+
+// TestRecomputeAllIsBlocked_LockstepConditionalBlocks (beads-hpmw) closes the
+// second gap: conditional-blocks is folded with 'blocks' in the SQL
+// (d.type = 'blocks' OR d.type = 'conditional-blocks') across the count and both
+// recompute templates, but was never seeded as a corruption case. A future edit
+// that drops 'conditional-blocks' from ONE of the three templates (e.g. the
+// unmark NOT EXISTS) would leave a conditional-blocks dependent stuck-blocked
+// while every existing test stayed green. This seeds a conditional-blocks dep on
+// an OPEN blocker (the dependent should be blocked), corrupts the flag, and
+// asserts count/recompute lockstep.
+func TestRecomputeAllIsBlocked_LockstepConditionalBlocks(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	createPerm(t, ctx, store, "hpmw-cb-dependent")
+	createPerm(t, ctx, store, "hpmw-cb-blocker")
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID: "hpmw-cb-dependent", DependsOnID: "hpmw-cb-blocker", Type: types.DepConditionalBlocks,
+	}, "tester"); err != nil {
+		t.Fatalf("seed conditional-blocks: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'seed conditional-blocks')"); err != nil && !isDoltNothingToCommit(err) {
+		t.Fatalf("commit seed: %v", err)
+	}
+	if !isBlocked(ctx, t, store.db, "hpmw-cb-dependent") {
+		t.Fatal("precondition: dependent should be blocked by open conditional-blocks blocker")
+	}
+	if n := countInconsistencies(ctx, t, store.db); n != 0 {
+		t.Fatalf("consistent conditional-blocks graph: want 0 inconsistencies, got %d", n)
+	}
+
+	// Corrupt the mark side: clear the flag on a dependent that should be blocked.
+	if _, err := store.db.ExecContext(ctx, "UPDATE issues SET is_blocked = 0 WHERE id = 'hpmw-cb-dependent'"); err != nil {
+		t.Fatalf("corrupt is_blocked: %v", err)
+	}
+	if n := countInconsistencies(ctx, t, store.db); n != 1 {
+		t.Fatalf("after mark-side corruption: want 1 inconsistency, got %d", n)
+	}
+	if changed := recomputeAll(ctx, t, store.db); changed != 1 {
+		t.Fatalf("mark-side repair: want 1 row corrected, got %d", changed)
+	}
+	if !isBlocked(ctx, t, store.db, "hpmw-cb-dependent") {
+		t.Fatal("after mark-side repair: dependent must read blocked again")
+	}
+	if n := countInconsistencies(ctx, t, store.db); n != 0 {
+		t.Fatalf("after mark-side repair: want 0 inconsistencies, got %d", n)
+	}
+
+	// Now the unmark side: close the blocker "remotely" (raw SQL, no write path),
+	// leaving the dependent stuck is_blocked = 1 with no live conditional-blocks
+	// reason. The count's unmark branch must catch it and the recompute clear it.
+	// This is the assertion that guards conditional-blocks in the unmark template.
+	if _, err := store.db.ExecContext(ctx, "UPDATE issues SET status = 'closed' WHERE id = 'hpmw-cb-blocker'"); err != nil {
+		t.Fatalf("simulate merged close of blocker: %v", err)
+	}
+	if !isBlocked(ctx, t, store.db, "hpmw-cb-dependent") {
+		t.Fatal("setup: dependent must still read blocked before recompute (the stale flag is the bug)")
+	}
+	if n := countInconsistencies(ctx, t, store.db); n != 1 {
+		t.Fatalf("after merged close: want 1 unmark-eligible inconsistency, got %d", n)
+	}
+	if changed := recomputeAll(ctx, t, store.db); changed != 1 {
+		t.Fatalf("unmark-side repair: want 1 row corrected, got %d", changed)
+	}
+	if isBlocked(ctx, t, store.db, "hpmw-cb-dependent") {
+		t.Fatal("after unmark-side repair: dependent must be unblocked (blocker closed)")
+	}
+	if n := countInconsistencies(ctx, t, store.db); n != 0 {
+		t.Fatalf("after unmark-side repair: want 0 inconsistencies, got %d", n)
+	}
+	if again := recomputeAll(ctx, t, store.db); again != 0 {
+		t.Fatalf("repair must be idempotent: want 0 on second run, got %d", again)
+	}
+}
