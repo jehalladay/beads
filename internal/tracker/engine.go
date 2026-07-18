@@ -1113,6 +1113,20 @@ func (e *Engine) doPush(ctx context.Context, opts SyncOptions, skipIDs, forceIDs
 				if isRateLimitExhausted(err) {
 					return stats, fmt.Errorf("sync aborted: %w", err)
 				}
+				// A non-ratelimit fetch error means we can't run the
+				// newer-external staleness guard below — the external's state/age
+				// is UNKNOWN. Falling through would push local over the external
+				// UNCONDITIONALLY, silently clobbering a possibly-newer external
+				// edit (the same silent-clobber class as the zero-timestamp case,
+				// beads-mckz, but on the fetch-ERROR path — beads-ih82). Age
+				// unknown ⇒ skip rather than overwrite blindly. --force
+				// (forceIDs) still bypasses this whole pre-check intentionally.
+				if err != nil {
+					e.warn("Failed to fetch %s from %s to check staleness — skipping to avoid clobbering a possibly-newer external issue (use --force to push anyway): %v",
+						issue.ID, e.Tracker.DisplayName(), err)
+					stats.Skipped++
+					continue
+				}
 				if err == nil && extIssue != nil {
 					// ContentEqual hook: content-hash dedup to skip unnecessary API calls
 					if e.PushHooks != nil && e.PushHooks.ContentEqual != nil {
