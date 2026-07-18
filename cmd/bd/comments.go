@@ -43,10 +43,21 @@ Examples:
 		localTime, _ := cmd.Flags().GetBool("local-time")
 		issueID := args[0]
 
+		ctx := rootCtx
+
+		// In proxied-server mode the global `store` is nil (main.go
+		// PersistentPreRun returns before newDoltStore), so the store-backed
+		// GetIssueComments path below would fail with "storage is nil". Route
+		// through the proxied UOW stack instead (beads-f2vu, fszd/aocj read leg)
+		// — clean-mirror via CommentUseCase.GetCommentsForIssue/GetCommentsForWisp
+		// (already on the UOW; no interface extension needed).
+		if usesProxiedServer() {
+			return runCommentsListProxiedServer(ctx, issueID, localTime)
+		}
+
 		if err := ensureStoreActive(); err != nil {
 			return HandleErrorRespectJSON("getting comments: %v", err)
 		}
-		ctx := rootCtx
 
 		result, err := resolveAndGetIssueWithRouting(ctx, store, issueID)
 		if err != nil {
