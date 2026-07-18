@@ -275,13 +275,14 @@ func TestFilterOnlyFields(t *testing.T) {
 			},
 		},
 		{
-			// beads-76y9: <= day-snaps to the exclusive next-day-midnight upper
-			// bound (dayEnd), consistent with = and the date-literal operators.
-			name:  "created less-eq duration sets day end (exclusive next-midnight)",
+			// beads-125q: a duration is PRECISE, so <= sets Before to the exact
+			// now-7d instant + 1ns (inclusive upper bound), NOT day-snapped.
+			// fixedNow is 2025-02-04T12:00:00Z, so now-7d = 2025-01-28T12:00:00Z.
+			name:  "created less-eq duration is precise instant + 1ns",
 			query: "created<=7d",
 			expectFilter: func(f *types.IssueFilter) bool {
-				return f.CreatedBefore != nil &&
-					f.CreatedBefore.Hour() == 0 && f.CreatedBefore.Minute() == 0 && f.CreatedBefore.Second() == 0
+				want := fixedNow.AddDate(0, 0, -7).Add(time.Nanosecond)
+				return f.CreatedBefore != nil && f.CreatedBefore.Equal(want)
 			},
 		},
 		{
@@ -299,12 +300,13 @@ func TestFilterOnlyFields(t *testing.T) {
 			},
 		},
 		{
-			// beads-76y9: <= day-snaps to the exclusive next-day-midnight bound.
-			name:  "updated less-eq duration sets day end (exclusive next-midnight)",
+			// beads-125q: a duration is PRECISE, so <= sets Before to the exact
+			// now-7d instant + 1ns (inclusive upper bound), NOT day-snapped.
+			name:  "updated less-eq duration is precise instant + 1ns",
 			query: "updated<=7d",
 			expectFilter: func(f *types.IssueFilter) bool {
-				return f.UpdatedBefore != nil &&
-					f.UpdatedBefore.Hour() == 0 && f.UpdatedBefore.Minute() == 0 && f.UpdatedBefore.Second() == 0
+				want := fixedNow.AddDate(0, 0, -7).Add(time.Nanosecond)
+				return f.UpdatedBefore != nil && f.UpdatedBefore.Equal(want)
 			},
 		},
 		{
@@ -625,7 +627,9 @@ func TestCompareTimeAllOperators(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := e.compareTime(tt.op, tt.actual, tt.target); got != tt.want {
+			// precise=false: these assertions pin the day-bracket semantics
+			// (76y9-era), unaffected by the resolution-aware precise path.
+			if got := e.compareTime(tt.op, tt.actual, tt.target, false); got != tt.want {
 				t.Errorf("compareTime(%v) = %v, want %v", tt.op, got, tt.want)
 			}
 		})

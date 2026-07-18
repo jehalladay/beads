@@ -3,6 +3,7 @@ package query
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -396,30 +397,94 @@ func (e *Evaluator) applyNotesFilter(comp *ComparisonNode, filter *types.IssueFi
 	return nil
 }
 
-// dateComparisonBounds maps a comparison operator against a date to the
-// (after, before) time bounds, snapping every operator to the parsed value's
-// day so all operators share one granularity (beads-76y9). The whole-day
-// window is [dayStart, dayEnd) where dayEnd is the next day's midnight — the
-// exclusive upper bound the SQL layer applies as `col < before`.
+// isPreciseTimeValue reports whether a comparison value should compare at its
+// precise parsed instant rather than day-bracketing (beads-125q). Durations
+// (6h, 7d, 2w) and explicit timestamps are precise; a date-only literal
+// (2026-01-15) day-brackets to match GitHub/Jira/Linear whole-day semantics.
+//
+// A duration is tagged TokenDuration by the parser. Everything else arrives as
+// TokenString/TokenIdent, so we distinguish a bare date-only literal
+// (YYYY-MM-DD) — the only bracketed form — from a fuller timestamp by the
+// presence of a time component.
+func isPreciseTimeValue(comp *ComparisonNode) bool {
+	if comp.ValueType == TokenDuration {
+		return true
+	}
+	// A date-only literal (2026-01-15) brackets the day; anything carrying a
+	// time-of-day (RFC3339, "2026-01-15T10:30:00", "2026-01-15 10:30:00") is a
+	// precise instant. dateOnlyRe in timeparsing matches exactly YYYY-MM-DD.
+	return !dateOnlyLiteralRe.MatchString(comp.Value)
+}
+
+// dateOnlyLiteralRe matches the date-only literal form (YYYY-MM-DD), the sole
+// value shape that day-brackets under the resolution-aware model (beads-125q).
+// Mirrors timeparsing.dateOnlyRe (unexported there).
+var dateOnlyLiteralRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// dateComparisonBounds maps a comparison operator against a parsed time value to
+// (after, before) filter bounds. The mapping is RESOLUTION-AWARE (beads-125q):
+//
+// For a PRECISE value (duration/timestamp; precise==true) the ordered operators
+// compare at the exact instant, mapping inclusive/exclusive onto the SQL strict
+// >/< comparators (sqlbuild/filter.go: `col > after`, `col < before`) via a 1ns
+// epsilon so <=/>= include the boundary instant:
+//
+//	<  -> before = t          (strictly before the instant)
+//	<= -> before = t + 1ns    (at or before the instant)
+//	>  -> after  = t          (strictly after the instant)
+//	>= -> after  = t - 1ns    (at or after the instant)
+//
+// For a BRACKETED value (date-only literal; precise==false) every operator
+// snaps to the value's day (beads-76y9 semantics, unchanged). The whole-day
+// window is [dayStart, dayEnd) where dayEnd is the next day's midnight:
 //
 //	<  -> before = dayStart  (strictly before the day)
 //	<= -> before = dayEnd    (through the end of the day)
-//	=  -> after = dayStart, before = dayEnd (the whole day)
-//	>  -> after = dayEnd     (strictly after the day)
-//	>= -> after = dayStart   (the day onward)
+//	>  -> after  = dayEnd     (strictly after the day)
+//	>= -> after  = dayStart   (the day onward)
+//
+// EQUALITY always day-brackets regardless of resolution: an exact-instant
+// equality is measure-zero (matches nothing), so `=` is inherently a day bucket
+// and stays `[dayStart, dayEnd)` for every value type (preserves the landed
+// `created=5d` -> same-day contract; only the ordered operators were ever
+// inconsistent — the 76y9 bug).
 //
 // ok is false for an operator the field does not support (the caller errors).
 // supportsEquals is false for fields (closed/started) that historically had no
 // = branch, preserving that behavior.
-func dateComparisonBounds(t time.Time, op ComparisonOp, supportsEquals bool) (after, before *time.Time, ok bool) {
+func dateComparisonBounds(t time.Time, op ComparisonOp, supportsEquals, precise bool) (after, before *time.Time, ok bool) {
 	dayStart := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 	dayEnd := dayStart.Add(24 * time.Hour)
-	switch op {
-	case OpEquals:
+
+	// Equality is always a whole-day bucket (see doc comment).
+	if op == OpEquals {
 		if !supportsEquals {
 			return nil, nil, false
 		}
 		return &dayStart, &dayEnd, true
+	}
+
+	if precise {
+		eps := time.Nanosecond
+		switch op {
+		case OpGreater:
+			after := t
+			return &after, nil, true
+		case OpGreaterEq:
+			after := t.Add(-eps)
+			return &after, nil, true
+		case OpLess:
+			before := t
+			return nil, &before, true
+		case OpLessEq:
+			before := t.Add(eps)
+			return nil, &before, true
+		default:
+			return nil, nil, false
+		}
+	}
+
+	switch op {
 	case OpGreater:
 		return &dayEnd, nil, true
 	case OpGreaterEq:
@@ -438,7 +503,7 @@ func (e *Evaluator) applyCreatedFilter(comp *ComparisonNode, filter *types.Issue
 	if err != nil {
 		return fmt.Errorf("invalid created time: %w", err)
 	}
-	after, before, ok := dateComparisonBounds(t, comp.Op, true)
+	after, before, ok := dateComparisonBounds(t, comp.Op, true, isPreciseTimeValue(comp))
 	if !ok {
 		return fmt.Errorf("created does not support %s operator", comp.Op.String())
 	}
@@ -456,7 +521,7 @@ func (e *Evaluator) applyUpdatedFilter(comp *ComparisonNode, filter *types.Issue
 	if err != nil {
 		return fmt.Errorf("invalid updated time: %w", err)
 	}
-	after, before, ok := dateComparisonBounds(t, comp.Op, true)
+	after, before, ok := dateComparisonBounds(t, comp.Op, true, isPreciseTimeValue(comp))
 	if !ok {
 		return fmt.Errorf("updated does not support %s operator", comp.Op.String())
 	}
@@ -475,7 +540,7 @@ func (e *Evaluator) applyClosedFilter(comp *ComparisonNode, filter *types.IssueF
 		return fmt.Errorf("invalid closed time: %w", err)
 	}
 	// closed/started have no = branch (historically unsupported); keep that.
-	after, before, ok := dateComparisonBounds(t, comp.Op, false)
+	after, before, ok := dateComparisonBounds(t, comp.Op, false, isPreciseTimeValue(comp))
 	if !ok {
 		return fmt.Errorf("closed does not support %s operator", comp.Op.String())
 	}
@@ -493,7 +558,7 @@ func (e *Evaluator) applyStartedFilter(comp *ComparisonNode, filter *types.Issue
 	if err != nil {
 		return fmt.Errorf("invalid started time: %w", err)
 	}
-	after, before, ok := dateComparisonBounds(t, comp.Op, false)
+	after, before, ok := dateComparisonBounds(t, comp.Op, false, isPreciseTimeValue(comp))
 	if !ok {
 		return fmt.Errorf("started does not support %s operator", comp.Op.String())
 	}
@@ -1047,7 +1112,8 @@ func (e *Evaluator) buildCreatedPredicate(comp *ComparisonNode) (func(*types.Iss
 	if err != nil {
 		return nil, fmt.Errorf("invalid created time: %w", err)
 	}
-	return e.buildTimePredicate(comp.Op, t, func(i *types.Issue) time.Time { return i.CreatedAt })
+	precise := isPreciseTimeValue(comp)
+	return e.buildTimePredicate(comp.Op, t, precise, func(i *types.Issue) time.Time { return i.CreatedAt })
 }
 
 func (e *Evaluator) buildUpdatedPredicate(comp *ComparisonNode) (func(*types.Issue) bool, error) {
@@ -1055,7 +1121,8 @@ func (e *Evaluator) buildUpdatedPredicate(comp *ComparisonNode) (func(*types.Iss
 	if err != nil {
 		return nil, fmt.Errorf("invalid updated time: %w", err)
 	}
-	return e.buildTimePredicate(comp.Op, t, func(i *types.Issue) time.Time { return i.UpdatedAt })
+	precise := isPreciseTimeValue(comp)
+	return e.buildTimePredicate(comp.Op, t, precise, func(i *types.Issue) time.Time { return i.UpdatedAt })
 }
 
 func (e *Evaluator) buildClosedPredicate(comp *ComparisonNode) (func(*types.Issue) bool, error) {
@@ -1063,11 +1130,12 @@ func (e *Evaluator) buildClosedPredicate(comp *ComparisonNode) (func(*types.Issu
 	if err != nil {
 		return nil, fmt.Errorf("invalid closed time: %w", err)
 	}
+	precise := isPreciseTimeValue(comp)
 	return func(i *types.Issue) bool {
 		if i.ClosedAt == nil {
 			return false
 		}
-		return e.compareTime(comp.Op, *i.ClosedAt, t)
+		return e.compareTime(comp.Op, *i.ClosedAt, t, precise)
 	}, nil
 }
 
@@ -1076,24 +1144,25 @@ func (e *Evaluator) buildStartedPredicate(comp *ComparisonNode) (func(*types.Iss
 	if err != nil {
 		return nil, fmt.Errorf("invalid started time: %w", err)
 	}
+	precise := isPreciseTimeValue(comp)
 	return func(i *types.Issue) bool {
 		if i.StartedAt == nil {
 			return false
 		}
-		return e.compareTime(comp.Op, *i.StartedAt, t)
+		return e.compareTime(comp.Op, *i.StartedAt, t, precise)
 	}, nil
 }
 
-func (e *Evaluator) buildTimePredicate(op ComparisonOp, t time.Time, getter func(*types.Issue) time.Time) (func(*types.Issue) bool, error) {
+func (e *Evaluator) buildTimePredicate(op ComparisonOp, t time.Time, precise bool, getter func(*types.Issue) time.Time) (func(*types.Issue) bool, error) {
 	return func(i *types.Issue) bool {
-		return e.compareTime(op, getter(i), t)
+		return e.compareTime(op, getter(i), t, precise)
 	}, nil
 }
 
-func (e *Evaluator) compareTime(op ComparisonOp, actual, target time.Time) bool {
+func (e *Evaluator) compareTime(op ComparisonOp, actual, target time.Time, precise bool) bool {
 	switch op {
 	case OpEquals:
-		// Same day comparison
+		// Same day comparison (equality is always day-bucketed — beads-125q).
 		return actual.Year() == target.Year() &&
 			actual.Month() == target.Month() &&
 			actual.Day() == target.Day()
@@ -1102,15 +1171,16 @@ func (e *Evaluator) compareTime(op ComparisonOp, actual, target time.Time) bool 
 			actual.Month() == target.Month() &&
 			actual.Day() == target.Day())
 	case OpLess, OpLessEq, OpGreater, OpGreaterEq:
-		// Day-snap the ordered operators to match the filter leg
-		// (dateComparisonBounds, beads-76y9) so a query returns the same set
-		// regardless of whether it takes the SQL-filter path or the in-memory
+		// Match the filter leg (dateComparisonBounds) so a query returns the same
+		// set regardless of whether it takes the SQL-filter path or the in-memory
 		// predicate path (OR / owner= / non-status != force the predicate).
+		// Resolution-aware (beads-125q): precise instant for durations/timestamps,
+		// day-snap for date-only literals.
 		// Before beads-7a4t this compared the raw parsed instant (midnight of
 		// the target's day), so a same-day issue was classified differently by
 		// query shape. Apply the exact bounds SQL applies: `actual > after`
 		// (strict) AND `actual < before` (strict), matching sqlbuild/filter.go.
-		after, before, ok := dateComparisonBounds(target, op, true)
+		after, before, ok := dateComparisonBounds(target, op, true, precise)
 		if !ok {
 			return false
 		}
