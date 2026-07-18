@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd list --parent` now returns transitive descendants in `--json`/`--flat` (beads-wap4).**
+  The flat and `--json` `--parent` output returned only direct children (plus
+  dotted-ID descendants), silently dropping dep-edge grandchildren — even though
+  the help text and `WorkFilter.ParentID` godoc promise "descendants (recursive)"
+  and both `--tree` and `bd ready --parent` already recurse (GH#3396). The fix is
+  at the command layer: the flat/`--json`/`--format` path now gathers the full
+  descendant set via `findAllDescendants` (the same recursive helper `--tree`
+  uses) instead of the one-hop store filter, leaving the shared `SearchIssues`
+  core (and its many direct-only callers) unchanged. A valid parent with no
+  descendants still returns the empty result; the parent itself is not included.
+
 - **Compaction and restore now emit an audit event (beads-ehtw).** The
   `EventCompacted` event type was defined and re-exported but never emitted:
   `ApplyCompactionInTx` only updated the issue row, and `RestoreFromSnapshotInTx`
