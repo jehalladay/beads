@@ -343,6 +343,52 @@ func TestProxiedServerReopen(t *testing.T) {
 			t.Errorf("wisp reopen comment via -r: got %q, want %q", got, "still flaky")
 		}
 	})
+
+	// beads-6fns: reopening a closed child whose parent epic is itself closed
+	// must be refused on the proxied path (the b0tw guard), overridable with
+	// --force — mirroring the direct reopen path. Before the fix the proxied
+	// handler skipped the guard and silently recreated the inconsistent state.
+	t.Run("reopen_closed_child_of_closed_epic_refuses", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "rccer")
+		epic := bdProxiedCreate(t, bd, p.dir, "Closed epic", "-t", "epic")
+		child := bdProxiedCreate(t, bd, p.dir, "Child", "--parent", epic.ID)
+		bdProxiedClose(t, bd, p.dir, child.ID)
+		bdProxiedClose(t, bd, p.dir, epic.ID) // last child closed → epic closes clean
+		out := bdProxiedReopenFail(t, bd, p.dir, child.ID)
+		if !strings.Contains(out, "its parent epic") || !strings.Contains(out, "is closed") {
+			t.Errorf("expected closed-epic-parent guard error, got: %s", out)
+		}
+		db := openProxiedDB(t, p)
+		if got := readStatus(t, db, child.ID); got != types.StatusClosed {
+			t.Errorf("child must stay closed after a guarded reopen, got %q", got)
+		}
+	})
+
+	t.Run("reopen_closed_child_of_closed_epic_force_overrides", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "rccef")
+		epic := bdProxiedCreate(t, bd, p.dir, "Closed epic force", "-t", "epic")
+		child := bdProxiedCreate(t, bd, p.dir, "Child force", "--parent", epic.ID)
+		bdProxiedClose(t, bd, p.dir, child.ID)
+		bdProxiedClose(t, bd, p.dir, epic.ID)
+		bdProxiedReopen(t, bd, p.dir, child.ID, "--force")
+		db := openProxiedDB(t, p)
+		if got := readStatus(t, db, child.ID); got != types.StatusOpen {
+			t.Errorf("--force should override the closed-epic-parent guard, got %q", got)
+		}
+	})
+
+	t.Run("reopen_closed_child_of_open_epic_still_succeeds", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "rccos")
+		epic := bdProxiedCreate(t, bd, p.dir, "Open epic", "-t", "epic")
+		child := bdProxiedCreate(t, bd, p.dir, "Child open-epic", "--parent", epic.ID)
+		bdProxiedClose(t, bd, p.dir, child.ID)
+		// epic stays open → no guard should fire.
+		bdProxiedReopen(t, bd, p.dir, child.ID)
+		db := openProxiedDB(t, p)
+		if got := readStatus(t, db, child.ID); got != types.StatusOpen {
+			t.Errorf("reopening a closed child under an OPEN epic must succeed, got %q", got)
+		}
+	})
 }
 
 func TestProxiedServerReopenConcurrent(t *testing.T) {

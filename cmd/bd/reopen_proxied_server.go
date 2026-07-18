@@ -28,6 +28,9 @@ func runReopenProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	}
 	reason, _ := cmd.Flags().GetString("reason")
 	jsonOut, _ := cmd.Flags().GetBool("json")
+	// --force overrides the closed-epic-parent guard on the proxied path exactly
+	// as it does on the direct path (beads-6fns).
+	force, _ := cmd.Flags().GetBool("force")
 
 	if uowProvider == nil {
 		FatalError("proxied-server UOW provider not initialized")
@@ -43,7 +46,7 @@ func runReopenProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	hasError := false
 
 	for _, id := range args {
-		outcome, ok := reopenProxiedOne(ctx, uw, id, reason)
+		outcome, ok := reopenProxiedOne(ctx, uw, id, reason, force)
 		if !ok {
 			hasError = true
 			continue
@@ -83,7 +86,7 @@ func runReopenProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	}
 }
 
-func reopenProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string) (reopenProxiedOutcome, bool) {
+func reopenProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string, force bool) (reopenProxiedOutcome, bool) {
 	current, isWisp := proxiedResolveIssueOrWisp(ctx, uw, id)
 	if current == nil {
 		fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
@@ -92,6 +95,18 @@ func reopenProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string)
 	if current.Status != types.StatusClosed {
 		fmt.Fprintf(os.Stderr, "%s is already %s\n", id, current.Status)
 		return reopenProxiedOutcome{id: id, before: current, after: current, reopened: false}, true
+	}
+
+	// Closed-epic-parent guard (beads-b0tw), mirrored on the proxied path
+	// (beads-6fns): reopening a closed child whose parent epic is itself closed
+	// silently recreates the closed-epic-with-open-child inconsistency the
+	// close-guard family prevents. The direct reopen path enforces this
+	// (cmd/bd/reopen.go); the proxied handler skipped it. Overridable with --force.
+	if !force {
+		if closedEpics := proxiedClosedEpicParents(ctx, uw, id, isWisp); len(closedEpics) > 0 {
+			fmt.Fprintf(os.Stderr, "cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override\n", id, closedEpics)
+			return reopenProxiedOutcome{}, false
+		}
 	}
 
 	params := domain.ReopenIssueParams{Reason: reason}

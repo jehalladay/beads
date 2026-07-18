@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   open→closed transition and clears it on closed→open, unless the caller set `closed_at` explicitly — matching
   the shared seam. (Surfaced by the previously-red gated test `close_unblocks_dependents`.)
 
+- **`bd reopen` over the proxied server now enforces the closed-epic-parent guard (beads-6fns).**
+  The direct reopen path (`cmd/bd/reopen.go`) refuses to reopen a closed child whose parent epic is itself
+  closed (beads-b0tw) — that would recreate the closed-epic-with-open-child inconsistency the close-guard family
+  prevents — overridable with `--force`. The proxied handler (`reopenProxiedOne`) guarded only the
+  not-closed no-op and skipped the closed-epic-parent guard entirely, so `bd reopen <closed-child>` over the
+  proxied server (the live path for hub-connected crew) silently recreated the inconsistent state. The proxied
+  handler now applies the same guard (via `proxiedClosedEpicParents`), honoring `--force`, matching the direct
+  path. Same proxied-vs-direct parity class as beads-u8zw / rir3.
+
 - **`bd update --status closed` over the proxied server now enforces the same close-integrity guards as the direct path (beads-u8zw).**
   The direct update path (`cmd/bd/update.go`) refuses to close an epic with open children (beads-zgku), demote
   an epic with open children (beads-2hkd), or reopen a closed child under a closed epic (beads-b0tw), all
