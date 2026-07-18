@@ -845,6 +845,10 @@ func (r *issueSQLRepositoryImpl) History(ctx context.Context, id string) ([]*sto
 	return issueops.HistoryInTx(ctx, r.runner, id)
 }
 
+func (r *issueSQLRepositoryImpl) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
+	return issueops.UpdateIssueIDInTx(ctx, r.runner, oldID, newID, issue, actor)
+}
+
 func (r *issueSQLRepositoryImpl) Close(ctx context.Context, id string, params domain.CloseRowParams, actor string, opts domain.IssueTableOpts) (domain.CloseRowResult, error) {
 	res, err := issueops.CloseIssueInTx(ctx, r.runner, id, params.Reason, actor, params.Session)
 	if err != nil {

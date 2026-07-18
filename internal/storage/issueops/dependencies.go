@@ -456,7 +456,7 @@ func DeleteWispsFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispIDs []
 // Dependency target rewrites reinsert matching rows because Dolt can leave the
 // stored generated depends_on_id column stale after a split target column is
 // updated by FK cascade.
-func UpdateWispIDInDependenciesInTx(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
+func UpdateWispIDInDependenciesInTx(ctx context.Context, tx DBTX, oldID, newID string) error {
 	for _, table := range []string{"dependencies", "wisp_dependencies"} {
 		if err := replaceDependencyTargetInTx(ctx, tx, table, "depends_on_wisp_id", oldID, newID); err != nil {
 			return fmt.Errorf("update wisp %s -> %s in %s: %w", oldID, newID, table, err)
@@ -465,7 +465,7 @@ func UpdateWispIDInDependenciesInTx(ctx context.Context, tx *sql.Tx, oldID, newI
 	return nil
 }
 
-func UpdateIssueIDInDependenciesInTx(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
+func UpdateIssueIDInDependenciesInTx(ctx context.Context, tx DBTX, oldID, newID string) error {
 	for _, table := range []string{"dependencies", "wisp_dependencies"} {
 		if err := replaceDependencyTargetInTx(ctx, tx, table, "depends_on_issue_id", oldID, newID); err != nil {
 			return fmt.Errorf("update issue target %s -> %s in %s: %w", oldID, newID, table, err)
@@ -489,7 +489,7 @@ func UpdateIssueIDInDependenciesInTx(ctx context.Context, tx *sql.Tx, oldID, new
 // matches rows by both newID (the normal post-FK-cascade state) and oldID (defensive,
 // in case a caller reaches here before the cascade) and re-asserts issue_id = newID
 // so the row converges either way. Only rows whose id is actually stale are touched.
-func rekeyDependencySourceInTx(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
+func rekeyDependencySourceInTx(ctx context.Context, tx DBTX, oldID, newID string) error {
 	queryRows, err := tx.QueryContext(ctx, `
 		SELECT id, depends_on_issue_id, depends_on_wisp_id, depends_on_external
 		FROM dependencies
@@ -545,7 +545,7 @@ func resolveDependencyTarget(issueTarget, wispTarget, external sql.NullString) (
 	}
 }
 
-func replaceDependencyTargetInTx(ctx context.Context, tx *sql.Tx, table, column, oldID, newID string) error {
+func replaceDependencyTargetInTx(ctx context.Context, tx DBTX, table, column, oldID, newID string) error {
 	// Dolt does not reliably recompute the stored generated depends_on_id when
 	// only the split target column changes. Reinsert rows so the generated key
 	// is calculated from the new target value.
@@ -723,7 +723,7 @@ func checkRetargetTargetCollision(ctx context.Context, tx *sql.Tx, table, source
 }
 
 //nolint:gosec // G201: table and typedCol are hardcoded constants.
-func checkRenameTargetCollision(ctx context.Context, tx *sql.Tx, table, typedCol, newID string) error {
+func checkRenameTargetCollision(ctx context.Context, tx DBTX, table, typedCol, newID string) error {
 	var otherCols []string
 	switch typedCol {
 	case "depends_on_issue_id":

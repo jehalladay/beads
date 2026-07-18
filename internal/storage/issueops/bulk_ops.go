@@ -229,7 +229,7 @@ func DeleteIssuesBySourceRepoInTx(ctx context.Context, tx *sql.Tx, sourceRepo st
 }
 
 //nolint:gosec // G201: table names are hardcoded
-func UpdateIssueIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, issue *types.Issue, actor string) error {
+func UpdateIssueIDInTx(ctx context.Context, tx DBTX, oldID, newID string, issue *types.Issue, actor string) error {
 	if IsActiveWispInTx(ctx, tx, oldID) {
 		return updateWispIDInTx(ctx, tx, oldID, newID, issue, actor)
 	}
@@ -240,7 +240,7 @@ func UpdateIssueIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, iss
 // table must be a hardcoded constant ("issues" or "wisps").
 //
 //nolint:gosec // G201: table is a hardcoded constant supplied by the two callers.
-func rowExistsInTable(ctx context.Context, tx *sql.Tx, table, id string) (bool, error) {
+func rowExistsInTable(ctx context.Context, tx DBTX, table, id string) (bool, error) {
 	var probe int
 	err := tx.QueryRowContext(ctx, fmt.Sprintf("SELECT 1 FROM %s WHERE id = ? LIMIT 1", table), id).Scan(&probe)
 	if err == sql.ErrNoRows {
@@ -255,7 +255,7 @@ func rowExistsInTable(ctx context.Context, tx *sql.Tx, table, id string) (bool, 
 	return true, nil
 }
 
-func updateIssueIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, issue *types.Issue, actor string) error {
+func updateIssueIDInTx(ctx context.Context, tx DBTX, oldID, newID string, issue *types.Issue, actor string) error {
 	// issues and wisps are separate tables with no cross-table uniqueness, so a
 	// rename to a newID that already lives in wisps would mint an issue+wisp
 	// sharing the id — the same-id collision the merge/promote paths then
@@ -291,7 +291,7 @@ func updateIssueIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, iss
 	return err
 }
 
-func updateWispIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, issue *types.Issue, actor string) error {
+func updateWispIDInTx(ctx context.Context, tx DBTX, oldID, newID string, issue *types.Issue, actor string) error {
 	// Symmetric to updateIssueIDInTx: reject renaming a wisp to a newID that
 	// already exists as a permanent issue, so the two tables never end up
 	// sharing an id (beads-mgsx).

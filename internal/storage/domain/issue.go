@@ -53,6 +53,10 @@ type IssueSQLRepository interface {
 	Get(ctx context.Context, id string, opts IssueTableOpts) (*types.Issue, error)
 	AsOf(ctx context.Context, id, ref string) (*types.Issue, error)
 	History(ctx context.Context, id string) ([]*storage.HistoryEntry, error)
+	// UpdateIssueID renames an issue/wisp (oldID→newID), rekeying its
+	// dependency edges. Routes issues↔wisps tables and rejects a cross-table
+	// id collision (beads-mgsx). issue carries the current title/body fields.
+	UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error
 	GetByIDs(ctx context.Context, ids []string, opts IssueTableOpts) ([]*types.Issue, error)
 	Exists(ctx context.Context, id string, opts IssueTableOpts) (bool, error)
 	CountForPrefix(ctx context.Context, prefix string, opts IssueTableOpts) (int, error)
@@ -256,6 +260,7 @@ type IssueUseCase interface {
 	ApplyIssueGraph(ctx context.Context, plan GraphPlan, actor string) (GraphApplyResult, error)
 	AsOf(ctx context.Context, id, ref string) (*types.Issue, error)
 	History(ctx context.Context, id string) ([]*storage.HistoryEntry, error)
+	RenameIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error
 	DeleteIssue(ctx context.Context, id, actor string) (DeleteIssuesResult, error)
 	DeleteIssues(ctx context.Context, params DeleteIssuesParams, actor string) (DeleteIssuesResult, error)
 	PreviewDelete(ctx context.Context, ids []string) (DeletePreview, error)
@@ -359,6 +364,16 @@ func (u *issueUseCaseImpl) History(ctx context.Context, id string) ([]*storage.H
 		return nil, fmt.Errorf("history %s: %w", id, err)
 	}
 	return entries, nil
+}
+
+func (u *issueUseCaseImpl) RenameIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
+	if oldID == "" || newID == "" {
+		return fmt.Errorf("rename: oldID and newID must not be empty")
+	}
+	if err := u.issueRepo.UpdateIssueID(ctx, oldID, newID, issue, actor); err != nil {
+		return fmt.Errorf("rename %s -> %s: %w", oldID, newID, err)
+	}
+	return nil
 }
 
 func (u *issueUseCaseImpl) GetWisp(ctx context.Context, id string) (*types.Issue, error) {
