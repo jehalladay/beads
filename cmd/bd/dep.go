@@ -1205,7 +1205,23 @@ Examples:
 		}
 
 		if statusFilter != "" {
-			tree = filterTreeByStatus(tree, types.Status(statusFilter))
+			// beads-p330: validate --status against the known/custom statuses
+			// BEFORE filtering, mirroring bd list (cmd/bd/list_filter.go). A raw
+			// types.Status(<invalid>) matches nothing in filterTreeByStatus, so a
+			// typo'd --status silently returned an empty tree (exit 0) — the same
+			// silent-accept gap the enum-value-reject family closed on
+			// list/count/search/lint/migrate. dep tree --status is single-value
+			// (no comma/multi), so one Normalize+IsValidWithCustom check suffices.
+			cfg, cerr := loadDirectListFilterConfig(ctx, store)
+			if cerr != nil {
+				return HandleErrorRespectJSON("%v", cerr)
+			}
+			names := cfg.customStatusNames()
+			s := types.Status(strings.TrimSpace(statusFilter)).Normalize()
+			if !s.IsValidWithCustom(names) {
+				return HandleErrorRespectJSON("invalid status %q (valid: %s)", statusFilter, validStatusList(names))
+			}
+			tree = filterTreeByStatus(tree, s)
 		}
 
 		if formatStr == "mermaid" {
