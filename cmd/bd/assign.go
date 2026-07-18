@@ -64,6 +64,14 @@ Examples:
 			}
 		}()
 
+		// beads-aocj: route to the proxied handler in proxied-server mode.
+		// Without this, assign uses the direct global `store` — nil under
+		// proxiedServerMode — so `bd assign` failed "storage is nil", unlike its
+		// long form `bd update --assignee` which routes via usesProxiedServer().
+		if usesProxiedServer() {
+			return runAssignProxiedServer(rootCtx, args)
+		}
+
 		ctx := rootCtx
 
 		result, err := resolveAndGetIssueForMutation(ctx, store, id)
