@@ -5,6 +5,33 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// maxTitleLength is Linear's server-side cap on an issue title. Linear rejects
+// a create/update whose title exceeds 255 characters, while a local beads title
+// may be up to 500 (see types Validate). beads-exaq.
+const maxTitleLength = 255
+
+// truncateTitle caps a title at Linear's maxTitleLength, appending an ellipsis
+// marker so the truncation is visible on the Linear side (beads-exaq). The
+// PUSHED copy is truncated while the local beads title is left untouched.
+// Rune-aware so a multi-byte character is never split. Mirrors the GitHub
+// (beads-yaum), GitLab (beads-h266), Jira (beads-a2lv), and ADO (beads-z5ys)
+// guards — the reusable SCM per-field-cap class.
+func truncateTitle(title string) string {
+	// Linear counts characters (runes), not bytes; a title whose rune count
+	// already fits is fine even if its byte length overflows from multi-byte
+	// runes.
+	if len([]rune(title)) <= maxTitleLength {
+		return title
+	}
+	const marker = "..."
+	runes := []rune(title)
+	keep := maxTitleLength - len([]rune(marker))
+	if keep < 0 {
+		keep = 0
+	}
+	return string(runes[:keep]) + marker
+}
+
 // linearFieldMapper implements tracker.FieldMapper for Linear.
 type linearFieldMapper struct {
 	config *MappingConfig
@@ -77,7 +104,7 @@ func (m *linearFieldMapper) IssueToBeads(ti *tracker.TrackerIssue) *tracker.Issu
 
 func (m *linearFieldMapper) IssueToTracker(issue *types.Issue) map[string]interface{} {
 	updates := map[string]interface{}{
-		"title":    issue.Title,
+		"title":    truncateTitle(issue.Title),
 		"priority": PriorityToLinear(issue.Priority, m.config),
 	}
 	// Omit an empty description so a local issue with no body does not
