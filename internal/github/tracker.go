@@ -136,7 +136,7 @@ func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker
 	fields := BeadsIssueToGitHubFields(issue, t.config)
 	labels, _ := fields["labels"].([]string)
 
-	created, err := t.client.CreateIssue(ctx, issue.Title, issue.Description, labels)
+	created, err := t.client.CreateIssue(ctx, truncateTitle(issue.Title), issue.Description, labels)
 	if err != nil {
 		return nil, err
 	}
