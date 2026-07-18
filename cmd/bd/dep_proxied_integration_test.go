@@ -514,6 +514,32 @@ func TestProxiedServerDep(t *testing.T) {
 				t.Errorf("expected wisp target %s in batch list (partitioning path): %s", wispTgt, string(raw))
 			}
 		})
+
+		// beads-ez8b: the proxied `bd dep list` must fail (rc!=0) on an
+		// unresolvable id, matching the direct path (cmd/bd/dep.go resolves each
+		// id and returns depListExit -> exitError{Code:1} on any failed id) and
+		// the qtw9 proxied-show fix. Without this a `bd dep list <ghost> || fail`
+		// gate reads false-clean in proxied mode (a ghost id just prints
+		// "has no dependencies" with rc=0).
+		t.Run("nonexistent_id_exits_nonzero", func(t *testing.T) {
+			p := bdProxiedInit(t, bd, "dpln")
+			bdProxiedDepFail(t, bd, p.dir, "list", "dpln-nonexistent999")
+		})
+
+		t.Run("nonexistent_id_direction_up_exits_nonzero", func(t *testing.T) {
+			p := bdProxiedInit(t, bd, "dplu")
+			bdProxiedDepFail(t, bd, p.dir, "list", "dplu-nonexistent999", "--direction", "up")
+		})
+
+		t.Run("batch_partial_failure_exits_nonzero", func(t *testing.T) {
+			p := bdProxiedInit(t, bd, "dplp")
+			a := bdProxiedCreate(t, bd, p.dir, "PF A", "--type", "task")
+			b := bdProxiedCreate(t, bd, p.dir, "PF B", "--type", "task")
+			bdProxiedDep(t, bd, p.dir, "add", a.ID, b.ID)
+			// A real id + a bogus id: the real one still renders, but the bogus
+			// id must drive a non-zero exit (partial-failure contract).
+			bdProxiedDepFail(t, bd, p.dir, "list", a.ID, "dplp-nonexistent999")
+		})
 	})
 
 	t.Run("Tree", func(t *testing.T) {

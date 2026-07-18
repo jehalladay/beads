@@ -318,6 +318,39 @@ func runDepListProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 
 	depUC := uw.DependencyUseCase()
 
+	// beads-ez8b: resolve every id up front and signal a non-zero exit on any
+	// unresolvable id — mirroring the direct path (cmd/bd/dep.go, which resolves
+	// each arg and returns depListExit -> exitError{Code:1} on any failed id)
+	// and the qtw9 proxied-show fix. Without this a ghost id just yields an
+	// empty "has no dependencies" with rc=0, so `bd dep list <ghost> || fail`
+	// reads false-clean in proxied mode. Single-id not-found is a hard error
+	// (no listing); a batch warns+skips the bogus id, lists the rest, then exits
+	// non-zero — the same partial-failure contract as the direct path.
+	batchMode := len(args) > 1
+	validArgs := make([]string, 0, len(args))
+	failedCount := 0
+	for _, id := range args {
+		issue, _, err := proxiedGetIssueOrWisp(ctx, uw, id)
+		if err != nil {
+			if batchMode {
+				fmt.Fprintf(os.Stderr, "warning: resolving %s: %v (skipped)\n", id, err)
+				failedCount++
+				continue
+			}
+			FatalErrorRespectJSON("resolving %s: %v", id, err)
+		}
+		if issue == nil {
+			if batchMode {
+				fmt.Fprintf(os.Stderr, "warning: no issue found: %s (skipped)\n", id)
+				failedCount++
+				continue
+			}
+			FatalErrorRespectJSON("no issue found: %s", id)
+		}
+		validArgs = append(validArgs, id)
+	}
+	args = validArgs
+
 	if len(args) > 1 && direction == "down" {
 		depMap, err := depUC.GetIssueDependencyRecords(ctx, args)
 		if err != nil {
@@ -336,6 +369,7 @@ func runDepListProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 				allDeps = []*types.Dependency{}
 			}
 			_ = outputJSON(allDeps)
+			depListProxiedExit(failedCount)
 			return
 		}
 		for _, id := range args {
@@ -353,6 +387,7 @@ func runDepListProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 			}
 		}
 		fmt.Println()
+		depListProxiedExit(failedCount)
 		return
 	}
 
@@ -383,6 +418,7 @@ func runDepListProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 			allIssues = []*types.IssueWithDependencyMetadata{}
 		}
 		_ = outputJSON(allIssues)
+		depListProxiedExit(failedCount)
 		return
 	}
 
@@ -396,6 +432,7 @@ func runDepListProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 		} else {
 			fmt.Println("\nNo dependencies found")
 		}
+		depListProxiedExit(failedCount)
 		return
 	}
 
@@ -417,6 +454,16 @@ func runDepListProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 			idStr, iss.Title, iss.Priority, iss.Status, iss.DependencyType)
 	}
 	fmt.Println()
+	depListProxiedExit(failedCount)
+}
+
+// depListProxiedExit exits non-zero when any id failed to resolve (beads-ez8b),
+// mirroring the direct path's depListExit. Kept as a helper so every return
+// site in runDepListProxiedServer shares the one partial-failure contract.
+func depListProxiedExit(failedCount int) {
+	if failedCount > 0 {
+		os.Exit(1)
+	}
 }
 
 func runDepTreeProxiedServer(cmd *cobra.Command, ctx context.Context, args []string) {
