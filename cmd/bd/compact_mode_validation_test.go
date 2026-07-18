@@ -60,3 +60,37 @@ func TestValidateCompactMode(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateCompactLimit is the teeth for beads-y55w. A negative --limit
+// previously slipped past the `compactLimit > 0` candidate truncation, so the
+// FULL candidate set was compacted with rc=0 — the misleading false-green of
+// the eqi4/r9hj/4djp negative-limit class. The command body routes this pure
+// validator through FatalErrorRespectJSON, so a negative --limit now fails
+// loud; --limit 0 (documented "no limit") and positives stay valid.
+func TestValidateCompactLimit(t *testing.T) {
+	tests := []struct {
+		name    string
+		limit   int
+		wantErr bool
+	}{
+		{name: "zero is unlimited", limit: 0, wantErr: false},
+		{name: "positive", limit: 5, wantErr: false},
+		{name: "negative one", limit: -1, wantErr: true},
+		{name: "negative large", limit: -999, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateCompactLimit(tt.limit)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("validateCompactLimit(%d) = nil; want error", tt.limit)
+				}
+				if !strings.Contains(err.Error(), "--limit must be >= 0") {
+					t.Errorf("error = %q; want it to contain %q", err.Error(), "--limit must be >= 0")
+				}
+			} else if err != nil {
+				t.Errorf("validateCompactLimit(%d) = %v; want nil", tt.limit, err)
+			}
+		})
+	}
+}

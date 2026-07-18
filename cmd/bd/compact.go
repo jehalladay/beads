@@ -79,6 +79,20 @@ func validateCompactMode(analyze, apply, auto bool, tier int) error {
 	return nil
 }
 
+// validateCompactLimit rejects a negative --limit. The candidate truncation
+// only fires when limit > 0, so a negative value silently compacts the FULL
+// candidate set with rc=0 — the misleading false-green of the eqi4/r9hj/4djp
+// negative-limit class (compact was missed by that sweep). --limit 0 is the
+// documented "no limit" sentinel and positives are unchanged; only a negative
+// is invalid. Kept standalone so it is unit-testable without the command body
+// (mirrors validateCompactMode, beads-y55w).
+func validateCompactLimit(limit int) error {
+	if limit < 0 {
+		return fmt.Errorf("--limit must be >= 0")
+	}
+	return nil
+}
+
 var compactCmd = &cobra.Command{
 	Use:   "compact",
 	Args:  compactNoArgs,
@@ -152,6 +166,15 @@ Examples:
 		// must surface as structured JSON on stdout, never an empty-stdout exit
 		// (beads-9fww).
 		if err := validateCompactMode(compactAnalyze, compactApply, compactAuto, compactTier); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
+
+		// Reject a negative --limit up front (beads-y55w): the candidate
+		// truncation only fires when compactLimit > 0, so a negative value
+		// silently compacts the FULL candidate set with rc=0 — the misleading
+		// false-green of the eqi4/r9hj/4djp negative-limit class. Routed through
+		// FatalErrorRespectJSON so --json surfaces a structured error (beads-9fww).
+		if err := validateCompactLimit(compactLimit); err != nil {
 			FatalErrorRespectJSON("%v", err)
 		}
 
