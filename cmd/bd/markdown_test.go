@@ -154,6 +154,40 @@ Just a title and description.
 				},
 			},
 		},
+		{
+			// beads-ovhr: `### Assignee\nnone` must UNASSIGN (fold "none"->"")
+			// like assign/create/update do, not store the literal "none".
+			name: "assignee none unassigns",
+			content: `## None Assignee
+### Assignee
+none
+`,
+			expected: []*IssueTemplate{
+				{
+					Title:     "None Assignee",
+					Priority:  2,
+					IssueType: "task",
+					Assignee:  "", // "none" folds to unassigned
+				},
+			},
+		},
+		{
+			// beads-ovhr: padded assignee is trimmed (was already trimmed, kept
+			// as a guard that normalizeAssignee preserves the trim behavior).
+			name: "assignee padded is trimmed",
+			content: `## Padded Assignee
+### Assignee
+   alice
+`,
+			expected: []*IssueTemplate{
+				{
+					Title:     "Padded Assignee",
+					Priority:  2,
+					IssueType: "task",
+					Assignee:  "alice",
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
