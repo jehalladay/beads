@@ -372,6 +372,20 @@ func (r *dependencySQLRepositoryImpl) HasCycle(ctx context.Context, issueID, dep
 	return count > 0, nil
 }
 
+// CheckCycleForType rejects a new edge whose insertion would close a cycle
+// within the edge's own type FAMILY, matching the direct/embedded path
+// (issueops.CheckDependencyCycleInTx + cycleCheckTypesFor, beads-8qij). Unlike
+// HasCycle — which only ever walks the blocking family — this walks the
+// parent-child graph for a parent-child edge, so the proxied dep use-case no
+// longer accepts a parent-child cycle the direct path rejects (beads-7a6n).
+// Types outside a checked family (waits-for/related) return nil (no walk),
+// preserving each caller's existing accept-what-you-added behavior. The check
+// runs over the current graph, so for reparent the caller must remove the old
+// parent edge(s) first so the walk sees the post-delete graph.
+func (r *dependencySQLRepositoryImpl) CheckCycleForType(ctx context.Context, dep *types.Dependency) error {
+	return issueops.CheckDependencyCycleInTx(ctx, r.runner, dep, nil)
+}
+
 func (r *dependencySQLRepositoryImpl) ListByIssueIDs(ctx context.Context, issueIDs []string, opts domain.DepListOpts) (domain.DepBulkResult, error) {
 	result := domain.DepBulkResult{
 		Outgoing: make(map[string][]*types.Dependency),
