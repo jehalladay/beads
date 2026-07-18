@@ -111,6 +111,34 @@ func withOpenBudget(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { openTotalBudget = prev })
 }
 
+// killProxyChildOnCleanup guarantees the spawned db-proxy-child is dead when the
+// test ends (beads-8l9l). Shutdown(root) alone is NOT sufficient: forkExecChild
+// releases the proxy lock BEFORE cmd.Start (endpoint.go), so shutdownPair's
+// "lock is free ⇒ process already gone" fast-path removes the pidfile and
+// returns WITHOUT reading the pid or killing the detached child (it runs in its
+// own process group via procAttrDetached, and the fake child has
+// --idle-timeout 0s so it never self-exits). The result was up to 72 orphaned
+// db-proxy-child procs (aged to 14h) exhausting /tmp inodes and timing out the
+// whole cmd/bd package gate → refinery queue-freeze. Reading the child's own
+// pidfile and force-killing that pid (and its process group) in a cleanup that
+// runs BEFORE Shutdown removes the pidfile closes the leak deterministically.
+func killProxyChildOnCleanup(t *testing.T, root string) {
+	t.Helper()
+	t.Cleanup(func() {
+		pf, err := pidfile.Read(root, PIDFileName)
+		if err != nil || pf == nil || pf.Pid <= 0 {
+			return // never spawned / already reaped
+		}
+		// proc.Kill() is cross-platform (the fake child is a single process with
+		// no grandchildren, so killing the pidfile pid is sufficient). Reads the
+		// pidfile the child wrote itself, so it targets the real child pid even
+		// though the proxy lock was already released at spawn time.
+		if proc, ferr := os.FindProcess(pf.Pid); ferr == nil {
+			_ = proc.Kill()
+		}
+	})
+}
+
 // TestSpawnWaitsForSlowChildWithinBudget is the core teeth: a child that takes
 // well over the OLD 15s spawn kill-deadline to become ready must still be
 // awaited (not killed early) as long as it comes up within the unified budget.
@@ -125,6 +153,10 @@ func TestSpawnWaitsForSlowChildWithinBudget(t *testing.T) {
 	root := t.TempDir()
 	logPath := root + "/server.log"
 	t.Cleanup(func() { _ = Shutdown(root) })
+	// Registered AFTER Shutdown so it runs BEFORE it (t.Cleanup is LIFO) — read
+	// the child pidfile and force-kill it before Shutdown removes the pidfile,
+	// closing the orphan-leak (beads-8l9l).
+	killProxyChildOnCleanup(t, root)
 
 	start := time.Now()
 	ep, err := GetCreateDatabaseProxyServerEndpoint(root, OpenOpts{
@@ -157,6 +189,10 @@ func TestSpawnTimesOutOnUnifiedBudget(t *testing.T) {
 	root := t.TempDir()
 	logPath := root + "/server.log"
 	t.Cleanup(func() { _ = Shutdown(root) })
+	// Belt-and-suspenders orphan reap (beads-8l9l): even on the timeout path the
+	// child may have written its pidfile before the budget expired; kill it
+	// before Shutdown clears the pidfile.
+	killProxyChildOnCleanup(t, root)
 
 	start := time.Now()
 	_, err := GetCreateDatabaseProxyServerEndpoint(root, OpenOpts{
