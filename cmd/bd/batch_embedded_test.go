@@ -249,6 +249,46 @@ func TestBatch_DepRemoveInBatch(t *testing.T) {
 	}
 }
 
+// beads-cqk1: `bd batch` dep-add must reject an unknown dependency type the same
+// way `bd dep add` does (beads-qfka) — batch's help says "dependency types: see
+// bd dep add", but it previously gated IsValid()-only, letting a typo'd blocking
+// type ('blockd') store as a non-gating custom edge and roll the batch on rc=0.
+func TestBatch_DepAddUnknownTypeRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	st := newTestStoreWithPrefix(t, filepath.Join(tmpDir, ".beads", "beads.db"), "tbu")
+	ctx := context.Background()
+	seedBatchTestIssues(t, ctx, st, "tbu-1", "tbu-2")
+
+	err := runBatchScriptInTx(t, ctx, st, "dep add tbu-1 tbu-2 blockd\n")
+	if err == nil {
+		t.Fatal("expected batch dep add with unknown type 'blockd' to fail")
+	}
+	if !strings.Contains(err.Error(), "unknown dependency type") {
+		t.Fatalf("expected 'unknown dependency type' error, got: %v", err)
+	}
+	// The whole batch must roll back — no edge persisted.
+	deps, derr := st.GetDependencies(ctx, "tbu-1")
+	if derr != nil {
+		t.Fatalf("GetDependencies: %v", derr)
+	}
+	for _, d := range deps {
+		if d.ID == "tbu-2" {
+			t.Errorf("rejected unknown-type edge was persisted: %+v", d)
+		}
+	}
+}
+
+func TestBatch_DepAddWellKnownTypeAccepted(t *testing.T) {
+	tmpDir := t.TempDir()
+	st := newTestStoreWithPrefix(t, filepath.Join(tmpDir, ".beads", "beads.db"), "tbw")
+	ctx := context.Background()
+	seedBatchTestIssues(t, ctx, st, "tbw-1", "tbw-2")
+
+	if err := runBatchScriptInTx(t, ctx, st, "dep add tbw-1 tbw-2 related\n"); err != nil {
+		t.Fatalf("well-known type 'related' should be accepted: %v", err)
+	}
+}
+
 // TestBatch_CloseGuardParity verifies that `bd batch` enforces the same
 // close-time integrity guards as `bd close` / `bd update --status closed`
 // (beads-1d08 — the batch sibling of beads-zgku): a blocked issue or an epic
