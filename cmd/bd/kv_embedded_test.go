@@ -163,6 +163,36 @@ func TestEmbeddedKV(t *testing.T) {
 	t.Run("kv_clear_no_args", func(t *testing.T) {
 		bdKVFail(t, bd, dir, "clear")
 	})
+
+	// beads-v0rp: clearing a key that does not exist must fail loud, not print
+	// a false "Cleared"/deleted:true success. DeleteConfig is idempotent (an
+	// unconditional DELETE that no-ops on a missing key), so the CLI pre-checks
+	// the key exists and reports honestly. Sibling of the landed dep-remove /
+	// label-remove fixes (beads-w2tk/yaux).
+	t.Run("kv_clear_nonexistent_fails", func(t *testing.T) {
+		out := bdKVFail(t, bd, dir, "clear", "never_set_this_key")
+		if strings.Contains(out, "Cleared") {
+			t.Errorf("false success: clearing a nonexistent key printed 'Cleared': %s", out)
+		}
+		if !strings.Contains(out, "no key 'never_set_this_key' to clear") {
+			t.Errorf("expected a 'no key ... to clear' error, got: %s", out)
+		}
+	})
+
+	// A key set to the empty string still EXISTS, so clearing it must succeed
+	// (guards against a GetConfig=="" false-negative that would treat an
+	// empty-valued key as missing).
+	t.Run("kv_clear_empty_value_key_succeeds", func(t *testing.T) {
+		bdKV(t, bd, dir, "set", "empty_valued", "")
+		out := bdKV(t, bd, dir, "clear", "empty_valued")
+		if !strings.Contains(out, "Cleared") {
+			t.Errorf("expected an empty-valued key to clear successfully, got: %s", out)
+		}
+		m := bdKVListJSON(t, bd, dir)
+		if _, ok := m["empty_valued"]; ok {
+			t.Error("expected empty_valued to be absent from kv list after clear")
+		}
+	})
 }
 
 // TestEmbeddedKVConcurrent exercises kv operations concurrently.
