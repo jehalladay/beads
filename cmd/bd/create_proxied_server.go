@@ -168,6 +168,11 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 		fmt.Printf("  Priority: P%d\n", result.Issue.Priority)
 		fmt.Printf("  Status: %s\n", result.Issue.Status)
 	}
+
+	// Record last-touched so `bd show --current` fallback works after a proxied
+	// create, matching the direct create path (create.go) + ready_proxied_server.go
+	// (beads-gw7s: proxied create/update/close handlers previously omitted this).
+	SetLastTouchedID(result.Issue.ID)
 }
 
 func runCreateLintIssue(in createInput) {
