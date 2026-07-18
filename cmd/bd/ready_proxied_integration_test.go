@@ -741,6 +741,32 @@ func TestProxiedServerReady(t *testing.T) {
 			}
 		}
 	})
+
+	// beads-bqpe: `bd ready --mol <nonexistent> --json` must emit a stdout JSON
+	// {error:...} object (not plain-text stderr), matching the direct path
+	// (ready.go loadTemplateSubgraph → HandleErrorRespectJSON). Before the fix,
+	// runReadyProxiedMolecule reported the load error via plain FatalError, so a
+	// --json consumer got unparseable output. This is the testable leg of bqpe
+	// (a nonexistent molecule id is a deterministic CLI-triggerable error).
+	t.Run("mol_nonexistent_json_emits_json_error", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "rmje")
+		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "ready", "--mol", "nope-does-not-exist", "--json")
+		if err == nil {
+			t.Fatalf("bd ready --mol <nonexistent> --json should fail; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+		s := strings.TrimSpace(stdout)
+		start := strings.IndexAny(s, "{")
+		if start < 0 {
+			t.Fatalf("expected a JSON error object on stdout, got stdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+		var obj map[string]interface{}
+		if jerr := json.Unmarshal([]byte(s[start:]), &obj); jerr != nil {
+			t.Fatalf("stdout is not valid JSON (%v): %s", jerr, s[start:])
+		}
+		if _, ok := obj["error"]; !ok {
+			t.Errorf("expected an {\"error\":...} object on stdout, got: %s", s[start:])
+		}
+	})
 }
 
 func TestProxiedServerReadyConcurrent(t *testing.T) {

@@ -316,7 +316,11 @@ func runReadyProxiedMolecule(ctx context.Context, uw uow.UnitOfWork, in readyInp
 	moleculeID := in.molID
 	subgraph, err := proxiedLoadTemplateSubgraph(ctx, uw, moleculeID)
 	if err != nil {
-		FatalError("loading molecule: %v", err)
+		// beads-bqpe: `bd ready --mol <id> --json` is a valid combo (this handler
+		// has a jsonOut branch below), so a molecule-load error (e.g. a nonexistent
+		// id) must emit a stdout JSON {error:...} object under --json — matching the
+		// direct path (ready.go loadTemplateSubgraph → HandleErrorRespectJSON).
+		FatalErrorRespectJSON("loading molecule: %v", err)
 	}
 
 	analysis := analyzeMoleculeParallel(subgraph)
