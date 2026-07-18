@@ -670,7 +670,7 @@ var versionChanges = []VersionChange{
 		Version: "0.49.4",
 		Date:    "2026-02-05",
 		Changes: []string{
-			"NEW: --label-pattern and --label-regex flags for bd list and bd ready - glob and regex filtering on labels",
+			"NEW: --label-pattern and --label-regex flags for bd list - glob and regex filtering on labels",
 			"NEW: Simple query language for complex bd list filtering",
 			"NEW: spec_id field for linking issues to specification documents",
 			"NEW: Wisp type field for TTL-based compaction of ephemeral molecules",

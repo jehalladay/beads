@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -81,6 +82,30 @@ func TestVersionChangesCoverage(t *testing.T) {
 	for i, vc := range versionChanges {
 		if len(vc.Changes) < 1 {
 			t.Errorf("versionChanges[%d] (v%s) should have at least 1 change, found %d", i, vc.Version, len(vc.Changes))
+		}
+	}
+}
+
+// TestWhatsNewLabelPatternClaimMatchesReadyFlags is the teeth for beads-gul8:
+// a changelog entry must not advertise --label-pattern/--label-regex "for bd
+// ready" unless readyCmd actually registers those flags. info.go:673 claimed
+// them "for bd list and bd ready", but ready never registered them (only bd
+// list did), so `bd ready --label-pattern` fails "unknown flag" — the doc lied.
+func TestWhatsNewLabelPatternClaimMatchesReadyFlags(t *testing.T) {
+	readyHasPattern := readyCmd.Flags().Lookup("label-pattern") != nil ||
+		readyCmd.Flags().Lookup("label-regex") != nil
+
+	for _, vc := range versionChanges {
+		for _, change := range vc.Changes {
+			c := strings.ToLower(change)
+			if !strings.Contains(c, "label-pattern") && !strings.Contains(c, "label-regex") {
+				continue
+			}
+			// Only entries that specifically claim `bd ready` support.
+			if strings.Contains(c, "bd ready") && !readyHasPattern {
+				t.Errorf("changelog %s advertises --label-pattern/--label-regex for `bd ready`, "+
+					"but readyCmd registers neither flag (beads-gul8): %q", vc.Version, change)
+			}
 		}
 	}
 }
