@@ -21,7 +21,7 @@ import (
 // this is called; the proxied core audit-logs the priority change.
 func runPriorityProxiedServer(ctx context.Context, id string, priority int) error {
 	in := &updateInput{fields: map[string]any{"priority": priority}}
-	issue, ok := applyUpdateProxiedOne(ctx, id, in)
+	issue, ok := applyUpdateProxiedOne(ctx, id, in, false)
 	if !ok {
 		return &exitError{Code: 1}
 	}

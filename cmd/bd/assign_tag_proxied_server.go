@@ -26,7 +26,7 @@ func runAssignProxiedServer(ctx context.Context, args []string) error {
 	assignee := normalizeAssignee(args[1])
 
 	in := &updateInput{fields: map[string]any{"assignee": assignee}}
-	issue, ok := applyUpdateProxiedOne(ctx, id, in)
+	issue, ok := applyUpdateProxiedOne(ctx, id, in, false)
 	if !ok {
 		return &exitError{Code: 1}
 	}
@@ -50,7 +50,7 @@ func runTagProxiedServer(ctx context.Context, args []string) error {
 	label := args[1]
 
 	in := &updateInput{addLabels: []string{label}}
-	issue, ok := applyUpdateProxiedOne(ctx, id, in)
+	issue, ok := applyUpdateProxiedOne(ctx, id, in, false)
 	if !ok {
 		return &exitError{Code: 1}
 	}

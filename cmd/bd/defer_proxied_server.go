@@ -38,7 +38,7 @@ func runDeferProxiedServer(ctx context.Context, args []string, deferUntil *time.
 			in.appendNotes = reason
 		}
 
-		issue, ok := applyUpdateProxiedOne(ctx, id, in)
+		issue, ok := applyUpdateProxiedOne(ctx, id, in, false)
 		if !ok {
 			// applyUpdateProxiedOne already printed the per-item error to stderr.
 			continue
