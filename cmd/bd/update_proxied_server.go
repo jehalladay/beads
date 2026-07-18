@@ -62,6 +62,15 @@ func runUpdateProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	}
 
 	if !anyUpdated {
+		// A wholly-failed --json batch (no issue updated) would otherwise
+		// os.Exit(1) with EMPTY stdout, leaving --json consumers unable to
+		// tell "command failed" from "produced no output". Emit a stdout JSON
+		// error object, matching the direct path (update.go, beads-fg6/tx70).
+		// Partial success emitted the JSON array above and does not reach here
+		// (anyUpdated == true). (beads-j43d)
+		if jsonOut {
+			FatalErrorRespectJSON("no issues updated matching the provided IDs")
+		}
 		os.Exit(1)
 	}
 }

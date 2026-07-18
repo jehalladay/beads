@@ -26,6 +26,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same misleading false-green eqi4 fixed elsewhere. `bd stale` now routes through the same shared
   chokepoint, so a negative `--limit` errors while `--limit 0` (the documented "unlimited" sentinel)
   and positive values are left alone.
+- **Proxied-server `bd update`/`close`/`reopen` now emit a JSON error object on stdout for a wholly-failed `--json` batch, instead of exiting non-zero with empty stdout (beads-j43d).**
+  The direct paths were already fixed for this (beads-fg6/tx70): when no issue in
+  the batch resolved or mutated, `bd update --json`/`close --json`/`reopen --json`
+  emit `{"error":"no issues ... matching the provided IDs"}` on stdout so a `--json`
+  consumer piping stdout to a parser can always distinguish "command failed" from
+  "produced no output". The proxied-server equivalents (`runUpdateProxiedServer`,
+  `runCloseProxiedServer`, `runReopenProxiedServer`) instead bailed with a bare
+  `os.Exit(1)` and empty stdout under `--json`, breaking that contract on the
+  proxied path. All three now mirror the direct paths via `FatalErrorRespectJSON`
+  when nothing was mutated; partial success (some IDs mutated) still emits the JSON
+  array and keeps the plain non-zero exit. Same proxied-vs-direct parity class as
+  beads-pcij/iu9f/wg8i.
 - **`bd count` and `bd ready` `--priority` flags now accept the documented `P0`-`P4` syntax, not just bare `0`-`4` (beads-vcpq).**
   `bd list`/`quick`/`create` register `--priority` as a `StringP` consumed via `ValidatePriority`
   (which calls `ParsePriority`), so both `--priority 2` and `--priority P2` work and the help text

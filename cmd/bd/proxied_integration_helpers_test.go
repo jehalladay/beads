@@ -448,3 +448,27 @@ func getProxiedLabels(t *testing.T, db *sql.DB, issueID string) []string {
 	}
 	return out
 }
+
+// assertJSONErrorObject verifies that a wholly-failed --json command emitted a
+// parseable JSON error object on stdout (with an "error" field, possibly under
+// a "data" envelope), not a bare exit with empty stdout (beads-j43d/fg6/tx70).
+func assertJSONErrorObject(t *testing.T, stdout, stderr string) {
+	t.Helper()
+	out := strings.TrimSpace(stdout)
+	if out == "" {
+		t.Fatalf("stdout is empty on all-failed --json command — must emit a JSON error object (beads-j43d)\nstderr:\n%s", stderr)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		t.Fatalf("stdout is not a JSON object on all-failed --json command: %v\nstdout:\n%s", err, out)
+	}
+	if _, ok := obj["error"]; ok {
+		return
+	}
+	if data, ok := obj["data"].(map[string]any); ok {
+		if _, ok := data["error"]; ok {
+			return
+		}
+	}
+	t.Errorf("expected an \"error\" field in the all-failed --json stdout object, got: %s", out)
+}
