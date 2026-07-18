@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/storage/fs"
+	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -30,13 +31,17 @@ func runUpdateProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 		return
 	}
 
+	// --force overrides the close-time integrity guards on the proxied path
+	// exactly as it does on the direct path (beads-u8zw); read it once here.
+	force, _ := cmd.Flags().GetBool("force")
+
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	var updated []*types.Issue
 	var anyUpdated bool
 	var firstUpdatedID string
 
 	for _, id := range args {
-		issue, ok := applyUpdateProxiedOne(ctx, id, in)
+		issue, ok := applyUpdateProxiedOne(ctx, id, in, force)
 		if !ok {
 			continue
 		}
@@ -66,7 +71,7 @@ func runUpdateProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	}
 }
 
-func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput) (*types.Issue, bool) {
+func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, force bool) (*types.Issue, bool) {
 	if uowProvider == nil {
 		FatalError("proxied-server UOW provider not initialized")
 	}
@@ -78,22 +83,31 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput) (*ty
 	defer uw.Close(ctx)
 
 	issueUC := uw.IssueUseCase()
-	current, err := issueUC.GetIssue(ctx, id)
-	if err != nil || current == nil {
-		wispCurrent, wispErr := issueUC.GetWisp(ctx, id)
-		if wispErr == nil && wispCurrent != nil {
-			current = wispCurrent
-		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-			return nil, false
-		} else {
-			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-			return nil, false
-		}
+	current, isWisp := proxiedResolveIssueOrWisp(ctx, uw, id)
+	if current == nil {
+		fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+		return nil, false
 	}
 	if err := validateIssueUpdatable(id, current); err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		return nil, false
+	}
+
+	// Close-integrity guards (beads-u8zw): `update --status closed` (and the
+	// epic-demote / closed-child-reopen transitions) reach the same terminal
+	// states the direct update path guards at cmd/bd/update.go:429-496 (the
+	// zgku epic-with-open-children, 2hkd demote, and b0tw child-reopen guards).
+	// The proxied handler bypassed all of them — it applied the field update via
+	// ApplyUpdate with no guard, so `bd update <epic> --status closed` (open
+	// children), `bd update <blocked> --status closed`, and reopening a closed
+	// child under a closed epic all silently succeeded via the LIVE proxied path
+	// where the direct path refuses. Enforce the same invariants here, all
+	// overridable with --force, matching `bd close --force`.
+	if !force {
+		if err := checkProxiedUpdateCloseGuards(ctx, uw, id, current, isWisp, in.fields); err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+			return nil, false
+		}
 	}
 
 	spec, err := buildUpdateSpecForIssue(current, in)
@@ -137,6 +151,92 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput) (*ty
 		fmt.Fprintf(os.Stderr, "warning: %s: %v\n", id, err)
 	}
 	return updated, true
+}
+
+// checkProxiedUpdateCloseGuards enforces, on the proxied update path, the same
+// close-time integrity invariants the direct path enforces at cmd/bd/update.go
+// (beads-u8zw). It mirrors the direct-path guards (zgku/2hkd/b0tw) using the
+// UOW use-cases, exactly as the proxied close handler does (close_proxied_server.go).
+// Caller is responsible for the --force bypass (this runs only when !force).
+func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id string, current *types.Issue, isWisp bool, fields map[string]any) error {
+	// zgku: refuse closing an epic with open children on a real open->closed
+	// transition (already-closed is a no-op close).
+	if newStatus, ok := fields["status"].(string); ok && newStatus == "closed" &&
+		current.Status != types.StatusClosed {
+		if current.IssueType == types.TypeEpic {
+			var openChildren int
+			var err error
+			if isWisp {
+				openChildren, err = uw.IssueUseCase().CountOpenWispChildren(ctx, id)
+			} else {
+				openChildren, err = uw.IssueUseCase().CountOpenChildren(ctx, id)
+			}
+			if err == nil && openChildren > 0 {
+				return fmt.Errorf("cannot close epic %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
+			}
+		}
+		// zgku: refuse closing an issue that is blocked by open issues.
+		var blocked bool
+		var blockers []string
+		var err error
+		if isWisp {
+			blocked, blockers, err = uw.DependencyUseCase().IsWispBlocked(ctx, id)
+		} else {
+			blocked, blockers, err = uw.DependencyUseCase().IsBlocked(ctx, id)
+		}
+		if err != nil {
+			return fmt.Errorf("Error checking blockers for %s: %v", id, err)
+		}
+		if blocked && len(blockers) > 0 {
+			return fmt.Errorf("cannot close %s: blocked by open issues %v (use --force to override)", id, blockers)
+		}
+	}
+
+	// 2hkd: refuse demoting an epic (epic -> non-epic) that still has open
+	// children — the demote-then-close bypass of the epic close guard.
+	if newTypeRaw, ok := fields["issue_type"].(string); ok &&
+		current.IssueType == types.TypeEpic && types.IssueType(newTypeRaw).Normalize() != types.TypeEpic {
+		var openChildren int
+		var err error
+		if isWisp {
+			openChildren, err = uw.IssueUseCase().CountOpenWispChildren(ctx, id)
+		} else {
+			openChildren, err = uw.IssueUseCase().CountOpenChildren(ctx, id)
+		}
+		if err == nil && openChildren > 0 {
+			return fmt.Errorf("cannot demote epic %s to %s: %d open child issue(s); close children first or use --force to override", id, newTypeRaw, openChildren)
+		}
+	}
+
+	// b0tw: refuse reopening a closed child whose parent epic is itself closed
+	// (a real closed->open transition), which would recreate the
+	// closed-epic-with-open-child state.
+	if newStatus, ok := fields["status"].(string); ok &&
+		types.Status(newStatus) == types.StatusOpen && current.Status == types.StatusClosed {
+		if closedEpics := proxiedClosedEpicParents(ctx, uw, id, isWisp); len(closedEpics) > 0 {
+			return fmt.Errorf("cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override", id, closedEpics)
+		}
+	}
+
+	return nil
+}
+
+// proxiedClosedEpicParents returns the IDs of the issue's parent epics that are
+// themselves closed, mirroring cmd/bd/close.go closedEpicParents over the UOW.
+func proxiedClosedEpicParents(ctx context.Context, uw uow.UnitOfWork, id string, isWisp bool) []string {
+	deps, err := proxiedListDeps(ctx, uw, id, isWisp, domain.DepListFilter{Direction: domain.DepDirectionOut})
+	if err != nil {
+		return nil
+	}
+	var parents []string
+	for _, dep := range deps {
+		if dep.DependencyType == types.DepParentChild &&
+			dep.Issue.IssueType == types.TypeEpic &&
+			dep.Issue.Status == types.StatusClosed {
+			parents = append(parents, dep.Issue.ID)
+		}
+	}
+	return parents
 }
 
 func fireProxiedUpdateHooks(ctx context.Context, before, after *types.Issue) error {

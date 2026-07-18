@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd update --status closed` over the proxied server now actually closes the issue instead of failing the `closed_at` invariant (beads-h3iv).**
+  The domain single-issue update path (`internal/storage/domain/db` `issueSQLRepositoryImpl.Update`, used by the
+  proxied server via `domain.UpdateIssue`) validated the finalized issue with `ValidateWithCustom` but never
+  auto-managed `closed_at` on a status transition — the direct/embedded path does, via
+  `issueops.ManageClosedAt` in `UpdateIssueInTx`. So `bd update <id> --status closed` over the proxied server
+  (the live path for every hub-connected crew) failed with `closed issues must have closed_at timestamp` and
+  closed nothing, while the direct path closed fine. The domain update path now sets `closed_at` on a real
+  open→closed transition and clears it on closed→open, unless the caller set `closed_at` explicitly — matching
+  the shared seam. (Surfaced by the previously-red gated test `close_unblocks_dependents`.)
+
+- **`bd update --status closed` over the proxied server now enforces the same close-integrity guards as the direct path (beads-u8zw).**
+  The direct update path (`cmd/bd/update.go`) refuses to close an epic with open children (beads-zgku), demote
+  an epic with open children (beads-2hkd), or reopen a closed child under a closed epic (beads-b0tw), all
+  overridable with `--force`. The proxied handler (`applyUpdateProxiedOne`) skipped all three — it applied the
+  field update with no guard, so `bd update <epic> --status closed` (open children), `bd update <blocked>
+  --status closed`, and the demote/child-reopen bypasses all silently succeeded via the LIVE proxied path where
+  the direct path refuses. The proxied handler now enforces the same invariants (via the UOW use-cases, as the
+  proxied close handler already does), honoring `--force`, with matching messages. Same proxied-vs-direct parity
+  class as beads-k75k / n5xz / 6c45.
+
 - **`bd kv clear <key>` now fails loud on a key that does not exist instead of printing a false `Cleared`/`deleted:true` success (beads-v0rp).**
   `DeleteConfig` is idempotent — it issues an unconditional `DELETE` and returns nil regardless of how many
   rows matched, which programmatic cleanup callers rely on — but `bd kv clear` printed `Cleared <key>` (text)

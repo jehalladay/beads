@@ -869,6 +869,96 @@ func TestProxiedServerUpdate(t *testing.T) {
 			t.Errorf("failed title update leaked through: title=%q, want Original", reloaded.Title)
 		}
 	})
+
+	// beads-u8zw: `bd update --status closed` (and the demote / child-reopen
+	// transitions) must enforce, on the proxied path, the same close-integrity
+	// guards the direct path enforces (zgku/2hkd/b0tw). Before the fix the
+	// proxied handler applied the field update with no guard, so these all
+	// silently succeeded via the LIVE proxied path where the direct path refuses.
+	t.Run("update_close_epic_open_children_refuses", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "uceor")
+		epic := bdProxiedCreate(t, bd, p.dir, "Epic", "-t", "epic")
+		_ = bdProxiedCreate(t, bd, p.dir, "Child", "--parent", epic.ID)
+		out := bdProxiedUpdateFail(t, bd, p.dir, epic.ID, "-s", "closed")
+		if !strings.Contains(out, "open child") {
+			t.Errorf("expected 'open child' guard error, got: %s", out)
+		}
+		db := openProxiedDB(t, p)
+		if got := readStatus(t, db, epic.ID); got != types.StatusOpen {
+			t.Errorf("epic must stay open after a guarded update-close, got %q", got)
+		}
+	})
+
+	t.Run("update_close_epic_open_children_force_overrides", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "uceof")
+		epic := bdProxiedCreate(t, bd, p.dir, "Epic force", "-t", "epic")
+		_ = bdProxiedCreate(t, bd, p.dir, "Child force", "--parent", epic.ID)
+		bdProxiedUpdateOne(t, bd, p.dir, epic.ID, "-s", "closed", "--force")
+		db := openProxiedDB(t, p)
+		if got := readStatus(t, db, epic.ID); got != types.StatusClosed {
+			t.Errorf("--force should override the epic-open-children guard, got %q", got)
+		}
+	})
+
+	t.Run("update_close_blocked_refuses", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "ucbr")
+		blocker := bdProxiedCreate(t, bd, p.dir, "Blocker")
+		blocked := bdProxiedCreate(t, bd, p.dir, "Dependent", "--deps", "depends-on:"+blocker.ID)
+		out := bdProxiedUpdateFail(t, bd, p.dir, blocked.ID, "-s", "closed")
+		if !strings.Contains(out, "blocked by open issues") {
+			t.Errorf("expected 'blocked by open issues' guard error, got: %s", out)
+		}
+		db := openProxiedDB(t, p)
+		if got := readStatus(t, db, blocked.ID); got == types.StatusClosed {
+			t.Errorf("blocked issue must not close via a guarded update, got %q", got)
+		}
+	})
+
+	t.Run("update_close_blocked_force_overrides", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "ucbf")
+		blocker := bdProxiedCreate(t, bd, p.dir, "Blocker force")
+		blocked := bdProxiedCreate(t, bd, p.dir, "Dependent force", "--deps", "depends-on:"+blocker.ID)
+		bdProxiedUpdateOne(t, bd, p.dir, blocked.ID, "-s", "closed", "--force")
+		db := openProxiedDB(t, p)
+		if got := readStatus(t, db, blocked.ID); got != types.StatusClosed {
+			t.Errorf("--force should override the blocked guard, got %q", got)
+		}
+	})
+
+	t.Run("update_close_unblocked_still_succeeds", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "ucus")
+		issue := bdProxiedCreate(t, bd, p.dir, "Plain")
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "-s", "closed")
+		db := openProxiedDB(t, p)
+		if got := readStatus(t, db, issue.ID); got != types.StatusClosed {
+			t.Errorf("an unblocked non-epic must still close via update, got %q", got)
+		}
+	})
+
+	t.Run("update_demote_epic_open_children_refuses", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "udeor")
+		epic := bdProxiedCreate(t, bd, p.dir, "Demote epic", "-t", "epic")
+		_ = bdProxiedCreate(t, bd, p.dir, "Demote child", "--parent", epic.ID)
+		out := bdProxiedUpdateFail(t, bd, p.dir, epic.ID, "--type", "task")
+		if !strings.Contains(out, "cannot demote epic") {
+			t.Errorf("expected 'cannot demote epic' guard error, got: %s", out)
+		}
+		db := openProxiedDB(t, p)
+		if got := readIssueType(t, db, epic.ID); got != types.TypeEpic {
+			t.Errorf("epic must stay an epic after a guarded demote, got %q", got)
+		}
+	})
+}
+
+// readIssueType reads the stored issue_type directly from the proxied DB, for
+// asserting a demote guard did (not) apply.
+func readIssueType(t *testing.T, db *sql.DB, id string) types.IssueType {
+	t.Helper()
+	var it string
+	if err := db.QueryRow("SELECT issue_type FROM issues WHERE id = ?", id).Scan(&it); err != nil {
+		t.Fatalf("read issue_type for %s: %v", id, err)
+	}
+	return types.IssueType(it)
 }
 
 func TestProxiedServerUpdateHooks(t *testing.T) {
