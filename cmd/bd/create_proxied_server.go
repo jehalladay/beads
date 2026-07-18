@@ -442,11 +442,15 @@ func buildDomainGraphPlan(plan GraphApplyPlan, in createInput) domain.GraphPlan 
 	nodes := make([]domain.GraphNode, 0, len(plan.Nodes))
 	for _, n := range plan.Nodes {
 		nodes = append(nodes, domain.GraphNode{
-			Key:               n.Key,
-			Issue:             materializeGraphNodeIssue(n, in),
-			ParentKey:         n.ParentKey,
-			ParentID:          n.ParentID,
-			Assignee:          n.Assignee,
+			Key:       n.Key,
+			Issue:     materializeGraphNodeIssue(n, in),
+			ParentKey: n.ParentKey,
+			ParentID:  n.ParentID,
+			// Trim/fold-"none" the assignee like assign/create/update do
+			// (normalizeAssignee), so a graph node's padded "  alice  " isn't
+			// stored unmatchable and "none" unassigns (beads-7i4m, llzt graph
+			// sibling — this was a 4th create input site the llzt seam missed).
+			Assignee:          normalizeAssignee(n.Assignee),
 			AssignAfterCreate: n.AssignAfterCreate,
 			MetadataRefs:      n.MetadataRefs,
 			Labels:            n.Labels,

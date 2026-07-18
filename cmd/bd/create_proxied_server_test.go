@@ -225,6 +225,35 @@ func TestBuildDomainGraphPlan(t *testing.T) {
 	}
 }
 
+// TestBuildDomainGraphPlan_NormalizesAssignee verifies bd create --graph
+// trims/folds the per-node assignee like assign/create/update do
+// (normalizeAssignee), so a padded "  alice  " isn't stored unmatchable by
+// `bd ready --assignee alice` and "none" unassigns (beads-7i4m, llzt graph
+// sibling). Before the fix buildDomainGraphPlan carried node.Assignee raw.
+func TestBuildDomainGraphPlan_NormalizesAssignee(t *testing.T) {
+	plan := GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "pad", Title: "Padded", Assignee: "  alice  "},
+			{Key: "none", Title: "Sentinel", Assignee: "none"},
+			{Key: "nonepad", Title: "Padded sentinel", Assignee: "  None  "},
+		},
+	}
+	got := buildDomainGraphPlan(plan, createInput{createdBy: "t"})
+	byKey := map[string]string{}
+	for _, n := range got.Nodes {
+		byKey[n.Key] = n.Assignee
+	}
+	if byKey["pad"] != "alice" {
+		t.Errorf("padded assignee = %q, want trimmed %q", byKey["pad"], "alice")
+	}
+	if byKey["none"] != "" {
+		t.Errorf(`assignee "none" = %q, want "" (unassigned)`, byKey["none"])
+	}
+	if byKey["nonepad"] != "" {
+		t.Errorf(`assignee "  None  " = %q, want "" (trimmed+folded to unassign)`, byKey["nonepad"])
+	}
+}
+
 func TestParseMarkdownDepSpecs(t *testing.T) {
 	tests := []struct {
 		name    string
