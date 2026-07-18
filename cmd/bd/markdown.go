@@ -405,6 +405,14 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) error {
 	// hooks here is the consistent behavior for a bulk operation, not a
 	// regression — do not "restore" store.CreateIssues to re-enable hooks.
 	createOpts := storage.BatchCreateOptions{
+		// Skip-and-warn on unresolvable dependency edges (empty or nonexistent
+		// targets) instead of hard-failing the whole batch. Without this flag the
+		// empty-depends_on_id guard (a typed-blank line like "blocks:") returns a
+		// hard error and creates ZERO issues, while a nonexistent target only
+		// warns — an asymmetry that aborts an entire markdown batch on one bad
+		// dep line. Matches the JSONL import path (import_shared.go) this comment
+		// already claims alignment with (beads-mnfr, test beads-r2lq).
+		SkipDependencyValidationErrors: true,
 		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
 			WarnError("skipped dependency %s -> %s: %s", issueID, dependsOnID, reason)
 		},
