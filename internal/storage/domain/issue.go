@@ -42,6 +42,13 @@ type IssueSQLRepository interface {
 	Insert(ctx context.Context, issue *types.Issue, actor string, opts InsertIssueOpts) error
 	InsertBatch(ctx context.Context, issues []*types.Issue, actor string, opts InsertIssueOpts) error
 	Update(ctx context.Context, id string, updates map[string]any, actor string, opts IssueTableOpts) error
+	// ApplyMetadataEdits applies per-key metadata sets/unsets and/or a shallow
+	// object merge atomically SERVER-SIDE (a single JSON_SET/JSON_REMOVE inside
+	// one tx), never a client-side whole-blob read-modify-write — so concurrent
+	// edits to different keys don't clobber (beads-jibd/fnp6). A nil/empty edit
+	// set is a no-op. merge (if non-nil) is applied first, then sets, then
+	// unsets, matching the client-side ordering it replaces.
+	ApplyMetadataEdits(ctx context.Context, id string, sets map[string]json.RawMessage, unsets []string, merge json.RawMessage, actor string, opts IssueTableOpts) error
 	Claim(ctx context.Context, id, actor string, opts IssueTableOpts) (ClaimRowResult, error)
 	Get(ctx context.Context, id string, opts IssueTableOpts) (*types.Issue, error)
 	AsOf(ctx context.Context, id, ref string) (*types.Issue, error)
@@ -200,6 +207,20 @@ type UpdateSpec struct {
 	RemoveLabels []string
 	SetLabels    *[]string
 	Reparent     *string
+
+	// Per-key metadata edits, applied atomically SERVER-SIDE (JSON_SET) inside
+	// the update transaction rather than as a client-side whole-blob
+	// read-modify-write, so two concurrent proxied metadata edits to different
+	// keys both survive instead of the second clobbering the first (beads-jibd;
+	// the atomic path fnp6 gave the direct CLI, now reachable from the proxied
+	// stack). MetadataSets maps key -> pre-encoded JSON value; MetadataUnsets
+	// lists keys to remove; MetadataMerge is a whole-object merge (shallow).
+	// These are mutually usable with Fields (which carries the non-metadata
+	// column updates); when any is set, ApplyUpdate routes them through the
+	// atomic metadata seam instead of stuffing a merged blob into Fields.
+	MetadataSets   map[string]json.RawMessage
+	MetadataUnsets []string
+	MetadataMerge  json.RawMessage
 }
 
 type IssueUseCase interface {
@@ -463,6 +484,16 @@ func (u *issueUseCaseImpl) ApplyUpdate(ctx context.Context, id string, spec Upda
 			if err := u.UpdateIssue(ctx, id, spec.Fields, actor); err != nil {
 				return nil, err
 			}
+		}
+	}
+
+	// Metadata edits go through the atomic server-side seam (beads-jibd), NOT a
+	// client-side merged blob in Fields — so concurrent proxied edits to
+	// different keys don't clobber each other (the fnp6 guarantee, now on the
+	// proxied path). A no-op when no metadata slots are set.
+	if len(spec.MetadataSets) > 0 || len(spec.MetadataUnsets) > 0 || len(spec.MetadataMerge) > 0 {
+		if err := u.issueRepo.ApplyMetadataEdits(ctx, id, spec.MetadataSets, spec.MetadataUnsets, spec.MetadataMerge, actor, IssueTableOpts{UseWispsTable: useWisp, Finalize: true}); err != nil {
+			return nil, fmt.Errorf("ApplyUpdate %s: metadata edits: %w", id, err)
 		}
 	}
 
