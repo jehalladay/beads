@@ -133,6 +133,9 @@ func (t *Tracker) FetchIssue(ctx context.Context, identifier string) (*tracker.T
 }
 
 func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker.TrackerIssue, error) {
+	if err := validateGitHubLabels(issue.Labels); err != nil {
+		return nil, err
+	}
 	fields := BeadsIssueToGitHubFields(issue, t.config)
 	labels, _ := fields["labels"].([]string)
 
@@ -149,6 +152,10 @@ func (t *Tracker) UpdateIssue(ctx context.Context, externalID string, issue *typ
 	number, err := strconv.Atoi(externalID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid GitHub issue number %q: %w", externalID, err)
+	}
+
+	if err := validateGitHubLabels(issue.Labels); err != nil {
+		return nil, err
 	}
 
 	updates := BeadsIssueToGitHubFields(issue, t.config)

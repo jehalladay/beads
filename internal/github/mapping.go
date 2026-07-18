@@ -155,6 +155,29 @@ func GitHubIssueToBeads(gh *Issue, config *MappingConfig) *IssueConversion {
 	}
 }
 
+// maxLabelNameLength is GitHub's server-side cap on an issue LABEL NAME. GitHub
+// 422-rejects a create/update whose label exceeds 50 characters, failing the
+// WHOLE issue push with an opaque error. A beads label is legal locally up to
+// 255 characters (see types Validate), so a 51-255 char label is legal locally
+// but unpushable to GitHub. beads-98gh.
+const maxLabelNameLength = 50
+
+// validateGitHubLabels fails loud, before any GitHub API call, if a label
+// exceeds GitHub's maxLabelNameLength. Per the SCM per-field-constraint class
+// ruling (beads-xcbd): a label is an identity token used for dedup and
+// round-trip, so there is no lossless transform (truncating would drift on
+// pull-back and break dedup). The correct behavior is to reject with a
+// beads-side message naming the offending label. Rune-aware — GitHub counts
+// characters, not bytes. Mirrors validateJiraLabels (jira/fieldmapper.go).
+func validateGitHubLabels(labels []string) error {
+	for _, l := range labels {
+		if len([]rune(l)) > maxLabelNameLength {
+			return fmt.Errorf("label %q is %d characters; GitHub caps a label name at %d — shorten or remove it before syncing", l, len([]rune(l)), maxLabelNameLength)
+		}
+	}
+	return nil
+}
+
 // BeadsIssueToGitHubFields converts a beads Issue to GitHub API update fields.
 func BeadsIssueToGitHubFields(issue *types.Issue, config *MappingConfig) map[string]interface{} {
 	fields := map[string]interface{}{
