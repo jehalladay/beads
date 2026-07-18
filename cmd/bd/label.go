@@ -161,10 +161,7 @@ var labelAddCmd = &cobra.Command{
 			return HandleErrorRespectJSON("no issue id resolved")
 		}
 
-		if err := processBatchLabelsOperation(issueIDs, labels, "added", jsonOutput,
-			func(ctx context.Context, tx storage.Transaction, issueID, lbl, act string) error {
-				return tx.AddLabel(ctx, issueID, lbl, act)
-			}); err != nil {
+		if err := addLabelsHonoringNoChange(ctx, issueIDs, labels, jsonOutput); err != nil {
 			return err
 		}
 		if len(unresolved) > 0 {
@@ -173,6 +170,75 @@ var labelAddCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// addLabelsHonoringNoChange adds every label in labels to every issue in
+// issueIDs, but reports honestly per (issue,label): a label the issue already
+// carries is an idempotent no-op (AddLabel is INSERT IGNORE) and is reported as
+// "already present, no change" (JSON status:unchanged) instead of a false
+// "✓ Added" (beads-qi8t; mirrors the dep-add fix beads-bwla). Only labels that
+// are genuinely new are written, still in a SINGLE transaction (preserves the
+// no-exec-storm contract of processBatchLabelsOperation, beads-9c7). A pre-read
+// error falls back to the plain add path so a lookup hiccup never blocks a write.
+func addLabelsHonoringNoChange(ctx context.Context, issueIDs, labels []string, jsonOut bool) error {
+	type pair struct{ issueID, label string }
+	var toAdd, unchanged []pair
+	for _, id := range issueIDs {
+		existing, err := store.GetLabels(ctx, id)
+		if err != nil {
+			// Best-effort: on a lookup error, fall back to the plain add path
+			// for the whole batch rather than blocking a legitimate write.
+			return processBatchLabelsOperation(issueIDs, labels, "added", jsonOut,
+				func(ctx context.Context, tx storage.Transaction, issueID, lbl, act string) error {
+					return tx.AddLabel(ctx, issueID, lbl, act)
+				})
+		}
+		have := make(map[string]bool, len(existing))
+		for _, l := range existing {
+			have[l] = true
+		}
+		for _, lbl := range labels {
+			if have[lbl] {
+				unchanged = append(unchanged, pair{id, lbl})
+			} else {
+				toAdd = append(toAdd, pair{id, lbl})
+			}
+		}
+	}
+
+	if len(toAdd) > 0 {
+		commitMsg := fmt.Sprintf("bd: label added %d label(s) on %d issue(s)", len(labels), len(issueIDs))
+		err := transactHonoringAutoCommit(ctx, store, commitMsg, func(tx storage.Transaction) error {
+			for _, p := range toAdd {
+				if err := tx.AddLabel(ctx, p.issueID, p.label, actor); err != nil {
+					return fmt.Errorf("added label '%s' on %s: %w", p.label, p.issueID, err)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return HandleErrorRespectJSON("label added: %v", err)
+		}
+		commandDidWrite.Store(true)
+	}
+
+	if jsonOut {
+		results := make([]map[string]interface{}, 0, len(toAdd)+len(unchanged))
+		for _, p := range toAdd {
+			results = append(results, map[string]interface{}{"status": "added", "issue_id": p.issueID, "label": p.label})
+		}
+		for _, p := range unchanged {
+			results = append(results, map[string]interface{}{"status": "unchanged", "issue_id": p.issueID, "label": p.label})
+		}
+		return outputJSON(results)
+	}
+	for _, p := range toAdd {
+		fmt.Printf("%s Added label '%s' to %s\n", ui.RenderPass("✓"), p.label, p.issueID)
+	}
+	for _, p := range unchanged {
+		fmt.Printf("%s Label '%s' already present, no change: %s\n", ui.RenderPass("✓"), p.label, p.issueID)
+	}
+	return nil
 }
 
 //nolint:dupl // labelRemoveCmd and labelAddCmd are similar but serve different operations

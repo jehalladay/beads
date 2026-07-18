@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd label add <id> <label>` now reports "already present, no change" (JSON `status:unchanged`) on an idempotent re-add instead of a false "✓ Added" (beads-qi8t).**
+  `AddLabel` is intentionally idempotent (`INSERT IGNORE`; the audit event was
+  already suppressed on a no-op, beads-usz1), but the CLI discarded that bit and
+  always printed "✓ Added label" / `status:added` — a false success a CI/agent
+  gate reads as proof the label was newly applied. The add path now pre-reads
+  each issue's labels and reports per (issue,label): genuinely new labels are
+  written (still one transaction) and reported `added`; already-present labels
+  are reported `unchanged`. A batch mixing both reports each honestly. This is
+  the label-add half of the false-success class split from beads-bwla (dep add);
+  the label-remove half is tracked separately (beads-yaux). Storage stays
+  idempotent for programmatic callers.
+
 - **`bd count` and `bd ready` `--priority` flags now accept the documented `P0`-`P4` syntax, not just bare `0`-`4` (beads-vcpq).**
   `bd list`/`quick`/`create` register `--priority` as a `StringP` consumed via `ValidatePriority`
   (which calls `ParsePriority`), so both `--priority 2` and `--priority P2` work and the help text

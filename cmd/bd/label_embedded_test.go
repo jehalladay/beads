@@ -160,6 +160,79 @@ func TestEmbeddedLabel(t *testing.T) {
 		}
 	})
 
+	t.Run("add_existing_reports_no_change", func(t *testing.T) {
+		// beads-qi8t: re-adding a label the issue ALREADY carries is an
+		// idempotent no-op (AddLabel INSERT IGNORE). The CLI must NOT print a
+		// false "✓ Added" — it should report "already present, no change".
+		issue := bdCreate(t, bd, dir, "Re-add existing", "--type", "task", "--label", "present")
+		out := bdLabel(t, bd, dir, "add", issue.ID, "present")
+		if strings.Contains(out, "Added") {
+			t.Errorf("expected no false 'Added' on a re-add, got: %s", out)
+		}
+		if !strings.Contains(strings.ToLower(out), "no change") &&
+			!strings.Contains(strings.ToLower(out), "already present") {
+			t.Errorf("expected 'already present, no change' on a re-add, got: %s", out)
+		}
+	})
+
+	t.Run("add_existing_json_reports_unchanged", func(t *testing.T) {
+		// beads-qi8t: --json must report status:unchanged on a re-add, not
+		// status:added, so a consumer piping stdout can tell a real add apart
+		// from a no-op.
+		issue := bdCreate(t, bd, dir, "Re-add existing json", "--type", "task", "--label", "jpresent")
+		s := strings.TrimSpace(bdLabelJSONOutput(t, bd, dir, "add", issue.ID, "jpresent", "--json"))
+		start := strings.Index(s, "[")
+		if start < 0 {
+			t.Fatalf("no JSON array in output: %s", s)
+		}
+		var results []map[string]interface{}
+		if err := json.Unmarshal([]byte(s[start:]), &results); err != nil {
+			t.Fatalf("expected valid JSON array: %v\n%s", err, s)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d: %s", len(results), s)
+		}
+		if got := results[0]["status"]; got != "unchanged" {
+			t.Errorf("expected status:unchanged on a re-add, got %v: %s", got, s)
+		}
+	})
+
+	t.Run("add_mixed_reports_added_and_unchanged", func(t *testing.T) {
+		// beads-qi8t: a batch mixing a new label and an already-present one must
+		// add the new one and report the present one as unchanged (not a blanket
+		// "Added" for both, nor an error).
+		issue := bdCreate(t, bd, dir, "Mixed add", "--type", "task", "--label", "old")
+		s := strings.TrimSpace(bdLabelJSONOutput(t, bd, dir, "add", issue.ID, "--label", "old", "--label", "new", "--json"))
+		start := strings.Index(s, "[")
+		if start < 0 {
+			t.Fatalf("no JSON array in output: %s", s)
+		}
+		var results []map[string]interface{}
+		if err := json.Unmarshal([]byte(s[start:]), &results); err != nil {
+			t.Fatalf("expected valid JSON array: %v\n%s", err, s)
+		}
+		byLabel := map[string]string{}
+		for _, r := range results {
+			byLabel[fmt.Sprint(r["label"])] = fmt.Sprint(r["status"])
+		}
+		if byLabel["old"] != "unchanged" {
+			t.Errorf("expected 'old' status:unchanged, got %q: %s", byLabel["old"], s)
+		}
+		if byLabel["new"] != "added" {
+			t.Errorf("expected 'new' status:added, got %q: %s", byLabel["new"], s)
+		}
+		labels := bdLabelListJSON(t, bd, dir, issue.ID)
+		hasNew := false
+		for _, l := range labels {
+			if l == "new" {
+				hasNew = true
+			}
+		}
+		if !hasNew {
+			t.Errorf("expected 'new' to actually be added: %v", labels)
+		}
+	})
+
 	// ===== Label Remove =====
 
 	t.Run("label_remove", func(t *testing.T) {
