@@ -367,6 +367,22 @@ func TestEvaluatorSimpleQueries(t *testing.T) {
 			},
 		},
 		{
+			// beads-204n: notes=none/null/"" must mean EMPTY notes, mirroring
+			// description=none — not a literal substring search for "none".
+			name:  "notes empty via none",
+			query: "notes=none",
+			expectFilter: func(f *types.IssueFilter) bool {
+				return f.EmptyNotes && f.NotesContains == ""
+			},
+		},
+		{
+			name:  "notes contains a real word",
+			query: "notes=blocker",
+			expectFilter: func(f *types.IssueFilter) bool {
+				return f.NotesContains == "blocker" && !f.EmptyNotes
+			},
+		},
+		{
 			name:  "pinned equals true",
 			query: "pinned=true",
 			expectFilter: func(f *types.IssueFilter) bool {

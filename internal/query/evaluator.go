@@ -393,7 +393,13 @@ func (e *Evaluator) applyNotesFilter(comp *ComparisonNode, filter *types.IssueFi
 	if comp.Op != OpEquals {
 		return fmt.Errorf("notes only supports = operator")
 	}
-	filter.NotesContains = comp.Value
+	// beads-204n: mirror applyDescriptionFilter — value=""/"none"/"null" queries
+	// for EMPTY notes, not a literal substring search for the word "none".
+	if comp.Value == "" || strings.ToLower(comp.Value) == "none" || strings.ToLower(comp.Value) == "null" {
+		filter.EmptyNotes = true
+	} else {
+		filter.NotesContains = comp.Value
+	}
 	return nil
 }
 

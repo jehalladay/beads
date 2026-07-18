@@ -1330,6 +1330,7 @@ type IssueFilter struct {
 
 	// Empty/null checks
 	EmptyDescription bool
+	EmptyNotes       bool
 	NoAssignee       bool
 	NoLabels         bool
 

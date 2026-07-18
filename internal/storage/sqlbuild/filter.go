@@ -213,6 +213,9 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 	if filter.EmptyDescription {
 		whereClauses = append(whereClauses, "(description IS NULL OR description = '')")
 	}
+	if filter.EmptyNotes {
+		whereClauses = append(whereClauses, "(notes IS NULL OR notes = '')")
+	}
 	if filter.NoAssignee {
 		whereClauses = append(whereClauses, "(assignee IS NULL OR assignee = '')")
 	}
