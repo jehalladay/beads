@@ -1183,6 +1183,16 @@ Examples:
 			return HandleErrorRespectJSON("--max-depth must be >= 1")
 		}
 
+		// beads-n95d: validate --format the same way --direction/--max-depth are
+		// validated above. Only json (consumed to "" already) and mermaid are
+		// supported; any other value (dot, digraph, a typo) previously fell
+		// straight through to the default text render with no error — a
+		// misleading false-green. Note 'dot'/'digraph' are valid for
+		// `bd list --format` but NOT here.
+		if formatStr != "" && !strings.EqualFold(formatStr, "mermaid") {
+			return HandleErrorRespectJSON("invalid --format %q (valid: json, mermaid)", formatStr)
+		}
+
 		var tree []*types.TreeNode
 
 		if direction == "both" {
@@ -1224,7 +1234,7 @@ Examples:
 			tree = filterTreeByStatus(tree, s)
 		}
 
-		if formatStr == "mermaid" {
+		if strings.EqualFold(formatStr, "mermaid") {
 			outputMermaidTree(tree, args[0])
 			return nil
 		}
@@ -1705,7 +1715,7 @@ func init() {
 	depTreeCmd.Flags().Bool("reverse", false, "Show dependent tree (deprecated: use --direction=up)")
 	depTreeCmd.Flags().String("direction", "", "Tree direction: 'down' (dependencies), 'up' (dependents), or 'both'")
 	depTreeCmd.Flags().String("status", "", "Filter to only show issues with this status (open, in_progress, blocked, deferred, closed)")
-	depTreeCmd.Flags().String("format", "", "Output format: 'mermaid' for Mermaid.js flowchart")
+	depTreeCmd.Flags().String("format", "", "Output format: 'json' or 'mermaid' (Mermaid.js flowchart); default is a text tree")
 	// Note: --type flag intentionally omitted from depTreeCmd — TreeNode lacks
 	// dependency type info so filtering is not possible. Use 'bd dep list --type' instead.
 

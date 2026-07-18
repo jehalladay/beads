@@ -67,6 +67,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the direct path refuses. The proxied handler now enforces the same invariants (via the UOW use-cases, as the
   proxied close handler already does), honoring `--force`, with matching messages. Same proxied-vs-direct parity
   class as beads-k75k / n5xz / 6c45.
+- **`bd dep tree --format <bad>` now fails loud instead of silently rendering the default text tree (beads-n95d).**
+  `bd dep tree` only special-cased `--format json` and `--format mermaid`; any other value (`dot`, `digraph`, a
+  typo) fell straight through to the default text render with no error — a misleading false-green where the user
+  believed they requested a format. It now rejects an unrecognized `--format` with a hard error
+  (`invalid --format "<x>" (valid: json, mermaid)`, rc!=0), matching how the same command already validates
+  `--direction` and `--max-depth`, and matching the sort-field (beads-y04n) / status (beads-p330) validation on
+  the sibling read commands. Note `dot`/`digraph` are valid for `bd list --format` but not for `bd dep tree`. The
+  `mermaid` render is now matched case-insensitively (parity with the existing `json` check). Fixed on both the
+  direct and proxied-server paths.
 
 - **`bd kv clear <key>` now fails loud on a key that does not exist instead of printing a false `Cleared`/`deleted:true` success (beads-v0rp).**
   `DeleteConfig` is idempotent — it issues an unconditional `DELETE` and returns nil regardless of how many

@@ -490,6 +490,13 @@ func runDepTreeProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 		FatalErrorRespectJSON("--max-depth must be >= 1")
 	}
 
+	// beads-n95d: validate --format (parity with the direct path + with
+	// --direction/--max-depth above). Only json (consumed to "") and mermaid
+	// are supported; anything else previously fell through to default text.
+	if formatStr != "" && !strings.EqualFold(formatStr, "mermaid") {
+		FatalErrorRespectJSON("invalid --format %q (valid: json, mermaid)", formatStr)
+	}
+
 	uw := openDepProxiedUOW(ctx)
 	defer uw.Close(ctx)
 
@@ -534,7 +541,7 @@ func runDepTreeProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 		tree = filterTreeByStatus(tree, types.Status(statusFilter))
 	}
 
-	if formatStr == "mermaid" {
+	if strings.EqualFold(formatStr, "mermaid") {
 		outputMermaidTree(tree, args[0])
 		return
 	}
