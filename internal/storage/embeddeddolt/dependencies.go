@@ -18,6 +18,17 @@ func (s *EmbeddedDoltStore) AddDependency(ctx context.Context, dep *types.Depend
 	})
 }
 
+// LinkAndClose adds a dependency edge AND closes dep.IssueID in ONE transaction
+// so they can't split into an inconsistent state (beads-njnw; same class as
+// compaction's overwrite+mark, beads-pj38). Used by bd duplicate / bd supersede.
+func (s *EmbeddedDoltStore) LinkAndClose(ctx context.Context, dep *types.Dependency, actor string) error {
+	return s.withConn(ctx, true, func(tx *sql.Tx) error {
+		return issueops.LinkAndCloseInTx(ctx, tx, dep, actor, issueops.AddDependencyOpts{
+			IsCrossPrefix: types.ExtractPrefix(dep.IssueID) != types.ExtractPrefix(dep.DependsOnID),
+		})
+	})
+}
+
 // RemoveDependency removes a dependency between two issues.
 func (s *EmbeddedDoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
 	return s.withConn(ctx, true, func(tx *sql.Tx) error {

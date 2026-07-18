@@ -54,6 +54,11 @@ type Storage interface {
 
 	// Dependencies
 	AddDependency(ctx context.Context, dep *types.Dependency, actor string) error
+	// LinkAndClose adds a dependency edge AND closes dep.IssueID in ONE
+	// transaction, so the two cannot split into an inconsistent state (edge
+	// added while the issue stays open). Used by bd duplicate / bd supersede
+	// (beads-njnw; same split-state class as compaction overwrite+mark, pj38).
+	LinkAndClose(ctx context.Context, dep *types.Dependency, actor string) error
 	RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error
 	GetDependencies(ctx context.Context, issueID string) ([]*types.Issue, error)
 	GetDependents(ctx context.Context, issueID string) ([]*types.Issue, error)

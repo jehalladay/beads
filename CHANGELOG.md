@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd duplicate` and `bd supersede` now link+close atomically in one transaction (beads-njnw).**
+  Both commands ran `AddDependency` (the `duplicates`/`supersedes` edge) and then `UpdateIssue`
+  (close the source) as two *separate committed transactions*. A failure or crash between them left
+  the edge added while the issue stayed OPEN — a recoverable-but-inconsistent split state: the issue
+  reads as linked yet remains active in `ready`/`list`, and a re-run re-adds the edge. This is the
+  same split-state class the compaction overwrite+mark fix addressed (beads-pj38). A new store seam
+  `LinkAndClose` (issueops `LinkAndCloseInTx`) runs the edge-add and the close in ONE transaction on
+  `DoltStore` + `EmbeddedDoltStore`, so a failure in either leg rolls the whole thing back (the edge
+  is only durable when the close also succeeds). Behavior-preserving on the success path (same hooks,
+  same result); the only change is that a mid-sequence failure now leaves the issue untouched instead
+  of half-linked.
 - **`bd count` and `bd ready` `--priority` flags now accept the documented `P0`-`P4` syntax, not just bare `0`-`4` (beads-vcpq).**
   `bd list`/`quick`/`create` register `--priority` as a `StringP` consumed via `ValidatePriority`
   (which calls `ParsePriority`), so both `--priority 2` and `--priority P2` work and the help text

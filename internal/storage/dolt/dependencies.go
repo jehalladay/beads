@@ -55,6 +55,44 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 	return s.doltAddAndCommit(ctx, []string{"dependencies"}, "dependency: add "+string(dep.Type)+" "+dep.IssueID+" -> "+dep.DependsOnID)
 }
 
+// LinkAndClose adds a dependency edge AND closes dep.IssueID in ONE transaction
+// so they can't split into an inconsistent state (edge added while the issue
+// stays open). Used by bd duplicate / bd supersede, which previously ran the
+// edge-add and the close as two separate committed transactions (beads-njnw;
+// same split-state class as compaction's overwrite+mark, beads-pj38).
+func (s *DoltStore) LinkAndClose(ctx context.Context, dep *types.Dependency, actor string) error {
+	isCrossPrefix := isCrossPrefixDep(dep.IssueID, dep.DependsOnID)
+
+	targetTable := "issues"
+	kind := issueops.DepTargetIssue
+	switch {
+	case isCrossPrefix, strings.HasPrefix(dep.DependsOnID, "external:"):
+		kind = issueops.DepTargetExternal
+	default:
+		if s.isActiveWisp(ctx, dep.DependsOnID) {
+			targetTable = "wisps"
+			kind = issueops.DepTargetWisp
+		}
+	}
+
+	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
+		opts := issueops.AddDependencyOpts{
+			SourceTable:   "issues",
+			TargetTable:   targetTable,
+			WriteTable:    "dependencies",
+			IsCrossPrefix: isCrossPrefix,
+			TargetKind:    &kind,
+		}
+		return issueops.LinkAndCloseInTx(ctx, tx, dep, actor, opts)
+	}); err != nil {
+		return err
+	}
+	// Commit both touched tables in one Dolt commit — the SQL tx already made
+	// the edge + close atomic; this makes the Dolt commit atomic too.
+	return s.doltAddAndCommit(ctx, []string{"dependencies", "issues"},
+		"dependency: link+close "+string(dep.Type)+" "+dep.IssueID+" -> "+dep.DependsOnID)
+}
+
 // RemoveDependency removes a dependency between two issues.
 // Delegates SQL work to issueops.RemoveDependencyInTx which handles wisp routing.
 func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
