@@ -107,7 +107,7 @@ func runShowProxiedServer(cmd *cobra.Command, ctx context.Context, args []string
 	case in.children:
 		failedCount = runShowProxiedChildren(ctx, uw, in)
 	default:
-		runShowProxiedDefault(ctx, uw, in)
+		failedCount = runShowProxiedDefault(ctx, uw, in)
 	}
 
 	// beads-qtw9: any id-resolution failure -> rc!=0 (partial success still
@@ -464,7 +464,7 @@ func proxiedFindReplies(ctx context.Context, uw uow.UnitOfWork, id string) []typ
 	return out
 }
 
-func runShowProxiedDefault(ctx context.Context, uw uow.UnitOfWork, in *showProxiedInput) {
+func runShowProxiedDefault(ctx context.Context, uw uow.UnitOfWork, in *showProxiedInput) int {
 	formatTime := func(t time.Time) string {
 		if in.localTime {
 			t = t.Local()
@@ -474,14 +474,17 @@ func runShowProxiedDefault(ctx context.Context, uw uow.UnitOfWork, in *showProxi
 
 	var allDetails []interface{}
 	foundCount := 0
+	failedCount := 0
 	for idx, id := range in.ids {
 		issue, isWisp, err := proxiedGetIssueOrWisp(ctx, uw, id)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
+			failedCount++
 			continue
 		}
 		if issue == nil {
 			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+			failedCount++
 			continue
 		}
 		foundCount++
@@ -502,13 +505,21 @@ func runShowProxiedDefault(ctx context.Context, uw uow.UnitOfWork, in *showProxi
 
 	if jsonOutput {
 		if len(allDetails) > 0 {
+			// beads-ej2f: partial success — the found issues are the stdout JSON
+			// array; the failedCount is returned so runShowProxiedServer exits
+			// non-zero (matching the direct show.go:469 failedCount>0 contract).
 			_ = outputJSON(allDetails)
 		} else {
+			// All failed: preserve the single stdout JSON error object (beads-92tz).
 			FatalErrorRespectJSON("no issues found matching the provided IDs")
 		}
 	} else if foundCount == 0 {
 		os.Exit(1)
 	}
+	// beads-ej2f: any failed id drives a non-zero exit even on partial success,
+	// mirroring the as-of/refs/children legs (qtw9) and the direct default path
+	// (cmd/bd/show.go returns exitError{Code:1} on failedCount>0).
+	return failedCount
 }
 
 func proxiedBuildDetails(ctx context.Context, uw uow.UnitOfWork, issue *types.Issue, isWisp bool, in *showProxiedInput) *types.IssueDetails {

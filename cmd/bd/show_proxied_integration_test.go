@@ -843,6 +843,31 @@ func TestProxiedServerShow(t *testing.T) {
 		hash := proxiedCurrentCommit(t, p)
 		bdProxiedShowFail(t, bd, p.dir, "aof-nonexistent999", "--as-of", hash)
 	})
+
+	// beads-ej2f: the DEFAULT show leg (no --refs/--children/--as-of) must also
+	// exit non-zero on a PARTIAL failure — qtw9 fixed the other three legs but
+	// scoped out the default (foundCount==0 only). The direct default path
+	// (show.go) returns exitError{Code:1} on failedCount>0 even on partial
+	// success, so `bd show <real> <ghost>` exits 1 direct but was 0 proxied.
+	t.Run("default_partial_failure_exits_nonzero", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "dpf")
+		issue := bdProxiedCreate(t, bd, p.dir, "Real default", "--type", "task")
+		// Plain text: real id renders, ghost id drives non-zero exit.
+		stdout, _ := bdProxiedShowFail(t, bd, p.dir, issue.ID, "dpf-nonexistent999")
+		if !strings.Contains(stdout, issue.ID) {
+			t.Errorf("expected the resolved id in output on partial failure, got:\n%s", stdout)
+		}
+	})
+
+	t.Run("default_partial_failure_json_exits_nonzero", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "dpj")
+		issue := bdProxiedCreate(t, bd, p.dir, "Real json default", "--type", "task")
+		// --json: found issue is on stdout as an array; the ghost drives rc!=0.
+		stdout, _ := bdProxiedShowFail(t, bd, p.dir, issue.ID, "dpj-nonexistent999", "--json")
+		if !strings.Contains(stdout, issue.ID) {
+			t.Errorf("expected the resolved id in --json stdout on partial failure, got:\n%s", stdout)
+		}
+	})
 }
 
 func proxiedCurrentCommit(t *testing.T, p proxiedProject) string {
