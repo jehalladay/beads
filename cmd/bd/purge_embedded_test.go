@@ -129,6 +129,21 @@ func TestEmbeddedPurge(t *testing.T) {
 		out := bdPurge(t, bd, dir, "--pattern", "pt-*", "--force")
 		_ = out // Should succeed or find no matches
 	})
+
+	// beads-cpss: a MALFORMED glob (e.g. an unclosed bracket) must fail loud,
+	// not silently match nothing. filepath.Match returns ErrBadPattern for
+	// "[invalid"; purge previously discarded that error (`ok, _ :=`) so a typo'd
+	// --pattern reported "No beads to purge" with rc=0 — a footgun on a
+	// destructive command that masks the user's mistake.
+	t.Run("purge_malformed_pattern_fails_loud", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "pm")
+		createAndCloseEphemeral(t, bd, dir, "Purge bad pattern test")
+
+		out := bdPurgeFail(t, bd, dir, "--pattern", "[invalid", "--dry-run")
+		if !strings.Contains(strings.ToLower(out), "pattern") {
+			t.Errorf("expected a malformed-pattern error mentioning 'pattern', got: %q", out)
+		}
+	})
 }
 
 // TestEmbeddedPurgeConcurrent exercises purge --dry-run concurrently.
