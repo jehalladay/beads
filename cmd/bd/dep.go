@@ -709,6 +709,19 @@ func dependencyStoreKey(s storage.DoltStorage) string {
 	return fmt.Sprintf("instance:%p", s)
 }
 
+// depListExit signals a non-zero exit when one or more ids failed to resolve in
+// a `bd dep list <id>...` batch, while the resolvable ids' output is still
+// produced (partial output preserved). This keeps batch mode consistent with
+// the single-id path (which errors at resolve) so a `bd dep list $ids || ...`
+// guard fires on a missing/typo'd id rather than silently proceeding when
+// nothing (or only some) resolved (beads-116e).
+func depListExit(failedCount int) error {
+	if failedCount > 0 {
+		return &exitError{Code: 1}
+	}
+	return nil
+}
+
 var depListCmd = &cobra.Command{
 	Use:   "list [issue-id...]",
 	Short: "List dependencies or dependents of one or more issues",
@@ -758,11 +771,13 @@ Examples:
 		}
 		var resolved []resolvedID
 		batchMode := len(args) > 1
+		failedCount := 0
 		for _, arg := range args {
 			routedResult, err := resolveAndGetIssueWithRouting(ctx, store, arg)
 			if err != nil {
 				if batchMode {
 					fmt.Fprintf(os.Stderr, "warning: resolving %s: %v (skipped)\n", arg, err)
+					failedCount++
 					continue
 				}
 				return HandleErrorRespectJSON("resolving %s: %v", arg, err)
@@ -770,6 +785,7 @@ Examples:
 			if routedResult == nil || routedResult.Issue == nil {
 				if batchMode {
 					fmt.Fprintf(os.Stderr, "warning: no issue found: %s (skipped)\n", arg)
+					failedCount++
 					continue
 				}
 				return HandleErrorRespectJSON("no issue found: %s", arg)
@@ -786,10 +802,13 @@ Examples:
 		}
 		if batchMode && len(resolved) == 0 {
 			if jsonOutput {
-				return outputJSON([]*types.Dependency{})
+				if err := outputJSON([]*types.Dependency{}); err != nil {
+					return err
+				}
+				return depListExit(failedCount)
 			}
 			fmt.Fprintln(os.Stderr, "no resolvable issues in batch")
-			return nil
+			return depListExit(failedCount)
 		}
 		defer func() {
 			for _, r := range resolved {
@@ -827,7 +846,10 @@ Examples:
 						if allDeps == nil {
 							allDeps = []*types.Dependency{}
 						}
-						return outputJSON(allDeps)
+						if err := outputJSON(allDeps); err != nil {
+							return err
+						}
+						return depListExit(failedCount)
 					}
 					for _, id := range ids {
 						deps := depMap[id]
@@ -844,7 +866,7 @@ Examples:
 						}
 					}
 					fmt.Println()
-					return nil
+					return depListExit(failedCount)
 				}
 			}
 		}
@@ -877,7 +899,10 @@ Examples:
 			if allIssues == nil {
 				allIssues = []*types.IssueWithDependencyMetadata{}
 			}
-			return outputJSON(allIssues)
+			if err := outputJSON(allIssues); err != nil {
+				return err
+			}
+			return depListExit(failedCount)
 		}
 
 		if len(allIssues) == 0 {
@@ -890,7 +915,7 @@ Examples:
 			} else {
 				fmt.Println("\nNo dependencies found")
 			}
-			return nil
+			return depListExit(failedCount)
 		}
 
 		for _, iss := range allIssues {
@@ -911,7 +936,7 @@ Examples:
 				idStr, iss.Title, iss.Priority, iss.Status, iss.DependencyType)
 		}
 		fmt.Println()
-		return nil
+		return depListExit(failedCount)
 	},
 }
 
