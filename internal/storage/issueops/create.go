@@ -754,7 +754,19 @@ func PersistDependenciesWithOptionsResult(ctx context.Context, tx *sql.Tx, issue
 				return result, fmt.Errorf("dependency %s -> %s has invalid type %q: must be non-empty and at most 32 characters", dep.IssueID, dep.DependsOnID, dep.Type)
 			}
 
-			kind := ClassifyDepTarget(ctx, tx, dep, false)
+			// A cross-prefix target (source and target have different ID
+			// prefixes) lives in another rig's database, so it can't be
+			// validated against — or found in — this DB's issues/wisps tables.
+			// Every interactive path (dep add / link) derives cross-prefix via
+			// ExtractPrefix and treats such a target as external, skipping the
+			// local-existence check (dolt/transaction.go, embeddeddolt/*). Import
+			// once hardcoded false here, so a cross-prefix edge that dep add
+			// accepts and export emits was validated locally, missed, and got
+			// silently dropped as "target not found" — a lossy export->import
+			// round-trip (beads-77i6). Derive cross-prefix the same way so the
+			// edge is preserved.
+			isCrossPrefix := types.ExtractPrefix(dep.IssueID) != types.ExtractPrefix(dep.DependsOnID)
+			kind := ClassifyDepTarget(ctx, tx, dep, isCrossPrefix)
 
 			if kind != DepTargetExternal {
 				lookupTable := "issues"
