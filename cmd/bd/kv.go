@@ -91,7 +91,7 @@ Examples:
 		}()
 
 		if err := ensureDirectMode("kv set requires direct database access"); err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		key := args[0]
@@ -138,7 +138,7 @@ Examples:
 		}()
 
 		if err := ensureDirectMode("kv get requires direct database access"); err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		key := args[0]
@@ -195,7 +195,7 @@ Examples:
 		}()
 
 		if err := ensureDirectMode("kv clear requires direct database access"); err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		key := args[0]
@@ -257,7 +257,7 @@ Examples:
 		}()
 
 		if err := ensureDirectMode("kv list requires direct database access"); err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		ctx := rootCtx
