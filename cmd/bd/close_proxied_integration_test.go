@@ -744,6 +744,36 @@ func TestProxiedServerClose(t *testing.T) {
 			}
 		}
 	})
+
+	// beads-gt5p: a PARTIAL batch (some ids close, one is unresolvable) must
+	// exit non-zero, matching the direct path (close.go — genuine failures trip
+	// a non-zero exit alongside successes) and the update/cwl8 partial-exit
+	// contract. Before the fix runCloseProxiedServer exited non-zero only when
+	// ALL ids failed, so `bd close good-id ghost-id` returned rc=0 — a
+	// false-clean read for a proxied crew scripting `bd close a b c || fail`.
+	t.Run("partial_batch_failure_exits_nonzero", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "cpe")
+		good := bdProxiedCreate(t, bd, p.dir, "Good close", "--type", "task")
+
+		out := bdProxiedCloseFail(t, bd, p.dir, good.ID, "ghost-9999", "--reason", "partial")
+		if strings.Contains(out, "storage is nil") {
+			t.Fatalf("proxied close hit the nil-store path: %s", out)
+		}
+		// The good id still closed (proxied processes the resolvable ids); the
+		// non-zero exit comes from the unresolvable one.
+		got := bdProxiedShow(t, bd, p.dir, good.ID)
+		if got.Status != types.StatusClosed {
+			t.Errorf("good id status after partial close = %q, want closed", got.Status)
+		}
+	})
+
+	t.Run("all_bad_ids_exits_nonzero", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "cae")
+		out := bdProxiedCloseFail(t, bd, p.dir, "ghost-1", "ghost-2", "--reason", "none")
+		if strings.Contains(out, "storage is nil") {
+			t.Fatalf("proxied close hit the nil-store path: %s", out)
+		}
+	})
 }
 
 func shellQuote(s string) string {

@@ -157,7 +157,17 @@ func runCloseProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 		SetLastTouchedID(closedIssues[0].ID)
 	}
 
-	if len(args) > 0 && len(outcomes) == 0 {
+	// beads-gt5p: exit non-zero when ANY id failed (not only when ALL failed).
+	// closeProxiedOne returns an outcome for every id that closed OR was an
+	// idempotent already-closed no-op (rc-0-fine per beads-8l5t), and nothing
+	// for a genuine failure (not-found / guard / blocked, already reported to
+	// stderr). So len(outcomes) < len(args) means at least one id genuinely
+	// failed — mirror the direct path (close.go: genuine failures trip a
+	// non-zero exit even alongside successes) and the update/cwl8 partial-exit
+	// contract, instead of the old ALL-failed-only check that returned rc=0 on
+	// a partial batch (e.g. `bd close good-id ghost-id`) — a false-clean read
+	// for a proxied crew scripting `bd close a b c || fail`.
+	if len(outcomes) < len(args) {
 		os.Exit(1)
 	}
 }
