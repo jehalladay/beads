@@ -283,6 +283,35 @@ func TestEmbeddedFindDuplicates(t *testing.T) {
 			t.Errorf("expected 'Pair' in human-readable output: %s", out)
 		}
 	})
+
+	// ===== Flag validation (beads-j1r0): reject out-of-range/invalid inputs =====
+
+	t.Run("threshold_above_one_rejected", func(t *testing.T) {
+		out := bdFindDupsFail(t, bd, dir, "--threshold", "5")
+		if !strings.Contains(out, "threshold must be between 0.0 and 1.0") {
+			t.Errorf("expected threshold-range error, got: %s", out)
+		}
+	})
+
+	t.Run("threshold_negative_rejected", func(t *testing.T) {
+		out := bdFindDupsFail(t, bd, dir, "--threshold", "-1")
+		if !strings.Contains(out, "threshold must be between 0.0 and 1.0") {
+			t.Errorf("expected threshold-range error, got: %s", out)
+		}
+	})
+
+	t.Run("threshold_in_range_accepted", func(t *testing.T) {
+		// 0.0 and 1.0 are the inclusive bounds — must not error.
+		_ = bdFindDups(t, bd, dir, "--threshold", "0")
+		_ = bdFindDups(t, bd, dir, "--threshold", "1")
+	})
+
+	t.Run("invalid_status_rejected", func(t *testing.T) {
+		out := bdFindDupsFail(t, bd, dir, "--status", "bogusxyz")
+		if !strings.Contains(out, "invalid status") {
+			t.Errorf("expected invalid-status error, got: %s", out)
+		}
+	})
 }
 
 // TestEmbeddedFindDuplicatesConcurrent exercises find-duplicates operations concurrently.

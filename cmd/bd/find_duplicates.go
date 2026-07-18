@@ -122,7 +122,14 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) error {
 
 	filter := types.IssueFilter{}
 	if status != "" && status != "all" {
-		s := types.Status(status)
+		filterCfg, cfgErr := loadDirectListFilterConfig(ctx, store)
+		if cfgErr != nil {
+			return HandleErrorRespectJSON("%v", cfgErr)
+		}
+		s := types.Status(status).Normalize()
+		if !s.IsValidWithCustom(filterCfg.customStatusNames()) {
+			return HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(filterCfg.customStatusNames()))
+		}
 		filter.Status = &s
 	}
 
