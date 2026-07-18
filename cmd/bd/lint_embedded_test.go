@@ -317,3 +317,58 @@ func TestEmbeddedLintConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddedLintRejectsInvalidEnums is the beads-8cg2 teeth: bd lint must
+// reject invalid --status/--type values with rc!=0 and a valid-values-listing
+// error, mirroring bd list — not silently check 0 issues and exit 0 (a
+// false-clean pass a typo'd CI/agent lint gate would read as success). 3rd
+// command in the enum-value-reject family (beads-deud count/search, beads-pbl7
+// ready). lint has no --priority flag, so status+type are the gap.
+func TestEmbeddedLintRejectsInvalidEnums(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "lde")
+	// A fully-templated bug so a VALID lint finds no warnings (exit 0) — proving
+	// the surgical change only affects the invalid-enum path.
+	bdCreate(t, bd, dir, "lint enum clean bug", "--type", "bug",
+		"--description", "## Steps to Reproduce\nx\n## Acceptance Criteria\ny")
+
+	cases := []struct {
+		name    string
+		args    []string
+		wantSub string
+	}{
+		{"invalid_status", []string{"--status", "bogusxyz"}, "invalid status"},
+		{"invalid_type", []string{"--type", "notatype"}, "invalid issue type"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, code := bdLint(t, bd, dir, tc.args...)
+			if code == 0 {
+				t.Fatalf("bd lint %v: expected non-zero exit, got 0:\n%s", tc.args, out)
+			}
+			if !strings.Contains(out, tc.wantSub) {
+				t.Errorf("bd lint %v: expected error containing %q, got:\n%s", tc.args, tc.wantSub, out)
+			}
+		})
+	}
+
+	// Valid values must still succeed (surgical — no regression). The seeded bug
+	// is fully templated, so a valid lint reports no warnings and exits 0.
+	for _, args := range [][]string{
+		{"--status", "open"},
+		{"--type", "bug"},
+	} {
+		out, code := bdLint(t, bd, dir, args...)
+		if code != 0 {
+			t.Errorf("bd lint %v: expected exit 0 on valid input, got %d:\n%s", args, code, out)
+		}
+		if !strings.Contains(out, "No template warnings found") {
+			t.Errorf("bd lint %v: expected clean-lint output, got:\n%s", args, out)
+		}
+	}
+}
