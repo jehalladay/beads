@@ -576,3 +576,143 @@ func TestEmbeddedDepBulkNoCycleCheckKeepsWholeGraphGate(t *testing.T) {
 		t.Fatalf("expected rolled-back bulk add to leave the graph acyclic, got: %s", cycles)
 	}
 }
+
+// bdDepAddFail runs "bd dep add" expecting a non-zero exit; returns combined output.
+func bdDepAddFail(t *testing.T, bd, dir string, args ...string) string {
+	t.Helper()
+	fullArgs := append([]string{"dep", "add"}, args...)
+	cmd := exec.Command(bd, fullArgs...)
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected bd dep add %s to fail, but it succeeded:\n%s", strings.Join(args, " "), out)
+	}
+	return string(out)
+}
+
+// TestEmbeddedDepAddClosedEpicParentGuard verifies the beads-eth8 fix: adding an
+// OPEN child to an already-CLOSED epic via a parent-child edge would recreate the
+// closed-epic-with-open-child inconsistency the close-guard family prevents. The
+// dep-add chokepoint refuses it unless --force. Sibling of beads-2hkd (demote) /
+// beads-b0tw (child-reopen) / beads-zgku / beads-1d08.
+func TestEmbeddedDepAddClosedEpicParentGuard(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "de")
+
+	// newClosedEpic creates an epic and closes it (no children yet, so the close
+	// is clean).
+	newClosedEpic := func(t *testing.T, prefix string) string {
+		epic := bdCreate(t, bd, dir, prefix+" epic", "--type", "epic")
+		bdClose(t, bd, dir, epic.ID)
+		return epic.ID
+	}
+
+	// Adding an OPEN child to a CLOSED epic must be refused without --force.
+	t.Run("open_child_to_closed_epic_refuses", func(t *testing.T) {
+		epic := newClosedEpic(t, "cr")
+		child := bdCreate(t, bd, dir, "cr child", "--type", "task") // open
+		out := bdDepAddFail(t, bd, dir, child.ID, epic, "--type", "parent-child")
+		if !strings.Contains(out, "closed epic") {
+			t.Errorf("expected closed-epic-parent dep-add guard message, got:\n%s", out)
+		}
+		// The edge must not have been added (guard fired before AddDependency).
+		deps := showDeps(t, bd, dir, child.ID)
+		for _, d := range deps {
+			if d.ID == epic {
+				t.Errorf("parent-child edge to closed epic should not have been added, got %+v", deps)
+			}
+		}
+	})
+
+	// --force overrides (operator escape hatch, family parity).
+	t.Run("open_child_to_closed_epic_force_succeeds", func(t *testing.T) {
+		epic := newClosedEpic(t, "cf")
+		child := bdCreate(t, bd, dir, "cf child", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, epic, "--type", "parent-child", "--force")
+		found := false
+		for _, d := range showDeps(t, bd, dir, child.ID) {
+			if d.ID == epic {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected --force to add the parent-child edge to the closed epic")
+		}
+	})
+
+	// Adding a CLOSED child to a closed epic is fine (no open child created).
+	t.Run("closed_child_to_closed_epic_succeeds", func(t *testing.T) {
+		epic := newClosedEpic(t, "cc")
+		child := bdCreate(t, bd, dir, "cc child", "--type", "task")
+		bdClose(t, bd, dir, child.ID)
+		bdDepAdd(t, bd, dir, child.ID, epic, "--type", "parent-child")
+		found := false
+		for _, d := range showDeps(t, bd, dir, child.ID) {
+			if d.ID == epic {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected closed child to attach to closed epic cleanly")
+		}
+	})
+
+	// Adding an open child to an OPEN epic is unaffected (the normal case).
+	t.Run("open_child_to_open_epic_succeeds", func(t *testing.T) {
+		epic := bdCreate(t, bd, dir, "oe epic", "--type", "epic") // stays open
+		child := bdCreate(t, bd, dir, "oe child", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, epic.ID, "--type", "parent-child")
+		found := false
+		for _, d := range showDeps(t, bd, dir, child.ID) {
+			if d.ID == epic.ID {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected open child to attach to open epic")
+		}
+	})
+
+	// A non-parent-child edge (related) to a closed epic is unaffected — the
+	// guard is specific to the parent-child (epic-membership) relationship.
+	// (A `blocks` edge task->epic is independently rejected by the cross-type
+	// blocking rule, so `related` is the clean witness for guard-specificity.)
+	t.Run("related_edge_to_closed_epic_succeeds", func(t *testing.T) {
+		epic := newClosedEpic(t, "rl")
+		child := bdCreate(t, bd, dir, "rl related", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, epic, "--type", "related")
+		found := false
+		for _, d := range showDeps(t, bd, dir, child.ID) {
+			if d.ID == epic {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected a related edge to a closed epic to be allowed")
+		}
+	})
+
+	// A parent-child edge to a closed NON-epic parent is unaffected — the
+	// invariant is specifically about closed EPIC parents.
+	t.Run("open_child_to_closed_nonepic_parent_succeeds", func(t *testing.T) {
+		parent := bdCreate(t, bd, dir, "np parent", "--type", "task")
+		bdClose(t, bd, dir, parent.ID)
+		child := bdCreate(t, bd, dir, "np child", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, parent.ID, "--type", "parent-child")
+		found := false
+		for _, d := range showDeps(t, bd, dir, child.ID) {
+			if d.ID == parent.ID {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected open child to attach to a closed non-epic parent")
+		}
+	})
+}

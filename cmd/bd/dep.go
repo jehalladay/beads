@@ -375,6 +375,27 @@ Examples:
 			Type:        dt,
 		}
 
+		// Closed-epic-parent guard (beads-eth8): attaching an OPEN child to an
+		// already-CLOSED epic via a parent-child edge silently creates the
+		// closed-epic-with-open-child inconsistency the close-guard family
+		// prevents ("a closed epic has no open children" is enforced at
+		// epic-close, but never re-checked when a new parent-child edge is added
+		// afterwards). Here `bd dep add <child> <epic> --type parent-child` maps
+		// child->fromID (IssueID) and epic->toID (DependsOnID). Refuse unless
+		// --force, mirroring `bd close --force`. Best-effort: only guards when
+		// both endpoints resolve in fromStore (same-store, non-external); a
+		// cross-rig/external parent is left to the normal path.
+		depForce, _ := cmd.Flags().GetBool("force")
+		if !depForce && dt == types.DepParentChild && !isExternalRef {
+			parent, perr := fromStore.GetIssue(ctx, toID)
+			child, cerr := fromStore.GetIssue(ctx, fromID)
+			if perr == nil && cerr == nil && parent != nil && child != nil &&
+				parent.IssueType == types.TypeEpic && parent.Status == types.StatusClosed &&
+				child.Status != types.StatusClosed {
+				return HandleErrorRespectJSON("cannot add %s as a child of closed epic %s: it would leave the closed epic with an open child; reopen the epic, close the child first, or use --force to override", fromID, toID)
+			}
+		}
+
 		if err := fromStore.AddDependency(ctx, dep, actor); err != nil {
 			return HandleErrorRespectJSON("%v", err)
 		}
@@ -1543,6 +1564,7 @@ func init() {
 	depAddCmd.Flags().String("depends-on", "", "Issue ID that the first issue depends on (alias for --blocked-by)")
 	depAddCmd.Flags().String("file", "", "Read dependency edges from JSONL file, or '-' for stdin")
 	depAddCmd.Flags().Bool("no-cycle-check", false, "Skip per-edge cycle checks for speed (bulk wiring); bulk --file adds still run one final whole-graph check before commit")
+	depAddCmd.Flags().Bool("force", false, "Override the closed-epic-parent guard (adding an open child to a closed epic); recreates a closed-epic-with-open-child state")
 
 	depTreeCmd.Flags().Bool("show-all-paths", false, "Show all paths to nodes (no deduplication for diamond dependencies)")
 	depTreeCmd.Flags().IntP("max-depth", "d", 50, "Maximum tree depth to display (safety limit)")
