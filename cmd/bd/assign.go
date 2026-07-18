@@ -95,6 +95,34 @@ Examples:
 			return HandleErrorRespectJSON("%s", err)
 		}
 
+		// beads-xqsy: `bd assign <id> <same-assignee>` is an idempotent no-op —
+		// re-assigning to the current owner (or unassigning an already-unassigned
+		// issue) changes nothing, yet the command printed "✓ Assigned/Unassigned"
+		// with rc=0, a false success a CI/agent gate reads as proof of a state
+		// change. UpdateIssue itself is idempotent (correct for programmatic
+		// callers), so — mirroring the bwla dep-add / w2tk false-success class —
+		// the CLI pre-checks and reports an honest "no change" (rc=0, benign
+		// no-op) rather than a fake ✓, and skips the write so no spurious audit
+		// event / commit is recorded. Under --json the issue object is still
+		// emitted (it accurately reflects the already-desired state), preserving
+		// the JSON contract.
+		if normalizeAssignee(result.Issue.Assignee) == assignee {
+			SetLastTouchedID(result.ResolvedID)
+			if jsonOutput {
+				if err := outputJSON(result.Issue); err != nil {
+					return err
+				}
+			} else {
+				title := formatFeedbackID(result.ResolvedID, result.Issue.Title)
+				if assignee == "" {
+					fmt.Printf("%s already unassigned, no change\n", title)
+				} else {
+					fmt.Printf("%s already assigned to %s, no change\n", title, assignee)
+				}
+			}
+			return nil
+		}
+
 		updates := map[string]interface{}{
 			"assignee": assignee,
 		}
