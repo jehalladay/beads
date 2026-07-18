@@ -113,6 +113,7 @@ var showCmd = &cobra.Command{
 		// Direct mode - use routed resolution for cross-repo lookups
 		allDetails := []interface{}{}
 		foundCount := 0
+		failedCount := 0
 		for idx, id := range args {
 			// Resolve and get issue with routing (e.g., gt-xyz routes to another rig)
 			result, err := resolveAndGetIssueWithRouting(ctx, store, id)
@@ -121,6 +122,7 @@ var showCmd = &cobra.Command{
 					result.Close()
 				}
 				reportItemError("Error fetching %s: %v", id, err)
+				failedCount++
 				continue
 			}
 			if result == nil || result.Issue == nil {
@@ -128,6 +130,7 @@ var showCmd = &cobra.Command{
 					result.Close()
 				}
 				reportItemError("Issue %s not found", id)
+				failedCount++
 				continue
 			}
 			issue := result.Issue
@@ -431,6 +434,16 @@ var showCmd = &cobra.Command{
 
 		if len(args) > 0 {
 			SetLastTouchedID(args[0])
+		}
+		// Partial failure: at least one id resolved (its issue was shown/emitted)
+		// but at least one other id could not be fetched. The all-failed case
+		// already exits non-zero above (SilentExit / HandleErrorRespectJSON); this
+		// makes the partial case do the same so scripts (`bd show $a $b || ...`)
+		// don't silently proceed when one of several ids is missing (beads-sw7l).
+		// The found issues have already been printed/emitted, so display is
+		// preserved — only the terminal exit code changes.
+		if failedCount > 0 {
+			return &exitError{Code: 1}
 		}
 		return nil
 	},
