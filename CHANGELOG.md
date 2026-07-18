@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd count` and `bd ready` `--priority` flags now accept the documented `P0`-`P4` syntax, not just bare `0`-`4` (beads-vcpq).**
+  `bd list`/`quick`/`create` register `--priority` as a `StringP` consumed via `ValidatePriority`
+  (which calls `ParsePriority`), so both `--priority 2` and `--priority P2` work and the help text
+  documents `0-4 or P0-P4`. `bd count` (and its `--priority-min`/`--priority-max`) used an `IntP`/`Int`
+  flag, so `bd count --priority P2` failed with a raw cobra `strconv.ParseInt: parsing "P2"` error
+  before any beads code ran — a cross-command syntax-parity break on the form `bd list` documents.
+  `bd count`'s priority flags are now `StringP`/`String` parsed via `ValidatePriority`, mirroring
+  `bd list`: `P2` resolves identically to `2`, `--priority-min P1`/`--priority-max P2` are accepted,
+  and out-of-range/non-numeric values still error (subsuming beads-deud's `0-4` range check). `--json`
+  emits the structured `{"error":...}` shape. This is the `bd count` half; the `bd ready` leg
+  coordinates with beads-pbl7 (which owns `ready.go` `--priority` validation).
 - **`bd count` and `bd search` now reject invalid `--status`/`--type`/`--priority` values (beads-deud).**
   Both commands silently accepted bogus enum values — `bd count --status bogusxyz`,
   `--type notatype`, `--priority 99`/`-1`, and `bd search --status/--type` — returning
