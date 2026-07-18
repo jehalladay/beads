@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 )
 
 const idempotencyPrefix = "<!-- bd-idempotency: "
@@ -33,4 +34,35 @@ func AppendIdempotencyMarker(description, marker string) string {
 		return marker
 	}
 	return description + "\n" + marker
+}
+
+// StripIdempotencyMarker removes the bd-idempotency HTML-comment marker (and the
+// newline separator that AppendIdempotencyMarker inserts before it) from a
+// description, returning the original body. It is the exact inverse of
+// AppendIdempotencyMarker. A description with no marker is returned unchanged.
+//
+// This must be applied on import (so the marker never leaks into the beads
+// description) and in the push change-detection comparators (so a
+// beads-originated issue whose remote description carries the marker still
+// compares equal to the unchanged local issue and is not re-pushed every sync).
+// beads-5ahf.
+func StripIdempotencyMarker(description string) string {
+	idx := strings.Index(description, idempotencyPrefix)
+	if idx < 0 {
+		return description
+	}
+	end := strings.Index(description[idx:], idempotencySuffix)
+	if end < 0 {
+		return description
+	}
+	markerEnd := idx + end + len(idempotencySuffix)
+	before := description[:idx]
+	after := description[markerEnd:]
+	// Drop the single newline separator AppendIdempotencyMarker inserts before
+	// the marker (marker appended to a non-empty body), so the body round-trips
+	// exactly. Guard the index since the marker can also be the whole body.
+	if strings.HasSuffix(before, "\n") {
+		before = before[:len(before)-1]
+	}
+	return before + after
 }

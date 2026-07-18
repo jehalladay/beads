@@ -426,7 +426,10 @@ func PushFieldsEqual(local *types.Issue, remote *Issue, config *MappingConfig) b
 	if local.Title != remote.Title {
 		return false
 	}
-	if BuildLinearDescription(local) != remote.Description {
+	// The idempotent-create path embeds a bd-idempotency marker in the remote
+	// description; strip it so an unchanged beads-originated issue still compares
+	// equal and is not re-pushed on every sync (beads-5ahf).
+	if BuildLinearDescription(local) != StripIdempotencyMarker(remote.Description) {
 		return false
 	}
 	if PriorityToLinear(local.Priority, config) != remote.Priority {
@@ -444,7 +447,10 @@ func PushFieldsEqualToBeads(local, remote *types.Issue) bool {
 	if local.Title != remote.Title {
 		return false
 	}
-	if BuildLinearDescription(local) != remote.Description {
+	// Strip the bd-idempotency marker defensively; it is normally already
+	// removed on import, but a marker-bearing remote must not desync the compare
+	// (beads-5ahf).
+	if BuildLinearDescription(local) != StripIdempotencyMarker(remote.Description) {
 		return false
 	}
 	if local.Priority != remote.Priority {
@@ -545,8 +551,11 @@ func IssueToBeads(li *Issue, config *MappingConfig) *IssueConversion {
 	}
 
 	issue := &types.Issue{
-		Title:       li.Title,
-		Description: li.Description,
+		Title: li.Title,
+		// Strip the bd-idempotency marker that the idempotent-create path embeds
+		// into the pushed description, so it never leaks into the beads
+		// description on import (beads-5ahf).
+		Description: StripIdempotencyMarker(li.Description),
 		Priority:    PriorityToBeads(li.Priority, config),
 		IssueType:   LabelToIssueType(li.Labels, config),
 		CreatedAt:   createdAt,
