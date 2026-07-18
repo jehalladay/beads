@@ -598,7 +598,10 @@ func parseTypeList(s string) []types.IssueType {
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
 		if p != "" {
-			result = append(result, types.IssueType(p))
+			// Normalize aliases + case (mr->merge-request, feat->feature, ...)
+			// so the exact-== match in engine.shouldSync doesn't silently miss
+			// (--type) or fail open (--exclude-type). beads-15vj.
+			result = append(result, issueTypeFilterValue(p))
 		}
 	}
 	return result
