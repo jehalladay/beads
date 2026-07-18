@@ -65,10 +65,10 @@ func formatPrettyIssue(issue *types.Issue) string {
 			ui.RenderMuted(issue.ID),
 			ui.RenderMuted(fmt.Sprintf("● P%d", issue.Priority)),
 			ui.RenderMuted(string(issue.IssueType)),
-			ui.RenderMuted(" "+issue.Title))
+			ui.RenderMuted(" "+displayTitle(issue.Title)))
 	}
 
-	return fmt.Sprintf("%s %s %s %s%s", statusIcon, issue.ID, priorityTag, typeBadge, issue.Title)
+	return fmt.Sprintf("%s %s %s %s%s", statusIcon, issue.ID, priorityTag, typeBadge, displayTitle(issue.Title))
 }
 
 // formatPrettyIssueWithContext formats an issue with optional parent epic annotation
@@ -88,7 +88,7 @@ func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string, 
 	if status == "closed" {
 		line := fmt.Sprintf("%s%s [P%d] [%s] %s\n  %s",
 			pinIndicator(issue), issue.ID, issue.Priority,
-			issue.IssueType, status, issue.Title)
+			issue.IssueType, status, displayTitle(issue.Title))
 		buf.WriteString(ui.RenderClosedLine(line))
 		buf.WriteString("\n")
 	} else {
@@ -98,7 +98,7 @@ func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string, 
 			ui.RenderPriority(issue.Priority),
 			ui.RenderType(string(issue.IssueType)),
 			ui.RenderStatus(status)))
-		buf.WriteString(fmt.Sprintf("  %s\n", issue.Title))
+		buf.WriteString(fmt.Sprintf("  %s\n", displayTitle(issue.Title)))
 	}
 	if issue.Assignee != "" {
 		buf.WriteString(fmt.Sprintf("  Assignee: %s\n", issue.Assignee))
@@ -129,9 +129,9 @@ func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string, 
 func formatAgentIssue(buf *strings.Builder, issue *types.Issue, blockedBy, blocks []string, parent string) {
 	depInfo := formatDependencyInfo(blockedBy, blocks, parent)
 	if depInfo != "" {
-		buf.WriteString(fmt.Sprintf("%s: %s %s\n", issue.ID, issue.Title, depInfo))
+		buf.WriteString(fmt.Sprintf("%s: %s %s\n", issue.ID, displayTitle(issue.Title), depInfo))
 	} else {
-		buf.WriteString(fmt.Sprintf("%s: %s\n", issue.ID, issue.Title))
+		buf.WriteString(fmt.Sprintf("%s: %s\n", issue.ID, displayTitle(issue.Title)))
 	}
 }
 
@@ -254,7 +254,7 @@ func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []strin
 		// Closed issues: entire line muted (fades visually)
 		line := fmt.Sprintf("%s %s%s [P%d] [%s]%s%s - %s%s",
 			statusIcon, pinIndicator(issue), issue.ID, issue.Priority,
-			issue.IssueType, assigneeStr, labelsStr, issue.Title, depInfo)
+			issue.IssueType, assigneeStr, labelsStr, displayTitle(issue.Title), depInfo)
 		buf.WriteString(ui.RenderClosedLine(line))
 		buf.WriteString("\n")
 	} else {
@@ -265,7 +265,7 @@ func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []strin
 			ui.RenderID(issue.ID),
 			ui.RenderPriority(issue.Priority),
 			ui.RenderType(string(issue.IssueType)),
-			assigneeStr, labelsStr, issue.Title, depInfo))
+			assigneeStr, labelsStr, displayTitle(issue.Title), depInfo))
 	}
 }
 

@@ -33,10 +33,10 @@ func formatShortIssue(issue *types.Issue) string {
 			ui.RenderMuted(issue.ID),
 			ui.RenderMuted(fmt.Sprintf("● P%d", issue.Priority)),
 			ui.RenderMuted(string(issue.IssueType)),
-			ui.RenderMuted(" "+issue.Title))
+			ui.RenderMuted(" "+displayTitle(issue.Title)))
 	}
 
-	return fmt.Sprintf("%s %s %s %s%s", statusIcon, issue.ID, priorityTag, typeBadge, issue.Title)
+	return fmt.Sprintf("%s %s %s %s%s", statusIcon, issue.ID, priorityTag, typeBadge, displayTitle(issue.Title))
 }
 
 // formatIssueHeader returns the Tufte-aligned header line
@@ -72,7 +72,7 @@ func formatIssueHeader(issue *types.Issue) string {
 	// Build header: STATUS_ICON ID · Title   [Priority · STATUS]
 	idStyled := ui.RenderAccent(issue.ID)
 	return fmt.Sprintf("%s %s%s · %s%s   [%s · %s]",
-		statusIcon, idStyled, typeBadge, issue.Title, tierEmoji, priorityTag, statusStr)
+		statusIcon, idStyled, typeBadge, displayTitle(issue.Title), tierEmoji, priorityTag, statusStr)
 }
 
 // formatIssueMetadata returns the metadata line(s) with grouped info
@@ -155,7 +155,7 @@ func formatDependencyLine(prefix string, dep *types.IssueWithDependencyMetadata)
 		return fmt.Sprintf("  %s %s %s: %s %s",
 			prefix, statusIcon,
 			ui.RenderMuted(dep.ID),
-			ui.RenderMuted(dep.Title),
+			ui.RenderMuted(displayTitle(dep.Title)),
 			ui.RenderMuted(fmt.Sprintf("● P%d", dep.Priority)))
 	}
 
@@ -172,7 +172,7 @@ func formatDependencyLine(prefix string, dep *types.IssueWithDependencyMetadata)
 		typeStr = ui.TypeBugStyle.Render("(BUG)") + " "
 	}
 
-	return fmt.Sprintf("  %s %s %s: %s%s %s", prefix, statusIcon, idStr, typeStr, dep.Title, priorityTag)
+	return fmt.Sprintf("  %s %s %s: %s%s %s", prefix, statusIcon, idStr, typeStr, displayTitle(dep.Title), priorityTag)
 }
 
 // formatSimpleDependencyLine formats a dependency without metadata (fallback)
@@ -185,7 +185,7 @@ func formatSimpleDependencyLine(prefix string, dep *types.Issue) string {
 		return fmt.Sprintf("  %s %s %s: %s %s",
 			prefix, statusIcon,
 			ui.RenderMuted(dep.ID),
-			ui.RenderMuted(dep.Title),
+			ui.RenderMuted(displayTitle(dep.Title)),
 			ui.RenderMuted(fmt.Sprintf("● P%d", dep.Priority)))
 	}
 
@@ -194,7 +194,7 @@ func formatSimpleDependencyLine(prefix string, dep *types.Issue) string {
 	idStr := style.Render(dep.ID)
 	priorityTag := ui.RenderPriority(dep.Priority)
 
-	return fmt.Sprintf("  %s %s %s: %s %s", prefix, statusIcon, idStr, dep.Title, priorityTag)
+	return fmt.Sprintf("  %s %s %s: %s %s", prefix, statusIcon, idStr, displayTitle(dep.Title), priorityTag)
 }
 
 // formatIssueCustomMetadata renders the issue's custom JSON metadata field
