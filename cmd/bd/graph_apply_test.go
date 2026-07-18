@@ -51,6 +51,47 @@ func TestValidateGraphApplyPlanRejectsInvalidTypes(t *testing.T) {
 	}
 }
 
+// beads-0kno: graph-apply edge validation gated only on IsValid() (non-empty,
+// <=32), so an unknown/typo'd dependency type (e.g. "blockd") was accepted and
+// would store as a non-gating custom edge — the same silent-gate-drift beads-qfka
+// closed for `bd dep add`. Edge types must be well-known, mirroring the node-type
+// membership check.
+func TestValidateGraphApplyPlanRejectsUnknownEdgeType(t *testing.T) {
+	plan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "a", Title: "A", Type: "task"},
+			{Key: "b", Title: "B", Type: "task"},
+		},
+		Edges: []GraphApplyEdge{
+			{FromKey: "a", ToKey: "b", Type: "blockd"},
+		},
+	}
+	err := validateGraphApplyPlan(plan, nil)
+	if err == nil {
+		t.Fatal("expected error for unknown edge dependency type 'blockd'")
+	}
+	if !strings.Contains(err.Error(), "unknown dependency type") {
+		t.Fatalf("expected 'unknown dependency type' error, got: %v", err)
+	}
+}
+
+func TestValidateGraphApplyPlanAcceptsWellKnownEdgeTypes(t *testing.T) {
+	for _, typ := range []string{"blocks", "parent-child", "related", "tracks", "discovered-from"} {
+		plan := &GraphApplyPlan{
+			Nodes: []GraphApplyNode{
+				{Key: "a", Title: "A", Type: "task"},
+				{Key: "b", Title: "B", Type: "task"},
+			},
+			Edges: []GraphApplyEdge{
+				{FromKey: "a", ToKey: "b", Type: typ},
+			},
+		}
+		if err := validateGraphApplyPlan(plan, nil); err != nil {
+			t.Errorf("well-known edge type %q rejected: %v", typ, err)
+		}
+	}
+}
+
 func TestValidateGraphApplyPlanAcceptsBuiltInTypes(t *testing.T) {
 	for _, typ := range []string{"task", "bug", "feature", "epic", "chore", "decision"} {
 		plan := &GraphApplyPlan{
