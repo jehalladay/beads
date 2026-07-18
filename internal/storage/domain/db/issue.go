@@ -101,25 +101,10 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 		}
 	}
 
-	setClauses := make([]string, 0, len(updates))
-	args := make([]any, 0, len(updates)+1)
-	for key, value := range updates {
-		if _, ok := allowedUpdateFields[key]; !ok {
-			return fmt.Errorf("db: Update: field %q is not allowed", key)
-		}
-		column := key
-		if renamed, ok := updateFieldColumnRename[key]; ok {
-			column = renamed
-		}
-		setClauses = append(setClauses, fmt.Sprintf("`%s` = ?", column))
-		args = append(args, normalizeUpdateValue(key, value))
-	}
-	setClauses = append(setClauses, "updated_at = ?")
-	args = append(args, time.Now().UTC())
-	args = append(args, id)
-
 	table := pickIssueTable(opts.UseWispsTable)
 
+	// Read the prior status up-front when the caller is changing it: needed both
+	// for the closed_at management below and the is_blocked recompute at the end.
 	var oldStatus types.Status
 	_, statusChanging := updates["status"]
 	if statusChanging {
@@ -133,6 +118,46 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 			return fmt.Errorf("db: Update %s: read old status: %w", id, err)
 		}
 	}
+
+	setClauses := make([]string, 0, len(updates))
+	args := make([]any, 0, len(updates)+1)
+	for key, value := range updates {
+		if _, ok := allowedUpdateFields[key]; !ok {
+			return fmt.Errorf("db: Update: field %q is not allowed", key)
+		}
+		column := key
+		if renamed, ok := updateFieldColumnRename[key]; ok {
+			column = renamed
+		}
+		setClauses = append(setClauses, fmt.Sprintf("`%s` = ?", column))
+		args = append(args, normalizeUpdateValue(key, value))
+	}
+
+	// beads-h3iv: auto-manage closed_at on a status transition, mirroring the
+	// shared seam (issueops.ManageClosedAt, wired into UpdateIssueInTx for the
+	// direct/embedded path). Without this the domain/proxied UPDATE path set
+	// status=closed but left closed_at NULL, so the Finalize invariant
+	// ("closed issues must have closed_at timestamp") rejected every
+	// `bd update --status closed` over the proxied server. Only inject when the
+	// caller did not already set closed_at explicitly, and only on a real
+	// transition into/out of the closed state.
+	if statusChanging {
+		if _, callerSetClosedAt := updates["closed_at"]; !callerSetClosedAt {
+			newStatus := coerceStatus(updates["status"])
+			switch {
+			case newStatus == types.StatusClosed && oldStatus != types.StatusClosed:
+				setClauses = append(setClauses, "closed_at = ?")
+				args = append(args, time.Now().UTC())
+			case newStatus != types.StatusClosed && oldStatus == types.StatusClosed:
+				setClauses = append(setClauses, "closed_at = ?")
+				args = append(args, nil)
+			}
+		}
+	}
+
+	setClauses = append(setClauses, "updated_at = ?")
+	args = append(args, time.Now().UTC())
+	args = append(args, id)
 
 	//nolint:gosec // G201: table is one of two hardcoded constants
 	q := fmt.Sprintf("UPDATE %s SET %s WHERE id = ?", table, strings.Join(setClauses, ", "))
