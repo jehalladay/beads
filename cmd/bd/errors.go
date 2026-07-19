@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
 )
 
@@ -42,6 +43,78 @@ func isArgCountError(err error) bool {
 	return strings.Contains(msg, "arg(s), received ") ||
 		strings.Contains(msg, "arg(s), only received ") ||
 		strings.Contains(msg, "accepts between ")
+}
+
+// isCobraExecuteCValidationError reports whether err is one of the cobra/pflag
+// validation errors that fire inside rootCmd.ExecuteC() BEFORE a command's RunE
+// (beads-3tgu, sibling of beads-71br which handled only the arg-count leg). Like
+// arg-count errors, these never reach a per-command --json-aware handler, so the
+// main.go error branch uses this to honor the --json contract centrally instead
+// of leaking plaintext to stderr with an empty stdout.
+//
+// The covered shapes, matched via cobra/pflag's stable literals:
+//   - required-flag        (cobra command.go): `required flag(s) "X" not set`
+//   - unknown-flag         (pflag errors.go):  `unknown flag: --X`
+//                                              `unknown shorthand flag: "c" in -X`
+//   - flag-value-required  (pflag errors.go):  `flag needs an argument: ...`
+//   - flag-parse           (pflag errors.go):  `invalid argument "V" for "--F" flag: ...`
+//   - bad-flag-syntax      (pflag errors.go):  `bad flag syntax: X`
+//   - unknown-command      (cobra args.go):    `unknown command "X" for "bd..."`
+//     (both the top-level `bd frobnicate` typo and the leaf-command stray-arg
+//     `bd stale bogus` case, which cobra treats as an attempted subcommand
+//     dispatch — DISTINCT from the pure-parent-group unknown-subcommand case,
+//     which is already JSON-correct via the dthi subcmd_guard.)
+//
+// Arg-count errors are intentionally NOT folded in here: they retain their own
+// isArgCountError matcher + test (beads-71br) and are checked separately in
+// main.go. This matcher covers the remaining pre-RunE validation classes.
+func isCobraExecuteCValidationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "required flag(s) ") ||
+		strings.Contains(msg, "unknown flag: ") ||
+		strings.Contains(msg, "unknown shorthand flag: ") ||
+		strings.Contains(msg, "flag needs an argument: ") ||
+		strings.Contains(msg, "invalid argument ") ||
+		strings.Contains(msg, "bad flag syntax: ") ||
+		strings.Contains(msg, "unknown command ")
+}
+
+// wantsJSONOutput reports whether the user asked for --json output, robust to
+// the parse-abort legs of beads-3tgu. For required-flag and unknown-command
+// (arg-position) errors, cobra finishes flag parsing before failing, so the
+// bound jsonOutput / executedCmd's "json" flag is reliable. But for
+// unknown-flag / flag-parse / bad-syntax errors, pflag aborts at the bad token
+// BEFORE recording a `--json` that appears alongside or after it, so neither
+// jsonOutput nor the flag lookup is set. The leak is position-independent, so
+// detection must be too: fall back to scanning the raw argv for a --json or
+// --format json intent token. This mirrors how the user expressed the request,
+// not how far cobra got parsing it.
+func wantsJSONOutput(executedCmd *cobra.Command, args []string) bool {
+	if jsonOutput {
+		return true
+	}
+	if executedCmd != nil {
+		if jf := executedCmd.Flags().Lookup("json"); jf != nil && jf.Value.String() == "true" {
+			return true
+		}
+	}
+	for i, a := range args {
+		switch {
+		case a == "--json", a == "--json=true":
+			return true
+		case strings.EqualFold(a, "--format=json"):
+			return true
+		case a == "--format":
+			// `--format json` (space form).
+			if i+1 < len(args) && strings.EqualFold(args[i+1], "json") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func activeWorkspaceNotFoundError() string {

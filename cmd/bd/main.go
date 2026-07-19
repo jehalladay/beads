@@ -1520,14 +1520,20 @@ func main() {
 		if code, ok := exitCodeFromError(err); ok {
 			os.Exit(code)
 		}
-		// beads-71br: cobra positional-arg-count validators (ExactArgs/
-		// MinimumNArgs/...) fire inside ExecuteC BEFORE the command's RunE, so an
-		// arg-count failure never reaches a --json-aware handler and would leak as
-		// plaintext stderr + empty stdout. When --json is set on the executed
-		// command, honor the contract centrally: emit {error,schema_version} to
-		// STDOUT (matching HandleErrorRespectJSON) instead of the plaintext path.
-		if executedCmd != nil && isArgCountError(err) {
-			if jf := executedCmd.Flags().Lookup("json"); jf != nil && jf.Value.String() == "true" {
+		// beads-71br / beads-3tgu: cobra & pflag validators (arg-count, required-
+		// flag, unknown-flag, flag-parse, bad-flag-syntax, unknown-command) all fire
+		// inside ExecuteC BEFORE the command's RunE, so these failures never reach a
+		// per-command --json-aware handler and would leak as plaintext stderr + empty
+		// stdout. When the user asked for --json, honor the contract centrally: emit
+		// {error,schema_version} to STDOUT (matching HandleErrorRespectJSON) instead
+		// of the plaintext path.
+		//
+		// wantsJSONOutput is used (not just executedCmd's parsed "json" flag) because
+		// the unknown-flag / flag-parse / bad-syntax legs abort pflag parsing at the
+		// bad token BEFORE a same-line-or-later --json is recorded — so it scans the
+		// raw argv to detect the intent position-independently (beads-3tgu).
+		if isArgCountError(err) || isCobraExecuteCValidationError(err) {
+			if wantsJSONOutput(executedCmd, os.Args[1:]) {
 				jsonStdoutError(err.Error(), "")
 				os.Exit(1)
 			}
