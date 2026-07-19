@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd hooks list --json` inner hook objects now use snake_case keys, not raw Go PascalCase field names (beads-nbhp).**
+  The `HookStatus` struct had no JSON tags, so the inner `hooks[]` objects marshaled verbatim as
+  `{Name, Installed, Version, IsShim, Outdated}` — breaking the snake_case house style (`bd list`/`show` emit
+  `id`/`title`/`issue_type`). Added `json:"name"/"installed"/"version"/"is_shim"/"outdated"` tags so the payload is
+  `{name, installed, version, is_shim, outdated}`. The outer envelope + `schema_version` (beads-s2oy) were already
+  correct; this is the distinct inner-field-casing axis. Same field-casing class as beads-jyaw/8slh/7mm8. Teeth:
+  hooks_list_json_snake_case (embedded).
+
 - **`bd gate check`/`resolve`/`discover --json` now emit exactly one parseable JSON doc on stdout in all cases (beads-u3lt).**
   The gate command family broadly broke the `--json` contract: `gate check --json` on the common empty case printed
   `No open gates found.` plaintext + zero JSON (bare return before the summary block), and on the non-empty case

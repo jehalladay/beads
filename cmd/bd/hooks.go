@@ -464,11 +464,14 @@ func shouldPreserveHookContent(content string, fromHusky bool) (string, bool) {
 
 // HookStatus represents the status of a single git hook
 type HookStatus struct {
-	Name      string
-	Installed bool
-	Version   string
-	IsShim    bool // true if this is a thin shim (version-agnostic)
-	Outdated  bool
+	// beads-nbhp: snake_case json tags so `bd hooks list --json` inner objects
+	// match the house style (id/title/issue_type etc.) instead of leaking the
+	// raw Go PascalCase field names. field-casing class (jyaw/8slh/7mm8).
+	Name      string `json:"name"`
+	Installed bool   `json:"installed"`
+	Version   string `json:"version"`
+	IsShim    bool   `json:"is_shim"` // true if this is a thin shim (version-agnostic)
+	Outdated  bool   `json:"outdated"`
 }
 
 // CheckGitHooks checks the status of bd git hooks in .git/hooks/
