@@ -114,25 +114,7 @@ func runMolSquash(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		fmt.Printf("\nDry run: would squash %d ephemeral children of %s\n\n", len(wispChildren), moleculeID)
-		fmt.Printf("Root: %s\n", subgraph.Root.Title)
-		fmt.Printf("\nWisp children to squash:\n")
-		for _, issue := range wispChildren {
-			status := string(issue.Status)
-			fmt.Printf("  - [%s] %s (%s)\n", status, issue.Title, issue.ID)
-		}
-		fmt.Printf("\nDigest preview:\n")
-		digest := generateDigest(subgraph.Root, wispChildren)
-		if len(digest) > 500 {
-			fmt.Printf("%s...\n", digest[:500])
-		} else {
-			fmt.Printf("%s\n", digest)
-		}
-		if keepChildren {
-			fmt.Printf("\n--keep-children: children would NOT be deleted\n")
-		} else {
-			fmt.Printf("\nChildren would be deleted after digest creation.\n")
-		}
+		printMolSquashDryRunPreview(subgraph.Root, wispChildren, moleculeID, keepChildren)
 		return nil
 	}
 
@@ -161,6 +143,37 @@ func runMolSquash(cmd *cobra.Command, args []string) error {
 // generateDigest creates a summary from the molecule execution
 // Tier 2: Simple concatenation of titles and descriptions
 // Tier 3 (future): AI-powered summarization using Haiku
+// printMolSquashDryRunPreview renders the `bd mol squash --dry-run` preview.
+// Root/child titles are routed through displayTitle (ui.SanitizeForTerminal)
+// because a molecule/step title can originate from an untrusted import
+// (JSONL/markdown/SCM) carrying OSC/CSI terminal-control escapes (OSC 0
+// window-title / OSC 52 clipboard); printing them raw would inject control
+// sequences onto the preview lines. 7n9y sink-class slice (beads-uhiqz).
+func printMolSquashDryRunPreview(root *types.Issue, wispChildren []*types.Issue, moleculeID string, keepChildren bool) {
+	fmt.Printf("\nDry run: would squash %d ephemeral children of %s\n\n", len(wispChildren), moleculeID)
+	fmt.Printf("Root: %s\n", displayTitle(root.Title))
+	fmt.Printf("\nWisp children to squash:\n")
+	for _, issue := range wispChildren {
+		status := string(issue.Status)
+		fmt.Printf("  - [%s] %s (%s)\n", status, displayTitle(issue.Title), issue.ID)
+	}
+	fmt.Printf("\nDigest preview:\n")
+	// Sanitize the preview copy only (display-only): the stored digest is built
+	// independently in squashMolecule, so this does not alter persisted content.
+	// The digest embeds root/child titles, which can carry terminal escapes.
+	digest := displayTitle(generateDigest(root, wispChildren))
+	if len(digest) > 500 {
+		fmt.Printf("%s...\n", digest[:500])
+	} else {
+		fmt.Printf("%s\n", digest)
+	}
+	if keepChildren {
+		fmt.Printf("\n--keep-children: children would NOT be deleted\n")
+	} else {
+		fmt.Printf("\nChildren would be deleted after digest creation.\n")
+	}
+}
+
 func generateDigest(root *types.Issue, children []*types.Issue) string {
 	var sb strings.Builder
 
