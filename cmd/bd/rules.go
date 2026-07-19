@@ -573,7 +573,13 @@ func RunAudit(rulesDir string, threshold float64) (*AuditResult, error) {
 	entries, err := os.ReadDir(rulesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &AuditResult{}, nil
+			// Normalize the slices to [] like the other two return paths do
+			// (beads-r64h): a nil slice marshals to `null` under --json, which
+			// breaks a consumer iterating contradictions/merge_candidates.
+			return &AuditResult{
+				Contradictions:  []ContradictionReport{},
+				MergeCandidates: []MergeCandidate{},
+			}, nil
 		}
 		return nil, fmt.Errorf("read rules directory: %w", err)
 	}

@@ -434,6 +434,54 @@ func TestRulesRunAudit_EmptyDir(t *testing.T) {
 	}
 }
 
+// TestRulesRunAudit_AbsentDirJSONEmptyIsArray_r64h pins the json-ARRAY contract
+// for the os.IsNotExist early-return path of RunAudit (rules.go). When the rules
+// directory does not exist, RunAudit returned a bare &AuditResult{} whose
+// Contradictions/MergeCandidates were nil slices → marshaled `null` under
+// --json, unlike the other two return paths (len(rules)<2 and the normal path)
+// which normalize them to []. A --json consumer iterating those arrays breaks on
+// null. This calls RunAudit on a path that does NOT exist (distinct from the
+// EmptyDir test, which exercises the len(rules)<2 path on an existing dir).
+func TestRulesRunAudit_AbsentDirJSONEmptyIsArray_r64h(t *testing.T) {
+	// A path guaranteed not to exist (child of a temp dir, never created).
+	absent := filepath.Join(t.TempDir(), "does-not-exist")
+
+	result, err := RunAudit(absent, 0.6)
+	if err != nil {
+		t.Fatalf("unexpected error for absent rules dir: %v", err)
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("JSON marshal failed: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("JSON unmarshal to map failed: %v\ngot: %s", err, data)
+	}
+
+	for _, field := range []string{"contradictions", "merge_candidates"} {
+		v, ok := raw[field]
+		if !ok {
+			t.Errorf("missing JSON field %q; got: %s", field, data)
+			continue
+		}
+		if strings.TrimSpace(string(v)) == "null" {
+			t.Errorf("%s marshaled to `null` for an absent rules dir; a --json consumer expects `[]`\ngot: %s", field, data)
+			continue
+		}
+		var arr []json.RawMessage
+		if err := json.Unmarshal(v, &arr); err != nil {
+			t.Errorf("%s is not a JSON array: %v\ngot: %s", field, err, data)
+			continue
+		}
+		if len(arr) != 0 {
+			t.Errorf("expected empty %s array for an absent rules dir, got %d elements: %s", field, len(arr), data)
+		}
+	}
+}
+
 func TestRulesRunAudit_SingleRule(t *testing.T) {
 	dir := tempRulesDir(t)
 	writeRule(t, dir, "only-rule", `# Only Rule

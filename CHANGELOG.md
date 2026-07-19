@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd rules audit --json` now emits `"contradictions": []` and `"merge_candidates": []` instead of `null` when the rules directory does not exist (beads-r64h).**
+  `RunAudit` (`cmd/bd/rules.go`) normalized those two slices to `[]` on its other two
+  return paths (fewer than two rules, and the normal path) but its `os.IsNotExist` early-return
+  handed back a bare `&AuditResult{}` with nil slices, which marshaled to `null` under `--json`.
+  A consumer iterating the arrays broke on the absent-directory case. The early-return now
+  initializes both slices.
+
 - **`bd update <id> --json` with no field flags now emits a JSON no-op object instead of the plain-text line `No updates specified` (beads-b0lq).**
   A valid id with no mutating field flags is an idempotent no-op success (exit 0). The direct
   (`cmd/bd/update.go`) and proxied-server (`cmd/bd/update_proxied_server.go`) paths both printed the
