@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -139,4 +140,60 @@ func TestWrapWithSchemaVersion_Envelope_RoundTrip(t *testing.T) {
 	if innerData["count"] != float64(42) {
 		t.Errorf("data.count = %v, want 42", innerData["count"])
 	}
+}
+
+// TestWarnReservedUserMapKeys is the teeth for the beads-z0fe read-side leg
+// (PM ruling: the write guard stops NEW colliding keys, but a key stored before
+// the guard landed is still silently clobbered when `bd kv list --json` /
+// `bd memories --json` emit their flat map; warn on read so the residual loss
+// is visible). The warning must fire for a reserved key, name it + the singular
+// get hint, and stay silent for a map with no colliding keys.
+func TestWarnReservedUserMapKeys(t *testing.T) {
+	t.Run("warns_on_reserved_key", func(t *testing.T) {
+		out := captureStderr(t, func() {
+			warnReservedUserMapKeys(map[string]string{
+				"schema_version": "clobbered",
+				"normal_key":     "ok",
+			}, "kv get")
+		})
+		if !strings.Contains(out, "schema_version") {
+			t.Errorf("expected the warning to name the colliding key schema_version, got:\n%s", out)
+		}
+		if !strings.Contains(out, "kv get schema_version") {
+			t.Errorf("expected the warning to include the singular read hint 'kv get schema_version', got:\n%s", out)
+		}
+		if strings.Contains(out, "normal_key") {
+			t.Errorf("the warning must not name the non-colliding key normal_key, got:\n%s", out)
+		}
+	})
+
+	t.Run("warns_on_data_key", func(t *testing.T) {
+		out := captureStderr(t, func() {
+			warnReservedUserMapKeys(map[string]string{"data": "clobbered under envelope"}, "recall")
+		})
+		if !strings.Contains(out, `"data"`) || !strings.Contains(out, "recall data") {
+			t.Errorf("expected a warning naming 'data' with the 'recall data' hint, got:\n%s", out)
+		}
+	})
+
+	t.Run("silent_when_no_collision", func(t *testing.T) {
+		out := captureStderr(t, func() {
+			warnReservedUserMapKeys(map[string]string{
+				"feature_flag": "true",
+				"auth-note":    "jwt",
+			}, "kv get")
+		})
+		if strings.TrimSpace(out) != "" {
+			t.Errorf("expected no warning for a collision-free map, got:\n%s", out)
+		}
+	})
+
+	t.Run("silent_on_empty_map", func(t *testing.T) {
+		out := captureStderr(t, func() {
+			warnReservedUserMapKeys(map[string]string{}, "kv get")
+		})
+		if strings.TrimSpace(out) != "" {
+			t.Errorf("expected no warning for an empty map, got:\n%s", out)
+		}
+	})
 }

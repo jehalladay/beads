@@ -284,6 +284,11 @@ Examples:
 		}
 
 		if jsonOutput {
+			// beads-z0fe read-side leg: the write guard rejects NEW reserved
+			// keys, but a key stored before the guard is still clobbered when
+			// this flat map is wrapped. Warn (non-fatal) so the residual loss
+			// is visible; the value stays readable via `bd kv get <key>`.
+			warnReservedUserMapKeys(kvPairs, "kv get")
 			return outputJSON(kvPairs)
 		}
 

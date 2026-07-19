@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 
+	"github.com/steveyegge/beads/internal/storage/kvkeys"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -76,6 +77,28 @@ func wrapWithSchemaVersion(v interface{}) interface{} {
 	}
 	m["schema_version"] = JSONSchemaVersion
 	return m
+}
+
+// warnReservedUserMapKeys announces on stderr that a user-controlled key in a
+// flat map[string]string --json payload collides with a reserved key
+// wrapWithSchemaVersion injects (schema_version always; data under
+// BD_JSON_ENVELOPE=1) and will be overwritten when the map is emitted flat.
+//
+// The z0fe write-guard (bd kv set / bd remember --key) stops NEW colliding keys
+// from being stored, but a key stored BEFORE the guard landed still sits in the
+// DB and is silently clobbered on read (`bd kv list --json` / `bd memories
+// --json` emit a flat map). This read-side warning turns that residual silent
+// data-loss into a visible note (the value is still readable via the singular
+// get: `bd kv get <key>` / `bd recall <key>`), while preserving the tested
+// flat-map read contract (no nesting). It mirrors config.go's config-key warn.
+// getCmd is the singular retrieval hint shown to the operator (e.g. "kv get").
+// Non-fatal: callers still emit the map and exit 0.
+func warnReservedUserMapKeys(m map[string]string, getCmd string) {
+	for k := range m {
+		if kvkeys.IsReservedJSONKey(k) {
+			fmt.Fprintf(os.Stderr, "Warning: key %q collides with a bd --json envelope key and is overwritten in the flat --json output; read it with 'bd %s %s'\n", k, getCmd, k)
+		}
+	}
 }
 
 var envelopeDeprecationEmitted bool

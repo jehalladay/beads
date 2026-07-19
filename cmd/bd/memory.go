@@ -180,6 +180,10 @@ Examples:
 		}
 
 		if jsonOutput {
+			// beads-z0fe read-side leg: warn (non-fatal) if a stored memory key
+			// collides with a reserved --json envelope key so its silent clobber
+			// on read is visible; value stays readable via `bd recall <key>`.
+			warnReservedUserMapKeys(memories, "recall")
 			return outputJSON(memories)
 		}
 
