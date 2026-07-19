@@ -27,11 +27,18 @@ import (
 )
 
 var createCmd = &cobra.Command{
-	Use:           "create [title]",
-	GroupID:       "issues",
-	Aliases:       []string{"new"},
-	Short:         "Create a new issue (or batch from markdown/graph JSON)",
-	Args:          cobra.MinimumNArgs(0),
+	Use:     "create [title]",
+	GroupID: "issues",
+	Aliases: []string{"new"},
+	Short:   "Create a new issue (or batch from markdown/graph JSON)",
+	// beads-einrb: MaximumNArgs(1), not MinimumNArgs(0). create reads only
+	// args[0] as the title (batch --file/--graph reject any positional, and the
+	// --title path uses args[0]), so a 2nd+ positional was silently DROPPED
+	// (`bd create "a" "b"` created only "a", rc0, no warning). MaxN(1) still
+	// allows 0 args (batch + --title-only) and 1 (positional title) but errors
+	// on extras like other leaf cmds; under --json the 71br ExecuteC handler
+	// json-ifies the resulting arg-count error.
+	Args:          cobra.MaximumNArgs(1),
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {

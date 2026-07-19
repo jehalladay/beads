@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   realigned to it on both the `added` and idempotent `unchanged` branches (direct + proxied-server). Values are
   preserved — `issue_id` is the blocked/depending issue, `depends_on_id` is the blocker — only the key names change.
   Teeth: TestEmbeddedDepBlocksJSONVocab_xcujl.
+- **`bd create` now rejects extra positional args instead of silently dropping them (beads-einrb).**
+  `create` used `cobra.MinimumNArgs(0)` (accepts any count) but reads only `args[0]` as the title, so
+  `bd create "fix parser" "and lexer"` created ONE issue from the first arg and silently discarded the rest with
+  rc=0 — no warning (a mis-quote or assumed-variadic invocation lost data). The batch modes (`--file`/`--graph`)
+  already reject any positional and the `--title` path uses `args[0]`, so there is no legitimate multi-positional
+  mode: switched to `cobra.MaximumNArgs(1)`, which still allows 0 args (batch / `--title`) and 1 (positional title)
+  but errors on extras (`accepts at most 1 arg(s), received N`). Under `--json` the beads-71br ExecuteC handler
+  emits that as a `{error, schema_version}` object. Teeth: extra_positional_args_rejected.
+
 
 - **`bd list --parent X --limit N --pretty` no longer silently ignores `--limit` (beads-3dr5).**
   The `--parent`+`--pretty` branch renders the full subtree with no `--limit` cap or truncation hint, while every

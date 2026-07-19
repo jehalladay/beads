@@ -236,6 +236,25 @@ func TestEmbeddedCreate(t *testing.T) {
 		bdCreateFail(t, bd, dir, "--title", "\t \n")
 	})
 
+	// beads-einrb: create reads only args[0], so a 2nd+ positional was silently
+	// DROPPED (`bd create "a" "b"` created only "a", rc0). MaximumNArgs(1) now
+	// rejects extras loudly, while 0-arg (--title) and 1-arg (positional) paths
+	// still work.
+	t.Run("extra_positional_args_rejected", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "ep")
+		out := bdCreateFail(t, bd, dir, "first title", "second stray")
+		if !strings.Contains(out, "accepts at most 1 arg(s)") {
+			t.Errorf("expected an arg-count error for two positionals, got: %s", out)
+		}
+		// The valid arities must still succeed.
+		if issue := bdCreate(t, bd, dir, "one positional title"); issue.Title != "one positional title" {
+			t.Errorf("single positional title broke: got %q", issue.Title)
+		}
+		if issue := bdCreate(t, bd, dir, "--title", "title via flag"); issue.Title != "title via flag" {
+			t.Errorf("--title-only (zero positional) broke: got %q", issue.Title)
+		}
+	})
+
 	// A validation failure under --json must emit a parseable JSON error object
 	// on stdout (HandleErrorRespectJSON), matching update.go/close.go — not
 	// plain text to stderr with empty stdout (beads-hqm0). Uses an invalid
