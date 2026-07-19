@@ -35,7 +35,14 @@ type StatusResponse struct {
 	Ready         bool               `json:"ready"`
 	DataSourceID  string             `json:"data_source_id,omitempty"`
 	ViewURL       string             `json:"view_url,omitempty"`
-	SchemaVersion string             `json:"schema_version,omitempty"`
+	// beads-weyi: this Notion-database schema version must NOT use the bare
+	// "schema_version" JSON key — that key is reserved for the beads --json
+	// envelope (kvkeys.ReservedJSONKeys) that wrapWithSchemaVersion injects as
+	// an int. Sharing the key made `bd notion status --json` route through the
+	// envelope clobber this string field with 1, breaking the decode contract.
+	// The field is currently never populated; the distinct tag keeps it safe if
+	// it ever is.
+	SchemaVersion string             `json:"notion_schema_version,omitempty"`
 	Configured    bool               `json:"configured,omitempty"`
 	SavedConfig   bool               `json:"saved_config_present,omitempty"`
 	ConfigSource  string             `json:"config_source,omitempty"`

@@ -692,12 +692,16 @@ func saveNotionTargetConfig(ctx context.Context, dataSourceID, viewURL string) e
 // bypassing outputJSON→wrapWithSchemaVersion, so every notion --json object
 // omitted the top-level schema_version and ignored BD_JSON_ENVELOPE=1. The
 // lav0 discovery grep matched json.NewEncoder(os.Stdout) but missed the
-// cmd.OutOrStdout() variant. All 5 callers pass an object payload, so routing
-// through outputJSON adds schema_version in both plain and envelope mode,
-// matching every other --json verb. (cmd.OutOrStdout() == os.Stdout for all
-// callers, which are real commands writing to stdout.)
-func writeNotionJSON(_ *cobra.Command, value interface{}) error {
-	return outputJSON(value)
+// cmd.OutOrStdout() variant.
+//
+// beads-weyi: route through outputJSONTo(cmd.OutOrStdout()) — NOT outputJSON,
+// which writes to os.Stdout unconditionally. The notion callers write to the
+// command's writer and their tests redirect it to a buffer, so os.Stdout would
+// leave that buffer empty (the tests then fail with "unexpected end of JSON
+// input"). outputJSONTo preserves the schema_version wrapping while honoring
+// the caller's writer.
+func writeNotionJSON(cmd *cobra.Command, value interface{}) error {
+	return outputJSONTo(cmd.OutOrStdout(), value)
 }
 
 func firstNonEmpty(values ...string) string {

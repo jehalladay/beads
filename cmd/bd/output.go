@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
 
@@ -24,8 +25,18 @@ func jsonEnvelopeEnabled() bool {
 }
 
 func outputJSON(v interface{}) error {
+	return outputJSONTo(os.Stdout, v)
+}
+
+// outputJSONTo emits schema_version-wrapped --json output to an explicit writer,
+// so callers that hold a cobra command's OutOrStdout() (rather than os.Stdout
+// directly) still get the wrapWithSchemaVersion envelope + deprecation notice.
+// outputJSON is the os.Stdout convenience wrapper (beads-weyi: the notion
+// writeNotionJSON callers pass cmd.OutOrStdout(), which their tests redirect to
+// a buffer — writing to os.Stdout produced empty output under test).
+func outputJSONTo(w io.Writer, v interface{}) error {
 	wrapped := wrapWithSchemaVersion(v)
-	encoder := json.NewEncoder(os.Stdout)
+	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(wrapped); err != nil {
 		return fmt.Errorf("encoding JSON: %v", err)
