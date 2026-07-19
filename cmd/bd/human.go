@@ -304,6 +304,14 @@ Examples:
 		ctx := rootCtx
 		issueID := args[0]
 
+		// beads-ivje: hub-connected (proxied-server) crew have a nil `store`
+		// (`human` is in noDbCommands, so main.go skips both store and UOW init;
+		// ensureStoreActive can't help — newDoltStoreFromConfig refuses in
+		// proxied mode). Route the write through a lazily-built UOW instead.
+		if usesProxiedServer() {
+			return runHumanDismissProxiedServer(ctx, issueID, reason)
+		}
+
 		// Resolve partial ID and get issue
 		result, err := resolveAndGetIssueForMutation(ctx, store, issueID)
 		if err != nil {
