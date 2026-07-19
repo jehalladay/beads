@@ -679,7 +679,9 @@ func printTemplateTreeVisited(subgraph *TemplateSubgraph, parentID string, depth
 
 	// Print root
 	if isRoot {
-		fmt.Printf("%s   %s (root)\n", indent, subgraph.Root.Title)
+		// beads-8imcg: sanitize the title for terminal display (7n9y sink slice)
+		// — a store-read template title can carry OSC/CSI escapes.
+		fmt.Printf("%s   %s (root)\n", indent, displayTitle(subgraph.Root.Title))
 		visited[parentID] = true
 	}
 
@@ -706,11 +708,12 @@ func printTemplateTreeVisited(subgraph *TemplateSubgraph, parentID string, depth
 		}
 
 		// Cycle detection (GH#2719)
+		// beads-8imcg: sanitize the title for terminal display (7n9y sink slice).
 		if visited[child.ID] {
-			fmt.Printf("%s   %s %s%s (cycle detected, skipping)\n", indent, connector, child.Title, varStr)
+			fmt.Printf("%s   %s %s%s (cycle detected, skipping)\n", indent, connector, displayTitle(child.Title), varStr)
 			continue
 		}
-		fmt.Printf("%s   %s %s%s\n", indent, connector, child.Title, varStr)
+		fmt.Printf("%s   %s %s%s\n", indent, connector, displayTitle(child.Title), varStr)
 		visited[child.ID] = true
 		printTemplateTreeVisited(subgraph, child.ID, depth+1, false, visited)
 	}
