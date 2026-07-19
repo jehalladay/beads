@@ -137,8 +137,9 @@ func TestEmbeddedDiff(t *testing.T) {
 		foundRemoved := false
 		foundAdded := false
 		for _, e := range entries {
-			dt := e["DiffType"].(string)
-			id := e["IssueID"].(string)
+			// beads-8slh: DiffEntry now carries snake_case json tags.
+			dt := e["diff_type"].(string)
+			id := e["issue_id"].(string)
 			if id == issue1.ID && dt == "modified" {
 				foundModified = true
 			}
@@ -172,7 +173,7 @@ func TestEmbeddedDiff(t *testing.T) {
 		// Should show issue1 as added
 		found := false
 		for _, e := range entries {
-			if e["IssueID"] == issue1.ID && e["DiffType"] == "added" {
+			if e["issue_id"] == issue1.ID && e["diff_type"] == "added" {
 				found = true
 			}
 		}
@@ -208,12 +209,12 @@ func TestEmbeddedDiff(t *testing.T) {
 			t.Fatal("expected non-empty JSON array")
 		}
 		e := entries[0]
-		// Verify expected JSON keys
-		if _, ok := e["IssueID"]; !ok {
-			t.Error("expected 'IssueID' key in JSON entry")
+		// Verify expected JSON keys (beads-8slh: snake_case tags).
+		if _, ok := e["issue_id"]; !ok {
+			t.Error("expected 'issue_id' key in JSON entry")
 		}
-		if _, ok := e["DiffType"]; !ok {
-			t.Error("expected 'DiffType' key in JSON entry")
+		if _, ok := e["diff_type"]; !ok {
+			t.Error("expected 'diff_type' key in JSON entry")
 		}
 	})
 
@@ -222,11 +223,11 @@ func TestEmbeddedDiff(t *testing.T) {
 		currentHash := getCommitHash(t, beadsDir, "df")
 		entries := bdDiffJSON(t, bd, dir, hash1, currentHash)
 		for _, e := range entries {
-			if e["IssueID"] == issue1.ID && e["DiffType"] == "modified" {
-				if e["OldValue"] == nil {
+			if e["issue_id"] == issue1.ID && e["diff_type"] == "modified" {
+				if e["old_value"] == nil {
 					t.Error("expected old_value for modified entry")
 				}
-				if e["NewValue"] == nil {
+				if e["new_value"] == nil {
 					t.Error("expected new_value for modified entry")
 				}
 				return

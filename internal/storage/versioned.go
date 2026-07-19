@@ -17,18 +17,24 @@ type HistoryEntry struct {
 
 // DiffEntry represents a change between two commits.
 type DiffEntry struct {
-	IssueID  string       // The ID of the affected issue
-	DiffType string       // "added", "modified", or "removed"
-	OldValue *types.Issue // State before (nil for "added")
-	NewValue *types.Issue // State after (nil for "removed")
+	// beads-8slh: without json tags these serialize the Go field names verbatim
+	// (PascalCase IssueID/DiffType/...), so `bd diff --json` emitted PascalCase
+	// keys while the sibling HistoryEntry (and the nested types.Issue) are
+	// snake_case. Tag them to match.
+	IssueID  string       `json:"issue_id"`  // The ID of the affected issue
+	DiffType string       `json:"diff_type"` // "added", "modified", or "removed"
+	OldValue *types.Issue `json:"old_value"` // State before (nil for "added")
+	NewValue *types.Issue `json:"new_value"` // State after (nil for "removed")
 }
 
 // Conflict represents a merge conflict.
 type Conflict struct {
-	IssueID     string      // The ID of the conflicting issue
-	Field       string      // Which field has the conflict (empty for table-level)
-	OursValue   interface{} // Value on current branch
-	TheirsValue interface{} // Value on merged branch
+	// beads-8slh: same casing leak as DiffEntry — `bd federation sync --json`
+	// marshals SyncResult.Conflicts, so these wrapper fields need snake_case tags.
+	IssueID     string      `json:"issue_id"`     // The ID of the conflicting issue
+	Field       string      `json:"field"`        // Which field has the conflict (empty for table-level)
+	OursValue   interface{} `json:"ours_value"`   // Value on current branch
+	TheirsValue interface{} `json:"theirs_value"` // Value on merged branch
 }
 
 // RemoteInfo describes a configured remote.
