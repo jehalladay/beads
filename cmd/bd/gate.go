@@ -216,11 +216,15 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 
 		issue, err = store.GetIssue(ctx, gateID)
 		if err != nil {
-			return HandleError("gate not found: %s", gateID)
+			// beads-jial: honor the --json error contract on the direct-path
+			// guards, matching the sibling 'gate resolve' (beads-u3lt) and
+			// 'gate create'. A bare HandleError left stdout empty + stderr
+			// plaintext under `bd gate add-waiter <bad-id> --json`.
+			return HandleErrorRespectJSON("gate not found: %s", gateID)
 		}
 
 		if issue.IssueType != "gate" {
-			return HandleError("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
+			return HandleErrorRespectJSON("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
 		}
 
 		for _, w := range issue.Waiters {
@@ -236,7 +240,7 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 			"waiters": newWaiters,
 		}
 		if err := store.UpdateIssue(ctx, gateID, updates, actor); err != nil {
-			return HandleError("updating gate: %v", err)
+			return HandleErrorRespectJSON("updating gate: %v", err)
 		}
 
 		commandDidWrite.Store(true)

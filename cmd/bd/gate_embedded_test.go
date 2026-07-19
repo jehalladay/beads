@@ -635,6 +635,33 @@ func TestEmbeddedGateCreate(t *testing.T) {
 			t.Errorf("expected id=%s in gate resolve --json, got: %v", gate.ID, obj["id"])
 		}
 	})
+
+	// beads-jial: gate add-waiter direct-path guard errors must honor the
+	// --json error contract, matching the sibling 'gate resolve' (u3lt) and
+	// 'gate create'. Before the fix, `bd gate add-waiter <bad-id> --json` hit
+	// a bare HandleError → stdout EMPTY + plaintext on stderr, breaking a
+	// `2>&1 | jq` consumer. RED trigger is the same nonexistent-gate path as
+	// gate_add_waiter_nonexistent above, now under --json.
+	t.Run("gate_add_waiter_json_error_contract", func(t *testing.T) {
+		fullArgs := []string{"gate", "add-waiter", "tg-nonexistent999", "agent-1", "--json"}
+		cmd := exec.Command(bd, fullArgs...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Fatalf("expected bd gate add-waiter <bad-id> --json to fail:\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+		}
+		s := strings.TrimSpace(stdout.String())
+		if s == "" {
+			t.Fatalf("beads-jial: stdout is EMPTY under `gate add-waiter <bad-id> --json` "+
+				"(bare HandleError instead of HandleErrorRespectJSON) — a --json error-contract "+
+				"violation.\nstderr:\n%s", stderr.String())
+		}
+		obj := parseOneJSONDoc(t, s, "gate add-waiter --json (bad id)")
+		if obj["error"] == nil {
+			t.Errorf("beads-jial: expected an 'error' key in the --json error doc, got: %v", obj)
+		}
+	})
 }
 
 // TestEmbeddedGateConcurrent exercises gate operations concurrently.
