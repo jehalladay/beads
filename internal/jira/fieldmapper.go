@@ -2,6 +2,7 @@ package jira
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -85,9 +86,19 @@ func (m *jiraFieldMapper) PriorityToTracker(beadsPriority int) interface{} {
 
 func (m *jiraFieldMapper) StatusToBeads(trackerState interface{}) types.Status {
 	if state, ok := trackerState.(string); ok {
-		// Check custom map first (inverted: jira name → beads status).
-		for beadsStatus, jiraName := range m.statusMap {
-			if strings.EqualFold(state, jiraName) {
+		// Check custom map first (inverted: jira name → beads status). Iterate
+		// beadsStatus keys in sorted order so a non-injective statusMap (two
+		// beads statuses mapping to the same jira name) resolves to a STABLE
+		// beads status instead of a randomized one — Go map iteration order is
+		// non-deterministic (beads-famu, sibling of the 5y8t reverse-map class).
+		// The default map is injective so this is a no-op for it.
+		beadsStatuses := make([]string, 0, len(m.statusMap))
+		for beadsStatus := range m.statusMap {
+			beadsStatuses = append(beadsStatuses, beadsStatus)
+		}
+		sort.Strings(beadsStatuses)
+		for _, beadsStatus := range beadsStatuses {
+			if strings.EqualFold(state, m.statusMap[beadsStatus]) {
 				return types.Status(beadsStatus)
 			}
 		}
