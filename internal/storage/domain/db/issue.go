@@ -152,6 +152,19 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 			case newStatus == types.StatusClosed && oldStatus != types.StatusClosed:
 				setClauses = append(setClauses, "closed_at = ?")
 				args = append(args, time.Now().UTC())
+				// beads-4xltj (6qo8t proxied follow-up): default close_reason to
+				// "Closed" on the OPEN→closed transition, mirroring `bd close` and
+				// the CLI/direct path (beads-6qo8t patched cmd/bd/update.go). The
+				// proxied-server UPDATE path flows through here, not update.go's
+				// RunE, so without this a hub-connected crew's `bd update --status
+				// closed` stored close_reason NULL — the same field-parity gap 6qo8t
+				// fixed, on the other path. Only when the caller didn't set
+				// close_reason explicitly, and only on a fresh close (same guard as
+				// closed_at) so a re-close never clobbers an existing reason.
+				if _, callerSetReason := updates["close_reason"]; !callerSetReason {
+					setClauses = append(setClauses, "close_reason = ?")
+					args = append(args, "Closed")
+				}
 			case newStatus != types.StatusClosed && oldStatus == types.StatusClosed:
 				setClauses = append(setClauses, "closed_at = ?")
 				args = append(args, nil)

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd update --status closed` defaults `close_reason` to "Closed" on the PROXIED-server path too (beads-4xltj).**
+  The beads-6qo8t fix patched `cmd/bd/update.go` (the CLI/direct path), but the proxied-server UPDATE path flows
+  through `issueSQLRepositoryImpl.Update` (`internal/storage/domain/db/issue.go`), not update.go's RunE — so a
+  hub-connected crew's `bd update --status closed` still stored `close_reason` NULL while `bd close` stored `"Closed"`.
+  The domain/db close-transition block (the same one that auto-sets `closed_at`) now also defaults
+  `close_reason='Closed'` on the OPEN→closed transition, only when the caller didn't set it and only on a fresh close
+  (guarded on the transition, so a re-close never clobbers). Completes 6qo8t across both paths. Teeth:
+  update_close_defaults_close_reason (proxied integration).
+
+
 - **`bd dep A --blocks B --json` now uses the same endpoint key vocabulary as `bd dep add` (beads-xcujl).**
   The two commands are documented as equivalent (`dep --blocks` help: "is equivalent to: bd dep add"), but their
   `--json` output named the endpoints differently for the identical stored edge — `dep add` emitted
