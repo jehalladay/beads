@@ -2,7 +2,9 @@ package issueops
 
 import (
 	"context"
+	"errors"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -22,6 +24,24 @@ func buildDependencyTreeInTx(ctx context.Context, tx DBTX, issueID string, depth
 
 	issue, err := GetIssueInTx(ctx, tx, issueID)
 	if err != nil {
+		// beads-s34r: a CHILD (depth > 0) can be an unresolved external /
+		// cross-prefix / not-yet-synced target. `dep add` intentionally allows
+		// such edges (no existence validation) and GetDependenciesWithMetadataInTx
+		// already surfaces them as placeholders (beads-n49j), so recursing into one
+		// and re-fetching it must NOT abort the whole render — otherwise a single
+		// unresolved child turns `bd dep tree` into rc1 "not found" for the entire
+		// tree. Emit a placeholder leaf node (same rendering the metadata query
+		// uses) and stop descending; it has no locally-resolvable dependencies.
+		// A not-found ROOT (depth 0) is a genuine "no such issue" error and still
+		// propagates.
+		if depth > 0 && errors.Is(err, storage.ErrNotFound) {
+			return []*types.TreeNode{{
+				Issue:          unresolvedDepTargetIssue(issueID),
+				Depth:          depth,
+				ParentID:       parentID,
+				EdgeFromParent: edgeFromParent,
+			}}, nil
+		}
 		return nil, err
 	}
 

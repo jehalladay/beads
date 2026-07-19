@@ -94,9 +94,114 @@ func TestGetDependencyTreeInTxSkipsRelatesToEdges(t *testing.T) {
 	}
 }
 
+// TestGetDependencyTreeInTxToleratesUnresolvedChild pins beads-s34r: an
+// unresolved external/cross-prefix child (allowed by `dep add`, surfaced as a
+// placeholder by GetDependenciesWithMetadataInTx per beads-n49j) must NOT abort
+// the whole `bd dep tree` render with rc1 "not found". The child is emitted as
+// a placeholder leaf node and descent stops there.
+func TestGetDependencyTreeInTxToleratesUnresolvedChild(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectBegin()
+	expectIssue(mock, "root", "Root")
+	expectDependencies(mock, "root", []dependencyRow{
+		{id: "OTHER-999", depType: string(types.DepBlocks)},
+	})
+	// Metadata batch: the child is not a local issue, so it resolves to nothing
+	// (GetDependenciesWithMetadataInTx then emits the n49j placeholder).
+	expectIssueBatchMissing(mock, "OTHER-999")
+	// Recursion re-fetches the child; both tables miss → ErrNotFound. The fix
+	// turns this into a placeholder leaf instead of aborting the render.
+	expectIssueMissing(mock, "OTHER-999")
+	mock.ExpectRollback()
+
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	tree, err := GetDependencyTreeInTx(context.Background(), tx, "root", 3, false, false)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("GetDependencyTreeInTx aborted on an unresolved child (beads-s34r): %v", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sql expectations: %v", err)
+	}
+
+	if len(tree) != 2 {
+		t.Fatalf("len(tree) = %d, want 2 (root + placeholder child): %v", len(tree), treeIDs(tree))
+	}
+	if tree[0].ID != "root" || tree[1].ID != "OTHER-999" {
+		t.Fatalf("tree IDs = %v, want [root OTHER-999]", treeIDs(tree))
+	}
+	if tree[1].EdgeFromParent != types.DepBlocks {
+		t.Fatalf("child edge = %q, want %q", tree[1].EdgeFromParent, types.DepBlocks)
+	}
+	if !strings.Contains(tree[1].Title, "unresolved") {
+		t.Fatalf("child title = %q, want an unresolved placeholder", tree[1].Title)
+	}
+}
+
+// TestGetDependencyTreeInTxNotFoundRootStillErrors pins that beads-s34r's
+// tolerance is scoped to CHILDREN — a genuinely missing ROOT is still a real
+// "no such issue" error, not a silent empty tree.
+func TestGetDependencyTreeInTxNotFoundRootStillErrors(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectBegin()
+	expectIssueMissing(mock, "nope")
+	mock.ExpectRollback()
+
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	_, err = GetDependencyTreeInTx(context.Background(), tx, "nope", 3, false, false)
+	_ = tx.Rollback()
+	if err == nil {
+		t.Fatalf("GetDependencyTreeInTx on a missing ROOT should error, got nil")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sql expectations: %v", err)
+	}
+}
+
 type dependencyRow struct {
 	id      string
 	depType string
+}
+
+// expectIssueMissing models GetIssueInTx for an id present in neither the
+// issues nor the wisps table (both queries return no rows → ErrNotFound).
+func expectIssueMissing(mock sqlmock.Sqlmock, id string) {
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT " + IssueSelectColumns + " FROM issues WHERE id = ?")).
+		WithArgs(id).
+		WillReturnRows(issueRows())
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT " + IssueSelectColumns + " FROM wisps WHERE id = ?")).
+		WithArgs(id).
+		WillReturnRows(issueRows())
+}
+
+// expectIssueBatchMissing models GetIssuesByIDsInTx for a single id that
+// resolves to no local issue (empty wisps table, empty issues result), which is
+// how an unresolved cross-prefix dependency target reaches the n49j placeholder.
+func expectIssueBatchMissing(mock sqlmock.Sqlmock, id string) {
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT 1 FROM wisps LIMIT 1")).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT "+IssueSelectColumns+" FROM issues WHERE id IN (?)")).
+		WithArgs(id).
+		WillReturnRows(issueRows())
 }
 
 func expectIssue(mock sqlmock.Sqlmock, id, title string) {
