@@ -189,8 +189,18 @@ Examples:
 
 		searchFilter := result.Filter
 
+		// beads-ebpo: --limit (default 50) truncates the result set, but the human
+		// header read len(issues) as the true match total — a plain `bd query`
+		// over >50 matches printed "Found 50 issues" while more existed, with no
+		// truncation signal. On the SQL path (non-predicate) fetch one extra row
+		// to detect truncation, mirroring the `bd list` convention (list.go:43-44);
+		// on the predicate path the full survivor set is already collected, so a
+		// pre-trim length > limit is the truncation signal. Same display class as
+		// beads-l39v/beads-phmp/beads-4wn0.
+		effectiveLimit := limit
 		if jsonOutput {
 			var iwc []*types.IssueWithCounts
+			truncated := false
 			if result.RequiresPredicate && result.Predicate != nil {
 				// Predicate path: page through ALL candidates (beads-7hu4) so a
 				// selective predicate over a large table does not silently
@@ -202,22 +212,35 @@ Examples:
 				}
 				sortIssuesWithCounts(iwc, sortBy, reverse)
 				if limit > 0 && len(iwc) > limit {
+					truncated = true
 					iwc = iwc[:limit]
 				}
 			} else {
+				if limit > 0 {
+					searchFilter.Limit = limit + 1
+				}
 				iwc, err = store.SearchIssuesWithCounts(ctx, "", searchFilter)
 				if err != nil {
 					return HandleErrorRespectJSON("%v", err)
 				}
 				sortIssuesWithCounts(iwc, sortBy, reverse)
+				if limit > 0 && len(iwc) > limit {
+					truncated = true
+					iwc = iwc[:limit]
+				}
 			}
 			if iwc == nil {
 				iwc = []*types.IssueWithCounts{}
 			}
-			return outputJSON(iwc)
+			if err := outputJSON(iwc); err != nil {
+				return err
+			}
+			printTruncationHint(truncated, effectiveLimit)
+			return nil
 		}
 
 		var issues []*types.Issue
+		truncated := false
 		if result.RequiresPredicate && result.Predicate != nil {
 			issues, err = collectPredicateMatches(ctx, store, searchFilter, sortBy, reverse, result.Predicate)
 			if err != nil {
@@ -225,17 +248,26 @@ Examples:
 			}
 			sortIssues(issues, sortBy, reverse)
 			if limit > 0 && len(issues) > limit {
+				truncated = true
 				issues = issues[:limit]
 			}
 		} else {
+			if limit > 0 {
+				searchFilter.Limit = limit + 1
+			}
 			issues, err = store.SearchIssues(ctx, "", searchFilter)
 			if err != nil {
 				return HandleErrorRespectJSON("%v", err)
 			}
 			sortIssues(issues, sortBy, reverse)
+			if limit > 0 && len(issues) > limit {
+				truncated = true
+				issues = issues[:limit]
+			}
 		}
 
-		outputQueryResults(issues, queryStr, longFormat)
+		outputQueryResults(issues, queryStr, longFormat, truncated, effectiveLimit)
+		printTruncationHint(truncated, effectiveLimit)
 		return nil
 	},
 }
@@ -256,15 +288,22 @@ func hasExplicitStatusFilter(node query.Node) bool {
 	}
 }
 
-// outputQueryResults formats and displays query results
-func outputQueryResults(issues []*types.Issue, queryStr string, longFormat bool) {
+// outputQueryResults formats and displays query results. When truncated, the
+// header is qualified so the shown page size is not read as the true match
+// total (beads-ebpo); effectiveLimit is the applied --limit.
+func outputQueryResults(issues []*types.Issue, queryStr string, longFormat, truncated bool, effectiveLimit int) {
 	if len(issues) == 0 {
 		fmt.Printf("No issues found matching query: %s\n", queryStr)
 		return
 	}
 
+	header := fmt.Sprintf("Found %d issues:", len(issues))
+	if truncated {
+		header = fmt.Sprintf("Showing %d issues (limit %d — more matched):", len(issues), effectiveLimit)
+	}
+
 	if longFormat {
-		fmt.Printf("\nFound %d issues:\n\n", len(issues))
+		fmt.Printf("\n%s\n\n", header)
 		for _, issue := range issues {
 			fmt.Printf("%s [P%d] [%s] %s\n", issue.ID, issue.Priority, issue.IssueType, issue.Status)
 			fmt.Printf("  %s\n", issue.Title)
@@ -278,7 +317,7 @@ func outputQueryResults(issues []*types.Issue, queryStr string, longFormat bool)
 		}
 	} else {
 		// Use same compact format as list command
-		fmt.Printf("Found %d issues:\n", len(issues))
+		fmt.Printf("%s\n", header)
 		var buf strings.Builder
 		for _, issue := range issues {
 			formatQueryIssue(&buf, issue)

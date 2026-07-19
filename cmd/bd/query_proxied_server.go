@@ -165,7 +165,7 @@ func runQueryProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 		sortIssues(issues, sortBy, reverse)
 	}
 
-	outputQueryResults(issues, queryStr, longFormat)
+	outputQueryResults(issues, queryStr, longFormat, truncated, limit)
 	printTruncationHint(truncated, limit)
 	return nil
 }
