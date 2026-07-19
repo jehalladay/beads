@@ -205,6 +205,22 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		}
 		ctx := rootCtx
 
+		// beads-e875: validate the parent exists before filtering on it, mirroring
+		// the --blocked path below (beads-d5jg) and bd list --parent (beads-n8lv).
+		// Without this a typo'd/nonexistent parent id silently returns [] exit 0
+		// ("No ready work found") instead of erroring — a JSON consumer or a
+		// "what's ready under this epic" gate can't tell a bad id from a genuinely
+		// empty result.
+		if parentID != "" {
+			parentIssue, perr := store.GetIssue(ctx, parentID)
+			if perr != nil {
+				return HandleErrorRespectJSON("error checking parent issue: %v", perr)
+			}
+			if parentIssue == nil {
+				return HandleErrorRespectJSON("parent issue '%s' not found", parentID)
+			}
+		}
+
 		activeStore := store
 		if claimReady {
 			CheckReadonly("ready --claim")

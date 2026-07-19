@@ -101,6 +101,22 @@ func runBlockedProxiedServer(cmd *cobra.Command, ctx context.Context) {
 }
 
 func runReadyProxiedList(ctx context.Context, uw uow.UnitOfWork, in readyInput) {
+	// beads-e875: validate the parent exists before filtering on it — the proxied
+	// twin of the direct ready --parent check (ready.go) and the blocked --parent
+	// checks (beads-d5jg direct / beads-wu0u proxied). Without it a typo'd/
+	// nonexistent parent id silently returns [] exit 0 ("No ready work found")
+	// instead of erroring, so a JSON consumer or a "what's ready under this epic"
+	// gate can't tell a bad id from a genuinely empty result. This default
+	// runReadyProxiedList path was missed when d5jg/wu0u fixed the blocked path.
+	if in.parentID != "" {
+		parentIssue, perr := uw.IssueUseCase().GetIssue(ctx, in.parentID)
+		if perr != nil {
+			FatalErrorRespectJSON("error checking parent issue: %v", perr)
+		}
+		if parentIssue == nil {
+			FatalErrorRespectJSON("parent issue '%s' not found", in.parentID)
+		}
+	}
 	if in.jsonOut {
 		page, err := uw.IssueUseCase().GetReadyWorkWithCounts(ctx, in.filter)
 		if err != nil {

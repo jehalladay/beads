@@ -383,3 +383,46 @@ func TestEmbeddedReadyClaimConcurrent(t *testing.T) {
 		t.Fatal("expected final assignee to be set")
 	}
 }
+
+// TestEmbeddedReadyParentExistenceCheck verifies bd ready --parent <nonexistent>
+// errors (exit != 0) in both text and --json, rather than silently returning []
+// exit 0 ("No ready work found"). Mirrors TestEmbeddedBlockedParentExistenceCheck
+// (beads-d5jg) — the plain-ready default path was missed when the blocked path
+// was fixed (beads-e875).
+func TestEmbeddedReadyParentExistenceCheck(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "rpe")
+	epic := bdCreate(t, bd, dir, "real epic", "--type", "epic")
+
+	// Nonexistent parent must error, in both text and --json.
+	for _, args := range [][]string{
+		{"ready", "--parent", "rpe-nonexistent"},
+		{"ready", "--parent", "rpe-nonexistent", "--json"},
+	} {
+		cmd := exec.Command(bd, args...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("bd %v: expected non-zero exit for nonexistent parent, got success:\n%s", args, out)
+		}
+		if !strings.Contains(string(out), "not found") {
+			t.Errorf("bd %v: expected 'not found' error, got:\n%s", args, out)
+		}
+	}
+
+	// A real, childless epic must NOT error — a valid query with an empty result
+	// (surgical: the guard only rejects missing parents).
+	cmd := exec.Command(bd, "ready", "--parent", epic.ID)
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bd ready --parent %s (valid childless): expected success, got %v:\n%s", epic.ID, err, out)
+	}
+}

@@ -589,6 +589,36 @@ func TestProxiedServerReady(t *testing.T) {
 		}
 	})
 
+	// beads-e875: bd ready --parent <nonexistent> must error (exit != 0) with a
+	// parseable JSON error under --json — not silently return [] exit 0 ("No ready
+	// work found"). Proxied twin of the direct check (ready.go) and the blocked
+	// path (beads-d5jg direct / beads-wu0u proxied): a typo'd epic id should be a
+	// hard error, not "nothing ready". This default runReadyProxiedList path was
+	// missed when d5jg/wu0u fixed the blocked path.
+	t.Run("parent_nonexistent_errors", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "rpne")
+		bdProxiedCreate(t, bd, p.dir, "Some issue")
+		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "ready", "--parent", "nope-not-a-real-id", "--json")
+		if err == nil {
+			t.Fatalf("bd ready --parent <nonexistent> --json should fail; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+		s := strings.TrimSpace(stdout)
+		start := strings.IndexAny(s, "{")
+		if start < 0 {
+			t.Fatalf("expected a JSON error object on stdout, got stdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+		var obj map[string]interface{}
+		if jerr := json.Unmarshal([]byte(s[start:]), &obj); jerr != nil {
+			t.Fatalf("stdout is not valid JSON (%v): %s", jerr, s[start:])
+		}
+		if _, ok := obj["error"]; !ok {
+			t.Errorf("expected an {\"error\":...} object on stdout, got: %s", s[start:])
+		}
+		if !strings.Contains(fmt.Sprint(obj["error"]), "nope-not-a-real-id") {
+			t.Errorf("expected the bad parent id in the error, got: %v", obj["error"])
+		}
+	})
+
 	t.Run("metadata_field_match", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "rmd1")
 		match := bdProxiedCreate(t, bd, p.dir, "Has team", "--metadata", `{"team":"platform"}`)
