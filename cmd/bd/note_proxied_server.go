@@ -76,7 +76,8 @@ func runNoteProxiedServer(ctx context.Context, id, noteText string) {
 
 	if jsonOutput {
 		if result != nil {
-			_ = outputJSON(result)
+			// beads-bjyq: ARRAY shape, matching the direct note path + bd update.
+			_ = outputJSON([]*types.Issue{result})
 		}
 		return
 	}

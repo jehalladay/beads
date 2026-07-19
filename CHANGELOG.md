@@ -69,6 +69,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`label_proxied_server.go`) previously returned rc=0 on a partial batch; it now exits non-zero too, so
   both paths end at the same contract (single stdout doc, per-item errors on stderr, rc≠0). Wholly-failed
   batches are unchanged (a single stdout error object). Text-mode output is unchanged.
+- **`bd note <id> <text> --json` now emits a one-element ARRAY, matching `bd update` and the sibling mutation verbs (beads-bjyq).**
+  `bd note` is a single-issue mutation verb that returns the modified issue under `--json`, but emitted a
+  bare object (`{...}`) while `bd update`/`close`/`reopen`/`assign`/`tag`/`priority` emit a one-element
+  array (`[{...}]`) — completing the shorthand-shape class started in beads-yrtx (assign/tag) and
+  beads-utby (priority). The direct path (`cmd/bd/note.go`) and its proxied-server sibling
+  (`cmd/bd/note_proxied_server.go`) now wrap the updated issue in `[]*types.Issue{...}` before
+  `outputJSON`. Text-mode output is unchanged; the existing `--json` integration test still passes
+  (`parseIssueJSON` tolerates the array wrapper).
 
 - **`bd history <id> --json` now emits snake_case field names (`commit_hash`, `committer`, `commit_date`, `issue`) instead of PascalCase (beads-8slh).**
   The `storage.HistoryEntry` struct (`internal/storage/versioned.go`) carried no json tags, so
