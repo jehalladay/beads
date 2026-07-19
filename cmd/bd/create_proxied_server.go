@@ -163,6 +163,27 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 		}
 	}
 
+	// beads-a8a1b: refuse to create an OPEN child under a CLOSED epic on the
+	// proxied path (mirrors the direct guard in create.go) — the parent-
+	// assignment axis of the closed-epic-with-open-child invariant, which was
+	// wide open on both create paths. New issues are created open, so any
+	// closed-epic parent is a violation. Overridable with --force.
+	if !in.force && in.parentID != "" {
+		if uowProvider == nil {
+			FatalError("proxied-server UOW provider not initialized")
+		}
+		checkUW, err := uowProvider.NewUOW(ctx)
+		if err != nil {
+			FatalError("open unit of work: %v", err)
+		}
+		parent, gerr := checkUW.IssueUseCase().GetIssue(ctx, in.parentID)
+		checkUW.Close(ctx)
+		if gerr == nil && parent != nil &&
+			parent.IssueType == types.TypeEpic && parent.Status == types.StatusClosed {
+			FatalErrorRespectJSON("cannot create a child under closed epic %s (its status is closed; reopen the epic first or use --force to override)", in.parentID)
+		}
+	}
+
 	issue := buildCreateIssueFromInput(in)
 	params := domain.CreateIssueParams{
 		Issue:                   issue,

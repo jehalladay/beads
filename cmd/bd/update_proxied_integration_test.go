@@ -195,6 +195,42 @@ func TestProxiedServerUpdate(t *testing.T) {
 		}
 	})
 
+	// beads-a8a1b: refuse reparenting an OPEN child under a CLOSED epic over the
+	// PROXIED server (parent-assignment axis of the closed-epic-with-open-child
+	// invariant), mirroring the direct path. The proxied guard lives in
+	// checkProxiedUpdateCloseGuards, not update.go's RunE.
+	t.Run("reparent_open_child_under_closed_epic_refused", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "urce")
+		epic := bdProxiedCreate(t, bd, p.dir, "Closed epic reparent", "-t", "epic")
+		child := bdProxiedCreate(t, bd, p.dir, "Loose task")
+		bdProxiedUpdateOne(t, bd, p.dir, epic.ID, "-s", "closed") // no children yet, close allowed
+		out := bdProxiedUpdateFail(t, bd, p.dir, child.ID, "--parent", epic.ID)
+		if !strings.Contains(out, "closed epic") {
+			t.Errorf("expected a 'closed epic' guard error on proxied reparent, got: %s", out)
+		}
+		db := openProxiedDB(t, p)
+		// The child must not have been reparented under the closed epic.
+		var count int
+		if err := db.QueryRowContext(context.Background(),
+			"SELECT COUNT(*) FROM dependencies WHERE issue_id = ? AND depends_on_issue_id = ? AND type = 'parent-child'",
+			child.ID, epic.ID).Scan(&count); err != nil {
+			t.Fatalf("count parent dep: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("open child must not be reparented under a closed epic (a8a1b), got %d parent edges", count)
+		}
+	})
+
+	t.Run("reparent_open_child_under_closed_epic_force_overrides", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "urcf")
+		epic := bdProxiedCreate(t, bd, p.dir, "Closed epic reparent force", "-t", "epic")
+		child := bdProxiedCreate(t, bd, p.dir, "Loose task force")
+		bdProxiedUpdateOne(t, bd, p.dir, epic.ID, "-s", "closed")
+		bdProxiedUpdateOne(t, bd, p.dir, child.ID, "--parent", epic.ID, "--force")
+		db := openProxiedDB(t, p)
+		assertProxiedDepExistsWithType(t, db, child.ID, epic.ID, string(types.DepParentChild))
+	})
+
 	t.Run("close_unblocks_dependents", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "ucb")
 		blocker := bdProxiedCreate(t, bd, p.dir, "Blocker")

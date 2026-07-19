@@ -160,7 +160,7 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, forc
 	// where the direct path refuses. Enforce the same invariants here, all
 	// overridable with --force, matching `bd close --force`.
 	if !force {
-		if err := checkProxiedUpdateCloseGuards(ctx, uw, id, current, isWisp, in.fields); err != nil {
+		if err := checkProxiedUpdateCloseGuards(ctx, uw, id, current, isWisp, in.fields, in.reparent); err != nil {
 			reportItemError("%s", err)
 			return nil, false
 		}
@@ -214,7 +214,7 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, forc
 // (beads-u8zw). It mirrors the direct-path guards (zgku/2hkd/b0tw) using the
 // UOW use-cases, exactly as the proxied close handler does (close_proxied_server.go).
 // Caller is responsible for the --force bypass (this runs only when !force).
-func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id string, current *types.Issue, isWisp bool, fields map[string]any) error {
+func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id string, current *types.Issue, isWisp bool, fields map[string]any, reparent *string) error {
 	// zgku: refuse closing an epic with open children on a real open->closed
 	// transition (already-closed is a no-op close).
 	if newStatus, ok := fields["status"].(string); ok && newStatus == "closed" &&
@@ -271,6 +271,20 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 		types.Status(newStatus) == types.StatusOpen && current.Status == types.StatusClosed {
 		if closedEpics := proxiedClosedEpicParents(ctx, uw, id, isWisp); len(closedEpics) > 0 {
 			return fmt.Errorf("cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override", id, closedEpics)
+		}
+	}
+
+	// beads-a8a1b: refuse reparenting an OPEN child under a CLOSED epic on the
+	// proxied path (the parent-assignment axis of the closed-epic-with-open-child
+	// invariant), mirroring the direct path in update.go. Only a genuine
+	// violation: a non-empty new parent that is a closed epic AND this child is
+	// open. Reparenting a closed child, or under an open/non-epic parent, is
+	// unaffected. --force bypass is handled by the caller (runs only when !force).
+	if reparent != nil && *reparent != "" && current != nil && current.Status != types.StatusClosed {
+		parent, err := uw.IssueUseCase().GetIssue(ctx, *reparent)
+		if err == nil && parent != nil &&
+			parent.IssueType == types.TypeEpic && parent.Status == types.StatusClosed {
+			return fmt.Errorf("cannot reparent %s under closed epic %s: the epic is closed and %s is open (would create a closed epic with an open child); reopen the epic first or use --force to override", id, *reparent, id)
 		}
 	}
 

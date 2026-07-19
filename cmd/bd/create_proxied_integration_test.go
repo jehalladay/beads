@@ -51,6 +51,29 @@ func TestProxiedServerCreate(t *testing.T) {
 		}
 	})
 
+	// beads-a8a1b: refuse creating an OPEN child under a CLOSED epic over the
+	// PROXIED server (parent-assignment axis of the closed-epic-with-open-child
+	// invariant), mirroring the direct create.go guard.
+	t.Run("child_under_closed_epic_refused", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "cce")
+		epic := bdProxiedCreate(t, bd, p.dir, "Closed epic", "-t", "epic")
+		bdProxiedUpdateOne(t, bd, p.dir, epic.ID, "-s", "closed") // no children yet
+		out := bdProxiedCreateFail(t, bd, p.dir, "orphan child", "--parent", epic.ID)
+		if !strings.Contains(out, "closed epic") {
+			t.Errorf("expected a 'closed epic' guard error on proxied create, got: %s", out)
+		}
+	})
+
+	t.Run("child_under_closed_epic_force_overrides", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "ccf")
+		epic := bdProxiedCreate(t, bd, p.dir, "Closed epic force", "-t", "epic")
+		bdProxiedUpdateOne(t, bd, p.dir, epic.ID, "-s", "closed")
+		child := bdProxiedCreate(t, bd, p.dir, "forced child", "--parent", epic.ID, "--force")
+		if child.ID == "" {
+			t.Errorf("--force should allow creating a child under a closed epic (proxied)")
+		}
+	})
+
 	t.Run("silent", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "sl")
 		id := bdProxiedCreateSilent(t, bd, p.dir, "Silent issue")

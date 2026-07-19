@@ -707,6 +707,22 @@ create, update, show, or close operation).`,
 						closeIfUnmutated(result)
 						continue
 					}
+					// beads-a8a1b: refuse to reparent an OPEN child under a
+					// CLOSED epic — the parent-assignment axis of the "closed
+					// epic with an open child" invariant, which the close-guard
+					// family (zgku/b0tw) enforces on the status-transition axes
+					// but which was WIDE OPEN here (reparent only validated the
+					// new parent EXISTS, not its status). Only a genuine
+					// violation (parent is a closed epic AND this child is open);
+					// reparenting a closed child, or under an open/non-epic
+					// parent, is unaffected. Overridable with --force, matching
+					// `bd close --force`.
+					if !forceFlag && parentIssue.IssueType == types.TypeEpic &&
+						parentIssue.Status == types.StatusClosed && issue.Status != types.StatusClosed {
+						reportUpdateItemError("cannot reparent %s under closed epic %s: the epic is closed and %s is open (would create a closed epic with an open child); reopen the epic first or use --force to override", id, newParent, id)
+						closeIfUnmutated(result)
+						continue
+					}
 				}
 
 				// Find and remove ALL existing parent-child dependencies. A

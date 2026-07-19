@@ -455,12 +455,26 @@ var createCmd = &cobra.Command{
 		var inheritedLabels []string
 		if parentID != "" {
 			ctx := rootCtx
-			_, err := parentLookupStore.GetIssue(ctx, parentID)
+			parentIssue, err := parentLookupStore.GetIssue(ctx, parentID)
 			if err != nil {
 				if errors.Is(err, storage.ErrNotFound) {
 					return HandleErrorRespectJSON("parent issue %s not found", parentID)
 				}
 				return HandleErrorRespectJSON("failed to check parent issue: %v", err)
+			}
+
+			// beads-a8a1b: refuse to create an OPEN child under a CLOSED epic
+			// parent — that reaches the forbidden "closed epic with an open
+			// child" invariant the close-guard family (zgku/b0tw) enforces on the
+			// status-transition axes but which was WIDE OPEN on the parent-
+			// assignment axis (create only validated the parent EXISTS, not its
+			// status). Overridable with --force, matching `bd close --force`.
+			// New issues are created open, so any closed-epic parent is a
+			// violation here. (A closed non-epic parent-child is unusual but not
+			// the guarded invariant, so scope to epics like the other guards.)
+			if !forceCreate && parentIssue != nil &&
+				parentIssue.IssueType == types.TypeEpic && parentIssue.Status == types.StatusClosed {
+				return HandleErrorRespectJSON("cannot create a child under closed epic %s (its status is closed; reopen the epic first or use --force to override)", parentID)
 			}
 
 			noInheritLabels, _ := cmd.Flags().GetBool("no-inherit-labels")
