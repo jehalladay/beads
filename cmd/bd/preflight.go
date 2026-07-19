@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -145,16 +146,51 @@ func runPreflight(cmd *cobra.Command, args []string) error {
 		return runChecks(jsonOutput, skipLint)
 	}
 
-	fmt.Println("PR Readiness Checklist:")
-	fmt.Println()
-	fmt.Println("[ ] Tests pass: go test -tags gms_pure_go -short ./...")
-	fmt.Println("[ ] Lint passes: golangci-lint run --build-tags=gms_pure_go ./...")
-	fmt.Println("[ ] Formatting: gofmt -l .")
-	fmt.Println("[ ] No beads pollution: check .beads/issues.jsonl diff")
-	fmt.Println("[ ] Nix hash current: go.sum unchanged or vendorHash updated")
-	fmt.Println("[ ] Version sync: version.go matches default.nix")
-	fmt.Println()
-	fmt.Println("Run 'bd preflight --check' to validate automatically.")
+	// beads-kvmg: honor --json on the no-check path too. Previously the flag was
+	// silently ignored here and the plaintext checklist printed with exit 0,
+	// breaking the --json contract (a programmatic caller got un-parseable text).
+	return writePreflightChecklist(os.Stdout, jsonOutput)
+}
+
+// preflightChecklistItems are the static PR-readiness checklist entries shown
+// by `bd preflight` (no --check). Kept as data so both the plaintext and JSON
+// renderings stay in sync.
+var preflightChecklistItems = []string{
+	"Tests pass: go test -tags gms_pure_go -short ./...",
+	"Lint passes: golangci-lint run --build-tags=gms_pure_go ./...",
+	"Formatting: gofmt -l .",
+	"No beads pollution: check .beads/issues.jsonl diff",
+	"Nix hash current: go.sum unchanged or vendorHash updated",
+	"Version sync: version.go matches default.nix",
+}
+
+const preflightChecklistHint = "Run 'bd preflight --check' to validate automatically."
+
+// ChecklistResult is the --json shape of the informational (no --check)
+// preflight checklist.
+type ChecklistResult struct {
+	Items []string `json:"items"`
+	Hint  string   `json:"hint"`
+}
+
+// writePreflightChecklist renders the static PR-readiness checklist to w,
+// honoring the --json flag (beads-kvmg).
+func writePreflightChecklist(w io.Writer, jsonOutput bool) error {
+	if jsonOutput {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(ChecklistResult{Items: preflightChecklistItems, Hint: preflightChecklistHint}); err != nil {
+			return HandleError("encoding preflight checklist: %v", err)
+		}
+		return nil
+	}
+	fmt.Fprintln(w, "PR Readiness Checklist:")
+	fmt.Fprintln(w)
+	for _, item := range preflightChecklistItems {
+		fmt.Fprintf(w, "[ ] %s\n", item)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, preflightChecklistHint)
 	return nil
 }
 
