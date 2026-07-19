@@ -17,11 +17,11 @@ import (
 // once uowProvider is set) — so `bd defer` failed "storage is nil" for
 // hub-connected crew, unlike `bd update` which routes to a proxied handler.
 // Route to the shared update proxied core (applyUpdateProxiedOne), building the
-// same field set the direct path writes: status=deferred (always, matching the
-// direct `bd defer` which defers regardless of the --until time), optional
-// defer_until, and an optional reason appended to notes. Mirrors beads-1zuh
-// (relate/unrelate) and beads-qwez (assign/tag).
-func runDeferProxiedServer(ctx context.Context, args []string, deferUntil *time.Time, reason string) error {
+// same field set the direct path writes: status=deferred (except a PAST --until
+// date keeps status=open, beads-jy4r9 leg A), optional defer_until, and an
+// optional reason appended to notes. Mirrors beads-1zuh (relate/unrelate) and
+// beads-qwez (assign/tag).
+func runDeferProxiedServer(ctx context.Context, args []string, deferUntil *time.Time, inPast bool, reason string) error {
 	deferredCount := 0
 	alreadyDeferredCount := 0
 	var deferred []*types.Issue
@@ -58,8 +58,16 @@ func runDeferProxiedServer(ctx context.Context, args []string, deferUntil *time.
 			}
 		}
 
+		// beads-jy4r9 leg A: a past --until date keeps status=open (issue stays
+		// ready-visible) instead of a self-contradictory deferred-but-ready state,
+		// mirroring the direct path and update --defer <past>. A dateless or
+		// future defer still transitions to deferred.
+		deferredStatus := string(types.StatusDeferred)
+		if deferUntil != nil && inPast {
+			deferredStatus = string(types.StatusOpen)
+		}
 		in := &updateInput{fields: map[string]any{
-			"status": string(types.StatusDeferred),
+			"status": deferredStatus,
 		}}
 		if deferUntil != nil {
 			in.fields["defer_until"] = *deferUntil
@@ -80,6 +88,9 @@ func runDeferProxiedServer(ctx context.Context, args []string, deferUntil *time.
 
 		if jsonOutput {
 			deferred = append(deferred, issue)
+		} else if deferUntil != nil && inPast {
+			fmt.Printf("%s Scheduled %s for %s (past date — stays in bd ready now)\n",
+				ui.RenderAccent("*"), issue.ID, deferUntil.Format("2006-01-02 15:04"))
 		} else {
 			fmt.Printf("%s Deferred %s\n", ui.RenderAccent("*"), issue.ID)
 		}

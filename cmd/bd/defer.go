@@ -45,6 +45,13 @@ Examples:
 		}()
 
 		var deferUntil *time.Time
+		// beads-jy4r9 leg A: a PAST --until date must NOT flip status to deferred
+		// (the issue re-appears in bd ready immediately because the ready predicate
+		// ignores a past defer_until). inPast is true only when a --until date was
+		// given AND it is in the past; a dateless `bd defer` (deferUntil==nil) stays
+		// unconditionally deferred. Mirrors update.go's !inPast guard so the two
+		// defer entry points agree (update --defer <past> already keeps status=open).
+		inPast := false
 		untilStr, _ := cmd.Flags().GetString("until")
 		if untilStr != "" {
 			t, err := timeparsing.ParseRelativeTime(untilStr, time.Now())
@@ -57,10 +64,23 @@ Examples:
 				// not empty stdout + stderr text (0wp9/21xi class).
 				return HandleErrorRespectJSON("invalid --until format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", untilStr)
 			}
-			if t.Before(time.Now()) && !jsonOutput {
-				fmt.Fprintf(os.Stderr, "%s Defer date %q is in the past. Issue will appear in bd ready immediately.\n",
-					ui.RenderWarn("!"), t.Format("2006-01-02 15:04"))
-				fmt.Fprintf(os.Stderr, "  Did you mean a future date? Use --until=+1h or --until=tomorrow\n")
+			inPast = t.Before(time.Now())
+			if inPast {
+				// beads-jy4r9 leg B: the "appears in bd ready immediately" warning was
+				// suppressed under --json and surfaced NOWHERE, so a --json consumer got
+				// zero signal the defer is an immediate no-op. Emit it as a JSON object
+				// on STDERR under --json (stdout stays the pure issue-array success
+				// payload, matching reportItemError/jsonStderrError convention); plain
+				// text on stderr otherwise (unchanged human behavior).
+				if jsonOutput {
+					jsonStderrError(
+						fmt.Sprintf("Defer date %q is in the past; issue stays status=open and appears in bd ready immediately. Did you mean a future date?", t.Format("2006-01-02 15:04")),
+						"Use --until=+1h or --until=tomorrow for a future defer date")
+				} else {
+					fmt.Fprintf(os.Stderr, "%s Defer date %q is in the past. Issue will appear in bd ready immediately.\n",
+						ui.RenderWarn("!"), t.Format("2006-01-02 15:04"))
+					fmt.Fprintf(os.Stderr, "  Did you mean a future date? Use --until=+1h or --until=tomorrow\n")
+				}
 			}
 			deferUntil = &t
 		}
@@ -78,7 +98,7 @@ Examples:
 		// which routes via usesProxiedServer(). Parse --until/--reason first so
 		// the past-date warning + reason validation still fire identically.
 		if usesProxiedServer() {
-			return runDeferProxiedServer(rootCtx, args, deferUntil, reason)
+			return runDeferProxiedServer(rootCtx, args, deferUntil, inPast, reason)
 		}
 
 		ctx := rootCtx
@@ -106,8 +126,17 @@ Examples:
 				continue
 			}
 
+			// beads-jy4r9 leg A: set status=deferred UNLESS a past --until date was
+			// given (then keep the issue ready-visible with status=open, matching
+			// update --defer <past>). A dateless defer or a future --until still
+			// defers. deferredStatus is the status this command actually transitions
+			// to — used for both the update and the audit-trail entry so they agree.
+			deferredStatus := string(types.StatusDeferred)
+			if deferUntil != nil && inPast {
+				deferredStatus = string(types.StatusOpen)
+			}
 			updates := map[string]interface{}{
-				"status": string(types.StatusDeferred),
+				"status": deferredStatus,
 			}
 			if deferUntil != nil {
 				updates["defer_until"] = *deferUntil
@@ -162,8 +191,11 @@ Examples:
 				continue
 			}
 			// Audit log the defer status change (survives Dolt GC flatten) via
-			// the shared cmd-layer chokepoint (beads-n4sn).
-			auditStatusChange(fullID, oldStatus, string(types.StatusDeferred), actor, reason)
+			// the shared cmd-layer chokepoint (beads-n4sn). Uses the ACTUAL target
+			// status (deferredStatus) so a past-date defer records the truthful
+			// open->open (or prior->open) transition, not a phantom ->deferred
+			// (beads-jy4r9 leg A).
+			auditStatusChange(fullID, oldStatus, deferredStatus, actor, reason)
 			deferredCount++
 
 			if jsonOutput {
@@ -171,6 +203,10 @@ Examples:
 				if issue != nil {
 					deferredIssues = append(deferredIssues, issue)
 				}
+			} else if deferUntil != nil && inPast {
+				// Truthful feedback: the issue is scheduled but stays ready now.
+				fmt.Printf("%s Scheduled %s for %s (past date — stays in bd ready now)\n",
+					ui.RenderAccent("*"), fullID, deferUntil.Format("2006-01-02 15:04"))
 			} else {
 				fmt.Printf("%s Deferred %s\n", ui.RenderAccent("*"), fullID)
 			}

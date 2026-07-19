@@ -67,6 +67,66 @@ func TestProxiedServerDefer(t *testing.T) {
 	})
 }
 
+// TestProxiedServerDeferPastDate is the proxied-path teeth for beads-jy4r9 leg A
+// (status divergence). The proxied defer handler used to write status=deferred
+// unconditionally, so `bd defer --until <past>` in proxied mode produced the
+// same self-contradictory "deferred-but-ready" state the direct path did. This
+// asserts a PAST --until keeps status=open on the proxied path too (matching
+// `bd update --defer <past>`, update_defer_past_date_keeps_status_open), while a
+// future --until still defers.
+func TestProxiedServerDeferPastDate(t *testing.T) {
+	requireProxiedServerEnv(t)
+	bd := buildEmbeddedBD(t)
+
+	t.Run("past_until_keeps_status_open", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "dfrp")
+		a := bdProxiedCreate(t, bd, p.dir, "proxied past defer", "--type", "task")
+
+		out, err := bdProxiedRun(t, bd, p.dir, "defer", a.ID, "--until", "2020-01-01")
+		if err != nil {
+			t.Fatalf("proxied defer --until <past> failed: %v\n%s", err, out)
+		}
+		if strings.Contains(string(out), "storage is nil") {
+			t.Fatalf("proxied defer hit the nil-store path (beads-aocj regression): %s", out)
+		}
+		got := bdProxiedShow(t, bd, p.dir, a.ID)
+		if string(got.Status) != "open" {
+			t.Errorf("proxied `bd defer --until <past>` must keep status=open, got %q", got.Status)
+		}
+		if got.DeferUntil == nil {
+			t.Errorf("proxied past defer should still set defer_until, got nil")
+		}
+	})
+
+	t.Run("future_until_still_defers", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "dfrf")
+		a := bdProxiedCreate(t, bd, p.dir, "proxied future defer", "--type", "task")
+
+		out, err := bdProxiedRun(t, bd, p.dir, "defer", a.ID, "--until", "+24h")
+		if err != nil {
+			t.Fatalf("proxied defer --until <future> failed: %v\n%s", err, out)
+		}
+		got := bdProxiedShow(t, bd, p.dir, a.ID)
+		if string(got.Status) != "deferred" {
+			t.Errorf("proxied `bd defer --until <future>` must set status=deferred, got %q", got.Status)
+		}
+	})
+
+	t.Run("dateless_defer_still_defers", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "dfrd")
+		a := bdProxiedCreate(t, bd, p.dir, "proxied dateless defer", "--type", "task")
+
+		out, err := bdProxiedRun(t, bd, p.dir, "defer", a.ID)
+		if err != nil {
+			t.Fatalf("proxied dateless defer failed: %v\n%s", err, out)
+		}
+		got := bdProxiedShow(t, bd, p.dir, a.ID)
+		if string(got.Status) != "deferred" {
+			t.Errorf("proxied dateless `bd defer` must keep status=deferred (regression), got %q", got.Status)
+		}
+	})
+}
+
 // bdProxiedRunExpectFail runs a proxied bd command expecting a non-zero exit,
 // returning combined output. Fails the test if the command unexpectedly
 // succeeds.
