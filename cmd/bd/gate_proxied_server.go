@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"time"
 
 	"github.com/steveyegge/beads/internal/storage/domain"
@@ -181,16 +183,27 @@ func runGateCreateProxied(ctx context.Context, blocksID, gateType, reason, await
 		return outputJSON(gate)
 	}
 
-	fmt.Printf("%s Created gate %s (type: %s)\n", ui.RenderPass("✓"), ui.RenderID(gate.ID), gateType)
-	fmt.Printf("  Blocks: %s (%s)\n", targetIssue.ID, targetIssue.Title)
+	printGateCreateSummary(os.Stdout, gate.ID, gateType, targetIssue.ID, targetIssue.Title, reason, timeout)
+	return nil
+}
+
+// printGateCreateSummary renders the gate-create confirmation. The target
+// issue's title is routed through displayTitle (ui.SanitizeForTerminal) because
+// a title can originate from an untrusted import (JSONL/markdown/SCM) carrying
+// OSC/CSI terminal-control escapes; printing it raw would inject control
+// sequences onto the "Blocks:" line. Display-only — the stored title is
+// unchanged. Proxied twin of the direct gate.go gate-create sink. 7n9y
+// sink-class slice (beads-tberq).
+func printGateCreateSummary(w io.Writer, gateID, gateType, targetID, targetTitle, reason string, timeout time.Duration) {
+	fmt.Fprintf(w, "%s Created gate %s (type: %s)\n", ui.RenderPass("✓"), ui.RenderID(gateID), gateType)
+	fmt.Fprintf(w, "  Blocks: %s (%s)\n", targetID, displayTitle(targetTitle))
 	if reason != "" {
-		fmt.Printf("  Reason: %s\n", reason)
+		fmt.Fprintf(w, "  Reason: %s\n", reason)
 	}
 	if timeout > 0 {
-		fmt.Printf("  Timeout: %s\n", timeout)
+		fmt.Fprintf(w, "  Timeout: %s\n", timeout)
 	}
-	fmt.Printf("\nResolve with: bd gate resolve %s\n", gate.ID)
-	return nil
+	fmt.Fprintf(w, "\nResolve with: bd gate resolve %s\n", gateID)
 }
 
 // runGateResolveProxied mirrors gateResolveCmd's RunE via the UOW.
