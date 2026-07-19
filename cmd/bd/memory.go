@@ -242,9 +242,14 @@ Examples:
 		existing, _ := store.GetConfig(ctx, storageKey)
 		if existing == "" {
 			if jsonOutput {
-				if jerr := outputJSON(map[string]string{
+				// beads-dycj: emit a real JSON boolean, not the string
+				// literal "false" — a consumer doing `if result["found"]`
+				// reads the non-empty string "false" as truthy and misreads
+				// not-found as found. Matches the recall pattern below
+				// (memory.go: "found": value != "").
+				if jerr := outputJSON(map[string]interface{}{
 					"key":   key,
-					"found": "false",
+					"found": false,
 				}); jerr != nil {
 					return jerr
 				}
@@ -260,9 +265,10 @@ Examples:
 		commandDidWrite.Store(true)
 
 		if jsonOutput {
-			return outputJSON(map[string]string{
+			// beads-dycj: real JSON boolean, not the string literal "true".
+			return outputJSON(map[string]interface{}{
 				"key":     key,
-				"deleted": "true",
+				"deleted": true,
 			})
 		}
 		fmt.Printf("Forgot [%s]: %s\n", key, truncateMemory(existing, 80))
