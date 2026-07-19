@@ -51,6 +51,38 @@ Examples:
 	RunE:          runPour,
 }
 
+// attachmentInfo holds a resolved attached proto and its loaded subgraph.
+type attachmentInfo struct {
+	id       string
+	issue    *types.Issue
+	subgraph *TemplateSubgraph
+}
+
+// printPourDryRun renders the `bd pour --dry-run` preview. Titles are routed
+// through displayTitle (ui.SanitizeForTerminal) because a proto/attachment
+// title can originate from an untrusted import (JSONL/markdown/SCM) carrying
+// OSC/CSI terminal-control escapes (OSC 0 window-title / OSC 52 clipboard);
+// printing them raw would inject control sequences onto the preview lines.
+// 7n9y sink-class slice (beads-knab).
+func printPourDryRun(subgraph *TemplateSubgraph, attachments []attachmentInfo, vars map[string]string, assignee, attachType, protoID string) {
+	fmt.Printf("\nDry run: would pour %d issues from proto %s\n\n", len(subgraph.Issues), protoID)
+	fmt.Printf("Storage: permanent (.beads/)\n\n")
+	for _, issue := range subgraph.Issues {
+		newTitle := substituteVariables(issue.Title, vars)
+		suffix := ""
+		if issue.ID == subgraph.Root.ID && assignee != "" {
+			suffix = fmt.Sprintf(" (assignee: %s)", assignee)
+		}
+		fmt.Printf("  - %s (from %s)%s\n", displayTitle(newTitle), issue.ID, suffix)
+	}
+	if len(attachments) > 0 {
+		fmt.Printf("\nAttachments (%s bonding):\n", attachType)
+		for _, attach := range attachments {
+			fmt.Printf("  + %s (%d issues)\n", displayTitle(attach.issue.Title), len(attach.subgraph.Issues))
+		}
+	}
+}
+
 func runPour(cmd *cobra.Command, args []string) error {
 	CheckReadonly("pour")
 
@@ -140,11 +172,6 @@ func runPour(cmd *cobra.Command, args []string) error {
 	_ = isFormula // For future use (e.g., logging)
 
 	// Resolve and load attached protos
-	type attachmentInfo struct {
-		id       string
-		issue    *types.Issue
-		subgraph *TemplateSubgraph
-	}
 	var attachments []attachmentInfo
 	for _, attachArg := range attachFlags {
 		attachID, err := utils.ResolvePartialID(ctx, store, attachArg)
@@ -203,22 +230,7 @@ func runPour(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		fmt.Printf("\nDry run: would pour %d issues from proto %s\n\n", len(subgraph.Issues), protoID)
-		fmt.Printf("Storage: permanent (.beads/)\n\n")
-		for _, issue := range subgraph.Issues {
-			newTitle := substituteVariables(issue.Title, vars)
-			suffix := ""
-			if issue.ID == subgraph.Root.ID && assignee != "" {
-				suffix = fmt.Sprintf(" (assignee: %s)", assignee)
-			}
-			fmt.Printf("  - %s (from %s)%s\n", newTitle, issue.ID, suffix)
-		}
-		if len(attachments) > 0 {
-			fmt.Printf("\nAttachments (%s bonding):\n", attachType)
-			for _, attach := range attachments {
-				fmt.Printf("  + %s (%d issues)\n", attach.issue.Title, len(attach.subgraph.Issues))
-			}
-		}
+		printPourDryRun(subgraph, attachments, vars, assignee, attachType, protoID)
 		return nil
 	}
 
