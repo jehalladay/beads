@@ -202,7 +202,12 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 	var issues []*types.Issue
 	var memories []memoryRecord
 
+	// beads-ovc4: track the 1-based input line so a parse error names WHICH
+	// line is bad. On a large export/migration JSONL an unlocated
+	// "failed to parse" forces the operator to bisect the file by hand.
+	lineNum := 0
 	for scanner.Scan() {
+		lineNum++
 		line := scanner.Text()
 		if line == "" {
 			continue
@@ -210,7 +215,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 
 		var peek map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(line), &peek); err != nil {
-			return fmt.Errorf("failed to parse JSONL line: %w", err)
+			return fmt.Errorf("failed to parse JSONL line %d: %w", lineNum, err)
 		}
 
 		if rawType, ok := peek["_type"]; ok {
@@ -218,7 +223,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 			if err := json.Unmarshal(rawType, &typeStr); err == nil && typeStr == "memory" {
 				var mem memoryRecord
 				if err := json.Unmarshal([]byte(line), &mem); err != nil {
-					return fmt.Errorf("failed to parse memory record: %w", err)
+					return fmt.Errorf("failed to parse memory record on line %d: %w", lineNum, err)
 				}
 				if mem.Key != "" && mem.Value != "" {
 					memories = append(memories, mem)
@@ -229,7 +234,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 
 		var issue types.Issue
 		if err := json.Unmarshal([]byte(line), &issue); err != nil {
-			return fmt.Errorf("failed to parse issue from JSONL: %w", err)
+			return fmt.Errorf("failed to parse issue from JSONL line %d: %w", lineNum, err)
 		}
 		if issue.Status == "tombstone" {
 			continue
