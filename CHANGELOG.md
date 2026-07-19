@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   These leaf commands had no `Args` validator, so a query-style habit (`bd stats status=open`) or a
   fat-fingered positional was silently ignored and the command ran anyway with rc=0. Each now uses
   `cobra.NoArgs` (residual to the beads-ib1u/6jzt NoArgs sweep).
+- **`bd human stats --json` now emits a JSON object instead of the plaintext table (beads-vath).**
+  The `stats` RunE called `printHumanStats` unconditionally, so `--json` was silently ignored (rc=0,
+  plaintext "Human Beads Stats" on stdout) while the sibling `human list` already honored `--json`. The
+  counts are now emitted via `outputJSON` (`{total,pending,responded,dismissed}`).
+- **`bd human list --json` now emits `[]` instead of `null` on an empty result (beads-b2yd).**
+  A nil `[]*types.Issue` still satisfies `reflect.Slice` in `wrapWithSchemaVersion`, so it marshalled to
+  `null` and broke `.data`/iteration consumers. `emitHumanListJSON` now normalizes an empty result to `[]`,
+  matching the nil-slice ARRAY contract swept across the other `--json` list paths.
 - **`bd edit <id> --json` now emits the issue as a JSON array instead of plaintext (beads-8872).**
   Both the direct (`cmd/bd/edit.go`) and proxied-server (`cmd/bd/edit_proxied_server.go`) paths printed
   the plaintext `✓ Updated <field> for issue: <id>` success glyph (and `No changes made` on a no-op) to

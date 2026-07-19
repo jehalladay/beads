@@ -11,11 +11,12 @@ func TestPrintHumanStats(t *testing.T) {
 	tests := []struct {
 		name   string
 		issues []*types.Issue
-		// We just verify no panic; output goes to stdout
+		want   humanStats
 	}{
 		{
 			name:   "empty list",
 			issues: nil,
+			want:   humanStats{Total: 0, Pending: 0, Responded: 0, Dismissed: 0},
 		},
 		{
 			name: "mixed statuses",
@@ -27,6 +28,7 @@ func TestPrintHumanStats(t *testing.T) {
 				{ID: "bd-5", Status: "closed", CloseReason: "Dismissed: not needed"},
 				{ID: "bd-6", Status: "hooked"},
 			},
+			want: humanStats{Total: 6, Pending: 4, Responded: 1, Dismissed: 1},
 		},
 		{
 			name: "all closed responded",
@@ -34,6 +36,7 @@ func TestPrintHumanStats(t *testing.T) {
 				{ID: "bd-1", Status: "closed", CloseReason: "Responded"},
 				{ID: "bd-2", Status: "closed", CloseReason: "Responded"},
 			},
+			want: humanStats{Total: 2, Pending: 0, Responded: 2, Dismissed: 0},
 		},
 		{
 			name: "all dismissed",
@@ -41,13 +44,18 @@ func TestPrintHumanStats(t *testing.T) {
 				{ID: "bd-1", Status: "closed", CloseReason: "Dismissed"},
 				{ID: "bd-2", Status: "closed", CloseReason: "Dismissed: stale"},
 			},
+			want: humanStats{Total: 2, Pending: 0, Responded: 0, Dismissed: 2},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Just verify no panic
-			printHumanStats(tt.issues)
+			got := computeHumanStats(tt.issues)
+			if got != tt.want {
+				t.Errorf("computeHumanStats() = %+v, want %+v", got, tt.want)
+			}
+			// Also verify the plaintext printer does not panic on the counts.
+			printHumanStats(got)
 		})
 	}
 }

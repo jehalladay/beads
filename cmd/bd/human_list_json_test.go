@@ -45,6 +45,81 @@ func TestHumanListJSONEnvelopeMode(t *testing.T) {
 	}
 }
 
+// TestHumanListJSONEmptyIsArrayNotNull is the beads-b2yd regression: an empty
+// human-needed set left `issues` as a typed-nil `[]*types.Issue`, which still
+// satisfies reflect.Slice in wrapWithSchemaVersion and so marshalled to `null`
+// (breaking `.data`/iteration consumers). The fix normalizes nil→`[]` in
+// emitHumanListJSON. RED before the fix: stdout is `null`.
+func TestHumanListJSONEmptyIsArrayNotNull(t *testing.T) {
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	var empty []*types.Issue // nil slice — the "no human beads" case
+
+	out := captureStdout(t, func() error {
+		return emitHumanListJSON(empty)
+	})
+
+	trimmed := strings.TrimSpace(out)
+	if trimmed == "null" {
+		t.Fatalf("empty human list --json emitted `null` instead of `[]` (beads-b2yd)")
+	}
+	if !strings.HasPrefix(trimmed, "[") {
+		t.Fatalf("empty human list --json must be an empty JSON array `[]`, got: %q", trimmed)
+	}
+	var arr []map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &arr); err != nil {
+		t.Fatalf("empty output is not a decodable JSON array: %v\nstdout:\n%s", err, out)
+	}
+	if len(arr) != 0 {
+		t.Fatalf("expected an empty array, got %d elements: %v", len(arr), arr)
+	}
+}
+
+// TestHumanStatsJSONContract is the beads-vath regression: `bd human stats
+// --json` ignored the flag — its RunE called printHumanStats unconditionally,
+// emitting the plaintext "Human Beads Stats" table with rc=0. The fix routes
+// the computed counts through outputJSON. This drives the same emit path
+// (outputJSON(humanStats)) and asserts a parseable JSON object carrying the
+// four count fields. RED before the fix: the RunE never reaches outputJSON.
+func TestHumanStatsJSONContract(t *testing.T) {
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	issues := []*types.Issue{
+		{ID: "bd-1", Status: "open"},
+		{ID: "bd-2", Status: "closed", CloseReason: "Responded"},
+		{ID: "bd-3", Status: "closed", CloseReason: "Dismissed: stale"},
+	}
+	stats := computeHumanStats(issues)
+
+	out := captureStdout(t, func() error {
+		return outputJSON(stats)
+	})
+
+	trimmed := strings.TrimSpace(out)
+	if strings.Contains(trimmed, "Human Beads Stats") {
+		t.Fatalf("human stats --json leaked the plaintext table onto stdout (beads-vath):\n%s", out)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &m); err != nil {
+		t.Fatalf("human stats --json is not a decodable JSON object: %v\nstdout:\n%s", err, out)
+	}
+	// In non-envelope mode the stats object carries schema_version alongside the
+	// counts; assert the count fields are present and correct.
+	for field, want := range map[string]float64{"total": 3, "pending": 1, "responded": 1, "dismissed": 1} {
+		got, ok := m[field].(float64)
+		if !ok {
+			t.Fatalf("human stats --json missing numeric field %q: %v", field, m)
+		}
+		if got != want {
+			t.Errorf("human stats --json field %q = %v, want %v", field, got, want)
+		}
+	}
+}
+
 // TestHumanListJSONPlainModeIsList guards the non-envelope contract: the
 // response stays a bare JSON array (a top-level slice can't carry a
 // schema_version key), matching `ready --json` and preserving existing

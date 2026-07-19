@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -79,6 +80,19 @@ func TestEmbeddedHuman(t *testing.T) {
 		_ = bdHuman(t, bd, dir, "list", "--status", "open")
 	})
 
+	// beads-b2yd: `bd human list --json` on an empty set must emit `[]`, not
+	// `null` (a nil slice marshalled as-is). End-to-end through the RunE.
+	t.Run("human_list_json_empty_is_array", func(t *testing.T) {
+		out := bdHuman(t, bd, dir, "list", "--json")
+		trimmed := strings.TrimSpace(out)
+		if trimmed == "null" {
+			t.Fatalf("empty human list --json emitted `null` not `[]` (beads-b2yd)\nstdout:\n%s", out)
+		}
+		if !strings.HasPrefix(trimmed, "[") {
+			t.Fatalf("empty human list --json must be a JSON array, got: %q", trimmed)
+		}
+	})
+
 	// ===== Stats =====
 
 	t.Run("human_stats", func(t *testing.T) {
@@ -86,6 +100,26 @@ func TestEmbeddedHuman(t *testing.T) {
 		// Should succeed and produce output
 		if len(strings.TrimSpace(out)) == 0 {
 			t.Error("expected non-empty stats output")
+		}
+	})
+
+	// beads-vath: `bd human stats --json` was ignored — the RunE called
+	// printHumanStats unconditionally, leaking the plaintext table with rc=0.
+	// Drive it end-to-end and assert a parseable JSON object (not the table).
+	t.Run("human_stats_json_contract", func(t *testing.T) {
+		// Seed one human-labeled issue so counts are non-trivial.
+		bdCreate(t, bd, dir, "needs human", "--type", "task", "--label", "human")
+		out := bdHuman(t, bd, dir, "stats", "--json")
+		trimmed := strings.TrimSpace(out)
+		if strings.Contains(trimmed, "Human Beads Stats") {
+			t.Fatalf("human stats --json leaked the plaintext table (beads-vath)\nstdout:\n%s", out)
+		}
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(trimmed), &m); err != nil {
+			t.Fatalf("human stats --json is not a decodable JSON object: %v\nstdout:\n%s", err, out)
+		}
+		if _, ok := m["total"]; !ok {
+			t.Fatalf("human stats --json missing 'total' count field: %v", m)
 		}
 	})
 }

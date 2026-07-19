@@ -176,6 +176,14 @@ Examples:
 // .data consumer got a bare list even under envelope mode. Named so a
 // regression at this emit site is caught by TestHumanListJSON* (which drive it).
 func emitHumanListJSON(issues []*types.Issue) error {
+	// beads-b2yd: a nil `[]*types.Issue` marshals to `null` (a typed-nil slice
+	// still satisfies reflect.Slice in wrapWithSchemaVersion, so it is emitted
+	// as-is), which breaks `.data` consumers that iterate the result. Normalize
+	// an empty result to `[]` — the nil-slice ARRAY contract swept across the
+	// other --json list paths (guib/4mkg/erw5 family).
+	if issues == nil {
+		issues = []*types.Issue{}
+	}
 	return outputJSON(issues)
 }
 
@@ -410,38 +418,58 @@ Example:
 			return HandleErrorRespectJSON("getting human bead stats: %v", err)
 		}
 
-		printHumanStats(issues)
+		stats := computeHumanStats(issues)
+		// beads-vath: honor --json — the RunE previously called printHumanStats
+		// unconditionally, so `bd human stats --json` emitted the plaintext
+		// "Human Beads Stats" table with rc=0 and a script consuming --json got
+		// unparseable text (the sibling `human list` already honors --json).
+		if jsonOutput {
+			return outputJSON(stats)
+		}
+
+		printHumanStats(stats)
 		return nil
 	},
 }
 
-func printHumanStats(issues []*types.Issue) {
-	total := len(issues)
-	pending := 0
+// humanStats holds the summary counts for human-needed beads, emitted verbatim
+// under `bd human stats --json` (beads-vath).
+type humanStats struct {
+	Total     int `json:"total"`
+	Pending   int `json:"pending"`
+	Responded int `json:"responded"`
+	Dismissed int `json:"dismissed"`
+}
+
+func computeHumanStats(issues []*types.Issue) humanStats {
+	var s humanStats
+	s.Total = len(issues)
 	closed := 0
-	dismissed := 0
 
 	for _, issue := range issues {
 		switch issue.Status {
 		case "closed":
 			closed++
 			if strings.Contains(strings.ToLower(issue.CloseReason), "dismiss") {
-				dismissed++
+				s.Dismissed++
 			}
 		default:
 			// All non-closed statuses (open, in_progress, blocked, hooked, etc.) are pending
-			pending++
+			s.Pending++
 		}
 	}
 
-	responded := closed - dismissed
+	s.Responded = closed - s.Dismissed
+	return s
+}
 
+func printHumanStats(s humanStats) {
 	fmt.Printf("\n%s\n", ui.RenderBold("Human Beads Stats"))
 	fmt.Println()
-	fmt.Printf("  Total:      %d\n", total)
-	fmt.Printf("  Pending:    %d\n", pending)
-	fmt.Printf("  Responded:  %d\n", responded)
-	fmt.Printf("  Dismissed:  %d\n", dismissed)
+	fmt.Printf("  Total:      %d\n", s.Total)
+	fmt.Printf("  Pending:    %d\n", s.Pending)
+	fmt.Printf("  Responded:  %d\n", s.Responded)
+	fmt.Printf("  Dismissed:  %d\n", s.Dismissed)
 	fmt.Println()
 }
 
