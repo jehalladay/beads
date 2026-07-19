@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -161,17 +160,23 @@ Examples:
 				issue.Labels = labelsMap[issue.ID]
 			}
 
-			data, err := json.MarshalIndent(issues, "", "  ")
-			if err != nil {
-				return HandleErrorRespectJSON("encoding JSON: %v", err)
-			}
-			fmt.Println(string(data))
-			return nil
+			return emitHumanListJSON(issues)
 		}
 
 		printHumanList(issues)
 		return nil
 	},
+}
+
+// emitHumanListJSON writes the `bd human list --json` response. beads-erw5: it
+// routes through outputJSON so the response honors BD_JSON_ENVELOPE=1
+// ({schema_version, data:[...]}), matching the `ready --json` control and every
+// other list verb. The prior json.MarshalIndent+fmt.Println block bypassed
+// outputJSON→wrapWithSchemaVersion (the lav0 MARSHAL-variant blind spot), so a
+// .data consumer got a bare list even under envelope mode. Named so a
+// regression at this emit site is caught by TestHumanListJSON* (which drive it).
+func emitHumanListJSON(issues []*types.Issue) error {
+	return outputJSON(issues)
 }
 
 func printHumanList(issues []*types.Issue) {
