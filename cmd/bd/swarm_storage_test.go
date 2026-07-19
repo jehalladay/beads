@@ -167,6 +167,13 @@ func TestAnalyzeEpicForSwarm(t *testing.T) {
 		if a.TotalIssues != 0 || !swarmWarnsContain(a.Warnings, "no children") {
 			t.Fatalf("expected no-children warning, got %+v", a)
 		}
+		// beads-j75r: a childless epic must NOT report swarmable:true. The JSON
+		// path marshals analysis.Swarmable directly, so leaving the struct
+		// default (true) while total_issues:0 is a JSON/human divergence — the
+		// human path prints "no children to swarm" (not swarmable).
+		if a.Swarmable {
+			t.Fatalf("childless epic must not be swarmable (total_issues=%d), got swarmable=true", a.TotalIssues)
+		}
 	})
 
 	t.Run("builds graph, waves, and swarmable for a clean chain", func(t *testing.T) {

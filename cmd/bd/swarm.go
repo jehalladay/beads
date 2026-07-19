@@ -233,6 +233,11 @@ func analyzeEpicForSwarm(ctx context.Context, s SwarmStorage, epic *types.Issue)
 
 	if len(childIssues) == 0 {
 		analysis.Warnings = append(analysis.Warnings, "Epic has no children")
+		// beads-j75r: a childless epic is not swarmable (total_issues:0). The
+		// struct defaults Swarmable:true; leaving it here makes the JSON output
+		// report swarmable:true, contradicting total_issues:0 and the human path
+		// ("no children to swarm"). Set false so JSON matches human semantics.
+		analysis.Swarmable = false
 		return analysis, nil
 	}
 
