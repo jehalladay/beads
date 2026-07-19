@@ -137,7 +137,7 @@ Force: Delete and orphan dependents
 		if !force {
 			fmt.Printf("\n%s\n", ui.RenderFail("⚠️  DELETE PREVIEW"))
 			fmt.Printf("\nIssue to delete:\n")
-			fmt.Printf("  %s: %s\n", issueID, issue.Title)
+			fmt.Printf("  %s: %s\n", issueID, displayTitle(issue.Title))
 			totalDeps := len(depRecords) + len(dependents)
 			if totalDeps > 0 {
 				fmt.Printf("\nDependency links to remove: %d\n", totalDeps)
@@ -157,7 +157,7 @@ Force: Delete and orphan dependents
 						(connIssue.Design != "" && re.MatchString(connIssue.Design)) ||
 						(connIssue.AcceptanceCriteria != "" && re.MatchString(connIssue.AcceptanceCriteria))
 					if hasRefs {
-						fmt.Printf("  %s: %s\n", id, connIssue.Title)
+						fmt.Printf("  %s: %s\n", id, displayTitle(connIssue.Title))
 						issuesWithRefs++
 					}
 				}
@@ -367,7 +367,7 @@ func showDeletionPreview(issueIDs []string, issues map[string]*types.Issue, casc
 	fmt.Printf("\nIssues to delete (%d):\n", len(issueIDs))
 	for _, id := range issueIDs {
 		if issue := issues[id]; issue != nil {
-			fmt.Printf("  %s: %s\n", id, issue.Title)
+			fmt.Printf("  %s: %s\n", id, displayTitle(issue.Title))
 		}
 	}
 	if cascade {
