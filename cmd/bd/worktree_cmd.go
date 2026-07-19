@@ -160,26 +160,31 @@ func runWorktreeCreate(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
 	// Determine worktree path
+	// beads-z2b4: these error paths are all reachable under --json (the
+	// jsonOutput success branch is below), so route them through
+	// HandleErrorRespectJSON — under --json it emits a parseable JSON error
+	// object on stdout instead of a bare plaintext-stderr line + empty stdout,
+	// matching the 8lqh error-contract sibling handlers already honor.
 	worktreePath, err := filepath.Abs(name)
 	if err != nil {
-		return fmt.Errorf("failed to resolve path: %w", err)
+		return HandleErrorRespectJSON("failed to resolve path: %v", err)
 	}
 
 	// Check if path already exists
 	if _, err := os.Stat(worktreePath); err == nil {
-		return fmt.Errorf("path already exists: %s", worktreePath)
+		return HandleErrorRespectJSON("path already exists: %s", worktreePath)
 	}
 
 	// Get repository context (validates .beads exists and resolves paths)
 	rc, err := beads.GetRepoContext()
 	if err != nil {
-		return fmt.Errorf("%s; %s: %w", activeWorkspaceNotFoundError(), diagHint(), err)
+		return HandleErrorRespectJSON("%s; %s: %v", activeWorkspaceNotFoundError(), diagHint(), err)
 	}
 
 	// Worktree operations use CWD repo (where user is working), not BEADS_DIR repo
 	repoRoot := rc.CWDRepoRoot
 	if repoRoot == "" {
-		return fmt.Errorf("not in a git repository")
+		return HandleErrorRespectJSON("not in a git repository")
 	}
 
 	// Determine branch name
@@ -194,7 +199,7 @@ func runWorktreeCreate(cmd *cobra.Command, args []string) error {
 		// Try without -b if branch already exists
 		gitCmd = gitCmdInDir(ctx, repoRoot, "worktree", "add", worktreePath, branch)
 		if output, err := gitCmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to create worktree: %w\n%s", err, string(output))
+			return HandleErrorRespectJSON("failed to create worktree: %v\n%s", err, string(output))
 		}
 	}
 
@@ -250,7 +255,8 @@ func runWorktreeList(cmd *cobra.Command, args []string) error {
 		// Fall back to git.GetRepoRoot() for this case
 		repoRoot := git.GetRepoRoot()
 		if repoRoot == "" {
-			return fmt.Errorf("not in a git repository")
+			// beads-z2b4: honor the --json error contract (see runWorktreeCreate).
+			return HandleErrorRespectJSON("not in a git repository")
 		}
 		return listWorktreesWithoutBeads(ctx, repoRoot)
 	}
@@ -258,14 +264,14 @@ func runWorktreeList(cmd *cobra.Command, args []string) error {
 	// Worktree operations use CWD repo (where user is working)
 	repoRoot := rc.CWDRepoRoot
 	if repoRoot == "" {
-		return fmt.Errorf("not in a git repository")
+		return HandleErrorRespectJSON("not in a git repository")
 	}
 
 	// List worktrees using secure git command
 	gitCmd := gitCmdInDir(ctx, repoRoot, "worktree", "list", "--porcelain")
 	output, err := gitCmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to list worktrees: %w", err)
+		return HandleErrorRespectJSON("failed to list worktrees: %v", err)
 	}
 
 	// Parse worktree list
@@ -335,26 +341,27 @@ func runWorktreeRemove(cmd *cobra.Command, args []string) error {
 		repoRoot = rc.CWDRepoRoot
 	}
 	if repoRoot == "" {
-		return fmt.Errorf("not in a git repository")
+		// beads-z2b4: honor the --json error contract (see runWorktreeCreate).
+		return HandleErrorRespectJSON("not in a git repository")
 	}
 
 	// Resolve worktree path
 	worktreePath, err := resolveWorktreePath(ctx, repoRoot, name)
 	if err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	// Don't allow removing the main repository
 	absWorktree, _ := filepath.Abs(worktreePath)
 	absMain, _ := filepath.Abs(repoRoot)
 	if absWorktree == absMain {
-		return fmt.Errorf("cannot remove main repository as worktree")
+		return HandleErrorRespectJSON("cannot remove main repository as worktree")
 	}
 
 	// Safety checks unless --force
 	if !worktreeForce {
 		if err := checkWorktreeSafety(ctx, worktreePath); err != nil {
-			return fmt.Errorf("safety check failed: %w\nUse --force to skip safety checks", err)
+			return HandleErrorRespectJSON("safety check failed: %v\nUse --force to skip safety checks", err)
 		}
 	}
 
@@ -367,7 +374,7 @@ func runWorktreeRemove(cmd *cobra.Command, args []string) error {
 	}
 	output, err := gitCmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to remove worktree: %w\n%s", err, string(output))
+		return HandleErrorRespectJSON("failed to remove worktree: %v\n%s", err, string(output))
 	}
 
 	// Remove from .gitignore - use relative path from repo root
@@ -402,7 +409,8 @@ func runWorktreeInfo(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("failed to get current directory: %w", err)
+		// beads-z2b4: honor the --json error contract (see runWorktreeCreate).
+		return HandleErrorRespectJSON("failed to get current directory: %v", err)
 	}
 
 	// Check if we're in a worktree (use RepoContext if available, fallback to git)
@@ -511,7 +519,9 @@ func listWorktreesWithoutBeads(ctx context.Context, repoRoot string) error {
 	gitCmd := gitCmdInDir(ctx, repoRoot, "worktree", "list", "--porcelain")
 	output, err := gitCmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to list worktrees: %w", err)
+		// beads-z2b4: reached via `return listWorktreesWithoutBeads(...)` from
+		// runWorktreeList under --json — honor the JSON error contract.
+		return HandleErrorRespectJSON("failed to list worktrees: %v", err)
 	}
 
 	worktrees := parseWorktreeList(string(output))

@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recognizes the `repo_state.json … no such file / cannot find the file` cause line (emitted alone when the
   banner line is dropped under load). A genuine dangling-chunk finding — which never mentions
   `repo_state.json` — still aborts the push.
+- **`bd worktree create/list/remove/info --json` now emit a JSON error object on stdout instead of a plaintext-stderr line on domain errors (beads-z2b4).**
+  The four worktree handlers returned their domain errors (not-in-a-git-repo, path-exists, worktree-not-found,
+  safety-check-failed, git-command-failed, etc.) via a bare `fmt.Errorf`, so cobra printed a plaintext
+  `Error: ...` line to stderr and exited 1 with empty stdout — unparseable by a `--json` consumer — while the
+  success paths already emit JSON. E.g. `bd worktree remove <ghost> --json` produced empty stdout + text on
+  stderr, in contrast to `bd worktree list --json`'s JSON array. The reachable-under-json error paths in
+  `runWorktreeCreate`/`runWorktreeList`/`runWorktreeRemove`/`runWorktreeInfo` (and the
+  `listWorktreesWithoutBeads` fallback) now route through `HandleErrorRespectJSON`, matching the 8lqh
+  JSON-error contract. Same error-half class as beads-uc71 (ado) and distinct from the lav0 success-half.
 
 - **`bd search` now reports the true match count in its header, not the `--limit`-truncated page size (beads-4wn0).**
   The header printed `Found %d issues matching '<q>'` using the already-`--limit`-truncated result slice, so
