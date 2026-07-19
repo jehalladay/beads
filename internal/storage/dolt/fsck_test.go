@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestPrePushFSCK_EmptyCLIDir verifies that prePushFSCK is a no-op when
@@ -107,8 +108,30 @@ func TestFsckCouldNotOpen(t *testing.T) {
 			want:   true,
 		},
 		{
+			// beads-9nq1: the exact output the refinery gate captured under load
+			// was ONLY the repo_state.json cause line (the "repository state is
+			// invalid" banner was dropped/interleaved), which previously slipped
+			// through fsckCouldNotOpen and got wrapped as a corruption abort.
+			name:   "repo_state.json cause line alone (banner dropped under load)",
+			output: "open /tmp/x/001/mydb/.dolt/repo_state.json: no such file or directory",
+			want:   true,
+		},
+		{
+			name:   "repo_state.json windows cannot-find variant",
+			output: `open C:\Users\x\.dolt\repo_state.json: The system cannot find the file specified.`,
+			want:   true,
+		},
+		{
 			name:   "actual dangling chunk reference (must still abort)",
 			output: "dangling chunk reference: hash abc123 referenced but not present",
+			want:   false,
+		},
+		{
+			// A genuine integrity finding that happens to mention a missing file
+			// but NOT repo_state.json must still abort (guard is repo_state.json-
+			// scoped, not a blanket "no such file" match).
+			name:   "missing chunk file that is not repo_state.json (must still abort)",
+			output: "dangling chunk reference: open /x/.dolt/noms/abc.chunk: no such file or directory",
 			want:   false,
 		},
 		{
@@ -125,5 +148,40 @@ func TestFsckCouldNotOpen(t *testing.T) {
 				t.Errorf("fsckCouldNotOpen(%q) = %v, want %v", tc.output, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestPrePushFSCK_TimeoutProceeds is the teeth for the beads-9nq1 timeout leg:
+// when the fsck subprocess exceeds the fsck context deadline (the flake mode
+// under heavy /fsx node contention — dolt is killed mid-run with empty/partial
+// output), prePushFSCK must treat it as "could not run" and return nil (warn +
+// proceed), NOT wrap it as ErrDanglingReference and abort the push (which
+// bounce-loops the merge queue on a spurious RED). We force the deadline by
+// passing an already-expired context, so the exec.CommandContext child is
+// killed immediately and fsckCtx.Err() == DeadlineExceeded regardless of how
+// fast/slow dolt is — fully hermetic (no real slow dolt needed), but it does
+// require a dolt binary on PATH to reach the exec.
+func TestPrePushFSCK_TimeoutProceeds(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("dolt"); err != nil {
+		t.Skip("dolt not in PATH")
+	}
+
+	tmp := t.TempDir()
+	dbDir := filepath.Join(tmp, "mydb")
+	// .dolt/noms present so prePushFSCK does not short-circuit before the exec.
+	if err := os.MkdirAll(filepath.Join(dbDir, ".dolt", "noms"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Already-expired parent context → the derived fsck context is born past its
+	// deadline, so CommandContext kills the child at once and the error is a
+	// deadline, exercised deterministically.
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	s := &DoltStore{dbPath: tmp, database: "mydb"}
+	if err := s.prePushFSCK(ctx); err != nil {
+		t.Fatalf("expected nil on fsck timeout (should warn and proceed), got %v", err)
 	}
 }

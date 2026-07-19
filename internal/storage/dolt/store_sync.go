@@ -258,6 +258,17 @@ func (s *DoltStore) prePushFSCK(ctx context.Context) error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		output := strings.TrimSpace(string(out))
+		// beads-9nq1: a fsck that hit our context timeout never completed the
+		// integrity check, so it is a "couldn't run" case (environmental slowness
+		// under load), not "found problems" — must not be wrapped as corruption.
+		// This is the primary flake source under heavy /fsx node contention: the
+		// dolt subprocess is killed mid-run and its output is empty/partial, which
+		// fsckCouldNotOpen (rightly) does not match, so without this check a slow
+		// node would spuriously abort the push (and bounce-loop the merge queue).
+		if fsckCtx.Err() == context.DeadlineExceeded {
+			log.Printf("pre-push fsck timed out (%s), skipping integrity check: %s", fsckTimeout, output)
+			return nil
+		}
 		// Distinguish "fsck couldn't run the integrity check" (environmental /
 		// tooling issue) from "fsck ran and found integrity problems" (the actual
 		// concern of PR #3447). Wrapping an open-failure as ErrDanglingReference
@@ -268,7 +279,7 @@ func (s *DoltStore) prePushFSCK(ctx context.Context) error {
 		// running `bd dolt push` saw "dangling chunk reference" errors on perfectly
 		// healthy databases.
 		//
-		// The two known "couldn't open" signatures from dolt are covered below.
+		// The known "couldn't open" signatures from dolt are covered below.
 		// Any other fsck failure still aborts the push so real dangling references
 		// continue to block propagation.
 		if fsckCouldNotOpen(output) {
@@ -289,6 +300,18 @@ func fsckCouldNotOpen(output string) bool {
 	case strings.Contains(output, "Could not open dolt database"):
 		return true
 	case strings.Contains(output, "repository state is invalid"):
+		return true
+	// beads-9nq1: dolt emits the "repository state is invalid" banner and the
+	// underlying "open .../repo_state.json: no such file or directory" cause on
+	// separate lines; under load the gate captured only the repo_state.json line
+	// (the banner line was dropped/interleaved), so match the cause line too. A
+	// missing/unreadable repo_state.json means fsck could not open the repo — it
+	// is an open-failure, never an integrity finding. Guarded to repo_state.json
+	// so a genuine dangling-chunk message (which never mentions repo_state.json)
+	// still aborts the push.
+	case strings.Contains(output, "repo_state.json") &&
+		(strings.Contains(output, "no such file or directory") ||
+			strings.Contains(output, "cannot find the file")):
 		return true
 	default:
 		return false

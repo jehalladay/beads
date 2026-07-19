@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd dolt push` pre-push fsck no longer aborts with a spurious "dangling chunk reference" when the check merely timed out or the repo could not be opened (beads-9nq1).**
+  `prePushFSCK` shells out to `dolt fsck`; under heavy node contention the subprocess was killed by the fsck
+  context timeout with empty/partial output, and the open-failure matcher only recognized two banner
+  phrasings — so a timed-out or can't-open fsck was wrapped as `ErrDanglingReference` and aborted the push
+  (bounce-looping the merge queue on a spurious RED via `TestPrePushFSCK_UnopenableDB`). Now a
+  `context.DeadlineExceeded` fsck is treated as "could not run" (warn + proceed), and the matcher also
+  recognizes the `repo_state.json … no such file / cannot find the file` cause line (emitted alone when the
+  banner line is dropped under load). A genuine dangling-chunk finding — which never mentions
+  `repo_state.json` — still aborts the push.
+
 - **`bd search` now reports the true match count in its header, not the `--limit`-truncated page size (beads-4wn0).**
   The header printed `Found %d issues matching '<q>'` using the already-`--limit`-truncated result slice, so
   `bd search <term> --limit 2` on 3 matches reported `Found 2 issues` — an undercount with no "showing 2 of 3" hint.
