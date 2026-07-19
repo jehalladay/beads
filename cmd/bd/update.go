@@ -589,6 +589,22 @@ create, update, show, or close operation).`,
 				regularUpdates["status"] = string(types.StatusOpen)
 			}
 
+			// beads-6qo8t: `bd update --status closed` reaches the same terminal
+			// state as `bd close`, whose help this path claims to mirror, but left
+			// close_reason NULL while `bd close` defaults it to "Closed"
+			// (close.go: `if len(reasons)==0 { reasons=["Closed"] }`). Default
+			// close_reason to "Closed" on a real open->closed transition when the
+			// caller didn't set one, so the two close paths store the same field.
+			// Only on the genuine open->closed transition (not an already-closed
+			// no-op, and not a close->open reopen), matching the zgku transition
+			// guard's condition; never clobber a close_reason the caller supplied.
+			if newStatus, ok := regularUpdates["status"].(string); ok &&
+				newStatus == string(types.StatusClosed) && issue.Status != types.StatusClosed {
+				if _, alreadySet := regularUpdates["close_reason"]; !alreadySet {
+					regularUpdates["close_reason"] = "Closed"
+				}
+			}
+
 			// --metadata is a whole-blob MERGE with arbitrary (unvalidated) keys,
 			// so it can't safely decompose into per-key JSON_SET paths. Guard it
 			// against concurrent clobber with an optimistic CAS merge done wholly

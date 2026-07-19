@@ -119,6 +119,47 @@ func TestEmbeddedClose(t *testing.T) {
 		}
 	})
 
+	// beads-6qo8t: `bd update --status closed` reaches the same terminal state
+	// as `bd close` (and its help claims to mirror `bd close --force`), so it
+	// must store the same default close_reason='Closed' — previously it left
+	// close_reason NULL, a cross-command field-parity gap. Only on a real
+	// open->closed transition, and never clobbering an already-set reason.
+	t.Run("update_status_closed_defaults_close_reason_like_close", func(t *testing.T) {
+		viaClose := bdCreate(t, bd, dir, "6qo8t via close", "--type", "task")
+		viaUpdate := bdCreate(t, bd, dir, "6qo8t via update", "--type", "task")
+
+		bdClose(t, bd, dir, viaClose.ID)
+		bdUpdate(t, bd, dir, viaUpdate.ID, "--status", "closed")
+
+		gotClose := bdShow(t, bd, dir, viaClose.ID)
+		gotUpdate := bdShow(t, bd, dir, viaUpdate.ID)
+		if gotUpdate.CloseReason != "Closed" {
+			t.Errorf("update --status closed: expected default close_reason 'Closed' (parity with bd close), got %q", gotUpdate.CloseReason)
+		}
+		if gotUpdate.CloseReason != gotClose.CloseReason {
+			t.Errorf("close_reason parity gap: bd close=%q vs update --status closed=%q", gotClose.CloseReason, gotUpdate.CloseReason)
+		}
+	})
+
+	// The default must NOT clobber a close_reason already present (e.g. when the
+	// issue was closed with a real reason and update --status closed re-runs as a
+	// no-op transition). Guarded by the open->closed condition (issue.Status !=
+	// closed), so a re-close no-op never re-defaults.
+	t.Run("update_status_closed_does_not_clobber_existing_reason", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "6qo8t no-clobber", "--type", "task")
+		bdClose(t, bd, dir, issue.ID, "--reason", "real reason")
+		// Re-issue update --status closed on the already-closed issue: no-op
+		// transition, must not overwrite the existing reason.
+		cmd := exec.Command(bd, "update", issue.ID, "--status", "closed")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		_, _ = cmd.CombinedOutput()
+		got := bdShow(t, bd, dir, issue.ID)
+		if got.CloseReason != "real reason" {
+			t.Errorf("update --status closed on already-closed issue clobbered close_reason: got %q, want 'real reason'", got.CloseReason)
+		}
+	})
+
 	t.Run("close_with_reason", func(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "Reason test", "--type", "task")
 		bdClose(t, bd, dir, issue.ID, "--reason", "done")
