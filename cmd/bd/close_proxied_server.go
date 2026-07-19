@@ -99,13 +99,8 @@ func runCloseProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 		continueResult = closeProxiedContinue(ctx, uw, args[0], !in.noAuto)
 	}
 
-	var claimedNextIssue *types.Issue
-	if in.claimNext && len(outcomes) > 0 && !in.continueOn {
-		claimedNextIssue = closeProxiedClaimNext(ctx, uw, in.jsonOut)
-	}
-
 	if len(outcomes) > 0 {
-		msg := closeProxiedCommitMessage(outcomes, claimedNextIssue, continueResult)
+		msg := closeProxiedCommitMessage(outcomes, nil, continueResult)
 		if err := uw.Commit(ctx, msg); err != nil && !isDoltNothingToCommit(err) {
 			FatalErrorRespectJSON("commit close: %v", err)
 		}
@@ -117,6 +112,17 @@ func runCloseProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 				fmt.Fprintf(os.Stderr, "warning: %s: %v\n", o.id, err)
 			}
 		}
+	}
+
+	// beads-iq8zr: run --claim-next in its OWN UnitOfWork AFTER the primary close
+	// has committed. Bundling the opportunistic next-claim into the close commit
+	// meant a lost concurrent claim race (Dolt raises 1213 on the shared
+	// sql-server) rolled back the WHOLE unit of work — silently reverting the
+	// user's actual close. The direct path (close.go) already commits the close
+	// first, then claims separately and only warns on failure; mirror that here.
+	var claimedNextIssue *types.Issue
+	if in.claimNext && len(outcomes) > 0 && !in.continueOn {
+		claimedNextIssue = closeProxiedClaimNextSeparate(ctx, in.jsonOut)
 	}
 
 	if !in.jsonOut {
@@ -330,7 +336,37 @@ func closeProxiedSuggestNext(ctx context.Context, uw uow.UnitOfWork, closedID st
 	return unblocked
 }
 
-func closeProxiedClaimNext(ctx context.Context, uw uow.UnitOfWork, jsonOut bool) *types.Issue {
+// closeProxiedClaimNextSeparate claims the next ready issue in a SEPARATE
+// UnitOfWork, run only after the primary close has already committed. It never
+// fataly errors: any failure (including a lost concurrent claim race) is a
+// non-fatal warning, so it cannot revert the close (beads-iq8zr). The whole
+// read-claim-commit critical section is serialized by the same server-scoped
+// advisory lock as `bd ready --claim` so two concurrent claimers cannot
+// double-claim the same issue (beads-1i4u): both handlers take "bd_ready_claim",
+// so close --claim-next and ready --claim are mutually exclusive too.
+func closeProxiedClaimNextSeparate(ctx context.Context, jsonOut bool) *types.Issue {
+	if uowProvider == nil {
+		return nil
+	}
+
+	if locker, ok := uowProvider.(interface {
+		AcquireAdvisoryLock(ctx context.Context, name string, timeoutSeconds int) (func(), error)
+	}); ok {
+		release, lockErr := locker.AcquireAdvisoryLock(ctx, "bd_ready_claim", 10)
+		if lockErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not serialize claim-next: %v\n", lockErr)
+			return nil
+		}
+		defer release()
+	}
+
+	uw, err := uowProvider.NewUOW(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not open claim-next unit of work: %v\n", err)
+		return nil
+	}
+	defer uw.Close(ctx)
+
 	page, err := uw.IssueUseCase().GetReadyWork(ctx, types.WorkFilter{
 		Status:     "open",
 		Limit:      1,
@@ -350,6 +386,10 @@ func closeProxiedClaimNext(ctx context.Context, uw uow.UnitOfWork, jsonOut bool)
 	nextIssue := page.Items[0]
 	if _, err := uw.IssueUseCase().ClaimIssue(ctx, nextIssue.ID, actor); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not claim next issue %s: %v\n", nextIssue.ID, err)
+		return nil
+	}
+	if err := uw.Commit(ctx, "bd: claim "+nextIssue.ID); err != nil && !isDoltNothingToCommit(err) {
+		fmt.Fprintf(os.Stderr, "Warning: could not commit claim of next issue %s: %v\n", nextIssue.ID, err)
 		return nil
 	}
 	return nextIssue

@@ -866,3 +866,106 @@ func TestProxiedServerCloseConcurrent(t *testing.T) {
 		t.Errorf("open issues remain after concurrent close: %d", openCount)
 	}
 }
+
+// TestProxiedServerCloseClaimNextConcurrent exercises the double-claim vector in
+// `bd close --claim-next`: N workers each close their OWN decoy issue with
+// --claim-next while exactly ONE shared target issue is the only claimable ready
+// work. closeProxiedClaimNext does GetReadyWork -> ClaimIssue inside a
+// UnitOfWork; on the shared Dolt sql-server each worker's transaction snapshot
+// sees the same target open, both conditional-UPDATEs succeed in their own
+// working set, and DOLT_COMMIT auto-merges without a serialization conflict ->
+// the SAME target is handed to two actors (double-claim / lost update). This is
+// the same class as TestProxiedServerReadyClaimConcurrent (beads-1i4u) but on a
+// distinct, uncovered code path. Asserts exactly one worker wins the target AND
+// that a lost claim-next race never rolls back the worker's primary close
+// (beads-iq8zr — the close and claim-next used to share one commit).
+func TestProxiedServerCloseClaimNextConcurrent(t *testing.T) {
+	requireProxiedServerEnv(t)
+	bd := buildEmbeddedBD(t)
+	p := bdProxiedInit(t, bd, "ccn")
+
+	const numWorkers = 8
+	// One decoy per worker, pre-claimed to that worker so it is in_progress (NOT
+	// in the ready/open set) — each worker closes its OWN distinct decoy. Plus
+	// one shared target that is the ONLY ready/open issue, so every worker's
+	// --claim-next races for the SAME target row. A correct implementation lets
+	// exactly one win; the double-claim bug hands it to two.
+	decoys := make([]string, numWorkers)
+	for w := 0; w < numWorkers; w++ {
+		id := bdProxiedCreate(t, bd, p.dir, fmt.Sprintf("decoy-%d", w)).ID
+		decoys[w] = id
+		if _, err := bdProxiedRun(t, bd, p.dir, "update", id, "--claim",
+			"--actor", fmt.Sprintf("worker-%d@test", w)); err != nil {
+			t.Fatalf("pre-claim decoy %s: %v", id, err)
+		}
+	}
+	target := bdProxiedCreate(t, bd, p.dir, "shared claim-next target")
+
+	type result struct {
+		claimedID string
+		stdout    string
+		stderr    string
+		err       error
+	}
+	results := make([]result, numWorkers)
+	var wg sync.WaitGroup
+	wg.Add(numWorkers)
+	for w := 0; w < numWorkers; w++ {
+		go func(worker int) {
+			defer wg.Done()
+			cmd := exec.Command(bd, "close", decoys[worker], "--claim-next", "--json",
+				"--actor", fmt.Sprintf("worker-%d@test", worker))
+			cmd.Dir = p.dir
+			cmd.Env = bdProxiedEnv(p.dir)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+			r := result{stdout: stdout.String(), stderr: stderr.String(), err: err}
+			s := strings.TrimSpace(r.stdout)
+			if start := strings.Index(s, "{"); start >= 0 {
+				var env struct {
+					Claimed *types.Issue `json:"claimed"`
+				}
+				if jerr := json.Unmarshal([]byte(s[start:]), &env); jerr == nil && env.Claimed != nil {
+					r.claimedID = env.Claimed.ID
+				}
+			}
+			results[worker] = r
+		}(w)
+	}
+	wg.Wait()
+
+	winners := 0
+	for i, r := range results {
+		if r.claimedID == target.ID {
+			winners++
+		} else if r.claimedID != "" {
+			t.Errorf("worker %d claimed unexpected issue %s (want target %s or none)", i, r.claimedID, target.ID)
+		}
+	}
+	if winners != 1 {
+		for i, r := range results {
+			t.Logf("worker %d: claimed=%q err=%v\nstdout=%s\nstderr=%s", i, r.claimedID, r.err, r.stdout, r.stderr)
+		}
+		t.Fatalf("expected exactly one worker to claim the shared target, got %d", winners)
+	}
+
+	final := bdProxiedShow(t, bd, p.dir, target.ID)
+	if final.Status != types.StatusInProgress {
+		t.Errorf("target Status = %s, want in_progress", final.Status)
+	}
+	if final.Assignee == "" {
+		t.Error("target Assignee empty after claim-next")
+	}
+
+	// Collateral-loss guard: close and claim-next share ONE UnitOfWork commit, so
+	// a claim-next conflict must not silently roll back the worker's PRIMARY close.
+	// Every decoy the worker was asked to close MUST end up closed, win or lose.
+	for w, id := range decoys {
+		got := bdProxiedShow(t, bd, p.dir, id)
+		if got.Status != types.StatusClosed {
+			t.Errorf("worker %d decoy %s Status = %s, want closed (primary close must survive a claim-next race)", w, id, got.Status)
+		}
+	}
+}
