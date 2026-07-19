@@ -378,9 +378,20 @@ func runCreateProxiedMarkdown(_ *cobra.Command, ctx context.Context, in createIn
 		return
 	}
 
-	fmt.Printf("%s Created %d issues from %s:\n", ui.RenderPass("✓"), len(result.Issues), in.markdownFile)
-	for _, issue := range result.Issues {
-		fmt.Printf("  %s: %s [P%d, %s]\n", issue.ID, issue.Title, issue.Priority, issue.IssueType)
+	printProxiedMarkdownCreated(result.Issues, in.markdownFile)
+}
+
+// printProxiedMarkdownCreated renders the human summary for the proxied
+// 'bd create --from-markdown' path. Each created issue's Title is routed
+// through displayTitle (ui.SanitizeForTerminal): these titles come straight
+// from the imported markdown file (untrusted external source), so an OSC/CSI
+// terminal-control escape (OSC 0 window-title / OSC 52 clipboard) in a heading
+// would otherwise reach the terminal verbatim. Display-only — stored titles
+// and the JSON path (outputJSON above) are unchanged.
+func printProxiedMarkdownCreated(issues []*types.Issue, markdownFile string) {
+	fmt.Printf("%s Created %d issues from %s:\n", ui.RenderPass("✓"), len(issues), markdownFile)
+	for _, issue := range issues {
+		fmt.Printf("  %s: %s [P%d, %s]\n", issue.ID, displayTitle(issue.Title), issue.Priority, issue.IssueType)
 	}
 }
 
