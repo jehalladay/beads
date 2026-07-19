@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -22,9 +23,41 @@ import (
 // (relate/unrelate) and beads-qwez (assign/tag).
 func runDeferProxiedServer(ctx context.Context, args []string, deferUntil *time.Time, reason string) error {
 	deferredCount := 0
+	alreadyDeferredCount := 0
 	var deferred []*types.Issue
 
+	// Already-deferred no-op guard (beads-fs01), mirrored on the proxied path so
+	// it stays symmetric with the direct defer path (defer.go) — the whole point
+	// of the aocj proxied routing was to make `bd defer` behave identically for
+	// hub-connected crew. Resolving current state needs a read UOW; the write
+	// still goes through applyUpdateProxiedOne (its own UOW), matching how
+	// reopen_proxied_server.go (beads-b0tw/6fns) reads current then transitions.
+	var readUW uow.UnitOfWork
+	if uowProvider != nil {
+		if uw, err := uowProvider.NewUOW(ctx); err == nil {
+			readUW = uw
+			defer readUW.Close(ctx)
+		}
+	}
+
 	for _, id := range args {
+		// Genuine re-defer (new --until or --reason) is a real change and must
+		// still succeed; only a bare re-defer of an already-deferred issue is the
+		// idempotent no-op we short-circuit.
+		if readUW != nil && deferUntil == nil && reason == "" {
+			if current, _ := proxiedResolveIssueOrWisp(ctx, readUW, id); current != nil &&
+				current.Status == types.StatusDeferred {
+				alreadyDeferredCount++
+				if jsonOutput {
+					deferred = append(deferred, current)
+				} else {
+					fmt.Printf("%s %s was already deferred (no change)\n",
+						ui.RenderInfoIcon(), formatFeedbackID(current.ID, current.Title))
+				}
+				continue
+			}
+		}
+
 		in := &updateInput{fields: map[string]any{
 			"status": string(types.StatusDeferred),
 		}}
@@ -63,8 +96,10 @@ func runDeferProxiedServer(ctx context.Context, args []string, deferUntil *time.
 
 	// Every requested ID failed → non-zero exit so scripts don't read false
 	// success; partial success (deferredCount>0) keeps rc=0 with its JSON array.
-	// Mirrors the direct defer path (beads-fg6) and the update/close batch paths.
-	if len(args) > 0 && deferredCount == 0 {
+	// An all-idempotent-no-op batch (alreadyDeferredCount>0, beads-fs01) also
+	// keeps rc=0 — nothing failed. Mirrors the direct defer path (beads-fg6/fs01)
+	// and the update/close batch paths.
+	if len(args) > 0 && deferredCount == 0 && alreadyDeferredCount == 0 {
 		if jsonOutput {
 			return HandleErrorRespectJSON("no issues deferred matching the provided IDs")
 		}

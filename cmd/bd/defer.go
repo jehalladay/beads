@@ -93,6 +93,7 @@ Examples:
 
 		deferredIssues := []*types.Issue{}
 		deferredCount := 0
+		alreadyDeferredCount := 0
 
 		if store == nil {
 			return HandleErrorWithHint("database not initialized", diagHint())
@@ -117,6 +118,27 @@ Examples:
 			oldStatus := "open"
 			if issue, gerr := store.GetIssue(ctx, fullID); gerr == nil && issue != nil {
 				oldStatus = string(issue.Status)
+				// Already-deferred guard (beads-fs01): `bd defer` on an issue that
+				// is already status=deferred, with NO new --until and NO --reason,
+				// changes nothing — yet the command printed "* Deferred" (rc=0), a
+				// false success a CI/agent gate re-running defer reads as proof of a
+				// state change. Mirror the landed close (beads-dr3) / reopen
+				// (beads-b0tw) already-in-state no-op guards: report an honest "already
+				// deferred, no change" and skip the write (no spurious audit event /
+				// commit). A re-defer WITH a new --until or --reason is a genuine
+				// change (defer_until / notes) and still falls through to succeed.
+				if issue.Status == types.StatusDeferred && deferUntil == nil && reason == "" {
+					alreadyDeferredCount++
+					if jsonOutput {
+						// JSON reflects state, not a claimed transition: the issue
+						// is (still) deferred, so keep it in the payload.
+						deferredIssues = append(deferredIssues, issue)
+					} else {
+						fmt.Printf("%s %s was already deferred (no change)\n",
+							ui.RenderInfoIcon(), formatFeedbackID(fullID, issue.Title))
+					}
+					continue
+				}
 				if reason != "" {
 					notes := issue.Notes
 					if notes != "" {
@@ -170,8 +192,10 @@ Examples:
 		// object to keep the failure parseable (beads-fg6, matching the update
 		// and close batch paths) instead of a bare silent exit. Partial success
 		// (deferredCount>0) keeps rc=0 and its JSON array above, mirroring
-		// update/close batch semantics.
-		if len(args) > 0 && deferredCount == 0 {
+		// update/close batch semantics. An all-idempotent-no-op batch
+		// (alreadyDeferredCount>0, beads-fs01) also keeps rc=0 — nothing failed,
+		// matching close.go's already-closed exclusion (beads-dr3).
+		if len(args) > 0 && deferredCount == 0 && alreadyDeferredCount == 0 {
 			if jsonOutput {
 				return HandleErrorRespectJSON("no issues deferred matching the provided IDs")
 			}
