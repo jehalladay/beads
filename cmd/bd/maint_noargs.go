@@ -17,5 +17,15 @@ func maintNoArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
-	return fmt.Errorf("bd %s does not accept positional arguments; use flags instead (see bd %s --help)", cmd.Name(), cmd.Name())
+	msg := fmt.Sprintf("bd %s does not accept positional arguments; use flags instead (see bd %s --help)", cmd.Name(), cmd.Name())
+	// beads-t1lx: honor the --json contract. cobra runs Args-validators after
+	// flag-parse but before the global jsonOutput is set, so read --json off the
+	// command directly. Under --json, emit a parseable JSON error object on
+	// stdout and return an *exitError — main consumes that via exitCodeFromError
+	// before its SilenceErrors plaintext-stderr print, so no plaintext leaks.
+	if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
+		jsonStdoutError(msg, "")
+		return &exitError{Code: 1}
+	}
+	return fmt.Errorf("%s", msg)
 }

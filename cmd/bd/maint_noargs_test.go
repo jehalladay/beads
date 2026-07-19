@@ -3,6 +3,9 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -48,6 +51,44 @@ func TestMaintNoArgsRejectsPositional(t *testing.T) {
 			t.Fatal("maintNoArgs with multiple positionals: expected an error, got nil")
 		}
 	})
+}
+
+// TestMaintNoArgsJSONErrorContract pins the --json contract for the stray-
+// positional guard (beads-t1lx): under --json a consumer must get a parseable
+// JSON error object on stdout (empty stderr), not the bare plaintext cobra
+// prints. cobra runs Args-validators after flag-parse but before the global
+// jsonOutput is set, so the guard reads the flag directly off the command.
+func TestMaintNoArgsJSONErrorContract(t *testing.T) {
+	cmd := &cobra.Command{Use: "flatten"}
+	cmd.Flags().Bool("json", true, "")
+
+	// Capture stdout during the guard call.
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := maintNoArgs(cmd, []string{"mybead"})
+
+	_ = w.Close()
+	os.Stdout = oldStdout
+	out, _ := io.ReadAll(r)
+
+	if err == nil {
+		t.Fatal("maintNoArgs with a positional under --json: expected an error, got nil")
+	}
+	// The error must carry a non-zero exit code but NOT be printed as plaintext
+	// by main's SilenceErrors path (an *exitError is consumed by
+	// exitCodeFromError before the stderr print).
+	if _, ok := exitCodeFromError(err); !ok {
+		t.Errorf("under --json the guard must return an exitError (consumed before the plaintext stderr print), got %v", err)
+	}
+	var obj map[string]interface{}
+	if jerr := json.Unmarshal(out, &obj); jerr != nil {
+		t.Fatalf("under --json stdout must be a parseable JSON error object, got %q (unmarshal: %v)", string(out), jerr)
+	}
+	if _, ok := obj["error"]; !ok && obj["data"] == nil {
+		t.Errorf("JSON error object should carry an 'error' field, got %v", obj)
+	}
 }
 
 // TestMaintCommandsUseNoArgsGuard ensures the guard is actually wired onto the
