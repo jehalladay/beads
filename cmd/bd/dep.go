@@ -1267,7 +1267,18 @@ Examples:
 			fmt.Printf("\n%s Dependency tree for %s:\n\n", ui.RenderAccent("🌲"), fullID)
 		}
 
-		renderTree(tree, maxDepth, direction)
+		// beads-x2e9: for the down/default direction, compute the root's
+		// READY/BLOCKED verdict from ground truth (store.IsBlocked, the same
+		// source `bd blocked` uses) so a display --max-depth cap can't flip a
+		// genuinely-blocked root to [READY]. up/both keep the tree-derived
+		// verdict (IsBlocked reflects dependency blockers, not dependents).
+		var rootBlockedOverride *bool
+		if direction != "up" && direction != "both" && treeStore != nil {
+			if blocked, _, berr := treeStore.IsBlocked(ctx, fullID); berr == nil {
+				rootBlockedOverride = &blocked
+			}
+		}
+		renderTreeWithVerdict(tree, maxDepth, direction, rootBlockedOverride)
 		fmt.Println()
 		return nil
 	},
@@ -1391,6 +1402,17 @@ type treeRenderer struct {
 
 // renderTree renders the tree with proper box-drawing connectors
 func renderTree(tree []*types.TreeNode, maxDepth int, direction string) {
+	renderTreeWithVerdict(tree, maxDepth, direction, nil)
+}
+
+// renderTreeWithVerdict renders the dependency tree. rootBlockedOverride, when
+// non-nil, forces the root's READY/BLOCKED verdict instead of deriving it from
+// the (possibly depth-truncated) rendered children — beads-x2e9: with
+// --max-depth=1 the depth-1 blockers are truncated out of `tree`, so the
+// children-derived verdict wrongly showed a genuinely-BLOCKED root as [READY].
+// The caller passes ground truth (store.IsBlocked) for the down/default
+// direction, where IsBlocked's dependency-blocker semantics apply.
+func renderTreeWithVerdict(tree []*types.TreeNode, maxDepth int, direction string, rootBlockedOverride *bool) {
 	if len(tree) == 0 {
 		return
 	}
@@ -1431,6 +1453,14 @@ func renderTree(tree []*types.TreeNode, maxDepth int, direction string) {
 			}
 		}
 		r.rootBlocked = hasOpenBlockers
+	}
+
+	// beads-x2e9: prefer ground-truth blocked-ness over the children-derived
+	// verdict, which is wrong when the tree is depth-truncated (the depth-1
+	// blockers are absent from `children`). The caller supplies this only for
+	// the down/default direction (store.IsBlocked reflects dependency blockers).
+	if rootBlockedOverride != nil {
+		r.rootBlocked = *rootBlockedOverride
 	}
 
 	// Render recursively from root
