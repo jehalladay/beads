@@ -73,24 +73,24 @@ NOTE: This is a rare operation. Most users never need this command.`,
 
 		if store == nil {
 			if err := ensureStoreActive(); err != nil {
-				return HandleError("%v", err)
+				return HandleErrorRespectJSON("%v", err)
 			}
 		}
 
 		if err := validatePrefix(newPrefix); err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		oldPrefix, err := store.GetConfig(ctx, "issue_prefix")
 		if err != nil || oldPrefix == "" {
-			return HandleError("failed to get current prefix: %v", err)
+			return HandleErrorRespectJSON("failed to get current prefix: %v", err)
 		}
 
 		newPrefix = strings.TrimRight(newPrefix, "-")
 
 		issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 		if err != nil {
-			return HandleError("failed to list issues: %v", err)
+			return HandleErrorRespectJSON("failed to list issues: %v", err)
 		}
 
 		prefixes := detectPrefixes(issues)
@@ -110,7 +110,7 @@ NOTE: This is a rare operation. Most users never need this command.`,
 			}
 
 			if err := repairPrefixes(ctx, store, actor, newPrefix, issues, prefixes, dryRun); err != nil {
-				return HandleError("failed to repair prefixes: %v", err)
+				return HandleErrorRespectJSON("failed to repair prefixes: %v", err)
 			}
 			if !dryRun {
 				commandDidWrite.Store(true)
@@ -119,14 +119,14 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		}
 
 		if len(prefixes) == 1 && oldPrefix == newPrefix {
-			return HandleError("new prefix is the same as current prefix: %s", oldPrefix)
+			return HandleErrorRespectJSON("new prefix is the same as current prefix: %s", oldPrefix)
 		}
 
 		if len(issues) == 0 {
 			fmt.Printf("No issues to rename. Updating prefix to %s\n", newPrefix)
 			if !dryRun {
 				if err := store.SetConfig(ctx, "issue_prefix", newPrefix); err != nil {
-					return HandleError("failed to update prefix: %v", err)
+					return HandleErrorRespectJSON("failed to update prefix: %v", err)
 				}
 				commandDidWrite.Store(true)
 			}
@@ -148,15 +148,22 @@ NOTE: This is a rare operation. Most users never need this command.`,
 			return nil
 		}
 
-		fmt.Printf("Renaming %d issues from prefix '%s' to '%s'...\n", len(issues), oldPrefix, newPrefix)
+		// beads-qpiw: keep human progress/success text off stdout under --json,
+		// else `bd rename-prefix X --json | jq` sees "Renaming...\n{...}" and
+		// fails to parse the happy path (ado.go precedent gates prints likewise).
+		if !jsonOutput {
+			fmt.Printf("Renaming %d issues from prefix '%s' to '%s'...\n", len(issues), oldPrefix, newPrefix)
+		}
 
 		if err := renamePrefixInDB(ctx, oldPrefix, newPrefix, issues); err != nil {
-			return HandleError("failed to rename prefix: %v", err)
+			return HandleErrorRespectJSON("failed to rename prefix: %v", err)
 		}
 
 		commandDidWrite.Store(true)
 
-		fmt.Printf("%s Successfully renamed prefix from %s to %s\n", ui.RenderPass("✓"), ui.RenderAccent(oldPrefix), ui.RenderAccent(newPrefix))
+		if !jsonOutput {
+			fmt.Printf("%s Successfully renamed prefix from %s to %s\n", ui.RenderPass("✓"), ui.RenderAccent(oldPrefix), ui.RenderAccent(newPrefix))
+		}
 
 		if jsonOutput {
 			result := map[string]interface{}{
@@ -281,10 +288,13 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 		return nil
 	}
 
-	// Perform the repairs
-	fmt.Printf("Repairing database with multiple prefixes...\n")
-	fmt.Printf("  Issues with correct prefix (%s): %d\n", ui.RenderAccent(targetPrefix), len(correctIssues))
-	fmt.Printf("  Issues to repair: %d\n\n", len(incorrectIssues))
+	// Perform the repairs. beads-qpiw: suppress human progress under --json so
+	// the trailing JSON result object is the only thing on stdout.
+	if !jsonOutput {
+		fmt.Printf("Repairing database with multiple prefixes...\n")
+		fmt.Printf("  Issues with correct prefix (%s): %d\n", ui.RenderAccent(targetPrefix), len(correctIssues))
+		fmt.Printf("  Issues to repair: %d\n\n", len(incorrectIssues))
+	}
 
 	// Pattern to match any issue ID reference in text (both hash and sequential IDs)
 	oldPrefixPattern := regexp.MustCompile(`\b[a-z][a-z0-9-]*-[a-z0-9]+\b`)
@@ -323,7 +333,9 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 			return fmt.Errorf("failed to update issue %s -> %s: %w", oldID, newID, err)
 		}
 
-		fmt.Printf("  Renamed %s -> %s\n", ui.RenderWarn(oldID), ui.RenderAccent(newID))
+		if !jsonOutput {
+			fmt.Printf("  Renamed %s -> %s\n", ui.RenderWarn(oldID), ui.RenderAccent(newID))
+		}
 	}
 
 	// Set the new prefix in config
@@ -331,9 +343,11 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 		return fmt.Errorf("failed to update config: %w", err)
 	}
 
-	fmt.Printf("\n%s Successfully consolidated %d prefixes into %s\n",
-		ui.RenderPass("✓"), len(prefixes), ui.RenderAccent(targetPrefix))
-	fmt.Printf("  %d issues repaired, %d issues unchanged\n", len(incorrectIssues), len(correctIssues))
+	if !jsonOutput {
+		fmt.Printf("\n%s Successfully consolidated %d prefixes into %s\n",
+			ui.RenderPass("✓"), len(prefixes), ui.RenderAccent(targetPrefix))
+		fmt.Printf("  %d issues repaired, %d issues unchanged\n", len(incorrectIssues), len(correctIssues))
+	}
 
 	if jsonOutput {
 		result := map[string]interface{}{

@@ -53,6 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   printing) they wrote plain text to stderr with an empty stdout, leaving a `bd batch --json` consumer with
   nothing to parse on a bad `--file` path or malformed script. They now route through `HandleErrorRespectJSON`,
   matching the `bd sql` precedent (sql.go). Same JSON-error-contract class as beads-uc71/z2b4/nqv0.
+- **`bd rename-prefix --json` now emits parseable JSON on both success and error (beads-qpiw).**
+  The command has a `--json` success branch emitting a JSON result object, but was doubly broken under
+  `--json`: (1) human progress/success text (`Renaming...`, `✓ Successfully renamed...`, and the `--repair`
+  consolidate prints) was written to stdout *before* the JSON object, so `bd rename-prefix X --json | jq`
+  failed to parse the happy path; and (2) every error return used `HandleError`/`HandleErrorWithHint`
+  (plain-text stderr, empty stdout), leaving a `--json` consumer nothing to parse on failure. Human prints are
+  now gated behind `!jsonOutput` (matching the `bd ado sync` precedent) and reachable error returns route
+  through `HandleErrorRespectJSON`. Same JSON-contract class as beads-uc71/z2b4/nqv0/2yhq.
 
 - **`bd dolt push` pre-push fsck no longer aborts with a spurious "dangling chunk reference" when the check merely timed out or the repo could not be opened (beads-9nq1).**
   `prePushFSCK` shells out to `dolt fsck`; under heavy node contention the subprocess was killed by the fsck
