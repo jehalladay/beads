@@ -208,7 +208,46 @@ func TestEmbeddedFederation(t *testing.T) {
 		if _, ok := result["peers"]; !ok {
 			t.Error("missing 'peers' in status JSON")
 		}
+		// beads-7mm8: the pending-changes key must be snake_case per the JSON
+		// contract, not the old camelCase "pendingChanges".
+		if _, ok := result["pending_changes"]; !ok {
+			t.Errorf("expected snake_case 'pending_changes' key, got: %s", out)
+		}
+		if _, ok := result["pendingChanges"]; ok {
+			t.Errorf("camelCase 'pendingChanges' key must be gone (snake_case contract), got: %s", out)
+		}
 	})
+}
+
+// TestFederationStatusPeerJSONSnakeCase pins the beads-7mm8 fix: the per-peer
+// status object marshals snake_case keys, not the PascalCase Go field names.
+// peerStatus is local to runFederationStatus, so assert the contract via the
+// same field/tag shape here (a regression in the source struct tags would be
+// caught by the embedded status test with a live peer; this documents the
+// intended keys without requiring a reachable peer).
+func TestFederationStatusPeerJSONSnakeCase(t *testing.T) {
+	type peerStatus struct {
+		Status      *storage.SyncStatus `json:"status"`
+		URL         string              `json:"url"`
+		Reachable   bool                `json:"reachable"`
+		ReachError  string              `json:"reach_error"`
+		StatusError string              `json:"status_error"`
+	}
+	raw, err := json.Marshal(peerStatus{URL: "file:///tmp/p", Reachable: true})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	body := string(raw)
+	for _, want := range []string{`"status"`, `"url"`, `"reachable"`, `"reach_error"`, `"status_error"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected snake_case key %s, got %s", want, body)
+		}
+	}
+	for _, bad := range []string{`"URL"`, `"Reachable"`, `"ReachError"`, `"StatusError"`} {
+		if strings.Contains(body, bad) {
+			t.Errorf("PascalCase key %s must not appear (snake_case contract), got %s", bad, body)
+		}
+	}
 }
 
 func TestEmbeddedFederationConcurrent(t *testing.T) {

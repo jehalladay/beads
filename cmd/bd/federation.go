@@ -278,8 +278,8 @@ func runFederationStatus(cmd *cobra.Command, args []string) error {
 	if len(peers) == 0 {
 		if jsonOutput {
 			return outputJSON(map[string]interface{}{
-				"peers":          []string{},
-				"pendingChanges": 0,
+				"peers":           []string{},
+				"pending_changes": 0,
 			})
 		}
 		fmt.Println("No federation peers configured.")
@@ -292,12 +292,15 @@ func runFederationStatus(cmd *cobra.Command, args []string) error {
 		pendingChanges = len(doltStatus.Staged) + len(doltStatus.Unstaged)
 	}
 
+	// beads-7mm8: json tags keep the --json output snake_case; without them
+	// json.Marshal emits the PascalCase Go field names (Status/URL/...),
+	// violating the snake_case JSON contract (same class as hooks-list kwyuug).
 	type peerStatus struct {
-		Status      *storage.SyncStatus
-		URL         string
-		Reachable   bool
-		ReachError  string
-		StatusError string
+		Status      *storage.SyncStatus `json:"status"`
+		URL         string              `json:"url"`
+		Reachable   bool                `json:"reachable"`
+		ReachError  string              `json:"reach_error"`
+		StatusError string              `json:"status_error"`
 	}
 	var peerStatuses []peerStatus
 
@@ -336,8 +339,8 @@ func runFederationStatus(cmd *cobra.Command, args []string) error {
 
 	if jsonOutput {
 		return outputJSON(map[string]interface{}{
-			"peers":          peerStatuses,
-			"pendingChanges": pendingChanges,
+			"peers":           peerStatuses,
+			"pending_changes": pendingChanges,
 		})
 	}
 
@@ -512,6 +515,13 @@ func runFederationListPeers(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// federationPeerListJSON is a DELIBERATE compat shim (#4236): the PascalCase
+// json tags "Name"/"URL" are intentionally preserved for existing consumers of
+// `bd federation list-peers --json` and pinned by
+// TestFormatFederationPeerListJSONPreservesLegacyKeys. beads-7mm8 asked to
+// snake_case these too, but that would silently break the documented legacy
+// contract — left unchanged; flagged on the bead for a PM call (a compat break
+// needs a deliberate deprecation, not a drive-by rename).
 type federationPeerListJSON struct {
 	Name string `json:"Name"`
 	URL  string `json:"URL"`
