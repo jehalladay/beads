@@ -39,6 +39,19 @@ Example:
 
 		title := strings.Join(args, " ")
 
+		// beads-cra1: trim + reject a whitespace-only title, mirroring create.go
+		// (beads-n5xz) and update.go. types.Validate only rejects len==0, so a
+		// title like "   " (len>0) previously created a blank-displayed bead with
+		// rc=0 here while `bd create "   "` / `bd update --title "   "` rejected it
+		// — a q/quick asymmetry n5xz missed (it scoped the trim to
+		// create.go/create_input.go/update.go, not quick.go). This runs BEFORE the
+		// usesProxiedServer() split below, so ONE site covers both direct and
+		// proxied modes; HandleErrorRespectJSON keeps the --json error contract.
+		title = strings.TrimSpace(title)
+		if title == "" {
+			return HandleErrorRespectJSON("title cannot be empty")
+		}
+
 		priorityStr, _ := cmd.Flags().GetString("priority")
 		issueType, _ := cmd.Flags().GetString("type")
 		labels, _ := cmd.Flags().GetStringSlice("labels")
