@@ -361,11 +361,15 @@ func dryRunMarkdownBatch(templates []*IssueTemplate, filepath string) error {
 func createIssuesFromMarkdown(_ *cobra.Command, filepath string, dryRun bool) error {
 	templates, err := parseMarkdownFile(filepath)
 	if err != nil {
-		return HandleError("parsing markdown file: %v", err)
+		// beads-1z1l: this function emits outputJSON on success, so its error
+		// paths must honor the --json contract too (HandleErrorRespectJSON) —
+		// a bare HandleError prints plain text to stderr, breaking
+		// `bd create --file foo.md --json` consumers. Mirrors landed beads-xwjg.
+		return HandleErrorRespectJSON("parsing markdown file: %v", err)
 	}
 
 	if len(templates) == 0 {
-		return HandleError("no issues found in markdown file")
+		return HandleErrorRespectJSON("no issues found in markdown file")
 	}
 
 	// beads-9rb6: --dry-run previews the batch (the case where a preview is most
@@ -415,7 +419,7 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string, dryRun bool) er
 			if strings.Contains(depSpec, ":") {
 				parts := strings.SplitN(depSpec, ":", 2)
 				if len(parts) != 2 {
-					return HandleError("invalid dependency format '%s' for issue '%s'", depSpec, template.Title)
+					return HandleErrorRespectJSON("invalid dependency format '%s' for issue '%s'", depSpec, template.Title)
 				}
 				depType = types.DependencyType(strings.TrimSpace(parts[0]))
 				dependsOnID = strings.TrimSpace(parts[1])
@@ -425,7 +429,7 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string, dryRun bool) er
 			}
 
 			if !depType.IsValid() {
-				return HandleError("invalid dependency type '%s' for issue '%s'", depType, template.Title)
+				return HandleErrorRespectJSON("invalid dependency type '%s' for issue '%s'", depType, template.Title)
 			}
 
 			// IssueID left empty — PersistDependencies defaults it to issue.ID
@@ -461,7 +465,7 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string, dryRun bool) er
 		},
 	}
 	if err := store.CreateIssuesWithFullOptions(ctx, issues, actor, createOpts); err != nil {
-		return HandleError("creating issues from markdown: %v", err)
+		return HandleErrorRespectJSON("creating issues from markdown: %v", err)
 	}
 	commitMsg := fmt.Sprintf("bd: create %d issue(s) from %s", len(templates), filepath)
 	issueIDs := make([]string, 0, len(issues))
