@@ -64,7 +64,9 @@ func runHistoryProxiedServer(ctx context.Context, issueID string) error {
 		fmt.Printf("%s %s\n",
 			ui.RenderMuted(entry.CommitHash[:8]),
 			ui.RenderMuted(entry.CommitDate.Format("2006-01-02 15:04:05")))
-		fmt.Printf("  Author: %s\n", entry.Committer)
+		// Match the direct-path human view + --json "Committer" field: this is
+		// the Dolt committer, not the issue author (beads-lf39).
+		fmt.Printf("  Committer: %s\n", entry.Committer)
 
 		if entry.Issue != nil {
 			statusIcon := ui.GetStatusIcon(string(entry.Issue.Status))

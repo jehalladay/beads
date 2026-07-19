@@ -88,9 +88,14 @@ func TestEmbeddedHistory(t *testing.T) {
 		if !strings.Contains(out, "History for") {
 			t.Errorf("expected 'History for' header: %s", out)
 		}
-		// Should show commit hashes
-		if !strings.Contains(out, "Author:") {
-			t.Errorf("expected 'Author:' in history output: %s", out)
+		// The human view labels the Dolt committer honestly as "Committer:",
+		// matching the --json "Committer" field (beads-lf39) — NOT "Author:",
+		// which misattributed revisions to the shared-bare-repo committer.
+		if !strings.Contains(out, "Committer:") {
+			t.Errorf("expected 'Committer:' in history output: %s", out)
+		}
+		if strings.Contains(out, "Author:") {
+			t.Errorf("history human view should not mislabel the committer as 'Author:': %s", out)
 		}
 	})
 
