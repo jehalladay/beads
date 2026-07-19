@@ -71,6 +71,24 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 	includeEphemeral, _ := cmd.Flags().GetBool("include-ephemeral")
 	excludeTypeStrs, _ := cmd.Flags().GetStringSlice("exclude-type")
 
+	// beads-gddf: validate --type here so the PROXIED ready path rejects an
+	// invalid type like list/count/search do. gatherReadyInput is the shared
+	// input path for runReadyProxiedServer (the direct ready.go RunE guards
+	// --type itself, since it does NOT go through gatherReadyInput — same split
+	// as the --limit guard above). Without this, `bd ready --type bogus` dropped
+	// the raw string into WorkFilter.Type and matched nothing (rc0, empty) — a
+	// false-negative footgun. Custom-type-aware (loadEmbeddedCustomTypes) to
+	// match count/list and not reject a user's configured custom type.
+	if issueType != "" {
+		if t := types.IssueType(issueType); !t.IsValidWithCustom(loadEmbeddedCustomTypes()) {
+			validTypes := types.ValidWorkTypesString()
+			if custom := loadEmbeddedCustomTypes(); len(custom) > 0 {
+				validTypes += ", " + strings.Join(custom, ", ")
+			}
+			FatalErrorRespectJSON("invalid issue type %q (valid: %s)", issueType, validTypes)
+		}
+	}
+
 	var molType *types.MolType
 	if molTypeStr != "" {
 		mt := types.MolType(molTypeStr)

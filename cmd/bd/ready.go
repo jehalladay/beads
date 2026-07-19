@@ -108,6 +108,22 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		excludeLabels, _ := cmd.Flags().GetStringSlice("exclude-label")
 		issueType, _ := cmd.Flags().GetString("type")
 		issueType = utils.NormalizeIssueType(issueType) // Expand aliases (mr→merge-request, etc.)
+		// beads-gddf: validate --type like list/count/search do. Previously
+		// `bd ready --type bogus` dropped the raw string into WorkFilter.Type and
+		// matched nothing (rc0, empty) — a false-negative footgun (a typo'd
+		// `--type buq` reads as "no ready work of that type"). ready already
+		// validates --mol-type two lines below; this brings --type to parity.
+		// Custom-type-aware (loadEmbeddedCustomTypes) so it matches count/list and
+		// does not reject a user's configured custom type.
+		if issueType != "" {
+			if t := types.IssueType(issueType); !t.IsValidWithCustom(loadEmbeddedCustomTypes()) {
+				validTypes := types.ValidWorkTypesString()
+				if custom := loadEmbeddedCustomTypes(); len(custom) > 0 {
+					validTypes += ", " + strings.Join(custom, ", ")
+				}
+				return HandleErrorRespectJSON("invalid issue type %q (valid: %s)", issueType, validTypes)
+			}
+		}
 		parentID, _ := cmd.Flags().GetString("parent")
 		molTypeStr, _ := cmd.Flags().GetString("mol-type")
 		prettyFormat, _ := cmd.Flags().GetBool("pretty")

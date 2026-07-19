@@ -715,6 +715,23 @@ func TestProxiedServerReady(t *testing.T) {
 		}
 	})
 
+	// beads-gddf: `bd ready --type bogus` used to silently return rc0 + empty
+	// (a false-negative footgun) while list/count/search reject an invalid type.
+	// The RunE --type validation runs on both direct and proxied paths, so a
+	// reject here confirms the parity fix fires. A valid type must NOT be
+	// rejected (guards against over-eager validation).
+	t.Run("type_validation_rejects_invalid", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "rtvi")
+		out := bdProxiedReadyFail(t, bd, p, "--type", "bogus")
+		if !strings.Contains(out, "invalid issue type") {
+			t.Errorf("expected 'invalid issue type' error, got: %s", out)
+		}
+		// A valid type still succeeds (no false reject).
+		if _, _, err := bdProxiedRunBuffers(t, bd, p.dir, "ready", "--type", "bug"); err != nil {
+			t.Errorf("bd ready --type bug should succeed, got err: %v", err)
+		}
+	})
+
 	t.Run("claim_combo_guards", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "rcc")
 		bdProxiedCreate(t, bd, p.dir, "Seed")
