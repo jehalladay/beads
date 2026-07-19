@@ -74,27 +74,8 @@ func runPollutionCheck(_ string, clean bool, yes bool) error {
 	// Human-readable output
 	fmt.Printf("Found %d potential test issues:\n\n", len(polluted))
 
-	if len(highConfidence) > 0 {
-		fmt.Printf("High Confidence (score ≥ 0.9):\n")
-		for _, p := range highConfidence {
-			fmt.Printf("  %s: %q (score: %.2f)\n", p.issue.ID, p.issue.Title, p.score)
-			for _, reason := range p.reasons {
-				fmt.Printf("    - %s\n", reason)
-			}
-		}
-		fmt.Printf("  (Total: %d issues)\n\n", len(highConfidence))
-	}
-
-	if len(mediumConfidence) > 0 {
-		fmt.Printf("Medium Confidence (score 0.7-0.9):\n")
-		for _, p := range mediumConfidence {
-			fmt.Printf("  %s: %q (score: %.2f)\n", p.issue.ID, p.issue.Title, p.score)
-			for _, reason := range p.reasons {
-				fmt.Printf("    - %s\n", reason)
-			}
-		}
-		fmt.Printf("  (Total: %d issues)\n\n", len(mediumConfidence))
-	}
+	printPollutionConfidenceGroup("High Confidence (score ≥ 0.9):", highConfidence)
+	printPollutionConfidenceGroup("Medium Confidence (score 0.7-0.9):", mediumConfidence)
 
 	if !clean {
 		fmt.Printf("Run 'bd doctor --check=pollution --clean' to delete these issues (with confirmation).\n")
@@ -130,6 +111,28 @@ func runPollutionCheck(_ string, clean bool, yes bool) error {
 	fmt.Printf("%s Deleted %d test issues\n", ui.RenderPass("✓"), deleted)
 	fmt.Printf("\nCleanup complete. To restore, run: bd init --from-jsonl %s\n", backupPath)
 	return nil
+}
+
+// printPollutionConfidenceGroup renders one confidence tier of the human
+// `bd doctor --check=pollution` output. Each issue.Title is routed through
+// displayTitle (beads-7n9y): a pollution-check title can originate from an
+// untrusted import (JSONL/markdown/SCM) carrying OSC/CSI terminal-control
+// escapes, so printing it RAW here injected control sequences (OSC 0
+// window-title / OSC 52 clipboard) — the same sink class j8li/ihaw fixed for
+// list/show/create. Display-only: the stored/JSON title stays raw for
+// round-trip fidelity. No-op when the group is empty.
+func printPollutionConfidenceGroup(header string, group []pollutionResult) {
+	if len(group) == 0 {
+		return
+	}
+	fmt.Printf("%s\n", header)
+	for _, p := range group {
+		fmt.Printf("  %s: %q (score: %.2f)\n", p.issue.ID, displayTitle(p.issue.Title), p.score)
+		for _, reason := range p.reasons {
+			fmt.Printf("    - %s\n", reason)
+		}
+	}
+	fmt.Printf("  (Total: %d issues)\n\n", len(group))
 }
 
 func init() {
