@@ -152,6 +152,27 @@ var closeEligibleEpicsCmd = &cobra.Command{
 // commitFn, if non-nil, is invoked once after at least one successful close to
 // persist the batch — the proxied UOW holds a single transaction that must be
 // committed explicitly (the direct store autocommits, so it passes nil).
+// epicCloseEligibleResult builds the STABLE --json shape for
+// `bd epic close-eligible` (beads-qos4p). All non-error outcomes emit this one
+// schema — eligible (rich EpicStatus objects), closed (ids), count, dry_run —
+// so a --json consumer never has to branch array-vs-dict by outcome. Empty and
+// dry-run legs populate 'eligible' with closed=[]; the actually-closed leg
+// populates 'closed'+'count' (and keeps 'eligible' with what it closed).
+func epicCloseEligibleResult(eligible []*types.EpicStatus, closedIDs []string, dryRun bool) map[string]interface{} {
+	if eligible == nil {
+		eligible = []*types.EpicStatus{}
+	}
+	if closedIDs == nil {
+		closedIDs = []string{}
+	}
+	return map[string]interface{}{
+		"eligible": eligible,
+		"closed":   closedIDs,
+		"count":    len(closedIDs),
+		"dry_run":  dryRun,
+	}
+}
+
 func renderEpicCloseEligible(epics []*types.EpicStatus, dryRun bool, closeFn func(id string) error, commitFn func() error) error {
 	var eligibleEpics []*types.EpicStatus
 	for _, epic := range epics {
@@ -161,14 +182,18 @@ func renderEpicCloseEligible(epics []*types.EpicStatus, dryRun bool, closeFn fun
 	}
 	if len(eligibleEpics) == 0 {
 		if jsonOutput {
-			return outputJSON([]*types.EpicStatus{})
+			// beads-qos4p: emit the STABLE dict shape (same schema as dry-run
+			// and actually-closed) so a --json consumer sees one static shape
+			// regardless of outcome, not a bare array here + a dict elsewhere.
+			return outputJSON(epicCloseEligibleResult(eligibleEpics, []string{}, true))
 		}
 		fmt.Println("No epics eligible for closure")
 		return nil
 	}
 	if dryRun {
 		if jsonOutput {
-			return outputJSON(eligibleEpics)
+			// beads-qos4p: stable dict (eligible populated, closed empty, dry_run).
+			return outputJSON(epicCloseEligibleResult(eligibleEpics, []string{}, true))
 		}
 		fmt.Printf("Would close %d epic(s):\n", len(eligibleEpics))
 		for _, epicStatus := range eligibleEpics {
@@ -208,10 +233,10 @@ func renderEpicCloseEligible(epics []*types.EpicStatus, dryRun bool, closeFn fun
 		return SilentExit()
 	}
 	if jsonOutput {
-		return outputJSON(map[string]interface{}{
-			"closed": closedIDs,
-			"count":  len(closedIDs),
-		})
+		// beads-qos4p: same STABLE dict shape as the empty/dry-run legs — one
+		// static schema regardless of outcome. 'eligible' still carries what we
+		// closed so a consumer gets the rich objects too.
+		return outputJSON(epicCloseEligibleResult(eligibleEpics, closedIDs, false))
 	}
 	fmt.Printf("✓ Closed %d epic(s)\n", len(closedIDs))
 	for _, id := range closedIDs {
