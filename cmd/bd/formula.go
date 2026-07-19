@@ -480,7 +480,10 @@ func printFormulaStepsTree(steps []*formula.Step, indent string) {
 			typeStr = fmt.Sprintf(" (%s)", step.Type)
 		}
 
-		fmt.Printf("%s%s %s: %s%s%s\n", indent, connector, step.ID, step.Title, typeStr, depStr)
+		// beads-q5d15 (7n9y sink-class): sanitize step.Title through displayTitle
+		// (SanitizeForTerminal) — a formula step title can carry OSC/CSI control
+		// sequences that the raw fmt.Printf would inject into the terminal.
+		fmt.Printf("%s%s %s: %s%s%s\n", indent, connector, step.ID, displayTitle(step.Title), typeStr, depStr)
 
 		if len(step.Children) > 0 {
 			childIndent := indent

@@ -1017,7 +1017,11 @@ func printFormulaSteps(steps []*formula.Step, indent string) {
 			sourceStr = fmt.Sprintf(" [from: %s@%s]", step.SourceFormula, step.SourceLocation)
 		}
 
-		fmt.Printf("%s%s %s: %s%s%s%s\n", indent, connector, step.ID, step.Title, typeStr, depStr, sourceStr)
+		// beads-q5d15 (7n9y sink-class): sanitize step.Title through
+		// displayTitle (SanitizeForTerminal) — a step title from an untrusted
+		// formula can carry OSC/CSI control sequences that the raw fmt.Printf
+		// would inject into the terminal via the cook tree render.
+		fmt.Printf("%s%s %s: %s%s%s%s\n", indent, connector, step.ID, displayTitle(step.Title), typeStr, depStr, sourceStr)
 
 		if len(step.Children) > 0 {
 			childIndent := indent
