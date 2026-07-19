@@ -134,62 +134,7 @@ func runMolBond(cmd *cobra.Command, args []string) error {
 			return HandleErrorRespectJSON("%v", err)
 		}
 
-		idA := args[0]
-		idB := args[1]
-		aIsProto := false
-		bIsProto := false
-
-		if issueA != nil {
-			idA = issueA.ID
-			aIsProto = isProto(issueA)
-		}
-		if issueB != nil {
-			idB = issueB.ID
-			bIsProto = isProto(issueB)
-		}
-
-		// Formulas are treated as protos for dry-run display
-		if formulaA != "" {
-			aIsProto = true
-		}
-		if formulaB != "" {
-			bIsProto = true
-		}
-
-		fmt.Printf("\nDry run: bond %s + %s\n", idA, idB)
-		if formulaA != "" {
-			fmt.Printf("  A: %s (formula → will cook as proto)\n", formulaA)
-		} else if issueA != nil {
-			fmt.Printf("  A: %s (%s)\n", issueA.Title, operandType(aIsProto))
-		}
-		if formulaB != "" {
-			fmt.Printf("  B: %s (formula → will cook as proto)\n", formulaB)
-		} else if issueB != nil {
-			fmt.Printf("  B: %s (%s)\n", issueB.Title, operandType(bIsProto))
-		}
-		fmt.Printf("  Bond type: %s\n", bondType)
-		if ephemeral {
-			fmt.Printf("  Phase override: vapor (--ephemeral)\n")
-		} else if pour {
-			fmt.Printf("  Phase override: liquid (--pour)\n")
-		}
-		if childRef != "" {
-			resolvedRef := substituteVariables(childRef, vars)
-			fmt.Printf("  Child ref: %s (resolved: %s)\n", childRef, resolvedRef)
-		}
-		if aIsProto && bIsProto {
-			fmt.Printf("  Result: compound proto\n")
-			if customTitle != "" {
-				fmt.Printf("  Custom title: %s\n", customTitle)
-			}
-		} else if aIsProto || bIsProto {
-			fmt.Printf("  Result: spawn proto, attach to molecule\n")
-		} else {
-			fmt.Printf("  Result: compound molecule\n")
-		}
-		if formulaA != "" || formulaB != "" {
-			fmt.Printf("\n  Note: Cooked formulas are ephemeral and deleted after bonding.\n")
-		}
+		printMolBondDryRun(issueA, issueB, formulaA, formulaB, args[0], args[1], bondType, customTitle, childRef, vars, ephemeral, pour)
 		return nil
 	}
 
@@ -257,6 +202,71 @@ func runMolBond(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Phase: liquid (persistent, Ephemeral=false)\n")
 	}
 	return nil
+}
+
+// printMolBondDryRun renders the `bd mol bond --dry-run` preview. Operand
+// titles are routed through displayTitle (ui.SanitizeForTerminal) because a
+// proto/mol title can originate from an untrusted import (JSONL/markdown/SCM)
+// carrying OSC/CSI terminal-control escapes (OSC 0 window-title / OSC 52
+// clipboard); printing them raw would inject control sequences onto the
+// preview lines. 7n9y sink-class slice (beads-hckxx).
+func printMolBondDryRun(issueA, issueB *types.Issue, formulaA, formulaB, argA, argB, bondType, customTitle, childRef string, vars map[string]string, ephemeral, pour bool) {
+	idA := argA
+	idB := argB
+	aIsProto := false
+	bIsProto := false
+
+	if issueA != nil {
+		idA = issueA.ID
+		aIsProto = isProto(issueA)
+	}
+	if issueB != nil {
+		idB = issueB.ID
+		bIsProto = isProto(issueB)
+	}
+
+	// Formulas are treated as protos for dry-run display
+	if formulaA != "" {
+		aIsProto = true
+	}
+	if formulaB != "" {
+		bIsProto = true
+	}
+
+	fmt.Printf("\nDry run: bond %s + %s\n", idA, idB)
+	if formulaA != "" {
+		fmt.Printf("  A: %s (formula → will cook as proto)\n", formulaA)
+	} else if issueA != nil {
+		fmt.Printf("  A: %s (%s)\n", displayTitle(issueA.Title), operandType(aIsProto))
+	}
+	if formulaB != "" {
+		fmt.Printf("  B: %s (formula → will cook as proto)\n", formulaB)
+	} else if issueB != nil {
+		fmt.Printf("  B: %s (%s)\n", displayTitle(issueB.Title), operandType(bIsProto))
+	}
+	fmt.Printf("  Bond type: %s\n", bondType)
+	if ephemeral {
+		fmt.Printf("  Phase override: vapor (--ephemeral)\n")
+	} else if pour {
+		fmt.Printf("  Phase override: liquid (--pour)\n")
+	}
+	if childRef != "" {
+		resolvedRef := substituteVariables(childRef, vars)
+		fmt.Printf("  Child ref: %s (resolved: %s)\n", childRef, resolvedRef)
+	}
+	if aIsProto && bIsProto {
+		fmt.Printf("  Result: compound proto\n")
+		if customTitle != "" {
+			fmt.Printf("  Custom title: %s\n", displayTitle(customTitle))
+		}
+	} else if aIsProto || bIsProto {
+		fmt.Printf("  Result: spawn proto, attach to molecule\n")
+	} else {
+		fmt.Printf("  Result: compound molecule\n")
+	}
+	if formulaA != "" || formulaB != "" {
+		fmt.Printf("\n  Note: Cooked formulas are ephemeral and deleted after bonding.\n")
+	}
 }
 
 // isProto checks if an issue is a proto (has the template label)
