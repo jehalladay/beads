@@ -409,7 +409,13 @@ func runCreateForm(cmd *cobra.Command) error {
 			fmt.Fprintln(os.Stderr, "Issue creation canceled.")
 			return nil
 		}
-		return HandleError("form error: %v", err)
+		// beads-csgk: honor the persistent --json error contract (8lqh /
+		// 0wp9 / jial class), matching the sibling `bd create` (create.go
+		// routes every error through HandleErrorRespectJSON). A bare
+		// HandleError left stdout EMPTY + plain-text on stderr under
+		// `bd create-form --json` — e.g. in a non-TTY, form.Run() fails
+		// ("could not open TTY") and a --json consumer got unparseable text.
+		return HandleErrorRespectJSON("form error: %v", err)
 	}
 
 	fv := parseCreateFormInput(raw)
@@ -417,7 +423,7 @@ func runCreateForm(cmd *cobra.Command) error {
 
 	issue, err := CreateIssueFromFormValues(rootCtx, store, fv, actor)
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	if jsonOutput {
