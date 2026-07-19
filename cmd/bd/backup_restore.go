@@ -30,7 +30,9 @@ Use --force to overwrite an existing database with the backup contents.
 
 The database must already be initialized (run 'bd init' first if needed).
 To initialize and restore in one step, use: bd init && bd backup restore`,
-	Args: cobra.MaximumNArgs(1),
+	Args:          cobra.MaximumNArgs(1),
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		evt := metrics.NewCommandEvent("backup-restore")
 		defer func() {

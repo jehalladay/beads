@@ -44,7 +44,9 @@ DoltHub (recommended for cloud backup):
   bd backup add https://doltremoteapi.dolthub.com/myuser/beads-backup
 
 After adding, run 'bd backup sync' to push your data.`,
-	Args: cobra.ExactArgs(1),
+	Args:          cobra.ExactArgs(1),
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		evt := metrics.NewCommandEvent("backup-init")
 		defer func() {
@@ -120,6 +122,8 @@ backup location configured with 'bd backup init'.
 The backup is atomic — if the sync fails, the previous backup state is preserved.
 
 Run 'bd backup init <path>' first to configure a destination.`,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		evt := metrics.NewCommandEvent("backup-sync")
 		defer func() {
@@ -429,7 +433,9 @@ var backupRemoveCmd = &cobra.Command{
 
 This unregisters the backup remote from Dolt and removes the local
 backup configuration. The backup data at the destination is not deleted.`,
-	Aliases: []string{"rm"},
+	Aliases:       []string{"rm"},
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		evt := metrics.NewCommandEvent("backup-remove")
 		defer func() {

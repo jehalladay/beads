@@ -34,8 +34,10 @@ DoltHub is recommended for cloud backup:
 }
 
 var backupStatusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show last backup status",
+	Use:           "status",
+	Short:         "Show last backup status",
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		evt := metrics.NewCommandEvent("backup-status")
 		defer func() {
