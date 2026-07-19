@@ -109,6 +109,19 @@ Examples:
 		if cfg.IsDoltProxiedServerMode() {
 			p, err := resolveProxiedServerRootPath(rc.BeadsDir)
 			if err != nil {
+				// beads-j3s8: mirror the repo-context error path above (:74) — under
+				// --json a consumer must get a structured {error} object on stdout,
+				// not plaintext on stderr with an empty stdout. This branch is
+				// proxied-mode-only, so before the fix a hub/proxied crew piping
+				// `bd context --json | jq` got nothing on stdout when the proxied
+				// root failed to resolve, while every other context error path
+				// already honored --json.
+				if jsonOutput {
+					if jerr := outputJSON(map[string]string{"error": fmt.Sprintf("resolve proxied server root: %v", err)}); jerr != nil {
+						return jerr
+					}
+					return SilentExit()
+				}
 				return HandleError("resolve proxied server root: %v", err)
 			}
 			info.ProxiedDir = p
