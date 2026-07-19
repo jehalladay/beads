@@ -260,6 +260,25 @@ func TestImportIssuesCoreReportsUpdatedAndTieKeptIssues(t *testing.T) {
 	if len(result.StaleSkippedIDs) != 1 || result.StaleSkippedIDs[0] != "bd-raced" {
 		t.Fatalf("StaleSkippedIDs = %#v, want [bd-raced]", result.StaleSkippedIDs)
 	}
+
+	// beads-y2y8: Created must be a TRUE partition — only genuinely new rows,
+	// NOT the updated (bd-upd) or tie-kept (bd-tie) ids that also land. Here the
+	// only brand-new row is bd-new, so Created=1. Before the fix Created was
+	// len(importedIDs)=3 (bd-upd + bd-tie + bd-new), double-counting the ids
+	// already reported in Updated / TieKeptLocalIDs. ImportedIDs stays the full
+	// processed set (the distinct-landed list), so created+updated+tie_kept+
+	// skipped partitions the batch without overlap.
+	if result.Created != 1 {
+		t.Fatalf("Created = %d, want 1 (only bd-new is genuinely new; bd-upd/bd-tie are counted in Updated/TieKept, not Created) — beads-y2y8 partition", result.Created)
+	}
+	if len(result.ImportedIDs) != 3 {
+		t.Fatalf("ImportedIDs = %#v, want the 3 distinct landed rows (bd-upd, bd-tie, bd-new)", result.ImportedIDs)
+	}
+	// The partition must sum to the non-stale-rejected distinct-landed rows.
+	if got := result.Created + result.Updated + len(result.TieKeptLocalIDs); got != len(result.ImportedIDs) {
+		t.Fatalf("created(%d)+updated(%d)+tie_kept(%d) = %d, want len(ImportedIDs)=%d (non-overlapping partition)",
+			result.Created, result.Updated, len(result.TieKeptLocalIDs), got, len(result.ImportedIDs))
+	}
 }
 
 // bd-pkim8: the pre-filter alone is racy (read-then-upsert), so importIssuesCore

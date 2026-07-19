@@ -41,7 +41,13 @@ type ImportOptions struct {
 
 // ImportResult describes what an import operation did.
 type ImportResult struct {
-	Created             int
+	Created int
+	// Processed is the total number of DISTINCT rows the batch landed
+	// (genuinely-new + updated + tie-kept), i.e. len(ImportedIDs). It is the
+	// "how many rows did this import touch" count that human output and the
+	// importFromLocalJSONL return value use; Created is the strict newly-created
+	// subset (beads-y2y8). Keep them separate — created ⊆ processed.
+	Processed           int
 	Updated             int
 	Unchanged           int
 	Skipped             int
@@ -211,15 +217,34 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 	// in between the pre-filter read and the batch write).
 	updatedIssues := make([]ImportChange, 0, len(changePlan.Updates))
 	updatedCount := 0
+	nonCreated := make(map[string]struct{}, len(changePlan.Updates)+len(changePlan.TieKeptLocal))
 	for _, change := range changePlan.Updates {
 		if _, rejected := staleRejectedSet[change.ID]; rejected {
 			continue
 		}
 		updatedIssues = append(updatedIssues, change)
 		updatedCount++
+		nonCreated[change.ID] = struct{}{}
+	}
+	// Created must be a TRUE partition alongside Updated / TieKept / Skipped:
+	// importedIDs is every distinct landed row (updated + tie-kept + genuinely
+	// new), so counting len(importedIDs) as Created double-counts the updated
+	// and tie-kept ids (which also appear in Updated / TieKeptLocalIDs). Exclude
+	// them so created + updated + tie_kept + skipped partitions the batch
+	// without overlap (beads-y2y8). Set-exclusion (not arithmetic subtraction)
+	// keeps this correct if an id is somehow in both update and tie-kept lists.
+	for _, id := range changePlan.TieKeptLocal {
+		nonCreated[id] = struct{}{}
+	}
+	createdCount := 0
+	for _, id := range importedIDs {
+		if _, isNonCreated := nonCreated[id]; !isNonCreated {
+			createdCount++
+		}
 	}
 	return &ImportResult{
-		Created:             len(importedIDs),
+		Created:             createdCount,
+		Processed:           len(importedIDs),
 		Updated:             updatedCount,
 		Skipped:             len(staleSkippedIDs) + len(invalidMetadataIDs),
 		ImportedIDs:         importedIDs,
@@ -546,7 +571,7 @@ func importFromLocalJSONLWithOpts(ctx context.Context, store storage.DoltStorage
 		if err != nil {
 			return nil, err
 		}
-		result.Issues = importResult.Created
+		result.Issues = importResult.Processed
 	}
 
 	return result, nil

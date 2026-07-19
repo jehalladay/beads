@@ -288,6 +288,12 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		result.Memories++
 	}
 
+	// processed is the total distinct rows the import landed (created +
+	// updated + tie-kept). It drives the human "Imported N" line and the
+	// commit gate; result.Created (the JSON "created" field) is the strict
+	// newly-created subset only — see beads-y2y8.
+	processed := 0
+
 	// Import issues
 	if len(issues) > 0 {
 		opts := ImportOptions{SkipPrefixValidation: true, AllowStale: importAllowStale}
@@ -296,6 +302,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 			return fmt.Errorf("import failed: %w", err)
 		}
 		result.Created = importResult.Created
+		processed = importResult.Processed
 		result.Updated = importResult.Updated
 		result.Skipped += importResult.Skipped
 		result.SkippedDependencies = append(result.SkippedDependencies, importResult.SkippedDependencies...)
@@ -306,8 +313,8 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		result.InvalidMetadataIDs = append(result.InvalidMetadataIDs, importResult.InvalidMetadataIDs...)
 	}
 
-	if result.Created > 0 || result.Memories > 0 {
-		commitMsg := fmt.Sprintf("bd import: %d issues", result.Created)
+	if processed > 0 || result.Memories > 0 {
+		commitMsg := fmt.Sprintf("bd import: %d issues", processed)
 		if result.Memories > 0 {
 			commitMsg += fmt.Sprintf(", %d memories", result.Memories)
 		}
@@ -326,7 +333,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		return outputJSON(result)
 	}
 
-	fmt.Fprintf(os.Stderr, "Imported %d issues", result.Created)
+	fmt.Fprintf(os.Stderr, "Imported %d issues", processed)
 	if result.Memories > 0 {
 		fmt.Fprintf(os.Stderr, " and %d memories", result.Memories)
 	}
