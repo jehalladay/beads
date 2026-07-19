@@ -60,4 +60,18 @@ func TestEmbeddedDepTreeMaxDepthVerdict(t *testing.T) {
 			t.Errorf("unblocked root a should show [READY]:\n%s", out)
 		}
 	})
+
+	// beads-wucv: --reverse (up) view of an unblocked root that HAS dependents
+	// must show [READY]. Before the fix the verdict counted the root's
+	// dependents' blocking edges → false [BLOCKED]. a blocks b (b depends on a),
+	// so a has a dependent but zero dependencies → genuinely READY.
+	t.Run("reverse_unblocked_root_with_dependents_ready", func(t *testing.T) {
+		out := bdDep(t, bd, dir, "tree", a.ID, "--reverse")
+		if strings.Contains(out, "[BLOCKED]") {
+			t.Errorf("--reverse wrongly shows [BLOCKED] for an unblocked root with dependents (beads-wucv):\n%s", out)
+		}
+		if !strings.Contains(out, "[READY]") {
+			t.Errorf("--reverse should show [READY] for the unblocked root a:\n%s", out)
+		}
+	})
 }

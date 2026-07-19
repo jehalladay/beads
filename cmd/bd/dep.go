@@ -1267,13 +1267,16 @@ Examples:
 			fmt.Printf("\n%s Dependency tree for %s:\n\n", ui.RenderAccent("🌲"), fullID)
 		}
 
-		// beads-x2e9: for the down/default direction, compute the root's
-		// READY/BLOCKED verdict from ground truth (store.IsBlocked, the same
-		// source `bd blocked` uses) so a display --max-depth cap can't flip a
-		// genuinely-blocked root to [READY]. up/both keep the tree-derived
-		// verdict (IsBlocked reflects dependency blockers, not dependents).
+		// beads-x2e9 / beads-wucv: compute the root's READY/BLOCKED verdict from
+		// ground truth (store.IsBlocked, the same source `bd blocked` uses) for
+		// EVERY direction. "Blocked" is a direction-independent property of the
+		// issue (does it have open blockers), not of the view being rendered.
+		// The tree-derived verdict was wrong in two directions: down + a display
+		// --max-depth cap truncates real blockers → false [READY] (x2e9); and
+		// --reverse/up renders the root's DEPENDENTS (blocking edges pointing
+		// AWAY) → false [BLOCKED] (wucv, having dependents ≠ being blocked).
 		var rootBlockedOverride *bool
-		if direction != "up" && direction != "both" && treeStore != nil {
+		if treeStore != nil {
 			if blocked, _, berr := treeStore.IsBlocked(ctx, fullID); berr == nil {
 				rootBlockedOverride = &blocked
 			}
