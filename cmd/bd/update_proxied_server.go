@@ -35,6 +35,18 @@ func runUpdateProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	// exactly as it does on the direct path (beads-u8zw); read it once here.
 	force, _ := cmd.Flags().GetBool("force")
 
+	// beads-1d32: --append-notes is NON-IDEMPOTENT, so pre-resolve every id and
+	// bail before any write when a multi-id batch appends notes — otherwise a
+	// bad sibling id leaves the good ids appended, exits non-zero, and the retry
+	// double-appends. Mirrors the direct update path (update.go) and bd close's
+	// resolve-all-first atomicity. Idempotent flags keep the cwl8 best-effort
+	// partial-apply; a single-id batch cannot half-apply.
+	if in.hasAppendNotes && len(args) > 1 {
+		if err := preresolveProxiedUpdateArgs(ctx, args); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
+	}
+
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	var updated []*types.Issue
 	var firstUpdatedID string
@@ -76,6 +88,28 @@ func runUpdateProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	if failedCount > 0 {
 		os.Exit(1)
 	}
+}
+
+// preresolveProxiedUpdateArgs resolves every id in a batch WITHOUT mutating,
+// returning the first resolution error so the caller can bail before any write
+// (beads-1d32). Used only for the non-idempotent --append-notes path where a
+// partial apply would double-append on retry.
+func preresolveProxiedUpdateArgs(ctx context.Context, args []string) error {
+	if uowProvider == nil {
+		FatalError("proxied-server UOW provider not initialized")
+	}
+	uw, err := uowProvider.NewUOW(ctx)
+	if err != nil {
+		return fmt.Errorf("opening unit of work: %v", err)
+	}
+	defer uw.Close(ctx)
+	for _, id := range args {
+		current, _ := proxiedResolveIssueOrWisp(ctx, uw, id)
+		if current == nil {
+			return fmt.Errorf("Issue %s not found", id)
+		}
+	}
+	return nil
 }
 
 func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, force bool) (*types.Issue, bool) {

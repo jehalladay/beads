@@ -1078,6 +1078,35 @@ func TestProxiedServerUpdate(t *testing.T) {
 			t.Errorf("the resolvable id should still update on a partial batch; assignee=%q, want team", got.Assignee)
 		}
 	})
+
+	// beads-1d32: --append-notes is non-idempotent, so on a mixed valid/invalid
+	// batch the proxied path must pre-resolve every id and bail before any write
+	// — otherwise the good id gets the note, the batch exits non-zero, and the
+	// retry double-appends. Contrast the partial_failure_exits_nonzero case
+	// above: idempotent flags (--assignee) keep the cwl8 best-effort
+	// partial-apply; this all-or-nothing guard is scoped to --append-notes only.
+	t.Run("append_notes_bad_id_is_atomic", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "uan")
+		good := bdProxiedCreate(t, bd, p.dir, "Append atomicity", "--type", "task")
+		missing := good.ID + "-nope-does-not-exist"
+
+		out := bdProxiedUpdateFail(t, bd, p.dir, good.ID, missing, "--append-notes", "LOG-ENTRY")
+		if strings.Contains(out, "storage is nil") {
+			t.Fatalf("proxied update hit the nil-store path: %s", out)
+		}
+		got := bdProxiedShow(t, bd, p.dir, good.ID)
+		if strings.Contains(got.Notes, "LOG-ENTRY") {
+			t.Fatalf("--append-notes must NOT write the good id when a sibling id is bad "+
+				"(non-idempotent partial-apply => double-append on retry); notes=%q", got.Notes)
+		}
+
+		// Retry with only the good id appends exactly once.
+		bdProxiedUpdateOne(t, bd, p.dir, good.ID, "--append-notes", "LOG-ENTRY")
+		got = bdProxiedShow(t, bd, p.dir, good.ID)
+		if n := strings.Count(got.Notes, "LOG-ENTRY"); n != 1 {
+			t.Fatalf("expected exactly one LOG-ENTRY after retry, got %d; notes=%q", n, got.Notes)
+		}
+	})
 }
 
 // readPinnedCol reads the stored pinned bool directly from the proxied DB.

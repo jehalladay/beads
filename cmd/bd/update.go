@@ -347,6 +347,30 @@ create, update, show, or close operation).`,
 
 		ctx := rootCtx
 
+		// beads-1d32: --append-notes is NON-IDEMPOTENT, so a best-effort partial
+		// apply across a mixed valid/invalid batch is a real correctness hazard —
+		// the good ids get the note, the batch exits non-zero, and the natural
+		// retry double-appends. bd close/delete pre-resolve every id and bail
+		// before any write; do the same here, but ONLY when --append-notes is in
+		// play (idempotent flags like --priority/--add-label keep the 4i20
+		// best-effort partial-apply). A single-id batch cannot half-apply, so the
+		// guard only matters for 2+ ids. If any id fails to resolve, error before
+		// the mutation loop so no note is written and the retry appends once.
+		if _, appending := updates["append_notes"]; appending && len(args) > 1 {
+			for _, id := range args {
+				pre, err := resolveAndGetIssueForMutation(ctx, store, id)
+				if pre != nil {
+					pre.Close()
+				}
+				if err != nil {
+					return HandleErrorRespectJSON("Error resolving %s: %v", id, err)
+				}
+				if pre == nil || pre.Issue == nil {
+					return HandleErrorRespectJSON("Issue %s not found", id)
+				}
+			}
+		}
+
 		updatedIssues := []*types.Issue{}
 		var firstUpdatedID string // Track first successful update for last-touched
 		// Count items that completed the loop body without hitting a per-item

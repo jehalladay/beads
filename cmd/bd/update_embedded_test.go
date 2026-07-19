@@ -1066,6 +1066,33 @@ func TestEmbeddedUpdate(t *testing.T) {
 		}
 	})
 
+	t.Run("update_append_notes_bad_id_is_atomic", func(t *testing.T) {
+		// beads-1d32: --append-notes is NON-IDEMPOTENT — a partial-apply on a
+		// mixed valid/invalid batch means the natural retry double-appends.
+		// close/delete pre-resolve all ids and bail before any write; update is
+		// best-effort-partial (preserved for idempotent flags by beads-4i20),
+		// but for --append-notes the batch must be all-or-nothing: a bad sibling
+		// id must prevent the good id's note from being written at all, so the
+		// user's retry appends exactly once.
+		good := bdCreate(t, bd, dir, "Append-notes atomicity", "--type", "task")
+		missing := good.ID + "-nope-does-not-exist"
+
+		// First attempt: bad sibling -> must fail AND leave the good id untouched.
+		bdUpdateFail(t, bd, dir, good.ID, missing, "--append-notes", "LOG-ENTRY")
+		got := bdShow(t, bd, dir, good.ID)
+		if strings.Contains(got.Notes, "LOG-ENTRY") {
+			t.Fatalf("--append-notes must NOT write the good id when a sibling id is bad "+
+				"(non-idempotent partial-apply => double-append on retry); notes=%q", got.Notes)
+		}
+
+		// Retry with only the good id: appends exactly once.
+		bdUpdate(t, bd, dir, good.ID, "--append-notes", "LOG-ENTRY")
+		got = bdShow(t, bd, dir, good.ID)
+		if n := strings.Count(got.Notes, "LOG-ENTRY"); n != 1 {
+			t.Fatalf("expected exactly one LOG-ENTRY after retry, got %d; notes=%q", n, got.Notes)
+		}
+	})
+
 	t.Run("update_dolt_commit", func(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "Dolt commit test", "--type", "task")
 		bdUpdate(t, bd, dir, issue.ID, "--status", "in_progress")
