@@ -45,6 +45,31 @@ func TestBuildListFilter_SingleStatusInvalid(t *testing.T) {
 	}
 }
 
+// beads-7f3g: `--status blocked` is validator-accepted but must route to the
+// derived is_blocked filter, not the stored status column (which can never
+// equal "blocked" → silent 0, disagreeing with bd blocked).
+func TestBuildListFilter_StatusBlockedRoutesToBlockedFilter(t *testing.T) {
+	f, err := buildListFilter(listInput{status: "blocked"}, baseCfg())
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if f.Status != nil {
+		t.Errorf("--status blocked must NOT set the status column filter, got %v", *f.Status)
+	}
+	if f.Blocked == nil || !*f.Blocked {
+		t.Fatalf("--status blocked must set Blocked=true, got %v", f.Blocked)
+	}
+}
+
+// beads-7f3g: "blocked" is derived, so it cannot be OR-combined with real
+// statuses in a single status-column IN() filter — reject rather than silently
+// return 0 for the whole multi-status filter.
+func TestBuildListFilter_StatusBlockedInMultiRejected(t *testing.T) {
+	if _, err := buildListFilter(listInput{status: "open,blocked"}, baseCfg()); err == nil {
+		t.Fatal("expected error combining derived 'blocked' with a real status")
+	}
+}
+
 func TestBuildListFilter_MultiStatus(t *testing.T) {
 	f, err := buildListFilter(listInput{status: "open,in_progress"}, baseCfg())
 	if err != nil {

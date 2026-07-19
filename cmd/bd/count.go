@@ -148,12 +148,28 @@ Examples:
 				if !s.IsValidWithCustom(names) {
 					return HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(names))
 				}
-				filter.Status = &s
+				if s == types.StatusBlocked {
+					// beads-7f3g: "blocked" is a derived pseudo-status (is_blocked
+					// column), not a stored status, so matching the status column
+					// always yields 0. Route to the is_blocked filter so
+					// count --status blocked agrees with bd blocked / stats.
+					b := true
+					filter.Blocked = &b
+				} else {
+					filter.Status = &s
+				}
 			} else {
 				for _, part := range statusParts {
 					s := types.Status(strings.TrimSpace(part)).Normalize()
 					if !s.IsValidWithCustom(names) {
 						return HandleErrorRespectJSON("invalid status %q in multi-status filter (valid: %s)", strings.TrimSpace(part), validStatusList(names))
+					}
+					if s == types.StatusBlocked {
+						// beads-7f3g: "blocked" is derived (is_blocked), not stored,
+						// so it cannot be OR-combined with real statuses in a single
+						// status-column IN() filter. Reject explicitly instead of
+						// silently counting 0 for the whole multi-status filter.
+						return HandleErrorRespectJSON("status %q is derived and cannot be combined in a multi-status filter; use `bd blocked` or `--status blocked` alone", "blocked")
 					}
 					filter.Statuses = append(filter.Statuses, s)
 				}

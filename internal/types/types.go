@@ -1373,6 +1373,13 @@ type IssueFilter struct {
 	// Pinned filtering
 	Pinned *bool // Filter by pinned flag (nil = any, true = only pinned, false = only non-pinned)
 
+	// Blocked filtering (beads-7f3g): filter by the denormalized is_blocked
+	// column (nil = any, true = only blocked, false = only unblocked). "blocked"
+	// is a DERIVED pseudo-status (a blocked issue keeps stored status=open/
+	// in_progress), so `--status blocked` maps here instead of to the status
+	// column — matching bd blocked / stats blocked_issues (both is_blocked-based).
+	Blocked *bool
+
 	// Template filtering
 	IsTemplate *bool // Filter by template flag (nil = any, true = only templates, false = exclude templates)
 

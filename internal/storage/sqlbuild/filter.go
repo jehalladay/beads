@@ -191,6 +191,18 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 			whereClauses = append(whereClauses, "(pinned = 0 OR pinned IS NULL)")
 		}
 	}
+	if filter.Blocked != nil {
+		// beads-7f3g: "blocked" is a derived pseudo-status, not a stored status
+		// value, so `--status blocked` routes here instead of to the status
+		// column (which could never match → silent 0). Match bd blocked's
+		// is_blocked semantics (issueops/blocked.go:247), incl. its closed/pinned
+		// exclusion, so count/list agree with bd blocked and stats blocked_issues.
+		if *filter.Blocked {
+			whereClauses = append(whereClauses, "is_blocked = 1 AND status <> 'closed' AND status <> 'pinned'")
+		} else {
+			whereClauses = append(whereClauses, "(is_blocked = 0 OR is_blocked IS NULL)")
+		}
+	}
 	if filter.SourceRepo != nil {
 		whereClauses = append(whereClauses, "source_repo = ?")
 		args = append(args, *filter.SourceRepo)
