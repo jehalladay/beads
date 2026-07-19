@@ -35,6 +35,38 @@ func (p *doltSQLProvider) NewUOW(ctx context.Context) (UnitOfWork, error) {
 	return NewUOW(ctx, p)
 }
 
+// AcquireAdvisoryLock takes the named server-scoped advisory lock on a dedicated
+// pooled connection and returns a release func. The lock is server-global (any
+// session's GET_LOCK blocks another session's GET_LOCK of the same name), so a
+// caller can serialize a read-then-write critical section that spans a UnitOfWork
+// commit — acquire BEFORE opening the UoW (so the UoW's transaction snapshot is
+// taken after any prior holder committed) and release AFTER Commit (beads-1i4u).
+// timeoutSeconds bounds the GET_LOCK wait. Returns a no-op release + error if the
+// lock cannot be acquired.
+func (p *doltSQLProvider) AcquireAdvisoryLock(ctx context.Context, name string, timeoutSeconds int) (func(), error) {
+	conn, err := p.db.Conn(ctx)
+	if err != nil {
+		return func() {}, fmt.Errorf("uow: advisory lock pin connection: %w", err)
+	}
+	var locked sql.NullInt64
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, ?)", name, timeoutSeconds).Scan(&locked); err != nil {
+		_ = conn.Close()
+		return func() {}, fmt.Errorf("uow: acquire advisory lock %q: %w", name, err)
+	}
+	if !locked.Valid || locked.Int64 != 1 {
+		_ = conn.Close()
+		return func() {}, fmt.Errorf("uow: advisory lock %q unavailable (timeout)", name)
+	}
+	return func() {
+		// Release on the same session that acquired it, then return the
+		// connection to the pool.
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = conn.ExecContext(releaseCtx, "SELECT RELEASE_LOCK(?)", name)
+		_ = conn.Close()
+	}, nil
+}
+
 func (p *doltSQLProvider) Close(ctx context.Context) error {
 	if p.db == nil {
 		return nil

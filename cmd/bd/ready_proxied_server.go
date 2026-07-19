@@ -21,6 +21,27 @@ func runReadyProxiedServer(cmd *cobra.Command, ctx context.Context) {
 	if uowProvider == nil {
 		FatalError("proxied-server UOW provider not initialized")
 	}
+
+	// beads-1i4u: `bd ready --claim` reads the ready set and flips one issue to
+	// in_progress across a UnitOfWork commit. On the shared Dolt sql-server, two
+	// concurrent claimers each open their own transaction snapshot, both see the
+	// same issue as claimable, and Dolt auto-merges both commits without a
+	// conflict → the SAME bead is handed to two actors (double-claim / lost
+	// update). Serialize the whole read-claim-commit critical section with a
+	// server-scoped advisory lock acquired BEFORE the transaction snapshot is
+	// taken, released AFTER commit. Read-only ready/list/explain never take it.
+	if in.claim {
+		if locker, ok := uowProvider.(interface {
+			AcquireAdvisoryLock(ctx context.Context, name string, timeoutSeconds int) (func(), error)
+		}); ok {
+			release, lockErr := locker.AcquireAdvisoryLock(ctx, "bd_ready_claim", 10)
+			if lockErr != nil {
+				FatalErrorRespectJSON("serialize claim: %v", lockErr)
+			}
+			defer release()
+		}
+	}
+
 	uw, err := uowProvider.NewUOW(ctx)
 	if err != nil {
 		FatalErrorRespectJSON("open unit of work: %v", err)
