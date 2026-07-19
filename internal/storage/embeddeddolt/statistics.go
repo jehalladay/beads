@@ -34,6 +34,18 @@ func (s *EmbeddedDoltStore) GetStatistics(ctx context.Context) (*types.Statistic
 			return rerr
 		}
 		stats.ReadyIssues = readyCount
+
+		// beads-13xl: populate the two Statistics fields that were declared +
+		// rendered but never assigned (permanent 0), so `bd stats` agrees with
+		// `bd epic status` and stops silently lying about lead time.
+		epicCount, eerr := issueops.CountEpicsEligibleForClosureInTx(ctx, tx)
+		if eerr != nil {
+			return eerr
+		}
+		stats.EpicsEligibleForClosure = epicCount
+		if lerr := issueops.ScanAverageLeadTimeInTx(ctx, tx, stats); lerr != nil {
+			return lerr
+		}
 		return nil
 	})
 	if err != nil {

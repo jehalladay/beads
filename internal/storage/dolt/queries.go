@@ -120,6 +120,20 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 		return nil, fmt.Errorf("failed to count ready issues: %w", err)
 	}
 
+	// beads-13xl: populate the two Statistics fields that were declared +
+	// rendered but never assigned (permanent 0), so `bd stats` agrees with
+	// `bd epic status` and stops silently lying about lead time.
+	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		epicCount, eerr := issueops.CountEpicsEligibleForClosureInTx(ctx, tx)
+		if eerr != nil {
+			return eerr
+		}
+		stats.EpicsEligibleForClosure = epicCount
+		return issueops.ScanAverageLeadTimeInTx(ctx, tx, stats)
+	}); err != nil {
+		return nil, fmt.Errorf("failed to compute extended statistics: %w", err)
+	}
+
 	return stats, nil
 }
 

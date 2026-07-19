@@ -979,6 +979,17 @@ func (r *issueSQLRepositoryImpl) GetStatistics(ctx context.Context) (*types.Stat
 		return nil, fmt.Errorf("db: IssueSQLRepository.GetStatistics: count ready: %w", rerr)
 	}
 	stats.ReadyIssues = readyCount
+	// beads-13xl: populate the two Statistics fields that were declared +
+	// rendered but never assigned (permanent 0), so `bd stats` agrees with
+	// `bd epic status` and stops silently lying about lead time.
+	epicCount, eerr := issueops.CountEpicsEligibleForClosureInTx(ctx, r.runner)
+	if eerr != nil {
+		return nil, fmt.Errorf("db: IssueSQLRepository.GetStatistics: count epics eligible: %w", eerr)
+	}
+	stats.EpicsEligibleForClosure = epicCount
+	if lerr := issueops.ScanAverageLeadTimeInTx(ctx, r.runner, stats); lerr != nil {
+		return nil, fmt.Errorf("db: IssueSQLRepository.GetStatistics: %w", lerr)
+	}
 	return stats, nil
 }
 
