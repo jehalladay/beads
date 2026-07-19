@@ -180,9 +180,16 @@ func executeMigrateIssues(ctx context.Context, p migrateIssuesParams) error {
 	// Step 5: Build migration plan
 	plan := buildMigrationPlan(candidates, migrationSet, dependencyStats, orphans, p.from, p.to)
 
-	// Step 6: Display plan
-	if err := displayMigrationPlan(plan, p.dryRun); err != nil {
-		return err
+	// Step 6: Display plan.
+	// In JSON mode a non-dry-run migration emits its own result document in
+	// Step 7 (with the plan embedded), so emitting the plan here too would put
+	// TWO JSON documents on stdout and break `--json | jq`. Skip the Step-6
+	// emission in that case; human mode and dry-run (which has no Step-7
+	// output) still show the plan.
+	if !jsonOutput || p.dryRun {
+		if err := displayMigrationPlan(plan, p.dryRun); err != nil {
+			return err
+		}
 	}
 
 	// Step 7: Execute migration if not dry-run

@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result serialized `"stale_molecules": null` — unlike `bd mol ready`, which already emits `[]`. A
   `--json` consumer iterating the array broke on `null`. The slice is now initialized to
   `[]*StaleMolecule{}` so an empty result marshals to an empty JSON array.
+- **`bd migrate issues --json` no longer emits two JSON documents on a non-dry-run success (beads-nqbv).**
+  A successful (non-dry-run) migration printed the plan via `displayMigrationPlan` (`{dry_run, plan}`) in
+  Step 6 and then the result (`{success, message, plan}`) in Step 7 — two concatenated top-level JSON
+  documents on stdout, which breaks `bd migrate issues --json | jq`. The Step-6 emission is now gated
+  behind `!jsonOutput || dryRun`, so a JSON non-dry-run run emits exactly the single Step-7 result (which
+  already embeds the plan); human output and dry-run (which has no Step-7 output) are unchanged.
 
 - **`bd update <id> --json` with no field flags now emits a JSON no-op object instead of the plain-text line `No updates specified` (beads-b0lq).**
   A valid id with no mutating field flags is an idempotent no-op success (exit 0). The direct
