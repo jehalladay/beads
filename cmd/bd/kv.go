@@ -158,17 +158,19 @@ Examples:
 		}
 
 		if jsonOutput {
-			if jerr := outputJSON(map[string]interface{}{
+			// beads-7qkq: a missing key is a RESULT, not an error, in --json mode
+			// — the found:false field already communicates the miss. Return rc0
+			// so `bd kv get k --json` matches the sibling `bd config get k --json`
+			// (which returns a set:false result at rc0); failing the exit code on
+			// a successful-but-empty lookup is a redundant cross-command
+			// divergence that trips scripted `bd kv get k --json; test $? …`.
+			// The TEXT branch below keeps rc1 for shell ergonomics
+			// (`bd kv get k || default`).
+			return outputJSON(map[string]interface{}{
 				"key":   key,
 				"value": value,
 				"found": value != "",
-			}); jerr != nil {
-				return jerr
-			}
-			if value == "" {
-				return SilentExit()
-			}
-			return nil
+			})
 		}
 		if value == "" {
 			fmt.Fprintf(os.Stderr, "%s (not set)\n", key)

@@ -152,6 +152,50 @@ func TestEmbeddedKV(t *testing.T) {
 		_ = out
 	})
 
+	// beads-7qkq: `bd kv get <missing> --json` must exit rc0 (not rc1),
+	// mirroring `bd config get <missing> --json` (which returns a set:false
+	// result at rc0). Both are lookup-by-key commands that emit an explicit
+	// found/set boolean; a successful lookup that finds nothing is a RESULT, not
+	// an error — the found:false field communicates the miss, so failing the
+	// exit code is redundant + a cross-command divergence that trips
+	// `bd kv get k --json; test $? …` scripts. The TEXT branch keeps rc1
+	// (shell ergonomics: `bd kv get k || default`), only the --json contract
+	// is corrected.
+	t.Run("kv_get_missing_json_exits_zero", func(t *testing.T) {
+		cmd := exec.Command(bd, "kv", "get", "nonexistent_key_7qkq", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		var stdout, stderr strings.Builder
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		err := cmd.Run()
+		if err != nil {
+			t.Fatalf("bd kv get <missing> --json must exit 0 (miss is a result, not an error — mirror config get, beads-7qkq); got err=%v\nstdout:%s\nstderr:%s", err, stdout.String(), stderr.String())
+		}
+		// The JSON payload must still communicate the miss via found:false.
+		var obj map[string]interface{}
+		s := strings.TrimSpace(stdout.String())
+		if start := strings.Index(s, "{"); start >= 0 {
+			s = s[start:]
+		}
+		if e := json.Unmarshal([]byte(s), &obj); e != nil {
+			t.Fatalf("kv get --json output is not valid JSON: %v\n%s", e, stdout.String())
+		}
+		if found, ok := obj["found"].(bool); !ok || found {
+			t.Errorf("expected found:false for a missing key, got: %v", obj["found"])
+		}
+	})
+
+	// The TEXT branch still signals non-zero on a miss (unchanged ergonomics).
+	t.Run("kv_get_missing_text_exits_nonzero", func(t *testing.T) {
+		cmd := exec.Command(bd, "kv", "get", "nonexistent_key_7qkq_text")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		if err := cmd.Run(); err == nil {
+			t.Errorf("bd kv get <missing> (text mode) should still exit non-zero for shell ergonomics (beads-7qkq scopes the change to --json only)")
+		}
+	})
+
 	t.Run("kv_set_no_args", func(t *testing.T) {
 		bdKVFail(t, bd, dir, "set")
 	})
