@@ -810,6 +810,15 @@ create, update, show, or close operation).`,
 			// stdout is never left empty (beads-fg6). Non-JSON exits silently
 			// after the per-item stderr lines already printed.
 			if jsonOutput {
+				// beads-9c0o: surface the ACTUAL per-item reason(s) captured in
+				// deferredItemErrors (e.g. "invalid issue type: X") instead of a
+				// generic "no issues matched" — the generic string misleads a
+				// --json consumer into thinking the ID didn't exist when the real
+				// cause was an invalid field value. Falls back to the generic
+				// message only when no specific reason was recorded.
+				if len(deferredItemErrors) > 0 {
+					return HandleErrorRespectJSON("%s", strings.Join(deferredItemErrors, "; "))
+				}
 				return HandleErrorRespectJSON("no issues updated matching the provided IDs")
 			}
 			return SilentExit()
