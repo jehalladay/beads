@@ -85,7 +85,14 @@ func hasDiscoveredFromAttribute(attributes map[string]interface{}) bool {
 	if !ok {
 		return false
 	}
-	return strings.Contains(s, discoveredFromComment)
+	// Match the marker by equality, not substring: the push side (links.go
+	// AddWorkItemLink) writes the comment as EXACTLY discoveredFromComment for
+	// a discovered-from link, so an exact match is the faithful mirror. A loose
+	// strings.Contains misclassified any Related link whose comment merely
+	// contained the marker (e.g. a human note "see beads:discovered-from
+	// convention") as a discovered-from dependency (beads-ybb8). TrimSpace
+	// tolerates only incidental surrounding whitespace, not embedded text.
+	return strings.TrimSpace(s) == discoveredFromComment
 }
 
 // beadsDepToADORel maps a beads dependency type to an ADO relation type.

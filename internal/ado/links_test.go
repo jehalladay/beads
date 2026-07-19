@@ -224,6 +224,17 @@ func TestAdoRelToBeadsDep(t *testing.T) {
 			wantSwap: false,
 		},
 		{
+			// beads-ybb8: a comment that merely mentions the marker in prose is
+			// a plain related link, not discovered-from (exact-match contract).
+			name: "Related whose comment merely mentions the marker → related",
+			rel:  RelRelated,
+			attributes: map[string]interface{}{
+				"comment": "see beads:discovered-from convention",
+			},
+			wantType: "related",
+			wantSwap: false,
+		},
+		{
 			name:     "Unknown rel type → empty",
 			rel:      "System.LinkTypes.Unknown",
 			wantType: "",
@@ -612,7 +623,12 @@ func TestHasDiscoveredFromAttribute(t *testing.T) {
 		{"empty comment string", map[string]interface{}{"comment": ""}, false},
 		{"non-matching comment", map[string]interface{}{"comment": "some other link"}, false},
 		{"matching comment", map[string]interface{}{"comment": "beads:discovered-from"}, true},
-		{"matching comment with extra text", map[string]interface{}{"comment": "link beads:discovered-from here"}, true},
+		// beads-ybb8: the match is exact (mirrors the push, which writes the
+		// comment as exactly the marker), so a comment that merely CONTAINS the
+		// marker embedded in other text is NOT a discovered-from link.
+		{"marker embedded in other text is NOT a match", map[string]interface{}{"comment": "link beads:discovered-from here"}, false},
+		{"human note mentioning the marker is NOT a match", map[string]interface{}{"comment": "see beads:discovered-from convention"}, false},
+		{"marker with surrounding whitespace still matches", map[string]interface{}{"comment": "  beads:discovered-from\n"}, true},
 	}
 
 	for _, tt := range tests {
