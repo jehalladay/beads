@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -154,11 +155,18 @@ func (c *Compactor) CompactTier1(ctx context.Context, issueID string) error {
 		return fmt.Errorf("failed to overwrite+mark compaction: %w", err)
 	}
 
-	// Add comment about compaction
+	// Add a human-readable comment about the compaction. This is a COSMETIC
+	// post-commit event log OUTSIDE the atomic unit — beads-pj38 deliberately
+	// scopes atomicity to CompactOverwrite above, and the snapshot/overwrite have
+	// already committed the compaction durably. A failure to record this log line
+	// must NOT be returned as the operation's error (beads-ezng): the caller/batch
+	// would otherwise see a false-FAILURE for an issue that WAS compacted, and a
+	// retry hits the "would increase size" skip (already compacted, level=1) →
+	// confusing double-failure signal. Warn and continue; success = data committed.
 	savingBytes := originalSize - compactedSize
 	comment := fmt.Sprintf("Tier 1 compaction: %d → %d bytes (saved %d)", originalSize, compactedSize, savingBytes)
 	if err := c.store.AddComment(ctx, issueID, "compactor", comment); err != nil {
-		return fmt.Errorf("failed to add compaction comment: %w", err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to record Tier 1 compaction comment for %s (compaction already committed): %v\n", issueID, err)
 	}
 
 	return nil

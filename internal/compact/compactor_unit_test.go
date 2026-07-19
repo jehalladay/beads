@@ -474,26 +474,35 @@ func TestCompactTier1_ApplyCompactionError(t *testing.T) {
 	}
 }
 
+// beads-ezng: a post-commit AddComment failure must NOT fail CompactTier1. The
+// comment is a COSMETIC event log emitted AFTER CompactOverwrite already
+// committed the compaction durably (atomicity is scoped to CompactOverwrite per
+// beads-pj38). Returning an error here reports a false-FAILURE for an issue that
+// WAS compacted. The overwrite must still have happened (compaction committed),
+// and the operation must report success.
 func TestCompactTier1_AddCommentError(t *testing.T) {
 	cleanup := withGitHash(t, "abc\n")
 	t.Cleanup(cleanup)
 
+	overwritten := false
 	store := &stubStore{
 		checkEligibilityFn: func(context.Context, string, int) (bool, string, error) { return true, "", nil },
 		getIssueFn:         func(context.Context, string) (*types.Issue, error) { return stubIssue(), nil },
-		updateIssueFn:      func(context.Context, string, map[string]interface{}, string) error { return nil },
-		applyCompactionFn:  func(context.Context, string, int, int, int, string) error { return nil },
-		addCommentFn:       func(context.Context, string, string, string) error { return errors.New("comment failed") },
+		compactOverwriteFn: func(context.Context, string, map[string]interface{}, int, int, string, string) error {
+			overwritten = true
+			return nil
+		},
+		addCommentFn: func(context.Context, string, string, string) error { return errors.New("comment failed") },
 	}
 	summary := &stubSummarizer{summary: "short"}
 	c := &Compactor{store: store, summarizer: summary, config: &Config{}}
 
 	err := c.CompactTier1(context.Background(), "bd-123")
-	if err == nil {
-		t.Fatal("expected error")
+	if err != nil {
+		t.Fatalf("beads-ezng: post-commit comment failure must not fail the compaction; got %v", err)
 	}
-	if !strings.Contains(err.Error(), "failed to add compaction comment") {
-		t.Errorf("unexpected error: %v", err)
+	if !overwritten {
+		t.Fatal("expected CompactOverwrite to have committed the compaction")
 	}
 }
 
