@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd edit <id> --json` now emits the issue as a JSON array instead of plaintext (beads-8872).**
+  Both the direct (`cmd/bd/edit.go`) and proxied-server (`cmd/bd/edit_proxied_server.go`) paths printed
+  the plaintext `✓ Updated <field> for issue: <id>` success glyph (and `No changes made` on a no-op) to
+  stdout with rc=0, ignoring `--json` entirely — a script consuming `bd edit ... --json` got unparseable
+  text. Both terminal paths now emit the mutated (or unchanged) issue as a one-element JSON array, matching
+  the `bd update`/`bd priority`/`bd assign`/`bd tag`/`bd note` single-issue mutation contract (ARRAY shape).
+
 - **`bd history <id> --json` now emits snake_case field names (`commit_hash`, `committer`, `commit_date`, `issue`) instead of PascalCase (beads-8slh).**
   The `storage.HistoryEntry` struct (`internal/storage/versioned.go`) carried no json tags, so
   `bd history --json` marshaled `CommitHash`/`Committer`/`CommitDate`/`Issue` — inconsistent with the

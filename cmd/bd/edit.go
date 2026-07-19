@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -135,6 +136,12 @@ Examples:
 
 		if newValue == currentValue {
 			editSaved = true
+			// beads-8872: honor --json — the field is unchanged, so emit the
+			// (unmodified) issue as a one-element array, matching the update/
+			// priority/shorthand single-issue mutation contract (ARRAY shape).
+			if jsonOutput {
+				return outputJSON([]*types.Issue{issue})
+			}
 			fmt.Println("No changes made")
 			return nil
 		}
@@ -172,6 +179,16 @@ Examples:
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "Your edits are preserved in: %s\n", tmpPath)
 			return HandleErrorRespectJSON("failed to commit: %v", err)
+		}
+
+		// beads-8872: honor --json — re-fetch the mutated issue and emit it as a
+		// one-element array (matching update/priority/shorthand ARRAY shape), so
+		// scripts get parseable JSON instead of the plaintext success glyph.
+		if jsonOutput {
+			if updatedIssue, gerr := issueStore.GetIssue(ctx, id); gerr == nil && updatedIssue != nil {
+				return outputJSON([]*types.Issue{updatedIssue})
+			}
+			return nil
 		}
 
 		displayTitle := issue.Title

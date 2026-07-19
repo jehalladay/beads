@@ -55,6 +55,11 @@ func runEditProxiedServer(ctx context.Context, id, fieldToEdit string) error {
 		return HandleErrorRespectJSON("%v", err)
 	}
 	if !changed {
+		// beads-8872: honor --json (ARRAY shape, matching the direct path + the
+		// update/priority/shorthand single-issue mutation contract).
+		if jsonOutput {
+			return outputJSON([]*types.Issue{issue})
+		}
 		fmt.Println("No changes made")
 		return nil
 	}
@@ -74,6 +79,11 @@ func runEditProxiedServer(ctx context.Context, id, fieldToEdit string) error {
 	_ = os.Remove(tmpPath)
 
 	SetLastTouchedID(updated.ID)
+	// beads-8872: honor --json — emit the mutated issue as a one-element array
+	// (ARRAY shape, matching the direct path + update/priority/shorthand).
+	if jsonOutput {
+		return outputJSON([]*types.Issue{updated})
+	}
 	displayTitle := updated.Title
 	fieldName := strings.ReplaceAll(fieldToEdit, "_", " ")
 	fmt.Printf("%s Updated %s for issue: %s\n", ui.RenderPass("✓"), fieldName, formatFeedbackID(updated.ID, displayTitle))
