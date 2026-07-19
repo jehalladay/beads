@@ -121,6 +121,29 @@ func TestEmbeddedHistory(t *testing.T) {
 		}
 	})
 
+	// ===== --limit header does not misreport page size as total (beads-qal3) =====
+
+	// With >4 entries, `--limit 1` previously printed "History for <id> (1
+	// entries)" — the truncated PAGE size, falsely implying only 1 entry
+	// exists. The header must now qualify a truncated view as "showing K of N".
+	t.Run("limit_header_reports_true_total", func(t *testing.T) {
+		out := bdHistory(t, bd, dir, issue.ID, "--limit", "1")
+		if !strings.Contains(out, "showing 1 of ") {
+			t.Errorf("expected truncated header 'showing 1 of N entries', got: %s", out)
+		}
+		if strings.Contains(out, "(1 entries)") {
+			t.Errorf("header must not report the --limit page size (1) as the total: %s", out)
+		}
+	})
+
+	// Without --limit, the header reports the full count with no "showing" qualifier.
+	t.Run("no_limit_header_unqualified", func(t *testing.T) {
+		out := bdHistory(t, bd, dir, issue.ID)
+		if strings.Contains(out, "showing ") {
+			t.Errorf("un-truncated header must not say 'showing K of N': %s", out)
+		}
+	})
+
 	// ===== Negative --limit fails loud (beads-4djp) =====
 
 	// A negative --limit previously slipped past the `historyLimit > 0`

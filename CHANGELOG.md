@@ -107,6 +107,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the true pre-truncation total and adds a muted `Showing K of N pairs` line when truncated; the `--json` object
   gains additive `total` (true count) and `truncated` fields while `count` keeps its existing page-size meaning for
   backward compatibility. Same limit-truncation-count class as beads-48g6/phmp/4wn0/ebpo/l39v.
+- **`bd history <id> --limit N` no longer reports the truncated page size as the total entry count (beads-qal3).**
+  The header printed `History for <id> (%d entries)` using the already-`--limit`-truncated slice length, so
+  `bd history <id> --limit 1` on an issue with many history entries reported `(1 entries)` — falsely implying only
+  one entry exists. The header now captures the true total before truncation and prints `(showing K of N entries)`
+  when the view is truncated, and the unqualified `(N entries)` otherwise. Both the direct and proxied-server paths
+  are fixed; the `--json` path was already unaffected. Same limit-truncation-count class as beads-48g6/phmp/4wn0/ebpo/l39v.
 
 - **`bd ado projects --json` and `bd ado sync --json` now emit a JSON error object on stdout instead of a plaintext-stderr line on config/setup errors (beads-uc71).**
   The two handlers returned their missing-config / setup errors via a bare `fmt.Errorf`, so cobra printed a

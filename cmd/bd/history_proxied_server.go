@@ -49,16 +49,27 @@ func runHistoryProxiedServer(ctx context.Context, issueID string) error {
 		return nil
 	}
 
+	// Capture the true total before truncation so the header does not
+	// misreport the --limit page size as the entry count (beads-qal3,
+	// symmetric with the direct path).
+	totalEntries := len(history)
+	truncated := false
 	if historyLimit > 0 && historyLimit < len(history) {
 		history = history[:historyLimit]
+		truncated = true
 	}
 
 	if jsonOutput {
 		return outputJSON(history)
 	}
 
-	fmt.Printf("\n%s History for %s (%d entries)\n\n",
-		ui.RenderAccent("📜"), issueID, len(history))
+	if truncated {
+		fmt.Printf("\n%s History for %s (showing %d of %d entries)\n\n",
+			ui.RenderAccent("📜"), issueID, len(history), totalEntries)
+	} else {
+		fmt.Printf("\n%s History for %s (%d entries)\n\n",
+			ui.RenderAccent("📜"), issueID, totalEntries)
+	}
 
 	for i, entry := range history {
 		fmt.Printf("%s %s\n",
