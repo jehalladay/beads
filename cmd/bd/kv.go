@@ -234,9 +234,11 @@ Examples:
 		}
 
 		if jsonOutput {
-			return outputJSON(map[string]string{
+			// beads-dycj: real JSON boolean, not the string literal "true"
+			// (a consumer's `if result["deleted"]` must not key off a string).
+			return outputJSON(map[string]interface{}{
 				"key":     key,
-				"deleted": "true",
+				"deleted": true,
 			})
 		}
 		fmt.Printf("Cleared %s\n", key)
