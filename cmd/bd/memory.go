@@ -322,17 +322,19 @@ Examples:
 		}
 
 		if jsonOutput {
-			if jerr := outputJSON(map[string]interface{}{
+			// beads-7fgq (sibling of 7qkq on the memory-get path): a missing key
+			// is a RESULT, not an error, in --json mode — the found:false field
+			// already communicates the miss. Return rc0 so `bd recall k --json`
+			// matches the sibling `bd config get k --json` (set:false at rc0);
+			// failing the exit code on a successful-but-empty lookup is a
+			// redundant cross-command divergence that trips scripted
+			// `bd recall k --json; test $? …`. The TEXT branch below keeps rc1
+			// for shell ergonomics (`bd recall k || default`).
+			return outputJSON(map[string]interface{}{
 				"key":   key,
 				"value": value,
 				"found": value != "",
-			}); jerr != nil {
-				return jerr
-			}
-			if value == "" {
-				return SilentExit()
-			}
-			return nil
+			})
 		}
 		if value == "" {
 			fmt.Fprintf(os.Stderr, "No memory with key %q\n", key)

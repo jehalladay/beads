@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -187,6 +188,37 @@ func TestEmbeddedMemory(t *testing.T) {
 
 	t.Run("recall_missing_key", func(t *testing.T) {
 		bdRecallFail(t, bd, dir, "nonexistent-key-xyz")
+	})
+
+	// beads-7fgq (sibling of 7qkq on the memory-get path): `bd recall <missing>
+	// --json` must exit rc0, mirroring `bd config get <missing> --json` (which
+	// returns a set:false result at rc0). A successful lookup that finds nothing
+	// is a RESULT, not an error — the found:false field communicates the miss,
+	// so failing the exit code is a redundant cross-command divergence that
+	// trips scripted `bd recall k --json; test $? …`. The TEXT branch
+	// (recall_missing_key above, via bdRecallFail) keeps rc1 for shell
+	// ergonomics; only the --json contract is corrected.
+	t.Run("recall_missing_json_exits_zero", func(t *testing.T) {
+		cmd := exec.Command(bd, "recall", "nonexistent-key-7fgq", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		var stdout, stderr strings.Builder
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd recall <missing> --json must exit 0 (miss is a result, not an error — mirror config get, beads-7fgq); got err=%v\nstdout:%s\nstderr:%s", err, stdout.String(), stderr.String())
+		}
+		var obj map[string]interface{}
+		s := strings.TrimSpace(stdout.String())
+		if start := strings.Index(s, "{"); start >= 0 {
+			s = s[start:]
+		}
+		if e := json.Unmarshal([]byte(s), &obj); e != nil {
+			t.Fatalf("recall --json output is not valid JSON: %v\n%s", e, stdout.String())
+		}
+		if found, ok := obj["found"].(bool); !ok || found {
+			t.Errorf("expected found:false for a missing key, got: %v", obj["found"])
+		}
 	})
 
 	t.Run("forget_missing_key", func(t *testing.T) {
