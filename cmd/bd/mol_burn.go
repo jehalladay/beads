@@ -155,7 +155,13 @@ func burnMultipleMolecules(ctx context.Context, moleculeIDs []string, dryRun, fo
 
 	if len(wispIDs) == 0 && len(persistentIDs) == 0 {
 		if jsonOutput {
-			_ = outputJSON(BatchBurnResult{FailedCount: len(failedResolve)})
+			// beads-m9gn: init Results so the no-valid-molecules branch emits
+			// "results":[] not null, matching the success path (:197 uses
+			// make([]BurnResult, 0)). Results is []BurnResult with no omitempty,
+			// so the bare BatchBurnResult{FailedCount:...} literal left it nil —
+			// the guib/036h/5fv3/jxel/4mkg/8wyu nil-slice asymmetry, here across
+			// two branches of the same command.
+			_ = outputJSON(BatchBurnResult{Results: make([]BurnResult, 0), FailedCount: len(failedResolve)})
 			if len(failedResolve) > 0 {
 				return &exitError{Code: 1}
 			}
