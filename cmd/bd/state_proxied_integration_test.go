@@ -80,3 +80,81 @@ func TestProxiedServerSetState(t *testing.T) {
 		}
 	})
 }
+
+// TestProxiedServerStateRead is the teeth for beads-i3hq: the `bd state <id>
+// <dim>` and `bd state list <id>` READ paths must WORK in proxied-server mode.
+// Before the fix, both resolved+read via the direct nil global `store` in
+// proxiedServerMode (state.go: utils.ResolvePartialID(ctx, store, ...) +
+// store.GetLabels) with no usesProxiedServer() routing, so they failed
+// "storage is nil" for hub-connected crew. Sibling of beads-nzb7 (the set-state
+// WRITE path above); this covers the read handlers. Mirrors show/list proxied
+// read handlers (uw.LabelUseCase().GetLabels).
+func TestProxiedServerStateRead(t *testing.T) {
+	requireProxiedServerEnv(t)
+	bd := buildEmbeddedBD(t)
+
+	t.Run("state_read_single_dimension", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "psr1")
+		a := bdProxiedCreate(t, bd, p.dir, "State me", "--type", "task")
+
+		// Seed a state label via `bd label add` (already proxied-aware).
+		if _, err := bdProxiedRun(t, bd, p.dir, "label", "add", a.ID, "patrol:active"); err != nil {
+			t.Fatalf("seed label add failed: %v", err)
+		}
+
+		out, err := bdProxiedRun(t, bd, p.dir, "state", a.ID, "patrol")
+		s := string(out)
+		if err != nil {
+			t.Fatalf("proxied bd state read failed: %v\n%s", err, s)
+		}
+		if strings.Contains(s, "storage is nil") {
+			t.Fatalf("proxied bd state hit the nil-store path (beads-i3hq regression): %s", s)
+		}
+		if !strings.Contains(s, "active") {
+			t.Errorf("expected 'active' from proxied bd state patrol, got: %s", s)
+		}
+	})
+
+	t.Run("state_read_unset_dimension", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "psr2")
+		a := bdProxiedCreate(t, bd, p.dir, "No state", "--type", "task")
+
+		out, err := bdProxiedRun(t, bd, p.dir, "state", a.ID, "mode")
+		s := string(out)
+		if err != nil {
+			t.Fatalf("proxied bd state (unset) failed: %v\n%s", err, s)
+		}
+		if strings.Contains(s, "storage is nil") {
+			t.Fatalf("proxied bd state (unset) hit the nil-store path: %s", s)
+		}
+		if !strings.Contains(s, "no mode state set") {
+			t.Errorf("expected '(no mode state set)' for unset dimension, got: %s", s)
+		}
+	})
+
+	t.Run("state_list", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "psr3")
+		a := bdProxiedCreate(t, bd, p.dir, "Multi state", "--type", "task")
+
+		for _, lbl := range []string{"patrol:muted", "mode:degraded"} {
+			if _, err := bdProxiedRun(t, bd, p.dir, "label", "add", a.ID, lbl); err != nil {
+				t.Fatalf("seed label add %s failed: %v", lbl, err)
+			}
+		}
+
+		out, err := bdProxiedRun(t, bd, p.dir, "state", "list", a.ID)
+		s := string(out)
+		if err != nil {
+			t.Fatalf("proxied bd state list failed: %v\n%s", err, s)
+		}
+		if strings.Contains(s, "storage is nil") {
+			t.Fatalf("proxied bd state list hit the nil-store path (beads-i3hq regression): %s", s)
+		}
+		if !strings.Contains(s, "patrol") || !strings.Contains(s, "muted") {
+			t.Errorf("expected patrol:muted in proxied bd state list, got: %s", s)
+		}
+		if !strings.Contains(s, "mode") || !strings.Contains(s, "degraded") {
+			t.Errorf("expected mode:degraded in proxied bd state list, got: %s", s)
+		}
+	})
+}

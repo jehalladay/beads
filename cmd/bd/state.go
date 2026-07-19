@@ -47,6 +47,13 @@ Examples:
 		issueID := args[0]
 		dimension := args[1]
 
+		// beads-i3hq: route the read path through the UOW under proxied-server
+		// mode, where the global `store` is nil (sibling of the beads-nzb7
+		// set-state write path).
+		if usesProxiedServer() {
+			return runStateProxiedServer(ctx, issueID, dimension)
+		}
+
 		var fullID string
 		var err error
 		fullID, err = utils.ResolvePartialID(ctx, store, issueID)
@@ -289,6 +296,12 @@ Example:
 
 		ctx := rootCtx
 		issueID := args[0]
+
+		// beads-i3hq: route the read path through the UOW under proxied-server
+		// mode, where the global `store` is nil.
+		if usesProxiedServer() {
+			return runStateListProxiedServer(ctx, issueID)
+		}
 
 		var fullID string
 		var err error
