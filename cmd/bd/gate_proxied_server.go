@@ -236,18 +236,23 @@ func runGateResolveProxied(ctx context.Context, gateID, reason string) error {
 
 // runGateAddWaiterProxied mirrors gateAddWaiterCmd's RunE via the UOW.
 func runGateAddWaiterProxied(ctx context.Context, gateID, waiter string) error {
+	// beads-mbh7: mirror the direct-path add-waiter --json contract (beads-jial)
+	// and the sibling proxied handlers (resolve=beads-u3lt, create, show) on the
+	// proxied path — errors through HandleErrorRespectJSON. A bare HandleError
+	// left stdout EMPTY + plaintext on stderr under
+	// `bd gate add-waiter <bad-id> --json` on a hub-connected crew.
 	uw, err := openGateProxiedUOW(ctx)
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	defer uw.Close(ctx)
 
 	issue, err := uw.IssueUseCase().GetIssue(ctx, gateID)
 	if err != nil {
-		return HandleError("gate not found: %s", gateID)
+		return HandleErrorRespectJSON("gate not found: %s", gateID)
 	}
 	if issue.IssueType != "gate" {
-		return HandleError("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
+		return HandleErrorRespectJSON("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
 	}
 
 	for _, w := range issue.Waiters {
@@ -262,10 +267,10 @@ func runGateAddWaiterProxied(ctx context.Context, gateID, waiter string) error {
 		"waiters": newWaiters,
 	}
 	if err := uw.IssueUseCase().UpdateIssue(ctx, gateID, updates, actor); err != nil {
-		return HandleError("updating gate: %v", err)
+		return HandleErrorRespectJSON("updating gate: %v", err)
 	}
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: gate add-waiter %s", gateID)); err != nil && !isDoltNothingToCommit(err) {
-		return HandleError("failed to commit: %v", err)
+		return HandleErrorRespectJSON("failed to commit: %v", err)
 	}
 
 	fmt.Printf("%s Added waiter to gate %s: %s\n", ui.RenderPass("✓"), gateID, waiter)

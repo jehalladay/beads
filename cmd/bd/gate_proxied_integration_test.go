@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -160,6 +161,35 @@ func TestProxiedServerGate(t *testing.T) {
 		}
 		if strings.Contains(out+stderr, "storage is nil") {
 			t.Fatalf("nonexistent gate show hit 'storage is nil' rather than not-found:\n%s\n%s", out, stderr)
+		}
+	})
+
+	// beads-mbh7: the proxied add-waiter path must honor the --json error
+	// contract on a bad gate id, matching the direct path (beads-jial) and the
+	// sibling proxied handlers (resolve=beads-u3lt, create, show). Before the
+	// fix, runGateAddWaiterProxied used a bare HandleError → stdout EMPTY +
+	// plaintext on stderr, which a --json consumer cannot parse.
+	t.Run("gate_add_waiter_json_error_contract", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "gpw")
+		out, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "gate", "add-waiter", "gpw-nope999", "my-rig/workers/agent-1", "--json")
+		if err == nil {
+			t.Fatalf("expected gate add-waiter on a nonexistent id to fail; got:\n%s\n%s", out, stderr)
+		}
+		if strings.Contains(out+stderr, "storage is nil") {
+			t.Fatalf("nonexistent gate add-waiter hit 'storage is nil' rather than not-found:\n%s\n%s", out, stderr)
+		}
+		s := strings.TrimSpace(out)
+		if s == "" {
+			t.Fatalf("beads-mbh7: stdout is EMPTY under `gate add-waiter <bad-id> --json` "+
+				"(bare HandleError instead of HandleErrorRespectJSON) — a --json error-contract "+
+				"violation.\nstderr:\n%s", stderr)
+		}
+		var obj map[string]interface{}
+		if jerr := json.Unmarshal([]byte(s), &obj); jerr != nil {
+			t.Fatalf("beads-mbh7: stdout is not a single parseable JSON doc: %v\nstdout:\n%s", jerr, s)
+		}
+		if obj["error"] == nil {
+			t.Errorf("beads-mbh7: expected an 'error' key in the --json error doc, got: %v", obj)
 		}
 	})
 }
