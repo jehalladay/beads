@@ -223,6 +223,15 @@ func analyzeEpicForSwarm(ctx context.Context, s SwarmStorage, epic *types.Issue)
 		EpicTitle: epic.Title,
 		Swarmable: true,
 		Issues:    make(map[string]*IssueNode),
+		// beads-5fv3: init the append-only slices so an empty result marshals
+		// to [] not null under --json. These fields have no omitempty; a nil
+		// slice serializes to null, breaking a consumer that expects an array
+		// (bd swarm validate/create --json → errors:null/ready_fronts:null on
+		// empty). getSwarmStatus (:689) inits its slices the same way, proving
+		// [] is the intended contract. tamf nil-slice class (sibling of guib).
+		ReadyFronts: []ReadyFront{},
+		Warnings:    []string{},
+		Errors:      []string{},
 	}
 
 	// Get all child issues of the epic
