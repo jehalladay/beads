@@ -79,6 +79,35 @@ func TestEmbeddedTodo(t *testing.T) {
 		}
 	})
 
+	// beads-t043: bd todo add validates --priority via ValidatePriority (StringP)
+	// like bd q/create/update/list/count. An out-of-range value used to be
+	// assigned to Priority silently (IntP + GetInt → bad write), and the
+	// canonical P0-P4 form could not parse (IntP). Confirms the reject + the
+	// P-prefixed form now succeeds.
+	t.Run("todo_add_priority_validation", func(t *testing.T) {
+		for _, bad := range []string{"99", "-5"} {
+			cmd := exec.Command(bd, "todo", "add", "bad prio "+bad, "--priority="+bad)
+			cmd.Dir = dir
+			cmd.Env = bdEnv(dir)
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("bd todo add --priority=%s should have failed, got: %s", bad, out)
+			}
+			if !strings.Contains(string(out), "invalid priority") {
+				t.Errorf("expected 'invalid priority' error for --priority=%s, got: %s", bad, out)
+			}
+		}
+		// P-prefixed and plain numeric forms both create successfully.
+		for _, ok := range []string{"P2", "2"} {
+			c := exec.Command(bd, "todo", "add", "good prio "+ok, "--priority", ok)
+			c.Dir = dir
+			c.Env = bdEnv(dir)
+			if o, err := c.CombinedOutput(); err != nil {
+				t.Errorf("bd todo add --priority %s should succeed, got err: %v\n%s", ok, err, o)
+			}
+		}
+	})
+
 	t.Run("todo_add_description", func(t *testing.T) {
 		out := bdTodo(t, bd, dir, "add", "Described todo", "--description", "Details here")
 		if !strings.Contains(out, "Created") {

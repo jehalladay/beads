@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 var todoCmd = &cobra.Command{
@@ -67,7 +68,18 @@ var addTodoCmd = &cobra.Command{
 
 		title := strings.Join(args, " ")
 
-		priority, _ := cmd.Flags().GetInt("priority")
+		// beads-t043: parse --priority via ValidatePriority (StringP flag) so an
+		// out-of-range/non-numeric value is rejected here (mirrors bd q/quick.go
+		// beads-n8xi + bd create/update/list/count). Previously registered as IntP
+		// and assigned directly to Priority, so `bd todo add X --priority 99` wrote
+		// a bad priority silently and the canonical `P0-P4` form failed to parse.
+		// Route through HandleErrorRespectJSON since bd todo add honors --json on
+		// success (outputJSON(issue) below, beads-s2oy).
+		priorityStr, _ := cmd.Flags().GetString("priority")
+		priority, err := validation.ValidatePriority(priorityStr)
+		if err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
 		description, _ := cmd.Flags().GetString("description")
 
 		ctx := rootCtx
@@ -253,7 +265,9 @@ func init() {
 	todoCmd.AddCommand(doneTodoCmd)
 
 	// Add flags
-	addTodoCmd.Flags().IntP("priority", "p", 2, "Priority (0-4, default 2)")
+	// beads-t043: StringP (0-4 or P0-P4) via the shared helper, validated in RunE
+	// by validation.ValidatePriority — matches bd q/create/update/list/count.
+	registerPriorityFlag(addTodoCmd, "2")
 	addTodoCmd.Flags().StringP("description", "d", "", "Description")
 
 	listTodosCmd.Flags().Bool("all", false, "Show all TODOs including completed")
