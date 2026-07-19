@@ -271,7 +271,7 @@ var createCmd = &cobra.Command{
 			// This is the live single-issue create path; gatherCreateInput's
 			// gate covers only the batch path (beads-eum2/ef2k).
 			if !metadataIsJSONObject(metadataJSON) {
-				return HandleError(`--metadata must be a JSON object, e.g. {"key":"value"} (arrays and scalars can't be edited by --set-metadata/--unset-metadata)`)
+				return HandleErrorRespectJSON(`--metadata must be a JSON object, e.g. {"key":"value"} (arrays and scalars can't be edited by --set-metadata/--unset-metadata)`)
 			}
 			metadata = json.RawMessage(metadataJSON)
 		}
@@ -509,7 +509,7 @@ var createCmd = &cobra.Command{
 						fmt.Sprintf("issue %s already exists", explicitID),
 						"Use 'bd update' to modify it, or pass --force to overwrite.")
 				} else if !errors.Is(err, storage.ErrNotFound) {
-					return HandleError("failed to check whether %s already exists: %v", explicitID, err)
+					return HandleErrorRespectJSON("failed to check whether %s already exists: %v", explicitID, err)
 				}
 			}
 		}
