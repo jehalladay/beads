@@ -27,13 +27,25 @@ SUBCOMMANDS:
   human respond <id>      Respond to a human-needed bead (adds comment and closes)
   human dismiss <id>      Dismiss a human-needed bead permanently
   human stats             Show summary statistics for human-needed beads`,
-	Run: func(cmd *cobra.Command, args []string) {
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
 		evt := metrics.NewCommandEvent("human")
 		defer func() {
 			if c := metrics.Global(); c != nil {
 				c.CloseEventAndAdd(evt)
 			}
 		}()
+
+		// beads-3l5q: human is a Runnable hybrid (own RunE + list/respond/
+		// dismiss/stats subcommands), so the shared unknown-subcommand guard
+		// skips it. A leftover positional (e.g. `bd human lst` typo of list) is
+		// an unknown subcommand — reject it instead of printing the essentials
+		// menu with exit 0 (silent false-success). Bare `bd human` (no args)
+		// still shows the menu.
+		if len(args) > 0 {
+			return rejectUnknownSubcommand(cmd, args[0])
+		}
 
 		fmt.Printf("\n%s\n", ui.RenderBold("bd - Essential Commands for Humans"))
 		fmt.Printf("For all 70+ commands: bd --help\n\n")
@@ -91,6 +103,7 @@ SUBCOMMANDS:
 		fmt.Printf("  bd ready                    # What can I work on?\n")
 		fmt.Printf("  bd list --status open       # All open issues\n")
 		fmt.Printf("  bd blocked                  # What's stuck?\n\n")
+		return nil
 	},
 }
 

@@ -238,8 +238,13 @@ Examples:
 			return nil
 		}
 
-		_ = cmd.Help()
-		return nil
+		// beads-3l5q: dep is a Runnable hybrid (own RunE + subcommands), so the
+		// shared attachUnknownSubcommandGuards tree walk skips it. A leftover
+		// positional with no --blocks is a typo'd subcommand (e.g. `bd dep
+		// remve`) — reject it loudly instead of falling to help with exit 0
+		// (silent false-success). Cobra dispatches valid subcommands to the
+		// child before this RunE, so args[0] here is not a real subcommand.
+		return rejectUnknownSubcommand(cmd, args[0])
 	},
 }
 

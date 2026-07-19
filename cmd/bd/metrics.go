@@ -44,6 +44,14 @@ any user-supplied text.
 				c.CloseEventAndAdd(evt)
 			}
 		}()
+		// beads-3l5q: metrics is a Runnable hybrid (own RunE + on/off/example
+		// subcommands), so the shared unknown-subcommand guard skips it. A
+		// leftover positional (e.g. `bd metrics of` typo of off) is an unknown
+		// subcommand — reject it instead of printing the ON/OFF status with
+		// exit 0 (silent false-success). Bare `bd metrics` still shows status.
+		if len(args) > 0 {
+			return rejectUnknownSubcommand(cmd, args[0])
+		}
 		runMetricsStatus(cmd)
 		return nil
 	},

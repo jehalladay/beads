@@ -42,20 +42,33 @@ func attachUnknownSubcommandGuards(cmd *cobra.Command) {
 		}
 		// A leftover positional here is an unknown subcommand (a valid child
 		// would have been dispatched by cobra before reaching this RunE).
-		// Silence the usage dump so the error line is the salient output, and
-		// return a non-nil error so the process exits non-zero. Route through
-		// HandleErrorRespectJSON so under --json the error is a structured
-		// {error,schema_version} object on stdout instead of plaintext on
-		// stderr with an empty stdout (beads-dthi). jsonOutput is set by the
-		// root PersistentPreRunE before this guard RunE fires.
-		//
-		// HandleErrorRespectJSON writes the message itself and returns the
-		// &exitError{1} sentinel, so SilenceErrors must be set too — otherwise
-		// cobra would render the sentinel's own Error() ("exit code 1") to
-		// stderr on top of our message.
-		c.SilenceUsage = true
-		c.SilenceErrors = true
-		return HandleErrorRespectJSON("unknown %s subcommand %q; run '%s --help' to list available subcommands",
-			c.Name(), args[0], c.CommandPath())
+		return rejectUnknownSubcommand(c, args[0])
 	}
+}
+
+// rejectUnknownSubcommand emits the canonical "unknown <group> subcommand"
+// error for a leftover positional that is not a valid child command. Cobra
+// dispatches valid subcommands to the child BEFORE the parent's RunE runs, so a
+// positional reaching a parent-group RunE is by definition an unknown
+// subcommand (or a typo). Both the pure parent-group guard above and the
+// Runnable-hybrid groups (dep/human/metrics/migrate — which have their own RunE
+// so the tree walk deliberately skips them, beads-3l5q) route through here for
+// one consistent shape.
+//
+// Silence the usage dump so the error line is the salient output, and return a
+// non-nil error so the process exits non-zero. Route through
+// HandleErrorRespectJSON so under --json the error is a structured
+// {error,schema_version} object on stdout instead of plaintext on stderr with
+// an empty stdout (beads-dthi). jsonOutput is set by the root PersistentPreRunE
+// before any RunE fires.
+//
+// HandleErrorRespectJSON writes the message itself and returns the
+// &exitError{1} sentinel, so SilenceErrors must be set too — otherwise cobra
+// would render the sentinel's own Error() ("exit code 1") to stderr on top of
+// our message.
+func rejectUnknownSubcommand(c *cobra.Command, arg string) error {
+	c.SilenceUsage = true
+	c.SilenceErrors = true
+	return HandleErrorRespectJSON("unknown %s subcommand %q; run '%s --help' to list available subcommands",
+		c.Name(), arg, c.CommandPath())
 }

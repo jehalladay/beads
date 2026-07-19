@@ -32,13 +32,25 @@ Subcommands:
 `,
 	SilenceUsage:  true,
 	SilenceErrors: true,
-	RunE: func(cmd *cobra.Command, _ []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		evt := metrics.NewCommandEvent("migrate")
 		defer func() {
 			if c := metrics.Global(); c != nil {
 				c.CloseEventAndAdd(evt)
 			}
 		}()
+
+		// beads-3l5q: migrate is a Runnable hybrid (own RunE + hooks/issues/
+		// schema/sync subcommands), so the shared unknown-subcommand guard
+		// skips it. Its RunE previously ignored positionals entirely, so a typo
+		// like `bd migrate shema` (for schema) fell to the metadata-status path
+		// and exited 0 — the WORST footgun in this class, because the user
+		// believes a schema migration RAN when nothing did. Reject a leftover
+		// positional loudly. Bare `bd migrate` (no positional) still runs the
+		// metadata version check/update.
+		if len(args) > 0 {
+			return rejectUnknownSubcommand(cmd, args[0])
+		}
 
 		autoYes, _ := cmd.Flags().GetBool("yes")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
