@@ -166,7 +166,7 @@ Examples:
 						} else {
 							cwd, err := os.Getwd()
 							if err != nil {
-								return HandleError("failed to get working directory: %v", err)
+								return HandleErrorRespectJSON("failed to get working directory: %v", err)
 							}
 							beadsDir = filepath.Join(cwd, ".beads")
 						}
@@ -203,7 +203,7 @@ Examples:
 
 		resolvedCfg, repairMsg, err := applyBootstrapMetadataRepair(beadsDir, cfg, !dryRun)
 		if err != nil {
-			return HandleError("failed to reconcile shared-server metadata: %v", err)
+			return HandleErrorRespectJSON("failed to reconcile shared-server metadata: %v", err)
 		}
 		if resolvedCfg != nil {
 			cfg = resolvedCfg
@@ -230,6 +230,14 @@ Examples:
 		}
 
 		if err := executeBootstrapPlan(plan, cfg, nonInteractive); err != nil {
+			// Under --json the plan payload was already written to stdout above,
+			// so route the failure as a JSON object on STDERR (not stdout) to
+			// keep stdout a single parseable document — mirrors defer.go leg-B
+			// (beads-jy4r9) / reportItemError convention. Plain text otherwise.
+			if jsonOutput {
+				jsonStderrError(fmt.Sprintf("Bootstrap failed: %v", err), "")
+				return SilentExit()
+			}
 			return HandleError("Bootstrap failed: %v", err)
 		}
 		return nil
