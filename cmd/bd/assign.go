@@ -110,7 +110,12 @@ Examples:
 		if normalizeAssignee(result.Issue.Assignee) == assignee {
 			SetLastTouchedID(result.ResolvedID)
 			if jsonOutput {
-				if err := outputJSON(result.Issue); err != nil {
+				// beads-5m56 (yrtx follow-on): emit an ARRAY to match the
+				// real-assign path (:158) + `bd update --assignee` + all sibling
+				// mutation verbs. The no-op branch previously emitted a bare
+				// DICT, so a --json consumer got a different shape depending on
+				// whether the reassign was a no-op.
+				if err := outputJSON([]*types.Issue{result.Issue}); err != nil {
 					return err
 				}
 			} else {
