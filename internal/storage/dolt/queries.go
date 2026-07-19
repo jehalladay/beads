@@ -187,9 +187,15 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 
 	// Step 2: Batch-fetch status for all children (batched IN clauses to avoid full table scans).
 	// Children of a wisp molecule are also wisps, so use the same table.
+	// beads-tcx7: also fetch closed_at so FirstClosed/LastClosed can be
+	// populated — the rate/ETA feature (mol_progress.go rate_per_hour/eta_hours
+	// + human "Rate: ~N steps/hour") was dead because no producer ever assigned
+	// those two fields, so the FirstClosed!=nil && LastClosed!=nil guard was
+	// never true.
 	if len(childIDs) > 0 {
 		type childInfo struct {
-			status string
+			status   string
+			closedAt sql.NullTime
 		}
 		childMap := make(map[string]childInfo)
 		for start := 0; start < len(childIDs); start += queryBatchSize {
@@ -200,18 +206,19 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 			batch := childIDs[start:end]
 			placeholders, args := doltBuildSQLInClause(batch)
 			// nolint:gosec // G201: issueTable is hardcoded, placeholders contains only ? markers
-			query := fmt.Sprintf("SELECT id, status FROM %s WHERE id IN (%s)", issueTable, placeholders)
+			query := fmt.Sprintf("SELECT id, status, closed_at FROM %s WHERE id IN (%s)", issueTable, placeholders)
 			statusRows, err := s.queryContext(ctx, query, args...)
 			if err != nil {
 				return nil, fmt.Errorf("failed to batch-fetch child statuses: %w", err)
 			}
 			for statusRows.Next() {
 				var id, status string
-				if err := statusRows.Scan(&id, &status); err != nil {
+				var closedAt sql.NullTime
+				if err := statusRows.Scan(&id, &status, &closedAt); err != nil {
 					_ = statusRows.Close()
 					return nil, wrapScanError("get molecule progress: scan status", err)
 				}
-				childMap[id] = childInfo{status: status}
+				childMap[id] = childInfo{status: status, closedAt: closedAt}
 			}
 			if err := statusRows.Err(); err != nil {
 				_ = statusRows.Close()
@@ -229,6 +236,20 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 			switch types.Status(info.status) {
 			case types.StatusClosed:
 				stats.Completed++
+				// beads-tcx7: track earliest/latest closure timestamps across
+				// closed children so the rate/ETA computation has its two
+				// endpoints. Skip rows whose closed_at is NULL (defensive).
+				if info.closedAt.Valid {
+					t := info.closedAt.Time
+					if stats.FirstClosed == nil || t.Before(*stats.FirstClosed) {
+						ft := t
+						stats.FirstClosed = &ft
+					}
+					if stats.LastClosed == nil || t.After(*stats.LastClosed) {
+						lt := t
+						stats.LastClosed = &lt
+					}
+				}
 			case types.StatusInProgress:
 				stats.InProgress++
 				if stats.CurrentStepID == "" {
