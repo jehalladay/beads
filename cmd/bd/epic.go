@@ -95,7 +95,10 @@ func renderEpicStatus(epics []*types.EpicStatus, eligibleOnly bool) error {
 		} else {
 			statusIcon = "○"
 		}
-		fmt.Printf("%s %s %s\n", statusIcon, ui.RenderAccent(epic.ID), ui.RenderBold(epic.Title))
+		// beads-1wrub: sanitize the title for terminal display (7n9y sink
+		// slice) — a store-read epic title from an untrusted import can carry
+		// OSC/CSI escapes; RenderBold (lipgloss) does not strip them.
+		fmt.Printf("%s %s %s\n", statusIcon, ui.RenderAccent(epic.ID), ui.RenderBold(displayTitle(epic.Title)))
 		fmt.Printf("   Progress: %d/%d children closed (%d%%)\n",
 			epicStatus.ClosedChildren, epicStatus.TotalChildren, percentage)
 		if epicStatus.EligibleForClose {
@@ -197,7 +200,9 @@ func renderEpicCloseEligible(epics []*types.EpicStatus, dryRun bool, closeFn fun
 		}
 		fmt.Printf("Would close %d epic(s):\n", len(eligibleEpics))
 		for _, epicStatus := range eligibleEpics {
-			fmt.Printf("  - %s: %s\n", epicStatus.Epic.ID, epicStatus.Epic.Title)
+			// beads-1wrub: sanitize the title for terminal display (7n9y sink
+			// slice) — an untrusted imported epic title can carry OSC/CSI escapes.
+			fmt.Printf("  - %s: %s\n", epicStatus.Epic.ID, displayTitle(epicStatus.Epic.Title))
 		}
 		return nil
 	}
