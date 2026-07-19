@@ -81,6 +81,10 @@ By default, shows only open gates. Use --all to include closed gates.`,
 
 		ctx := rootCtx
 
+		if usesProxiedServer() {
+			return runGateListProxied(ctx, filter, allFlag)
+		}
+
 		issues, err := store.SearchIssues(ctx, "", filter)
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
@@ -198,6 +202,10 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 		waiter := args[1]
 		ctx := rootCtx
 
+		if usesProxiedServer() {
+			return runGateAddWaiterProxied(ctx, gateID, waiter)
+		}
+
 		var issue *types.Issue
 		var err error
 
@@ -272,6 +280,10 @@ Examples:
 		timeoutStr, _ := cmd.Flags().GetString("timeout")
 
 		ctx := rootCtx
+
+		if usesProxiedServer() {
+			return runGateCreateProxied(ctx, blocksID, gateType, reason, awaitID, timeoutStr)
+		}
 
 		targetIssue, err := store.GetIssue(ctx, blocksID)
 		if err != nil {
@@ -366,6 +378,10 @@ This is similar to 'bd show' but validates that the issue is a gate.`,
 		gateID := args[0]
 		ctx := rootCtx
 
+		if usesProxiedServer() {
+			return runGateShowProxied(ctx, gateID)
+		}
+
 		var issue *types.Issue
 		var err error
 
@@ -434,6 +450,11 @@ Use --reason to provide context for why the gate was resolved.`,
 		reason, _ := cmd.Flags().GetString("reason")
 
 		ctx := rootCtx
+
+		if usesProxiedServer() {
+			return runGateResolveProxied(ctx, gateID, reason)
+		}
+
 		var issue *types.Issue
 		var err error
 
@@ -532,7 +553,11 @@ Examples:
 		var gates []*types.Issue
 		var err error
 
-		gates, err = store.SearchIssues(ctx, "", filter)
+		if usesProxiedServer() {
+			gates, err = searchGatesProxied(ctx, filter)
+		} else {
+			gates, err = store.SearchIssues(ctx, "", filter)
+		}
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
 		}
@@ -893,6 +918,13 @@ func checkBeadGate(_ context.Context, awaitID string) (bool, string) {
 
 // closeGate closes a gate issue with the given reason
 func closeGate(_ interface{}, gateID, reason string) error {
+	if usesProxiedServer() {
+		if err := closeGateProxied(gateID, reason); err != nil {
+			return err
+		}
+		commandDidWrite.Store(true)
+		return nil
+	}
 	if err := store.CloseIssue(rootCtx, gateID, reason, actor, ""); err != nil {
 		return err
 	}

@@ -736,6 +736,22 @@ func normalizeUpdateValue(key string, value any) any {
 		case []byte:
 			return string(v)
 		}
+	case "waiters":
+		// waiters is stored as a JSON-string-array TEXT column. Mirror the
+		// direct/embedded update path (issueops/update.go), which json.Marshals
+		// the []string before binding — the domain/proxied path previously bound
+		// the raw []string and failed "unsupported type []string" (beads-qppc,
+		// surfaced by proxied `bd gate add-waiter`). Same domain-vs-direct
+		// UPDATE-path asymmetry class as beads-h3iv/hfb4/n79c/lsbu.
+		switch v := value.(type) {
+		case []string:
+			b, _ := json.Marshal(v)
+			return string(b)
+		case []byte:
+			return string(v)
+		case json.RawMessage:
+			return string(v)
+		}
 	}
 	return value
 }

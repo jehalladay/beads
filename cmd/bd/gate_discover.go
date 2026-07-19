@@ -216,7 +216,13 @@ func findPendingGates() ([]*types.Issue, error) {
 		ExcludeStatus: []types.Status{types.StatusClosed},
 	}
 
-	allGates, err := store.SearchIssues(rootCtx, "", filter)
+	var allGates []*types.Issue
+	var err error
+	if usesProxiedServer() {
+		allGates, err = searchGatesProxied(rootCtx, filter)
+	} else {
+		allGates, err = store.SearchIssues(rootCtx, "", filter)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("search gates: %w", err)
 	}
@@ -372,6 +378,9 @@ func matchGateToRun(gate *types.Issue, runs []GHWorkflowRun, maxAge time.Duratio
 
 // updateGateAwaitID updates a gate's await_id field
 func updateGateAwaitID(_ interface{}, gateID, runID string) error {
+	if usesProxiedServer() {
+		return updateGateAwaitIDProxied(gateID, runID)
+	}
 	updates := map[string]interface{}{
 		"await_id": runID,
 	}

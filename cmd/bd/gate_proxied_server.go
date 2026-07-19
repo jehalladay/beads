@@ -1,0 +1,290 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/steveyegge/beads/internal/storage/domain"
+	"github.com/steveyegge/beads/internal/storage/uow"
+	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
+)
+
+// gate_proxied_server.go makes the `bd gate` subcommand family proxied-server-aware
+// (beads-qppc, aocj/1zuh class). In proxiedServerMode the global `store` is nil
+// (main.go PersistentPreRun sets uowProvider but returns before newDoltStore), so
+// every gate subcommand that touched store.* (SearchIssues/GetIssue/CreateIssue/
+// AddDependency/UpdateIssue/CloseIssue/Commit) failed "storage is nil" on
+// hub-connected crew. Each store call here has a direct UOW use-case equivalent,
+// so these are clean-mirror legs (no interface extension). The `gate check`
+// command is routed at the helper level (searchGatesProxied + the proxied legs of
+// closeGate/updateGateAwaitID) so its shared, pure evaluation loop is not
+// duplicated; the CRUD subcommands below are full-handler mirrors.
+
+// openGateProxiedUOW opens a UOW for the proxied gate handlers.
+func openGateProxiedUOW(ctx context.Context) (uow.UnitOfWork, error) {
+	if uowProvider == nil {
+		return nil, fmt.Errorf("proxied-server UOW provider not initialized")
+	}
+	return uowProvider.NewUOW(ctx)
+}
+
+// searchGatesProxied fetches gate issues via the UOW (mirrors store.SearchIssues
+// in gateListCmd / gateCheckCmd). Read-only: no commit.
+func searchGatesProxied(ctx context.Context, filter types.IssueFilter) ([]*types.Issue, error) {
+	uw, err := openGateProxiedUOW(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer uw.Close(ctx)
+	page, err := uw.IssueUseCase().SearchIssues(ctx, "", filter)
+	if err != nil {
+		return nil, err
+	}
+	return page.Items, nil
+}
+
+// runGateListProxied mirrors gateListCmd's RunE via the UOW.
+func runGateListProxied(ctx context.Context, filter types.IssueFilter, allFlag bool) error {
+	issues, err := searchGatesProxied(ctx, filter)
+	if err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
+	if jsonOutput {
+		return outputJSON(issues)
+	}
+	displayGates(issues, allFlag)
+	return nil
+}
+
+// runGateShowProxied mirrors gateShowCmd's RunE via the UOW.
+func runGateShowProxied(ctx context.Context, gateID string) error {
+	uw, err := openGateProxiedUOW(ctx)
+	if err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
+	defer uw.Close(ctx)
+
+	issue, err := uw.IssueUseCase().GetIssue(ctx, gateID)
+	if err != nil {
+		return HandleErrorRespectJSON("gate not found: %s", gateID)
+	}
+	if issue.IssueType != "gate" {
+		return HandleErrorRespectJSON("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
+	}
+
+	if jsonOutput {
+		return outputJSON(issue)
+	}
+
+	statusSym := "○"
+	if issue.Status == types.StatusClosed {
+		statusSym = "●"
+	}
+	fmt.Printf("%s %s - %s\n", statusSym, ui.RenderID(issue.ID), ui.SanitizeForTerminal(issue.Title))
+	fmt.Printf("  Status: %s\n", issue.Status)
+	fmt.Printf("  Await Type: %s\n", issue.AwaitType)
+	if issue.AwaitID != "" {
+		fmt.Printf("  Await ID: %s\n", issue.AwaitID)
+	}
+	if issue.Timeout > 0 {
+		fmt.Printf("  Timeout: %s\n", issue.Timeout)
+	}
+	if len(issue.Waiters) > 0 {
+		fmt.Printf("  Waiters:\n")
+		for _, w := range issue.Waiters {
+			fmt.Printf("    - %s\n", w)
+		}
+	}
+	if issue.Description != "" {
+		fmt.Printf("  Description: %s\n", ui.SanitizeForTerminal(issue.Description))
+	}
+	return nil
+}
+
+// runGateCreateProxied mirrors gateCreateCmd's RunE via the UOW: resolve the
+// blocked target, create the gate issue, add the blocking dependency, commit once.
+func runGateCreateProxied(ctx context.Context, blocksID, gateType, reason, awaitID, timeoutStr string) error {
+	uw, err := openGateProxiedUOW(ctx)
+	if err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
+	defer uw.Close(ctx)
+
+	issueUC := uw.IssueUseCase()
+	depUC := uw.DependencyUseCase()
+
+	targetIssue, err := issueUC.GetIssue(ctx, blocksID)
+	if err != nil {
+		return HandleErrorRespectJSON("issue not found: %s", blocksID)
+	}
+
+	var timeout time.Duration
+	if timeoutStr != "" {
+		parsed, perr := time.ParseDuration(timeoutStr)
+		if perr != nil {
+			return HandleErrorRespectJSON("invalid timeout: %v", perr)
+		}
+		timeout = parsed
+	}
+
+	title := fmt.Sprintf("Gate: %s", gateType)
+	if awaitID != "" {
+		title = fmt.Sprintf("Gate: %s %s", gateType, awaitID)
+	}
+
+	desc := fmt.Sprintf("Ad-hoc gate blocking %s", targetIssue.ID)
+	if reason != "" {
+		desc = fmt.Sprintf("%s\n\nReason: %s", desc, reason)
+	}
+
+	gate := &types.Issue{
+		Title:       title,
+		Description: desc,
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.IssueType("gate"),
+		AwaitType:   gateType,
+		AwaitID:     awaitID,
+		Timeout:     timeout,
+		CreatedBy:   getActorWithGit(),
+		Owner:       getOwner(),
+	}
+
+	result, err := issueUC.CreateIssue(ctx, domain.CreateIssueParams{Issue: gate}, actor)
+	if err != nil {
+		return HandleErrorRespectJSON("creating gate: %v", err)
+	}
+	gate = result.Issue
+
+	dep := &types.Dependency{
+		IssueID:     targetIssue.ID,
+		DependsOnID: gate.ID,
+		Type:        types.DepBlocks,
+	}
+	if err := depUC.AddDependency(ctx, dep, actor); err != nil {
+		return HandleErrorRespectJSON("adding blocking dependency: %v", err)
+	}
+
+	commitMsg := fmt.Sprintf("bd: create gate %s blocking %s", gate.ID, targetIssue.ID)
+	if err := uw.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
+		return HandleErrorRespectJSON("failed to commit: %v", err)
+	}
+
+	if jsonOutput {
+		return outputJSON(gate)
+	}
+
+	fmt.Printf("%s Created gate %s (type: %s)\n", ui.RenderPass("✓"), ui.RenderID(gate.ID), gateType)
+	fmt.Printf("  Blocks: %s (%s)\n", targetIssue.ID, targetIssue.Title)
+	if reason != "" {
+		fmt.Printf("  Reason: %s\n", reason)
+	}
+	if timeout > 0 {
+		fmt.Printf("  Timeout: %s\n", timeout)
+	}
+	fmt.Printf("\nResolve with: bd gate resolve %s\n", gate.ID)
+	return nil
+}
+
+// runGateResolveProxied mirrors gateResolveCmd's RunE via the UOW.
+func runGateResolveProxied(ctx context.Context, gateID, reason string) error {
+	uw, err := openGateProxiedUOW(ctx)
+	if err != nil {
+		return HandleError("%v", err)
+	}
+	defer uw.Close(ctx)
+
+	issue, err := uw.IssueUseCase().GetIssue(ctx, gateID)
+	if err != nil {
+		return HandleError("gate not found: %s", gateID)
+	}
+	if issue.IssueType != "gate" {
+		return HandleError("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
+	}
+
+	if _, err := uw.IssueUseCase().CloseIssue(ctx, gateID, domain.CloseIssueParams{Reason: reason}, actor); err != nil {
+		return HandleError("closing gate: %v", err)
+	}
+	if err := uw.Commit(ctx, fmt.Sprintf("bd: gate resolve %s", gateID)); err != nil && !isDoltNothingToCommit(err) {
+		return HandleError("failed to commit: %v", err)
+	}
+
+	fmt.Printf("%s Gate resolved: %s\n", ui.RenderPass("✓"), gateID)
+	if reason != "" {
+		fmt.Printf("  Reason: %s\n", reason)
+	}
+	return nil
+}
+
+// runGateAddWaiterProxied mirrors gateAddWaiterCmd's RunE via the UOW.
+func runGateAddWaiterProxied(ctx context.Context, gateID, waiter string) error {
+	uw, err := openGateProxiedUOW(ctx)
+	if err != nil {
+		return HandleError("%v", err)
+	}
+	defer uw.Close(ctx)
+
+	issue, err := uw.IssueUseCase().GetIssue(ctx, gateID)
+	if err != nil {
+		return HandleError("gate not found: %s", gateID)
+	}
+	if issue.IssueType != "gate" {
+		return HandleError("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
+	}
+
+	for _, w := range issue.Waiters {
+		if w == waiter {
+			fmt.Printf("Waiter already registered on gate %s\n", gateID)
+			return nil
+		}
+	}
+
+	newWaiters := append(issue.Waiters, waiter)
+	updates := map[string]interface{}{
+		"waiters": newWaiters,
+	}
+	if err := uw.IssueUseCase().UpdateIssue(ctx, gateID, updates, actor); err != nil {
+		return HandleError("updating gate: %v", err)
+	}
+	if err := uw.Commit(ctx, fmt.Sprintf("bd: gate add-waiter %s", gateID)); err != nil && !isDoltNothingToCommit(err) {
+		return HandleError("failed to commit: %v", err)
+	}
+
+	fmt.Printf("%s Added waiter to gate %s: %s\n", ui.RenderPass("✓"), gateID, waiter)
+	return nil
+}
+
+// closeGateProxied closes a gate via the UOW (proxied leg of closeGate, used by
+// gate check when routing hub crew). Commits its own write.
+func closeGateProxied(gateID, reason string) error {
+	ctx := rootCtx
+	uw, err := openGateProxiedUOW(ctx)
+	if err != nil {
+		return err
+	}
+	defer uw.Close(ctx)
+	if _, err := uw.IssueUseCase().CloseIssue(ctx, gateID, domain.CloseIssueParams{Reason: reason}, actor); err != nil {
+		return err
+	}
+	return uw.Commit(ctx, fmt.Sprintf("bd: gate check resolved %s", gateID))
+}
+
+// updateGateAwaitIDProxied updates a gate's await_id via the UOW (proxied leg of
+// updateGateAwaitID). Commits its own write.
+func updateGateAwaitIDProxied(gateID, runID string) error {
+	ctx := rootCtx
+	uw, err := openGateProxiedUOW(ctx)
+	if err != nil {
+		return err
+	}
+	defer uw.Close(ctx)
+	updates := map[string]interface{}{
+		"await_id": runID,
+	}
+	if err := uw.IssueUseCase().UpdateIssue(ctx, gateID, updates, actor); err != nil {
+		return err
+	}
+	return uw.Commit(ctx, fmt.Sprintf("bd: gate check discovered run %s", gateID))
+}
