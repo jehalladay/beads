@@ -116,6 +116,15 @@ func (p *Parser) Parse() (Node, error) {
 	}
 
 	if p.current.Type != TokenEOF {
+		// beads-q1pi: a bare (unquoted) absolute date fragments at the lexer —
+		// `created>2026-01-15` parses `created>2026`, leaving a `-01` token here.
+		// The lexer's exclusion of '-' from identifiers is intentional/tested
+		// (beads-0vxw), so the fix is a quoting HINT at the query layer (not a
+		// change to the shared timeparsing flag-path message). Recognize the
+		// date-fragment leftover (a '-' followed by digits) and guide the user.
+		if looksLikeDateFragment(p.current.Value) {
+			return nil, fmt.Errorf("unexpected token %q at position %d (expected end of query); quote absolute dates in a query, e.g. created>\"2026-01-15\"", p.current.Value, p.current.Pos)
+		}
 		return nil, fmt.Errorf("unexpected token %q at position %d (expected end of query)", p.current.Value, p.current.Pos)
 	}
 
@@ -293,6 +302,23 @@ func (p *Parser) parseComparison() (Node, error) {
 		Value:     value,
 		ValueType: valueType,
 	}, nil
+}
+
+// looksLikeDateFragment reports whether a leftover token is the tail of a bare
+// (unquoted) absolute date that fragmented at the lexer — a leading '-' followed
+// by one or more digits (e.g. the "-01" left after `created>2026-01-15` lexes
+// `2026`). Used only to add a quote-the-date hint to the query parse error
+// (beads-q1pi); it does not change tokenization.
+func looksLikeDateFragment(tok string) bool {
+	if len(tok) < 2 || tok[0] != '-' {
+		return false
+	}
+	for _, r := range tok[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // Parse is a convenience function that parses a query string.
