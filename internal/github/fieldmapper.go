@@ -2,6 +2,7 @@ package github
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
@@ -23,9 +24,17 @@ func (m *githubFieldMapper) PriorityToBeads(trackerPriority interface{}) int {
 }
 
 func (m *githubFieldMapper) PriorityToTracker(beadsPriority int) interface{} {
-	// Inverse lookup: find the label for this priority
-	for label, p := range m.config.PriorityMap {
-		if p == beadsPriority {
+	// Inverse lookup: find the label for this priority. Iterate label keys in
+	// sorted order so a non-injective PriorityMap resolves to a STABLE label
+	// instead of a randomized one (Go map iteration is non-deterministic) —
+	// beads-famu reverse-map class. The default bijective map is unaffected.
+	labels := make([]string, 0, len(m.config.PriorityMap))
+	for label := range m.config.PriorityMap {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+	for _, label := range labels {
+		if m.config.PriorityMap[label] == beadsPriority {
 			return label
 		}
 	}

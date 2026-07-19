@@ -1,6 +1,7 @@
 package ado
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/tracker"
@@ -80,9 +81,17 @@ func (m *adoFieldMapper) StatusToBeads(trackerState interface{}) types.Status {
 		return types.StatusOpen
 	}
 
-	// Check custom map first (inverted: ADO state → beads status).
-	for beadsStatus, adoState := range m.stateMap {
-		if strings.EqualFold(state, adoState) {
+	// Check custom map first (inverted: ADO state → beads status). Iterate
+	// beadsStatus keys in sorted order so a non-injective stateMap resolves to
+	// a STABLE beads status instead of a randomized one (Go map iteration is
+	// non-deterministic) — beads-famu reverse-map class.
+	beadsStatuses := make([]string, 0, len(m.stateMap))
+	for beadsStatus := range m.stateMap {
+		beadsStatuses = append(beadsStatuses, beadsStatus)
+	}
+	sort.Strings(beadsStatuses)
+	for _, beadsStatus := range beadsStatuses {
+		if strings.EqualFold(state, m.stateMap[beadsStatus]) {
 			return types.Status(beadsStatus)
 		}
 	}
@@ -134,9 +143,17 @@ func (m *adoFieldMapper) TypeToBeads(trackerType interface{}) types.IssueType {
 		return types.TypeTask
 	}
 
-	// Check custom map first (inverted: ADO type → beads type).
-	for beadsType, adoType := range m.typeMap {
-		if strings.EqualFold(t, adoType) {
+	// Check custom map first (inverted: ADO type → beads type). Iterate
+	// beadsType keys in sorted order so a non-injective typeMap resolves to a
+	// STABLE beads type instead of a randomized one (Go map iteration is
+	// non-deterministic) — beads-famu reverse-map class.
+	beadsTypes := make([]string, 0, len(m.typeMap))
+	for beadsType := range m.typeMap {
+		beadsTypes = append(beadsTypes, beadsType)
+	}
+	sort.Strings(beadsTypes)
+	for _, beadsType := range beadsTypes {
+		if strings.EqualFold(t, m.typeMap[beadsType]) {
 			return types.IssueType(beadsType)
 		}
 	}
