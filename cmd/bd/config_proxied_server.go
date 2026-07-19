@@ -60,9 +60,17 @@ func runConfigGetProxiedServer(ctx context.Context, key string) {
 	}
 
 	if jsonOutput {
-		_ = outputJSON(map[string]string{
+		// beads-aj9r: mirror the direct store branch — GetConfig collapses an
+		// absent key to ("", nil), so derive the set/unset signal from
+		// GetAllConfig membership for parity with the direct-mode --json shape.
+		set := value != ""
+		if all, allErr := uw.ConfigUseCase().GetAllConfig(ctx); allErr == nil {
+			_, set = all[key]
+		}
+		_ = outputJSON(map[string]interface{}{
 			"key":   key,
 			"value": value,
+			"set":   set,
 		})
 		return
 	}

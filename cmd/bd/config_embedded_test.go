@@ -382,3 +382,63 @@ func TestEmbeddedConfigConcurrent(t *testing.T) {
 		t.Fatal("expected at least 1 worker to succeed")
 	}
 }
+
+// bdConfigGetJSON runs "bd config get <key> --json" and returns the parsed
+// object (schema_version included).
+func bdConfigGetJSON(t *testing.T, bd, dir, key string) map[string]interface{} {
+	t.Helper()
+	cmd := exec.Command(bd, "config", "get", key, "--json")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd config get %s --json failed: %v\nstdout:\n%s\nstderr:\n%s", key, err, stdout.String(), stderr.String())
+	}
+	s := strings.TrimSpace(stdout.String())
+	start := strings.Index(s, "{")
+	if start < 0 {
+		t.Fatalf("no JSON object in config get output: %s", s)
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(s[start:]), &raw); err != nil {
+		t.Fatalf("parse config get JSON: %v\n%s", err, s)
+	}
+	return raw
+}
+
+// TestEmbeddedConfigGetJSONSetSignal is the teeth for beads-aj9r: `bd config
+// get --json` must carry a `set` bool so a machine consumer can distinguish an
+// explicitly-empty value from a never-set key — value=="" alone cannot. The
+// store branch (custom.*) previously collapsed both to {value:""} with no
+// signal because store.GetConfig maps sql.ErrNoRows -> ("", nil).
+func TestEmbeddedConfigGetJSONSetSignal(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "aj")
+
+	// A key explicitly set to the empty string is SET.
+	bdConfig(t, bd, dir, "set", "custom.empty_but_set", "")
+	got := bdConfigGetJSON(t, bd, dir, "custom.empty_but_set")
+	if v, _ := got["value"].(string); v != "" {
+		t.Errorf("empty-set key: expected value \"\", got %q", v)
+	}
+	set, ok := got["set"].(bool)
+	if !ok {
+		t.Fatalf("config get --json missing bool `set` field for an explicitly-set key: %v", got)
+	}
+	if !set {
+		t.Errorf("explicitly-empty-but-set key must report set=true, got set=false (%v)", got)
+	}
+
+	// A never-set custom key must report set=false (same value:"" as above).
+	got2 := bdConfigGetJSON(t, bd, dir, "custom.never_set_key_xyz")
+	set2, ok := got2["set"].(bool)
+	if !ok {
+		t.Fatalf("config get --json missing bool `set` field for a never-set key: %v", got2)
+	}
+	if set2 {
+		t.Errorf("never-set key must report set=false, got set=true (%v)", got2)
+	}
+}

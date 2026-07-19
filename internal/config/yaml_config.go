@@ -329,6 +329,25 @@ func GetUserYamlConfig(key string) string {
 	return strings.TrimSpace(raw)
 }
 
+// GetUserYamlConfigOK is GetUserYamlConfig plus a set/unset signal: ok is true
+// iff the key is actually defined in the user-global config.yaml (beads-aj9r).
+// It lets `bd config get --json` distinguish an explicitly-empty value from a
+// never-set key, which value=="" alone cannot.
+func GetUserYamlConfigOK(key string) (string, bool) {
+	raw, ok := readUserGlobalYamlValue(key)
+	return strings.TrimSpace(raw), ok
+}
+
+// HasYamlConfig reports whether key is set in the merged project config.yaml
+// (beads-aj9r). Mirrors GetYamlConfig's normalization + nil-viper guard so
+// `bd config get --json` can emit a set/unset signal for the project scope.
+func HasYamlConfig(key string) bool {
+	if v == nil {
+		return false
+	}
+	return v.IsSet(normalizeYamlKey(key))
+}
+
 // MetricsDisabledByUserConfig reports whether the user-global config.yaml sets
 // metrics.disabled: true. Project/BEADS_DIR config is intentionally ignored so a
 // repository can never re-enable metrics for a user who opted out globally.

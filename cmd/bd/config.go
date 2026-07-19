@@ -294,13 +294,17 @@ var configGetCmd = &cobra.Command{
 			// project's .beads/config.yaml shadow the effective value and report the
 			// opposite of what `bd metrics` actually honors.
 			if config.IsUserGlobalKey(key) {
-				value := config.GetUserYamlConfig(key)
+				value, set := config.GetUserYamlConfigOK(key)
 				location := config.UserConfigYamlPath()
 				if jsonOutput {
+					// beads-aj9r: emit a set/unset signal so a machine consumer can
+					// distinguish an explicitly-empty value from a never-set key
+					// (value=="" alone cannot — the human path below relies on it).
 					return outputJSON(map[string]interface{}{
 						"key":      key,
 						"value":    value,
 						"location": location,
+						"set":      set,
 					})
 				}
 				if value == "" {
@@ -314,10 +318,12 @@ var configGetCmd = &cobra.Command{
 			value := config.GetYamlConfig(key)
 
 			if jsonOutput {
+				// beads-aj9r: set/unset signal for the project config.yaml scope.
 				return outputJSON(map[string]interface{}{
 					"key":      key,
 					"value":    value,
 					"location": "config.yaml",
+					"set":      config.HasYamlConfig(key),
 				})
 			}
 			if value == "" {
@@ -332,14 +338,18 @@ var configGetCmd = &cobra.Command{
 			cmd := exec.Command("git", "config", "--get", "beads.role")
 			output, err := cmd.Output()
 			value := strings.TrimSpace(string(output))
+			set := err == nil
 			if err != nil {
 				value = ""
 			}
 			if jsonOutput {
+				// beads-aj9r: git config --get exits non-zero when the key is
+				// absent, so err==nil is the authoritative set signal.
 				return outputJSON(map[string]interface{}{
 					"key":      key,
 					"value":    value,
 					"location": "git config",
+					"set":      set,
 				})
 			}
 			if value == "" {
@@ -371,9 +381,20 @@ var configGetCmd = &cobra.Command{
 		}
 
 		if jsonOutput {
-			return outputJSON(map[string]string{
+			// beads-aj9r: store.GetConfig collapses "row absent" to ("", nil)
+			// (GetConfigInTx maps sql.ErrNoRows -> ""), so value=="" cannot tell
+			// an explicitly-empty value from a never-set key. Derive the set
+			// signal from GetAllConfig membership (the same source bd config list
+			// reads); on a GetAllConfig error, fall back to a value-based guess so
+			// we never fail an otherwise-successful get.
+			set := value != ""
+			if all, allErr := store.GetAllConfig(ctx); allErr == nil {
+				_, set = all[key]
+			}
+			return outputJSON(map[string]interface{}{
 				"key":   key,
 				"value": value,
+				"set":   set,
 			})
 		}
 		if value == "" {

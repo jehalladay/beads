@@ -196,6 +196,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd diff main main --json` returned `null` (rc 0), breaking a scripted `... --json | jq '.[]'` pipeline. The
   empty branch now emits an explicit empty array. Because `renderDiff` is shared by the direct and
   proxied-server paths, the single fix covers both. Same nil-slice array-contract class as beads-tamf.
+- **`bd config get --json` now carries a `set` bool so a machine consumer can distinguish an explicitly-empty value from a never-set key (beads-aj9r).**
+  Every scope branch (user-global config.yaml, project config.yaml, git config, and the DB store — plus the
+  proxied-server twin) emitted `{key, value:""}` with no set/unset signal, so `config get X --json` looked
+  identical whether `X` was set to `""` or had never been set (the human path renders `(not set in …)` only
+  by testing `value == ""`, a signal absent from the JSON). The store branch was the worst case:
+  `store.GetConfig` maps `sql.ErrNoRows` → `("", nil)`, collapsing both cases. Each branch now emits `set`
+  using the scope's real existence signal (yaml key membership, `git config --get` exit status, and
+  `GetAllConfig` membership for the DB/proxied paths).
 
 - **`bd search` now reports the true match count in its header, not the `--limit`-truncated page size (beads-4wn0).**
   The header printed `Found %d issues matching '<q>'` using the already-`--limit`-truncated result slice, so
