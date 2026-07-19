@@ -65,6 +65,18 @@ func newDoltServer(t *testing.T) (*server.DoltServer, string) {
 	log := filepath.Join(t.TempDir(), "server.log")
 	s, err := server.NewDoltServer(bin, rootDir, cfg, log, 0)
 	require.NoError(t, err)
+	// beads-sl5wbc: tests must never leak a dolt sql-server. Opt into
+	// kill-on-parent-death (kernel reaps the child if `go test -timeout`/panic
+	// SIGKILLs us before Stop runs) AND register a best-effort Stop backstop so
+	// a test that fails an assertion between Start and its inline Stop still
+	// tears the server down. Both are belt-and-suspenders; either alone closes
+	// the orphan gap.
+	s.SetKillOnParentDeath(true)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+		defer cancel()
+		_ = s.Stop(ctx)
+	})
 	return s, rootDir
 }
 
@@ -73,6 +85,23 @@ func stopWithTimeout(t *testing.T, s *server.DoltServer) {
 	ctx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 	defer cancel()
 	require.NoError(t, s.Stop(ctx))
+}
+
+// armServer makes a directly-constructed test DoltServer orphan-proof
+// (beads-sl5wbc): opt into kill-on-parent-death so a `go test -timeout`/panic
+// SIGKILL reaps the spawned dolt child, plus a best-effort Stop backstop so an
+// assertion failure between Start and an inline Stop still tears it down. Call
+// right after server.NewDoltServer for any test that will Start it. Safe to use
+// alongside an existing inline/Cleanup Stop — Stop is idempotent.
+func armServer(t *testing.T, s *server.DoltServer) *server.DoltServer {
+	t.Helper()
+	s.SetKillOnParentDeath(true)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+		defer cancel()
+		_ = s.Stop(ctx)
+	})
+	return s
 }
 
 func TestNewDoltServer_Validation(t *testing.T) {

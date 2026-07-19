@@ -49,6 +49,24 @@ type DoltServer struct {
 	egCtx   context.Context
 	cancel  context.CancelFunc
 	pid     int
+
+	// killOnParentDeath, when true, asks the OS to kill the spawned dolt
+	// sql-server if THIS process dies — even by SIGKILL, panic, or a
+	// `go test -timeout` hard kill, where deferred Stop()/context-cancel never
+	// run. It is OFF by default: the production proxied-server child
+	// (cmd/bd/db_proxy_child.go) is deliberately detached and must SURVIVE its
+	// transient parent. Only test harnesses (which own the server's whole
+	// lifetime and must never leak a dolt process) opt in via
+	// SetKillOnParentDeath. Root cause of the orphaned `dolt sql-server` procs
+	// in beads-sl5wbc.
+	killOnParentDeath bool
+}
+
+// SetKillOnParentDeath opts this server into being killed by the OS when the
+// current process dies (Pdeathsig on Linux). Intended for TEST harnesses only —
+// see the killOnParentDeath field doc. Must be called before Start().
+func (s *DoltServer) SetKillOnParentDeath(v bool) {
+	s.killOnParentDeath = v
 }
 
 var _ DatabaseServer = (*DoltServer)(nil)
@@ -247,6 +265,13 @@ func (s *DoltServer) Start(ctx context.Context) error {
 	}
 
 	cmd.Env = os.Environ()
+
+	// Test-only: ask the OS to reap the dolt child if this process dies before
+	// Stop() runs (SIGKILL/panic/go-test-timeout). No-op unless opted in, so the
+	// production detached proxied-server child is unaffected (beads-sl5wbc).
+	if s.killOnParentDeath {
+		applyKillOnParentDeath(cmd)
+	}
 
 	if err := cmd.Start(); err != nil {
 		s.eg, s.egCtx, s.cancel = nil, nil, nil
