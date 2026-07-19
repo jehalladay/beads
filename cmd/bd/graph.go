@@ -222,7 +222,14 @@ type graphCheckResult struct {
 // it in JSON or human form, returning SilentExit when the graph is dirty so the
 // command exits non-zero. Shared so both backends produce identical output.
 func renderGraphCheck(cycles [][]*types.Issue) error {
-	result := graphCheckResult{Clean: true}
+	// beads-8wyu: init Cycles to an empty slice so a CLEAN graph (no cycles —
+	// the common pass case) emits "cycles":[] not null. Cycles is only appended
+	// in the loop below, so without this the [][]string field (no omitempty)
+	// marshals to null on the happy path — the guib/036h/5fv3/jxel/4mkg
+	// nil-slice asymmetry. renderGraphCheck is the shared root for both the
+	// direct and proxied paths (graph_proxied_server.go), so this one init keeps
+	// the machine contract stable across both.
+	result := graphCheckResult{Clean: true, Cycles: [][]string{}}
 	for _, cycle := range cycles {
 		ids := make([]string, len(cycle))
 		for i, issue := range cycle {
