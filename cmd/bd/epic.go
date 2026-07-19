@@ -34,63 +34,78 @@ var epicStatusCmd = &cobra.Command{
 		}()
 
 		eligibleOnly, _ := cmd.Flags().GetBool("eligible-only")
-		var epics []*types.EpicStatus
-		var err error
 		ctx := rootCtx
-		epics, err = store.GetEpicsEligibleForClosure(ctx)
+
+		// Proxied-server mode: 'epic' is not a noDbCommand, so the global
+		// `store` is nil on hub-connected crew — reading it would nil-panic
+		// (beads-92ld). Route through the UOW stack instead, mirroring the
+		// direct path below (same --eligible-only + rendering).
+		if usesProxiedServer() {
+			return runEpicStatusProxiedServer(ctx, eligibleOnly)
+		}
+
+		epics, err := store.GetEpicsEligibleForClosure(ctx)
 		if err != nil {
 			return HandleErrorRespectJSON("getting epic status: %v", err)
 		}
-		if eligibleOnly {
-			filtered := []*types.EpicStatus{}
-			for _, epic := range epics {
-				if epic.EligibleForClose {
-					filtered = append(filtered, epic)
-				}
-			}
-			epics = filtered
-		}
-		if jsonOutput {
-			if epics == nil {
-				epics = []*types.EpicStatus{}
-			}
-			return outputJSON(epics)
-		}
-		if len(epics) == 0 {
-			// beads-cudm: distinguish "no open epics at all" from "none eligible"
-			// so the message is factually accurate under --eligible-only.
-			if eligibleOnly {
-				fmt.Println("No epics eligible for closure")
-			} else {
-				fmt.Println("No open epics found")
-			}
-			return nil
-		}
-		for _, epicStatus := range epics {
-			epic := epicStatus.Epic
-			percentage := 0
-			if epicStatus.TotalChildren > 0 {
-				percentage = (epicStatus.ClosedChildren * 100) / epicStatus.TotalChildren
-			}
-			statusIcon := ""
-			if epicStatus.EligibleForClose {
-				statusIcon = ui.RenderPass("✓")
-			} else if percentage > 0 {
-				statusIcon = ui.RenderWarn("○")
-			} else {
-				statusIcon = "○"
-			}
-			fmt.Printf("%s %s %s\n", statusIcon, ui.RenderAccent(epic.ID), ui.RenderBold(epic.Title))
-			fmt.Printf("   Progress: %d/%d children closed (%d%%)\n",
-				epicStatus.ClosedChildren, epicStatus.TotalChildren, percentage)
-			if epicStatus.EligibleForClose {
-				fmt.Printf("   %s\n", ui.RenderPass("Eligible for closure"))
-			}
-			fmt.Println()
-		}
-		return nil
+		return renderEpicStatus(epics, eligibleOnly)
 	},
 }
+
+// renderEpicStatus applies --eligible-only filtering and emits the epic-status
+// output (honoring --json), shared by the direct and proxied-server paths
+// (beads-92ld) so they stay behaviorally identical.
+func renderEpicStatus(epics []*types.EpicStatus, eligibleOnly bool) error {
+	if eligibleOnly {
+		filtered := []*types.EpicStatus{}
+		for _, epic := range epics {
+			if epic.EligibleForClose {
+				filtered = append(filtered, epic)
+			}
+		}
+		epics = filtered
+	}
+	if jsonOutput {
+		if epics == nil {
+			epics = []*types.EpicStatus{}
+		}
+		return outputJSON(epics)
+	}
+	if len(epics) == 0 {
+		// beads-cudm: distinguish "no open epics at all" from "none eligible"
+		// so the message is factually accurate under --eligible-only.
+		if eligibleOnly {
+			fmt.Println("No epics eligible for closure")
+		} else {
+			fmt.Println("No open epics found")
+		}
+		return nil
+	}
+	for _, epicStatus := range epics {
+		epic := epicStatus.Epic
+		percentage := 0
+		if epicStatus.TotalChildren > 0 {
+			percentage = (epicStatus.ClosedChildren * 100) / epicStatus.TotalChildren
+		}
+		statusIcon := ""
+		if epicStatus.EligibleForClose {
+			statusIcon = ui.RenderPass("✓")
+		} else if percentage > 0 {
+			statusIcon = ui.RenderWarn("○")
+		} else {
+			statusIcon = "○"
+		}
+		fmt.Printf("%s %s %s\n", statusIcon, ui.RenderAccent(epic.ID), ui.RenderBold(epic.Title))
+		fmt.Printf("   Progress: %d/%d children closed (%d%%)\n",
+			epicStatus.ClosedChildren, epicStatus.TotalChildren, percentage)
+		if epicStatus.EligibleForClose {
+			fmt.Printf("   %s\n", ui.RenderPass("Eligible for closure"))
+		}
+		fmt.Println()
+	}
+	return nil
+}
+
 var closeEligibleEpicsCmd = &cobra.Command{
 	Use:           "close-eligible",
 	Args:          cobra.NoArgs,
@@ -109,70 +124,100 @@ var closeEligibleEpicsCmd = &cobra.Command{
 		if !dryRun {
 			CheckReadonly("epic close-eligible")
 		}
-		var eligibleEpics []*types.EpicStatus
 		ctx := rootCtx
+
+		// Proxied-server mode: same nil-store hazard as `epic status`
+		// (beads-92ld). Route both the read (GetEpicsEligibleForClosure) and
+		// the write (CloseIssue) through the UOW, which already exposes both.
+		if usesProxiedServer() {
+			return runEpicCloseEligibleProxiedServer(ctx, dryRun)
+		}
+
 		epics, err := store.GetEpicsEligibleForClosure(ctx)
 		if err != nil {
 			return HandleErrorRespectJSON("getting eligible epics: %v", err)
 		}
-		for _, epic := range epics {
-			if epic.EligibleForClose {
-				eligibleEpics = append(eligibleEpics, epic)
-			}
+		// Direct path: store.CloseIssue autocommits per call (withConn commit
+		// mode), so there is no batch commit step (commitFn == nil).
+		return renderEpicCloseEligible(epics, dryRun, func(id string) error {
+			return store.CloseIssue(ctx, id, "All children completed", "system", "")
+		}, nil)
+	},
+}
+
+// renderEpicCloseEligible filters to eligible epics, then previews (--dry-run)
+// or closes them via closeFn, emitting the same output (honoring --json) for
+// both the direct and proxied-server paths (beads-92ld). closeFn abstracts the
+// per-epic close (direct store.CloseIssue vs the proxied UOW IssueUseCase).
+// commitFn, if non-nil, is invoked once after at least one successful close to
+// persist the batch — the proxied UOW holds a single transaction that must be
+// committed explicitly (the direct store autocommits, so it passes nil).
+func renderEpicCloseEligible(epics []*types.EpicStatus, dryRun bool, closeFn func(id string) error, commitFn func() error) error {
+	var eligibleEpics []*types.EpicStatus
+	for _, epic := range epics {
+		if epic.EligibleForClose {
+			eligibleEpics = append(eligibleEpics, epic)
 		}
-		if len(eligibleEpics) == 0 {
-			if jsonOutput {
-				return outputJSON([]*types.EpicStatus{})
-			}
-			fmt.Println("No epics eligible for closure")
-			return nil
-		}
-		if dryRun {
-			if jsonOutput {
-				return outputJSON(eligibleEpics)
-			}
-			fmt.Printf("Would close %d epic(s):\n", len(eligibleEpics))
-			for _, epicStatus := range eligibleEpics {
-				fmt.Printf("  - %s: %s\n", epicStatus.Epic.ID, epicStatus.Epic.Title)
-			}
-			return nil
-		}
-		closedIDs := []string{}
-		for _, epicStatus := range eligibleEpics {
-			err := store.CloseIssue(ctx, epicStatus.Epic.ID, "All children completed", "system", "")
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", epicStatus.Epic.ID, err)
-				continue
-			}
-			closedIDs = append(closedIDs, epicStatus.Epic.ID)
-		}
-		if len(closedIDs) > 0 {
-			commandDidWrite.Store(true)
-		}
-		// All-failed guard: eligibleEpics was non-empty (the len==0 early-out
-		// above already handled "nothing eligible"), so if closedIDs is empty
-		// every CloseIssue attempt failed. Per-item errors are already on
-		// stderr; a bare rc=0 with "✓ Closed 0 epic(s)" / {"closed":[]} would
-		// be a false success indistinguishable from "nothing eligible". Trip a
-		// non-zero exit, mirroring the close.go all-failed path (beads-b0df).
-		if len(closedIDs) == 0 {
-			if jsonOutput {
-				return HandleErrorRespectJSON("no epics closed (all %d eligible epic(s) failed to close)", len(eligibleEpics))
-			}
-			return SilentExit()
-		}
+	}
+	if len(eligibleEpics) == 0 {
 		if jsonOutput {
-			return outputJSON(map[string]interface{}{
-				"closed": closedIDs,
-				"count":  len(closedIDs),
-			})
+			return outputJSON([]*types.EpicStatus{})
 		}
-		fmt.Printf("✓ Closed %d epic(s)\n", len(closedIDs))
-		for _, id := range closedIDs {
-			fmt.Printf("  - %s\n", id)
+		fmt.Println("No epics eligible for closure")
+		return nil
+	}
+	if dryRun {
+		if jsonOutput {
+			return outputJSON(eligibleEpics)
+		}
+		fmt.Printf("Would close %d epic(s):\n", len(eligibleEpics))
+		for _, epicStatus := range eligibleEpics {
+			fmt.Printf("  - %s: %s\n", epicStatus.Epic.ID, epicStatus.Epic.Title)
 		}
 		return nil
-	},
+	}
+	closedIDs := []string{}
+	for _, epicStatus := range eligibleEpics {
+		if err := closeFn(epicStatus.Epic.ID); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", epicStatus.Epic.ID, err)
+			continue
+		}
+		closedIDs = append(closedIDs, epicStatus.Epic.ID)
+	}
+	if len(closedIDs) > 0 {
+		commandDidWrite.Store(true)
+		// Persist the proxied UOW's batch before reporting success — otherwise
+		// the closes roll back when the UOW is discarded and `close-eligible`
+		// would falsely report closing epics that stay open (beads-92ld).
+		if commitFn != nil {
+			if err := commitFn(); err != nil {
+				return HandleErrorRespectJSON("committing epic closures: %v", err)
+			}
+		}
+	}
+	// All-failed guard: eligibleEpics was non-empty (the len==0 early-out
+	// above already handled "nothing eligible"), so if closedIDs is empty
+	// every close attempt failed. Per-item errors are already on stderr; a
+	// bare rc=0 with "✓ Closed 0 epic(s)" / {"closed":[]} would be a false
+	// success indistinguishable from "nothing eligible". Trip a non-zero exit,
+	// mirroring the close.go all-failed path (beads-b0df).
+	if len(closedIDs) == 0 {
+		if jsonOutput {
+			return HandleErrorRespectJSON("no epics closed (all %d eligible epic(s) failed to close)", len(eligibleEpics))
+		}
+		return SilentExit()
+	}
+	if jsonOutput {
+		return outputJSON(map[string]interface{}{
+			"closed": closedIDs,
+			"count":  len(closedIDs),
+		})
+	}
+	fmt.Printf("✓ Closed %d epic(s)\n", len(closedIDs))
+	for _, id := range closedIDs {
+		fmt.Printf("  - %s\n", id)
+	}
+	return nil
 }
 
 func init() {

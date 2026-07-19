@@ -40,6 +40,8 @@ type fakeIssueRepo struct {
 	historyErr     error
 	diffEntries    []*storage.DiffEntry
 	diffErr        error
+	epicStatuses   []*types.EpicStatus
+	epicStatusErr  error
 	// UpdateIssueID (rename)
 	renameErr   error
 	renameCalls []struct{ oldID, newID string }
@@ -181,6 +183,9 @@ func (f *fakeIssueRepo) History(context.Context, string) ([]*storage.HistoryEntr
 }
 func (f *fakeIssueRepo) Diff(context.Context, string, string) ([]*storage.DiffEntry, error) {
 	return f.diffEntries, f.diffErr
+}
+func (f *fakeIssueRepo) GetEpicsEligibleForClosure(context.Context) ([]*types.EpicStatus, error) {
+	return f.epicStatuses, f.epicStatusErr
 }
 func (f *fakeIssueRepo) UpdateIssueID(_ context.Context, oldID, newID string, _ *types.Issue, _ string) error {
 	f.renameCalls = append(f.renameCalls, struct{ oldID, newID string }{oldID, newID})

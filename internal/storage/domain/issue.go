@@ -54,6 +54,11 @@ type IssueSQLRepository interface {
 	AsOf(ctx context.Context, id, ref string) (*types.Issue, error)
 	History(ctx context.Context, id string) ([]*storage.HistoryEntry, error)
 	Diff(ctx context.Context, fromRef, toRef string) ([]*storage.DiffEntry, error)
+	// GetEpicsEligibleForClosure returns every open epic with its child-closure
+	// status (beads-92ld). Read-only; mirrors History/Diff by delegating to the
+	// existing issueops InTx helper, so `bd epic status` / `epic close-eligible`
+	// can run through the proxied UOW on hub-connected crew.
+	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)
 	// UpdateIssueID renames an issue/wisp (oldID→newID), rekeying its
 	// dependency edges. Routes issues↔wisps tables and rejects a cross-table
 	// id collision (beads-mgsx). issue carries the current title/body fields.
@@ -278,6 +283,7 @@ type IssueUseCase interface {
 	AsOf(ctx context.Context, id, ref string) (*types.Issue, error)
 	History(ctx context.Context, id string) ([]*storage.HistoryEntry, error)
 	Diff(ctx context.Context, fromRef, toRef string) ([]*storage.DiffEntry, error)
+	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)
 	RenameIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error
 	DeleteIssue(ctx context.Context, id, actor string) (DeleteIssuesResult, error)
 	DeleteIssues(ctx context.Context, params DeleteIssuesParams, actor string) (DeleteIssuesResult, error)
@@ -390,6 +396,14 @@ func (u *issueUseCaseImpl) Diff(ctx context.Context, fromRef, toRef string) ([]*
 		return nil, fmt.Errorf("diff %s..%s: %w", fromRef, toRef, err)
 	}
 	return entries, nil
+}
+
+func (u *issueUseCaseImpl) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error) {
+	epics, err := u.issueRepo.GetEpicsEligibleForClosure(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get epics eligible for closure: %w", err)
+	}
+	return epics, nil
 }
 
 func (u *issueUseCaseImpl) RenameIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {

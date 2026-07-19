@@ -882,6 +882,10 @@ func (r *issueSQLRepositoryImpl) Diff(ctx context.Context, fromRef, toRef string
 	return issueops.DiffInTx(ctx, r.runner, fromRef, toRef)
 }
 
+func (r *issueSQLRepositoryImpl) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error) {
+	return issueops.GetEpicsEligibleForClosureInTx(ctx, r.runner)
+}
+
 func (r *issueSQLRepositoryImpl) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
 	return issueops.UpdateIssueIDInTx(ctx, r.runner, oldID, newID, issue, actor)
 }
