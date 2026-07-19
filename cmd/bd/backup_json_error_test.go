@@ -43,6 +43,16 @@ func TestBackupJSONErrorContract_51fl(t *testing.T) {
 	jsonOutput = true
 	t.Cleanup(func() { store, jsonOutput = prevStore, prevJSON })
 
+	// init/add: store == nil is a reachable guard error under --json. beads-4lg6a —
+	// beads-51fl fixed sync/restore/remove in this file but skipped init, which had
+	// the same raw fmt.Errorf on its guard/failure paths.
+	t.Run("init_no_store", func(t *testing.T) {
+		out, err := captureStdoutExpectErr(t, func() error {
+			return backupInitCmd.RunE(backupInitCmd, []string{"/tmp/beads-backup-4lg6a"})
+		})
+		assertBackupJSONError(t, "backup init (no store)", out, err)
+	})
+
 	// sync: store == nil is a reachable guard error under --json.
 	t.Run("sync_no_store", func(t *testing.T) {
 		out, err := captureStdoutExpectErr(t, func() error {

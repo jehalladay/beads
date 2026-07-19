@@ -58,8 +58,13 @@ After adding, run 'bd backup sync' to push your data.`,
 		ctx := rootCtx
 		rawPath := args[0]
 
+		// beads-4lg6a (8lqh error-half): these reachable guard/failure paths must
+		// honor the --json contract like the sibling sync/restore/remove commands
+		// (beads-51fl). init sets SilenceErrors, so a raw fmt.Errorf is printed as
+		// plain text to stderr by main() even under --json (empty stdout) — route
+		// through HandleErrorRespectJSON for a parseable JSON error object.
 		if store == nil {
-			return fmt.Errorf("no store available")
+			return HandleErrorRespectJSON("no store available")
 		}
 
 		// Resolve filesystem paths to absolute and add file:// prefix.
@@ -68,7 +73,7 @@ After adding, run 'bd backup sync' to push your data.`,
 
 		bs, ok := storage.UnwrapStore(store).(storage.BackupStore)
 		if !ok {
-			return fmt.Errorf("storage backend does not support backup operations")
+			return HandleErrorRespectJSON("storage backend does not support backup operations")
 		}
 
 		// Register the backup with Dolt
@@ -77,16 +82,16 @@ After adding, run 'bd backup sync' to push your data.`,
 				// Same name, different URL — remove and re-add to update
 				_ = bs.BackupRemove(ctx, defaultDoltBackupName)
 				if err := bs.BackupAdd(ctx, defaultDoltBackupName, backupURL); err != nil {
-					return fmt.Errorf("failed to update backup destination: %w", err)
+					return HandleErrorRespectJSON("failed to update backup destination: %v", err)
 				}
 			} else if conflict := versioncontrolops.ExtractAddressConflictName(err); conflict != "" {
 				// Different name (e.g. "backup_export") points at same URL — remove it, re-add as "default"
 				_ = bs.BackupRemove(ctx, conflict)
 				if err := bs.BackupAdd(ctx, defaultDoltBackupName, backupURL); err != nil {
-					return fmt.Errorf("failed to add backup destination: %w", err)
+					return HandleErrorRespectJSON("failed to add backup destination: %v", err)
 				}
 			} else {
-				return fmt.Errorf("failed to add backup destination: %w", err)
+				return HandleErrorRespectJSON("failed to add backup destination: %v", err)
 			}
 		}
 
