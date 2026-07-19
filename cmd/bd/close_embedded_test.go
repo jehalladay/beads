@@ -120,10 +120,12 @@ func TestEmbeddedClose(t *testing.T) {
 	})
 
 	// beads-6qo8t: `bd update --status closed` reaches the same terminal state
-	// as `bd close` (and its help claims to mirror `bd close --force`), so it
-	// must store the same default close_reason='Closed' — previously it left
-	// close_reason NULL, a cross-command field-parity gap. Only on a real
-	// open->closed transition, and never clobbering an already-set reason.
+	// as `bd close` (its help claims to mirror `bd close --force`) and must
+	// store the same default close_reason='Closed' — previously it left
+	// close_reason NULL, a cross-command field-parity gap. The fix is at the
+	// shared storage seam (issueops.ManageClosedAt + domain/db) so BOTH the
+	// direct (this test) and proxied paths are covered. Only on a real
+	// open->closed transition; never clobbering an already-set reason.
 	t.Run("update_status_closed_defaults_close_reason_like_close", func(t *testing.T) {
 		viaClose := bdCreate(t, bd, dir, "6qo8t via close", "--type", "task")
 		viaUpdate := bdCreate(t, bd, dir, "6qo8t via update", "--type", "task")
@@ -141,15 +143,12 @@ func TestEmbeddedClose(t *testing.T) {
 		}
 	})
 
-	// The default must NOT clobber a close_reason already present (e.g. when the
-	// issue was closed with a real reason and update --status closed re-runs as a
-	// no-op transition). Guarded by the open->closed condition (issue.Status !=
-	// closed), so a re-close no-op never re-defaults.
+	// The default must NOT clobber a close_reason already present (re-close of an
+	// issue closed with a real reason). Guarded by the open->closed fresh-close
+	// condition (oldIssue.ClosedAt == nil), so a re-close no-op never re-defaults.
 	t.Run("update_status_closed_does_not_clobber_existing_reason", func(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "6qo8t no-clobber", "--type", "task")
 		bdClose(t, bd, dir, issue.ID, "--reason", "real reason")
-		// Re-issue update --status closed on the already-closed issue: no-op
-		// transition, must not overwrite the existing reason.
 		cmd := exec.Command(bd, "update", issue.ID, "--status", "closed")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)

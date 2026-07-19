@@ -115,19 +115,40 @@ func TestManageClosedAt(t *testing.T) {
 		}
 	})
 
-	t.Run("closing sets closed_at", func(t *testing.T) {
+	t.Run("closing sets closed_at and defaults close_reason", func(t *testing.T) {
 		t.Parallel()
 		old := &types.Issue{Status: types.StatusOpen}
 		updates := map[string]interface{}{"status": string(types.StatusClosed)}
 		clauses, args := ManageClosedAt(old, updates, nil, nil)
+		// beads-6qo8t: an OPEN->closed transition now sets BOTH closed_at (the
+		// b1l7 auto-timestamp) AND close_reason='Closed' (parity with bd close),
+		// when the caller supplied neither.
+		if len(clauses) != 2 || clauses[0] != "closed_at = ?" || clauses[1] != "close_reason = ?" {
+			t.Fatalf("expected [closed_at = ?, close_reason = ?], got %v", clauses)
+		}
+		if len(args) != 2 {
+			t.Fatalf("expected two args (now, \"Closed\"), got %v", args)
+		}
+		if _, ok := args[0].(time.Time); !ok {
+			t.Fatalf("expected time.Time as first arg, got %T", args[0])
+		}
+		if args[1] != "Closed" {
+			t.Fatalf("expected close_reason default \"Closed\" as second arg, got %v", args[1])
+		}
+	})
+
+	t.Run("closing does not clobber a caller-set close_reason", func(t *testing.T) {
+		t.Parallel()
+		old := &types.Issue{Status: types.StatusOpen}
+		updates := map[string]interface{}{"status": string(types.StatusClosed), "close_reason": "custom"}
+		clauses, args := ManageClosedAt(old, updates, nil, nil)
+		// Only closed_at is auto-added; the explicit close_reason is left for the
+		// caller's own set-clause (the guard checks updates["close_reason"]).
 		if len(clauses) != 1 || clauses[0] != "closed_at = ?" {
-			t.Fatalf("expected [closed_at = ?], got %v", clauses)
+			t.Fatalf("expected only [closed_at = ?] when close_reason is caller-set, got %v", clauses)
 		}
 		if len(args) != 1 {
 			t.Fatalf("expected one arg (now), got %v", args)
-		}
-		if _, ok := args[0].(time.Time); !ok {
-			t.Fatalf("expected time.Time arg, got %T", args[0])
 		}
 	})
 

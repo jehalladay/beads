@@ -935,6 +935,21 @@ func TestProxiedServerUpdate(t *testing.T) {
 		}
 	})
 
+	// beads-6qo8t: `bd update --status closed` over the PROXIED server must
+	// default close_reason to "Closed", parity with `bd close` and the direct
+	// path. The proxied path flows through domain/db/issue.go (not update.go's
+	// RunE), so the fix lives at the storage seam to cover BOTH paths. Before
+	// the fix the proxied path set closed_at but left close_reason NULL.
+	t.Run("update_close_defaults_close_reason", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "ucdcr")
+		issue := bdProxiedCreate(t, bd, p.dir, "Proxied reason parity")
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "-s", "closed")
+		db := openProxiedDB(t, p)
+		if got := readCloseReason(t, db, issue.ID); got != "Closed" {
+			t.Errorf("update --status closed (proxied) must default close_reason='Closed' (beads-6qo8t parity with bd close), got %q", got)
+		}
+	})
+
 	t.Run("update_demote_epic_open_children_refuses", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "udeor")
 		epic := bdProxiedCreate(t, bd, p.dir, "Demote epic", "-t", "epic")

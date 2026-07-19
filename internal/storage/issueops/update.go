@@ -235,6 +235,22 @@ func ManageClosedAt(oldIssue *types.Issue, updates map[string]interface{}, setCl
 			now := time.Now().UTC()
 			setClauses = append(setClauses, "closed_at = ?")
 			args = append(args, now)
+
+			// beads-6qo8t: default close_reason to "Closed" on the OPEN→closed
+			// transition, mirroring `bd close` (close.go: reasons default to
+			// {"Closed"} when none given). `bd update --status closed` otherwise
+			// left close_reason NULL — a field-parity gap vs `bd close`, despite
+			// update's help claiming it mirrors `bd close --force`. Only defaults
+			// when the caller did not set close_reason explicitly (e.g. a future
+			// --reason flag), and only on a fresh close (oldIssue.ClosedAt == nil,
+			// same guard as closed_at) so a re-close/no-op never clobbers an
+			// existing reason. Applying it at this shared seam (not the update.go
+			// CLI) keeps the direct AND proxied paths at parity — the proxied
+			// server path goes through domain/db/issue.go, not update.go's RunE.
+			if _, hasExplicitReason := updates["close_reason"]; !hasExplicitReason {
+				setClauses = append(setClauses, "close_reason = ?")
+				args = append(args, "Closed")
+			}
 		}
 	} else if oldIssue.Status == types.StatusClosed {
 		setClauses = append(setClauses, "closed_at = ?", "close_reason = ?")
