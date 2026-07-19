@@ -400,9 +400,7 @@ func runReadyProxiedMolecule(ctx context.Context, uw uow.UnitOfWork, in readyInp
 		return
 	}
 
-	fmt.Printf("\n%s Ready steps in molecule: %s\n", ui.RenderAccent("🧪"), subgraph.Root.Title)
-	fmt.Printf("   ID: %s\n", moleculeID)
-	fmt.Printf("   Total: %d steps, %d ready\n", analysis.TotalSteps, len(readySteps))
+	printProxiedMoleculeReadyHeader(subgraph.Root.Title, moleculeID, analysis.TotalSteps, len(readySteps))
 	if len(readySteps) == 0 {
 		fmt.Printf("\n%s No ready steps (all blocked or completed)\n\n", ui.RenderWarn("✨"))
 		return
@@ -541,12 +539,7 @@ func runReadyProxiedGated(ctx context.Context, uw uow.UnitOfWork, _ readyInput) 
 		return
 	}
 	fmt.Printf("\n%s Molecules ready for gate-resume dispatch (%d):\n\n", ui.RenderAccent("🚪"), len(molecules))
-	for _, m := range molecules {
-		fmt.Printf("  %s: %s\n", ui.RenderID(m.MoleculeID), m.MoleculeTitle)
-		fmt.Printf("    Closed gate: %s (%s)\n", ui.RenderID(m.ClosedGate.ID), m.ClosedGate.Title)
-		fmt.Printf("    Ready step:  %s (%s)\n", ui.RenderID(m.ReadyStep.ID), m.ReadyStep.Title)
-		fmt.Println()
-	}
+	printProxiedGatedMolecules(molecules)
 }
 
 func emitGatedEmpty() {
@@ -640,4 +633,32 @@ func buildParentEpicMapProxied(ctx context.Context, uw uow.UnitOfWork, issues []
 		}
 	}
 	return result
+}
+
+// printProxiedMoleculeReadyHeader renders the header for the proxied
+// `bd ready --molecule` view. The molecule title is routed through displayTitle
+// (ui.SanitizeForTerminal) because a title can originate from an untrusted
+// import (JSONL/markdown/SCM) carrying OSC/CSI terminal-control escapes;
+// printing it raw would inject control sequences onto the header line.
+// Display-only — the stored title is unchanged. Proxied twin of the direct
+// ready.go header sink. 7n9y sink-class slice (beads-3nkwv).
+func printProxiedMoleculeReadyHeader(rootTitle, moleculeID string, totalSteps, readyCount int) {
+	fmt.Printf("\n%s Ready steps in molecule: %s\n", ui.RenderAccent("🧪"), displayTitle(rootTitle))
+	fmt.Printf("   ID: %s\n", moleculeID)
+	fmt.Printf("   Total: %d steps, %d ready\n", totalSteps, readyCount)
+}
+
+// printProxiedGatedMolecules renders the proxied gate-resume dispatch list.
+// Each molecule, closed-gate, and ready-step title is routed through
+// displayTitle for the same untrusted-import escape reason as
+// printProxiedMoleculeReadyHeader. Display-only — stored titles are unchanged.
+// Proxied twin of the direct ready.go gated-list sinks. 7n9y sink-class slice
+// (beads-3nkwv).
+func printProxiedGatedMolecules(molecules []*GatedMolecule) {
+	for _, m := range molecules {
+		fmt.Printf("  %s: %s\n", ui.RenderID(m.MoleculeID), displayTitle(m.MoleculeTitle))
+		fmt.Printf("    Closed gate: %s (%s)\n", ui.RenderID(m.ClosedGate.ID), displayTitle(m.ClosedGate.Title))
+		fmt.Printf("    Ready step:  %s (%s)\n", ui.RenderID(m.ReadyStep.ID), displayTitle(m.ReadyStep.Title))
+		fmt.Println()
+	}
 }
