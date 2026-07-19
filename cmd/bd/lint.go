@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -202,8 +201,10 @@ Examples:
 				Results:         results,
 				Inconsistencies: inconsistencies,
 			}
-			data, _ := json.MarshalIndent(output, "", "  ")
-			fmt.Println(string(data))
+			// beads-s2oy: outputJSON for schema_version + BD_JSON_ENVELOPE.
+			if err := outputJSON(output); err != nil {
+				return err
+			}
 			// Partial/total id-resolution failure: results (above) are still
 			// emitted for the ids that resolved, then signal non-zero so a
 			// scripted `bd lint $IDS --json || fail` fires on a missing id

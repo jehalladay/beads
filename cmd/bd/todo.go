@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
@@ -95,12 +94,8 @@ var addTodoCmd = &cobra.Command{
 		commandDidWrite.Store(true)
 
 		if jsonOutput {
-			data, err := json.MarshalIndent(issue, "", "  ")
-			if err != nil {
-				return HandleError("failed to marshal JSON: %v", err)
-			}
-			fmt.Println(string(data))
-			return nil
+			// beads-s2oy: outputJSON for schema_version + BD_JSON_ENVELOPE.
+			return outputJSON(issue)
 		}
 		fmt.Printf("Created %s: %s\n", ui.RenderID(issue.ID), issue.Title)
 		return nil
@@ -149,12 +144,8 @@ func runTodoListCore(cmd *cobra.Command, _ []string) error {
 	}
 
 	if jsonOutput {
-		data, err := json.MarshalIndent(issues, "", "  ")
-		if err != nil {
-			return HandleError("failed to marshal JSON: %v", err)
-		}
-		fmt.Println(string(data))
-		return nil
+		// beads-s2oy: outputJSON for schema_version + BD_JSON_ENVELOPE.
+		return outputJSON(issues)
 	}
 	if len(issues) == 0 {
 		fmt.Println("No TODOs found")
@@ -228,14 +219,13 @@ var doneTodoCmd = &cobra.Command{
 		}
 
 		if jsonOutput {
-			data, err := json.MarshalIndent(map[string]interface{}{
+			// beads-s2oy: outputJSON for schema_version + BD_JSON_ENVELOPE.
+			if err := outputJSON(map[string]interface{}{
 				"closed": closedIDs,
 				"reason": reason,
-			}, "", "  ")
-			if err != nil {
-				return HandleError("failed to marshal JSON: %v", err)
+			}); err != nil {
+				return err
 			}
-			fmt.Println(string(data))
 			// Closed set already emitted; signal non-zero if any id failed so
 			// `bd todo done $ids || ...` guards fire on a missing/typo'd id
 			// rather than silently proceeding when nothing was closed (beads-xi35).

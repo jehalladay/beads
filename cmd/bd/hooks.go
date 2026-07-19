@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -662,15 +661,16 @@ Installed hooks:
 		}
 
 		if jsonOutput {
-			output := map[string]interface{}{
+			// beads-s2oy: route through outputJSON so the success envelope
+			// carries schema_version and honors BD_JSON_ENVELOPE, instead of a
+			// raw MarshalIndent+Println that bypasses wrapWithSchemaVersion.
+			return outputJSON(map[string]interface{}{
 				"success":    true,
 				"message":    "Git hooks installed successfully",
 				"shared":     shared,
 				"chained":    chain,
 				"beadsHooks": beadsHooks,
-			}
-			jsonBytes, _ := json.MarshalIndent(output, "", "  ")
-			fmt.Println(string(jsonBytes))
+			})
 		} else {
 			fmt.Println("✓ Git hooks installed successfully")
 			fmt.Println()
@@ -713,15 +713,13 @@ var hooksUninstallCmd = &cobra.Command{
 		}
 
 		if jsonOutput {
-			output := map[string]interface{}{
+			// beads-s2oy: outputJSON for schema_version + BD_JSON_ENVELOPE.
+			return outputJSON(map[string]interface{}{
 				"success": true,
 				"message": "Git hooks uninstalled successfully",
-			}
-			jsonBytes, _ := json.MarshalIndent(output, "", "  ")
-			fmt.Println(string(jsonBytes))
-		} else {
-			fmt.Println("✓ Git hooks uninstalled successfully")
+			})
 		}
+		fmt.Println("✓ Git hooks uninstalled successfully")
 		return nil
 	},
 }
@@ -743,11 +741,10 @@ var hooksListCmd = &cobra.Command{
 		statuses := CheckGitHooks()
 
 		if jsonOutput {
-			output := map[string]interface{}{
+			// beads-s2oy: outputJSON for schema_version + BD_JSON_ENVELOPE.
+			return outputJSON(map[string]interface{}{
 				"hooks": statuses,
-			}
-			jsonBytes, _ := json.MarshalIndent(output, "", "  ")
-			fmt.Println(string(jsonBytes))
+			})
 		} else {
 			fmt.Println("Git hooks status:")
 			for _, status := range statuses {
