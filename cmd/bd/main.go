@@ -724,6 +724,15 @@ var rootCmd = &cobra.Command{
 				WasSet bool
 			}{readonlyMode, true}
 		}
+
+		// Central default-deny --readonly sandbox gate (beads-tjlq). Now that
+		// readonlyMode is resolved (flag or config), refuse any command not on
+		// the curated read allowlist BEFORE it can open the store or do work.
+		// This closes the leak-by-omission class that beads-q634 was an instance
+		// of; per-verb CheckReadonly calls remain as belt-and-suspenders and to
+		// carry conditional-write flag semantics.
+		enforceReadonlyGate(cmd)
+
 		if !cmd.Root().PersistentFlags().Changed("db") && dbPath == "" &&
 			os.Getenv("BEADS_DB") == "" && os.Getenv("BD_DB") == "" && os.Getenv("BEADS_DIR") == "" {
 			dbPath = config.GetString("db")

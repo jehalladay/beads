@@ -95,6 +95,63 @@ func TestReadonlyBlocksWriteChannels(t *testing.T) {
 	})
 }
 
+// TestReadonlyCentralGate is the behavioral teeth for beads-tjlq: the central
+// default-deny gate must block write commands that had NO per-verb
+// CheckReadonly guard at all (the leak-by-omission that q634's per-verb approach
+// couldn't prevent). `bd branch <name>` (creates a branch) and `bd doctor --fix`
+// (mutates the DB) both shipped unguarded; the central gate now refuses them.
+// Reads (including conditional-write verbs invoked in their read form) still run.
+func TestReadonlyCentralGate(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "cg")
+
+	t.Run("branch_create_blocked", func(t *testing.T) {
+		bdReadonlyExpectBlocked(t, bd, dir, "branch", "cg-leak-branch")
+		// Must NOT have created the branch: bare `bd branch` lists branches.
+		out, _ := runBDInReadDir(t, bd, dir, "branch")
+		if strings.Contains(out, "cg-leak-branch") {
+			t.Errorf("branch created under --readonly (beads-tjlq central-gate hole): %s", out)
+		}
+	})
+
+	t.Run("doctor_fix_blocked", func(t *testing.T) {
+		// doctor --fix mutates the database; --readonly must refuse it before
+		// any repair runs. (Bare `bd doctor` diagnostics are also gated — the
+		// whole command is a conditional write with no per-verb guard, so the
+		// central gate treats it as a write; sandboxed callers use read verbs.)
+		bdReadonlyExpectBlocked(t, bd, dir, "doctor", "--fix", "--yes")
+	})
+
+	t.Run("config_apply_blocked", func(t *testing.T) {
+		// config apply (no --dry-run) applies config/hooks — a write with no
+		// pre-tjlq per-verb guard.
+		bdReadonlyExpectBlocked(t, bd, dir, "config", "apply")
+	})
+
+	// Controls: representative reads (and a conditional-write verb in read form)
+	// must still succeed under --readonly.
+	for _, args := range [][]string{
+		{"count"},
+		{"query", "status=open"},
+		{"config", "get", "issue.prefix"},
+		{"ready"}, // conditional write only with --claim; plain form is a read
+	} {
+		args := args
+		t.Run("read_allowed_"+strings.Join(args, "_"), func(t *testing.T) {
+			cmd := exec.Command(bd, append([]string{"--readonly"}, args...)...)
+			cmd.Dir = dir
+			cmd.Env = bdEnv(dir)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Errorf("bd --readonly %s (a read) must succeed, got err=%v:\n%s",
+					strings.Join(args, " "), err, out)
+			}
+		})
+	}
+}
+
 // runBDInReadDir runs a read command (no --readonly) in dir, returning output.
 func runBDInReadDir(t *testing.T, bd, dir string, args ...string) (string, error) {
 	t.Helper()
