@@ -684,7 +684,7 @@ func RetargetInboundDependenciesToWispInTx(ctx context.Context, tx *sql.Tx, id s
 	return nil
 }
 
-func RetargetInboundDependenciesToIssueInTx(ctx context.Context, tx *sql.Tx, id string) error {
+func RetargetInboundDependenciesToIssueInTx(ctx context.Context, tx DBTX, id string) error {
 	for _, table := range []string{"dependencies", "wisp_dependencies"} {
 		if err := checkRetargetTargetCollision(ctx, tx, table, "depends_on_wisp_id", "depends_on_issue_id", id); err != nil {
 			return err
@@ -717,7 +717,7 @@ func UpdateIssueIDInDependencyTargetsInTx(ctx context.Context, tx *sql.Tx, _, ne
 }
 
 //nolint:gosec // G201: table and typed columns are hardcoded constants.
-func checkRetargetTargetCollision(ctx context.Context, tx *sql.Tx, table, sourceCol, destCol, id string) error {
+func checkRetargetTargetCollision(ctx context.Context, tx DBTX, table, sourceCol, destCol, id string) error {
 	var conflictCols []string
 	switch destCol {
 	case "depends_on_issue_id":

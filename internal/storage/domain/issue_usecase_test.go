@@ -48,6 +48,9 @@ type fakeIssueRepo struct {
 	renameErr   error
 	renameCalls []struct{ oldID, newID string }
 
+	promoteErr   error
+	promoteCalls []string
+
 	// GetByIDs
 	byIDs    []*types.Issue
 	byIDsErr error
@@ -195,6 +198,10 @@ func (f *fakeIssueRepo) GetStaleIssues(context.Context, types.StaleFilter) ([]*t
 func (f *fakeIssueRepo) UpdateIssueID(_ context.Context, oldID, newID string, _ *types.Issue, _ string) error {
 	f.renameCalls = append(f.renameCalls, struct{ oldID, newID string }{oldID, newID})
 	return f.renameErr
+}
+func (f *fakeIssueRepo) PromoteFromEphemeral(_ context.Context, id, _ string) error {
+	f.promoteCalls = append(f.promoteCalls, id)
+	return f.promoteErr
 }
 func (f *fakeIssueRepo) GetByIDs(context.Context, []string, IssueTableOpts) ([]*types.Issue, error) {
 	return f.byIDs, f.byIDsErr

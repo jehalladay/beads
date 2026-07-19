@@ -23,7 +23,7 @@ type BatchContext struct {
 }
 
 // NewBatchContext reads config from the database and returns a BatchContext.
-func NewBatchContext(ctx context.Context, tx *sql.Tx, opts storage.BatchCreateOptions) (*BatchContext, error) {
+func NewBatchContext(ctx context.Context, tx DBTX, opts storage.BatchCreateOptions) (*BatchContext, error) {
 	customStatuses, err := GetCustomStatusesTx(ctx, tx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get custom statuses: %w", err)
@@ -550,7 +550,7 @@ func CheckOrphan(ctx context.Context, tx *sql.Tx, issue *types.Issue, issueTable
 // additively (bd-hj85c).
 //
 //nolint:gosec // G201: table is a hardcoded constant
-func InsertIssueIfNew(ctx context.Context, tx *sql.Tx, issueTable string, issue *types.Issue, opts storage.BatchCreateOptions) (isNew bool, staleRejected bool, err error) {
+func InsertIssueIfNew(ctx context.Context, tx DBTX, issueTable string, issue *types.Issue, opts storage.BatchCreateOptions) (isNew bool, staleRejected bool, err error) {
 	var existingCount int
 	if issue.ID != "" {
 		// issues and wisps are separate tables with no cross-table uniqueness,

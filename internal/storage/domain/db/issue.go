@@ -904,6 +904,10 @@ func (r *issueSQLRepositoryImpl) UpdateIssueID(ctx context.Context, oldID, newID
 	return issueops.UpdateIssueIDInTx(ctx, r.runner, oldID, newID, issue, actor)
 }
 
+func (r *issueSQLRepositoryImpl) PromoteFromEphemeral(ctx context.Context, id, actor string) error {
+	return issueops.PromoteFromEphemeralInTx(ctx, r.runner, id, actor)
+}
+
 func (r *issueSQLRepositoryImpl) GetNextChildID(ctx context.Context, parentID string) (string, error) {
 	return issueops.GetNextChildIDTx(ctx, r.runner, parentID)
 }

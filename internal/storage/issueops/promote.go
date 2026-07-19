@@ -10,7 +10,11 @@ import (
 )
 
 //nolint:gosec // G201: table names are hardcoded constants
-func PromoteFromEphemeralInTx(ctx context.Context, tx *sql.Tx, id string, actor string) error {
+// PromoteFromEphemeralInTx takes a DBTX (not *sql.Tx) so both the direct/embedded
+// path (which passes a *sql.Tx) and the proxied UOW path (which passes a *sql.Conn
+// via IssueUseCase, beads-aocj promote leg) can drive it. All the SQL it and its
+// callees run uses only ExecContext/QueryContext/QueryRowContext, the DBTX subset.
+func PromoteFromEphemeralInTx(ctx context.Context, tx DBTX, id string, actor string) error {
 	if !IsActiveWispInTx(ctx, tx, id) {
 		return fmt.Errorf("wisp %s not found", id)
 	}

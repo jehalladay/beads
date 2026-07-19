@@ -45,6 +45,14 @@ Examples:
 
 		ctx := rootCtx
 
+		// beads-aocj: on hub-connected crew the global `store` is nil in
+		// proxiedServerMode, so route through the proxied UOW handler (mirrors
+		// close/comment/label). Without this the direct path below fails
+		// "database not initialized".
+		if usesProxiedServer() {
+			return runPromoteProxiedServer(ctx, id, reason)
+		}
+
 		if store == nil {
 			return HandleErrorWithHint("database not initialized", diagHint())
 		}

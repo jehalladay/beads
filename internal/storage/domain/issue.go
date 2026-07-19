@@ -67,6 +67,11 @@ type IssueSQLRepository interface {
 	// dependency edges. Routes issues↔wisps tables and rejects a cross-table
 	// id collision (beads-mgsx). issue carries the current title/body fields.
 	UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error
+	// PromoteFromEphemeral copies a wisp to the permanent issues table
+	// (preserving id/labels/deps/events/comments) and deletes the wisp row,
+	// exposing issueops.PromoteFromEphemeralInTx on the repo so the proxied UOW
+	// path can serve `bd promote` without the nil global store (beads-aocj).
+	PromoteFromEphemeral(ctx context.Context, id, actor string) error
 	GetByIDs(ctx context.Context, ids []string, opts IssueTableOpts) ([]*types.Issue, error)
 	// GetIDsByLabel returns issue/wisp IDs carrying the (case-insensitive)
 	// label, ordered priority ASC then created_at DESC. Used by bd ship
@@ -290,6 +295,11 @@ type IssueUseCase interface {
 	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)
 	GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error)
 	RenameIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error
+	// PromoteFromEphemeral promotes a wisp to a permanent bead (beads-aocj
+	// promote leg); mirrors RenameIssueID by delegating to the existing
+	// issueops InTx helper so `bd promote` runs through the proxied UOW on
+	// hub-connected crew.
+	PromoteFromEphemeral(ctx context.Context, id, actor string) error
 	DeleteIssue(ctx context.Context, id, actor string) (DeleteIssuesResult, error)
 	DeleteIssues(ctx context.Context, params DeleteIssuesParams, actor string) (DeleteIssuesResult, error)
 	PreviewDelete(ctx context.Context, ids []string) (DeletePreview, error)
@@ -425,6 +435,16 @@ func (u *issueUseCaseImpl) RenameIssueID(ctx context.Context, oldID, newID strin
 	}
 	if err := u.issueRepo.UpdateIssueID(ctx, oldID, newID, issue, actor); err != nil {
 		return fmt.Errorf("rename %s -> %s: %w", oldID, newID, err)
+	}
+	return nil
+}
+
+func (u *issueUseCaseImpl) PromoteFromEphemeral(ctx context.Context, id, actor string) error {
+	if id == "" {
+		return fmt.Errorf("promote: id must not be empty")
+	}
+	if err := u.issueRepo.PromoteFromEphemeral(ctx, id, actor); err != nil {
+		return fmt.Errorf("promote %s: %w", id, err)
 	}
 	return nil
 }

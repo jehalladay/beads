@@ -119,7 +119,7 @@ func InsertIssueIntoTable(ctx context.Context, tx *sql.Tx, table string, issue *
 }
 
 //nolint:gosec // G201: table is a hardcoded constant ("issues" or "wisps")
-func insertIssueIntoTable(ctx context.Context, tx *sql.Tx, table string, issue *types.Issue, rejectStaleUpdate bool) error {
+func insertIssueIntoTable(ctx context.Context, tx DBTX, table string, issue *types.Issue, rejectStaleUpdate bool) error {
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (
 			id, content_hash, title, description, design, acceptance_criteria, notes,
@@ -400,7 +400,7 @@ func ComputeAdaptiveLength(numIssues int, cfg AdaptiveIDConfig) int {
 }
 
 // GetCustomStatusesTx reads custom statuses from config within a transaction.
-func GetCustomStatusesTx(ctx context.Context, tx *sql.Tx) ([]string, error) {
+func GetCustomStatusesTx(ctx context.Context, tx DBTX) ([]string, error) {
 	var raw string
 	err := tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "status.custom").Scan(&raw)
 	if err == sql.ErrNoRows || raw == "" {
@@ -557,7 +557,7 @@ func IsDoltNothingToCommit(err error) bool {
 }
 
 // ReadConfigPrefix reads and normalizes issue_prefix from the config table.
-func ReadConfigPrefix(ctx context.Context, tx *sql.Tx) (string, error) {
+func ReadConfigPrefix(ctx context.Context, tx DBTX) (string, error) {
 	var configPrefix string
 	err := tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
 	if err == sql.ErrNoRows || configPrefix == "" {
