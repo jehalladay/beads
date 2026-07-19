@@ -937,4 +937,16 @@ func (r *issueSQLRepositoryImpl) GetStatistics(ctx context.Context) (*types.Stat
 	return stats, nil
 }
 
+func (r *issueSQLRepositoryImpl) CountIssues(ctx context.Context, query string, filter types.IssueFilter) (int64, error) {
+	n, err := issueops.CountIssuesInTx(ctx, r.runner, query, filter)
+	if err != nil {
+		return 0, err
+	}
+	return int64(n), nil
+}
+
+func (r *issueSQLRepositoryImpl) CountIssuesByGroup(ctx context.Context, filter types.IssueFilter, groupBy string) (map[string]int, error) {
+	return issueops.CountIssuesByGroupInTx(ctx, r.runner, filter, groupBy)
+}
+
 const deleteBatchSize = 200

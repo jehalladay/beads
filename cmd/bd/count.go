@@ -111,12 +111,23 @@ Examples:
 
 		ctx := rootCtx
 
+		// beads-2om1: in proxiedServerMode the global `store` is nil (main.go
+		// PersistentPreRun returns before newDoltStore), so store.CountIssues /
+		// CountIssuesByGroup / loadDirectListFilterConfig below would fail with
+		// "storage is nil" for hub crew. Resolve a config source + count backend
+		// once here — proxied via the UOW (CountIssues/CountIssuesByGroup added
+		// to IssueUseCase), direct via `store` — and route the shared
+		// filter-building through them. Interface-extension leg of the aocj/fszd
+		// proxied read-handler family.
+		cb := newCountBackend(ctx)
+		defer cb.close()
+
 		// beads-deud: validate --status/--type/--priority against their
 		// documented enums, mirroring bd list (list_filter.go) so an invalid
 		// value is a hard error (rc!=0) instead of a silent false-zero. The
 		// custom-status/type sets come from the store's config (nil-safe), so
 		// custom statuses + infra types (convoy/merge-request/...) still pass.
-		filterCfg, cfgErr := loadDirectListFilterConfig(ctx, store)
+		filterCfg, cfgErr := cb.loadFilterConfig(ctx)
 		if cfgErr != nil {
 			return HandleErrorRespectJSON("%v", cfgErr)
 		}
@@ -265,7 +276,7 @@ Examples:
 		}
 
 		if includeInfra, _ := cmd.Flags().GetBool("include-infra"); includeInfra {
-			cfg, err := loadDirectListFilterConfig(ctx, store)
+			cfg, err := cb.loadFilterConfig(ctx)
 			if err != nil {
 				return HandleError("%v", err)
 			}
@@ -275,7 +286,7 @@ Examples:
 		}
 
 		if groupBy == "" {
-			count, err := store.CountIssues(ctx, "", filter)
+			count, err := cb.countIssues(ctx, filter)
 			if err != nil {
 				return HandleErrorRespectJSON("%v", err)
 			}
@@ -288,7 +299,7 @@ Examples:
 			return nil
 		}
 
-		counts, err := store.CountIssuesByGroup(ctx, filter, groupBy)
+		counts, err := cb.countByGroup(ctx, filter, groupBy)
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
 		}
@@ -305,7 +316,7 @@ Examples:
 
 		// --by-label buckets are not mutually exclusive, so use CountIssues for the total
 		// to avoid double-counting multi-label issues.
-		total, err := store.CountIssues(ctx, "", filter)
+		total, err := cb.countIssues(ctx, filter)
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
 		}

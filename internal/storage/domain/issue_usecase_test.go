@@ -113,6 +113,11 @@ type fakeIssueRepo struct {
 	stats         *types.Statistics
 	statsErr      error
 
+	// Count (beads-2om1)
+	countTotal  int64
+	countGroups map[string]int
+	countErr2   error
+
 	// Claim
 	claimResult ClaimRowResult
 	claimErr    error
@@ -254,6 +259,12 @@ func (f *fakeIssueRepo) GetBlockedIssues(context.Context, types.WorkFilter) ([]*
 }
 func (f *fakeIssueRepo) GetStatistics(context.Context) (*types.Statistics, error) {
 	return f.stats, f.statsErr
+}
+func (f *fakeIssueRepo) CountIssues(context.Context, string, types.IssueFilter) (int64, error) {
+	return f.countTotal, f.countErr2
+}
+func (f *fakeIssueRepo) CountIssuesByGroup(context.Context, types.IssueFilter, string) (map[string]int, error) {
+	return f.countGroups, f.countErr2
 }
 
 // fakeDepRepoIUC is a minimal DependencySQLRepository. Only the methods the

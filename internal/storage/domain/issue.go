@@ -87,6 +87,10 @@ type IssueSQLRepository interface {
 	ClaimReadyWisp(ctx context.Context, filter types.WorkFilter, actor string) (*types.Issue, error)
 	GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error)
 	GetStatistics(ctx context.Context) (*types.Statistics, error)
+	// CountIssues / CountIssuesByGroup back bd count over the UOW (beads-2om1);
+	// the concrete store methods exist but were not on this interface.
+	CountIssues(ctx context.Context, query string, filter types.IssueFilter) (int64, error)
+	CountIssuesByGroup(ctx context.Context, filter types.IssueFilter, groupBy string) (map[string]int, error)
 }
 
 type CloseRowParams struct {
@@ -255,6 +259,8 @@ type IssueUseCase interface {
 	ClaimReadyIssue(ctx context.Context, filter types.WorkFilter, actor string) (ClaimReadyResult, error)
 	GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error)
 	GetStatistics(ctx context.Context) (*types.Statistics, error)
+	CountIssues(ctx context.Context, query string, filter types.IssueFilter) (int64, error)
+	CountIssuesByGroup(ctx context.Context, filter types.IssueFilter, groupBy string) (map[string]int, error)
 
 	CreateIssue(ctx context.Context, params CreateIssueParams, actor string) (CreateIssueResult, error)
 	CreateIssues(ctx context.Context, params []CreateIssueParams, actor string) (CreateIssuesResult, error)
@@ -1538,6 +1544,22 @@ func (u *issueUseCaseImpl) GetStatistics(ctx context.Context) (*types.Statistics
 	out, err := u.issueRepo.GetStatistics(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetStatistics: %w", err)
+	}
+	return out, nil
+}
+
+func (u *issueUseCaseImpl) CountIssues(ctx context.Context, query string, filter types.IssueFilter) (int64, error) {
+	n, err := u.issueRepo.CountIssues(ctx, query, filter)
+	if err != nil {
+		return 0, fmt.Errorf("CountIssues: %w", err)
+	}
+	return n, nil
+}
+
+func (u *issueUseCaseImpl) CountIssuesByGroup(ctx context.Context, filter types.IssueFilter, groupBy string) (map[string]int, error) {
+	out, err := u.issueRepo.CountIssuesByGroup(ctx, filter, groupBy)
+	if err != nil {
+		return nil, fmt.Errorf("CountIssuesByGroup: %w", err)
 	}
 	return out, nil
 }
