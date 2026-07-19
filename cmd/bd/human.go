@@ -226,6 +226,13 @@ Examples:
 		ctx := rootCtx
 		issueID := args[0]
 
+		// Hub-connected (proxied-server) crew have a nil global `store` — the
+		// `human` family is in noDbCommands, so store/UOW init is skipped. Route
+		// through the proxied UOW to avoid "storage is nil" (beads-ivje).
+		if usesProxiedServer() {
+			return runHumanRespondProxiedServer(ctx, issueID, response)
+		}
+
 		// Resolve partial ID and get issue
 		result, err := resolveAndGetIssueForMutation(ctx, store, issueID)
 		if err != nil {
