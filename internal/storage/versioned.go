@@ -9,10 +9,10 @@ import (
 
 // HistoryEntry represents an issue at a specific point in history.
 type HistoryEntry struct {
-	CommitHash string       // The commit hash at this point
-	Committer  string       // Who made the commit
-	CommitDate time.Time    // When the commit was made
-	Issue      *types.Issue // The issue state at that commit
+	CommitHash string       `json:"commit_hash"` // The commit hash at this point
+	Committer  string       `json:"committer"`   // Who made the commit
+	CommitDate time.Time    `json:"commit_date"` // When the commit was made
+	Issue      *types.Issue `json:"issue"`       // The issue state at that commit
 }
 
 // DiffEntry represents a change between two commits.

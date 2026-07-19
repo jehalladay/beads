@@ -169,18 +169,18 @@ func TestEmbeddedHistory(t *testing.T) {
 			t.Fatal("expected non-empty history")
 		}
 		e := entries[0]
-		// Check expected keys
-		if _, ok := e["CommitHash"]; !ok {
-			t.Error("expected 'CommitHash' key")
+		// Check expected keys (snake_case per the --json field-name contract, beads-8slh)
+		if _, ok := e["commit_hash"]; !ok {
+			t.Errorf("expected 'commit_hash' key; got keys %v", mapKeys(e))
 		}
-		if _, ok := e["CommitDate"]; !ok {
-			t.Error("expected 'CommitDate' key")
+		if _, ok := e["commit_date"]; !ok {
+			t.Errorf("expected 'commit_date' key; got keys %v", mapKeys(e))
 		}
-		if _, ok := e["Committer"]; !ok {
-			t.Error("expected 'Committer' key")
+		if _, ok := e["committer"]; !ok {
+			t.Errorf("expected 'committer' key; got keys %v", mapKeys(e))
 		}
-		if _, ok := e["Issue"]; !ok {
-			t.Error("expected 'Issue' key")
+		if _, ok := e["issue"]; !ok {
+			t.Errorf("expected 'issue' key; got keys %v", mapKeys(e))
 		}
 	})
 
@@ -190,9 +190,9 @@ func TestEmbeddedHistory(t *testing.T) {
 			t.Fatal("expected non-empty history")
 		}
 		// Most recent entry should have the updated title
-		issueMap, ok := entries[0]["Issue"].(map[string]interface{})
+		issueMap, ok := entries[0]["issue"].(map[string]interface{})
 		if !ok {
-			t.Fatalf("expected Issue to be a map, got %T", entries[0]["Issue"])
+			t.Fatalf("expected issue to be a map, got %T", entries[0]["issue"])
 		}
 		if issueMap["title"] != "History test issue updated" {
 			t.Errorf("expected latest title 'History test issue updated', got %v", issueMap["title"])

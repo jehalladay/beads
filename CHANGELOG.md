@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd history <id> --json` now emits snake_case field names (`commit_hash`, `committer`, `commit_date`, `issue`) instead of PascalCase (beads-8slh).**
+  The `storage.HistoryEntry` struct (`internal/storage/versioned.go`) carried no json tags, so
+  `bd history --json` marshaled `CommitHash`/`Committer`/`CommitDate`/`Issue` — inconsistent with the
+  snake_case field-name contract used across every other `--json` command. Added the json tags so a
+  machine consumer sees the same casing convention. (Go field access is unaffected; only the JSON
+  wire names change.)
+
 - **`bd update <id> --json` with no field flags now emits a JSON no-op object instead of the plain-text line `No updates specified` (beads-b0lq).**
   A valid id with no mutating field flags is an idempotent no-op success (exit 0). The direct
   (`cmd/bd/update.go`) and proxied-server (`cmd/bd/update_proxied_server.go`) paths both printed the
