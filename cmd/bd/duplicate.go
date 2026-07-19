@@ -72,6 +72,14 @@ func runDuplicate(cmd *cobra.Command, args []string) error {
 	}()
 
 	ctx := getRootContext()
+
+	// beads-crys: in proxied-server mode the global store is nil; route to the
+	// UOW-backed handler (which stages the edge + close on one tx, preserving
+	// njnw atomicity) instead of nil-panicking.
+	if usesProxiedServer() {
+		return runDuplicateProxiedServer(ctx, args[0], duplicateOf)
+	}
+
 	store := getStore()
 	actor := getActor()
 
@@ -135,6 +143,13 @@ func runSupersede(cmd *cobra.Command, args []string) error {
 	}()
 
 	ctx := getRootContext()
+
+	// beads-crys: in proxied-server mode the global store is nil; route to the
+	// UOW-backed handler instead of nil-panicking.
+	if usesProxiedServer() {
+		return runSupersedeProxiedServer(ctx, args[0], supersededWith)
+	}
+
 	store := getStore()
 	actor := getActor()
 
