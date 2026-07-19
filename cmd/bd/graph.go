@@ -106,7 +106,30 @@ Examples:
 			}
 
 			if jsonOutput {
-				return outputJSON(subgraphs)
+				// Build an explicit lowercase-keyed shape per subgraph,
+				// mirroring the single-issue JSON path below. Serializing the
+				// raw []*TemplateSubgraph leaked engine-internal fields
+				// (IssueMap/VarDefs/Phase/Pour), emitted PascalCase keys (the
+				// struct has no json tags), and bypassed schema_version
+				// (wrapWithSchemaVersion returns slices as-is). Only the public
+				// root/issues/dependencies fields are part of the API surface.
+				out := make([]map[string]interface{}, 0, len(subgraphs))
+				for _, sg := range subgraphs {
+					deps := sg.Dependencies
+					if deps == nil {
+						deps = []*types.Dependency{}
+					}
+					out = append(out, map[string]interface{}{
+						"root":         sg.Root,
+						"issues":       sg.Issues,
+						"dependencies": deps,
+					})
+				}
+				// Wrap in a map so wrapWithSchemaVersion attaches
+				// schema_version (it returns bare slices as-is).
+				return outputJSON(map[string]interface{}{
+					"subgraphs": out,
+				})
 			}
 
 			if graphHTML {

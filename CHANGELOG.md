@@ -123,6 +123,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cmd/bd/tag.go`) and their proxied-server siblings (`cmd/bd/assign_tag_proxied_server.go`) now wrap
   the updated issue in `[]*types.Issue{...}` before `outputJSON`, so all four code paths emit the array
   shape. Text-mode output is unchanged.
+- **`bd graph --all --json` no longer leaks formula-engine internals or emits PascalCase keys, and now carries `schema_version` (beads-jyaw).**
+  The `--all` path serialized the raw `[]*TemplateSubgraph`, whose struct has no JSON tags — so the output
+  used PascalCase field names (`Root`/`Issues`/`Dependencies`), exposed engine-internal fields
+  (`IssueMap`/`VarDefs`/`Phase`/`Pour`) as if they were public API, and omitted `schema_version` (the
+  envelope helper returns bare slices as-is). This diverged from the single-issue sibling `bd graph <id>
+  --json`, which builds an explicit lowercase map. The `--all` path now emits
+  `{"subgraphs":[{"root","issues","dependencies"}...],"schema_version":N}`, dropping the internal fields and
+  matching the single-issue contract.
 
 - **`bd update <id> --json` with no field flags now emits a JSON no-op object instead of the plain-text line `No updates specified` (beads-b0lq).**
   A valid id with no mutating field flags is an idempotent no-op success (exit 0). The direct
