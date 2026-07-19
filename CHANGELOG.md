@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd list --parent X --limit N --pretty` no longer silently ignores `--limit` (beads-3dr5).**
+  The `--parent`+`--pretty` branch renders the full subtree with no `--limit` cap or truncation hint, while every
+  other output path (`--json`, compact, non-parent pretty) honors `--limit` — so a user who passed `--limit 5` got
+  the entire tree with no signal it was ignored. Truncating a tree mid-hierarchy would orphan descendants, so the
+  full-tree render is kept, but it now prints a stderr hint (`--limit N ignored in --parent tree view; N children
+  shown; use --flat or --json to page`) when the child count exceeds the limit — making the ignore explicit instead
+  of silent. Hint is terminal-gated like the existing truncation hint. Teeth: TestTreeLimitIgnored.
+
 - **`bd <cmd> --json` with the wrong positional arg count now emits a JSON error object on stdout, not plaintext on stderr (beads-71br).**
   cobra positional-arg-count validators (`ExactArgs`/`MinimumNArgs`/…) fire inside `rootCmd.ExecuteC()` *before* a
   command's RunE, so an arg-count failure (e.g. `bd diff a --json`, which needs 2 args) never reached a `--json`-aware

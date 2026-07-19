@@ -668,6 +668,14 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 			// +1 vs --json (which returns children only).
 			displayPrettyListWithDepsContextRoot(treeIssues, false, allDeps, false, in.parentID)
 			printSkipLabelsFooter(in.skipLabels)
+			// beads-3dr5: the --parent tree view intentionally renders the FULL
+			// subtree (truncating mid-hierarchy would orphan children), so --limit
+			// is not applied here — but silently ignoring it is the defect. When the
+			// user passed a positive --limit that the child count exceeds, emit a
+			// hint so the ignore is not silent (parity with the truncation hint the
+			// --json/compact/non-parent-pretty paths print).
+			childCount := len(treeIssues) - 1 // exclude the prepended parent (bubp)
+			printTreeLimitIgnoredHint(in.effectiveLimit, childCount)
 			return nil
 		}
 

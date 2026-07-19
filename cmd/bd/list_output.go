@@ -21,6 +21,28 @@ func printTruncationHint(truncated bool, effectiveLimit int) {
 	fmt.Fprint(os.Stderr, ui.RenderWarn(msg))
 }
 
+// printTreeLimitIgnoredHint warns when `bd list --parent X --limit N --pretty`
+// was given a positive --limit that the child count exceeds. The tree view
+// intentionally renders the FULL subtree (truncating mid-hierarchy would orphan
+// children), so --limit is not applied here — but silently ignoring it is a
+// parity gap vs the --json/compact paths. This makes the ignore explicit
+// (beads-3dr5). Stderr + terminal-gated, matching printTruncationHint.
+func printTreeLimitIgnoredHint(effectiveLimit, childCount int) {
+	if !treeLimitIgnored(effectiveLimit, childCount) || !ui.IsStderrTerminal() {
+		return
+	}
+	msg := fmt.Sprintf("\n--limit %d ignored in --parent tree view (%d children shown; truncating a tree would orphan descendants). Use --flat or --json to page.\n", effectiveLimit, childCount)
+	fmt.Fprint(os.Stderr, ui.RenderWarn(msg))
+}
+
+// treeLimitIgnored reports whether a positive --limit was effectively ignored
+// by the --parent tree render (child count exceeds it). Split from the printer
+// so the decision is unit-testable without a TTY (the printer's stderr write is
+// terminal-gated, matching printTruncationHint) (beads-3dr5).
+func treeLimitIgnored(effectiveLimit, childCount int) bool {
+	return effectiveLimit > 0 && childCount > effectiveLimit
+}
+
 func outputDotFormat(issues []*types.Issue, depsByIssueID map[string][]*types.Dependency) error {
 	fmt.Println("digraph dependencies {")
 	fmt.Println("  rankdir=TB;")
