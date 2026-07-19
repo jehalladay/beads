@@ -357,6 +357,39 @@ create, update, show, or close operation).`,
 			return nil
 		}
 
+		// beads-bdy2: honest "no change" on a scalar-only no-op update.
+		//
+		// `bd update <id> --status open` on an already-open issue (likewise
+		// --priority/--title/--assignee to the current value) printed
+		// "✓ Updated issue" rc=0 though nothing changed — a false-success a
+		// CI/agent gate reads as proof of a change (the xqsy/dr3/b0tw no-op
+		// class, here on the general update path). Distinct from b0lq above,
+		// which is the no-FLAGS-at-all path; this is the flag-set-but-same-value
+		// path.
+		//
+		// This is a DISPLAY-ONLY fix per the beads-bdy2 ruling: the UpdateIssue
+		// call, audit trail, and mutation tracking are left UNCHANGED (the write
+		// stays idempotent), so it cannot swallow a legitimate append-notes/
+		// audit/parent-change. onlyScalarFlags is the guard — it is true ONLY
+		// when every set flag maps to a scalar field (status/priority/title/
+		// assignee) with no non-scalar/audit-bearing flag (notes, labels,
+		// parent, metadata, description, etc.) and no --claim. Anything else
+		// legitimately mutates/audits even when scalars match, so it always
+		// reports "✓ Updated".
+		scalarUpdateKeys := map[string]bool{
+			"status":   true,
+			"priority": true,
+			"title":    true,
+			"assignee": true,
+		}
+		onlyScalarFlags := len(updates) > 0 && !claimFlag
+		for k := range updates {
+			if !scalarUpdateKeys[k] {
+				onlyScalarFlags = false
+				break
+			}
+		}
+
 		ctx := rootCtx
 
 		// beads-1d32: --append-notes is NON-IDEMPOTENT, so a best-effort partial
@@ -717,6 +750,13 @@ create, update, show, or close operation).`,
 				if updatedIssue != nil {
 					updatedIssues = append(updatedIssues, updatedIssue)
 				}
+			} else if onlyScalarFlags && scalarUpdateIsNoOp(updates, issue) {
+				// beads-bdy2: a scalar-only update whose every set field already
+				// matches the issue's current value changed nothing — report it
+				// honestly instead of a false "✓ Updated". Display-only: the
+				// UpdateIssue call above already ran (idempotent, audit intact).
+				fmt.Printf("%s %s already matches (no change)\n",
+					ui.RenderInfoIcon(), formatFeedbackID(result.ResolvedID, updateTitle))
 			} else {
 				fmt.Printf("%s Updated issue: %s\n", ui.RenderPass("✓"), formatFeedbackID(result.ResolvedID, updateTitle))
 			}
@@ -787,6 +827,49 @@ create, update, show, or close operation).`,
 		}
 		return nil
 	},
+}
+
+// scalarUpdateIsNoOp reports whether every scalar field set in updates already
+// equals the pre-update issue's current value — i.e. the scalar-only update
+// changed nothing. Used ONLY for the display feedback line (beads-bdy2), never
+// to gate the write. Callers must have already established that updates contains
+// ONLY scalar keys (onlyScalarFlags); this compares those keys' values against
+// the snapshot the values were computed to be canonical against (status is
+// Normalize()d, assignee is normalizeAssignee()d, priority is validated at
+// parse time), so a match here means a genuine no-op.
+func scalarUpdateIsNoOp(updates map[string]interface{}, issue *types.Issue) bool {
+	if issue == nil || len(updates) == 0 {
+		return false
+	}
+	for k, v := range updates {
+		switch k {
+		case "status":
+			s, _ := v.(string)
+			if types.Status(s) != issue.Status {
+				return false
+			}
+		case "priority":
+			p, ok := v.(int)
+			if !ok || p != issue.Priority {
+				return false
+			}
+		case "title":
+			t, _ := v.(string)
+			if t != issue.Title {
+				return false
+			}
+		case "assignee":
+			a, _ := v.(string)
+			if a != issue.Assignee {
+				return false
+			}
+		default:
+			// Any non-scalar key means this is not a scalar-only no-op; the
+			// onlyScalarFlags guard should prevent reaching here, but stay safe.
+			return false
+		}
+	}
+	return true
 }
 
 // metadataIsJSONObject reports whether raw is a JSON object (or empty/null,
