@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -105,11 +104,13 @@ func runServerHealth(path string) error {
 	result := doctor.RunServerHealthChecks(path)
 
 	if jsonOutput {
-		jsonBytes, err := json.Marshal(result)
-		if err != nil {
-			return HandleError("failed to marshal health check result: %v", err)
+		// beads-scsf (s2oy MARSHAL-variant sibling): route through outputJSON so
+		// the --json success envelope carries schema_version and honors
+		// BD_JSON_ENVELOPE, instead of a raw json.Marshal+Println that bypasses
+		// wrapWithSchemaVersion.
+		if err := outputJSON(result); err != nil {
+			return err
 		}
-		fmt.Println(string(jsonBytes))
 	} else {
 		fmt.Println("Dolt Server Mode Health Check")
 		fmt.Println()
