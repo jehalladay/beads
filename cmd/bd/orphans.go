@@ -169,6 +169,12 @@ func (p *doltStoreProvider) GetIssuePrefix() string {
 // getIssueProviderFn is the function used to create an IssueProvider.
 // It is a variable so tests can substitute a mock without needing a real store.
 var getIssueProviderFn = func(labels, labelsAny []string) (types.IssueProvider, func(), error) {
+	// beads-ktlo: on hub-connected crew the global `store` is nil, so back the
+	// provider with the proxied UOW stack instead of failing "no database
+	// available".
+	if usesProxiedServer() {
+		return &proxiedIssueProvider{labels: labels, labelsAny: labelsAny}, func() {}, nil
+	}
 	if store != nil {
 		return &doltStoreProvider{labels: labels, labelsAny: labelsAny}, func() {}, nil
 	}
