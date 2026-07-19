@@ -58,12 +58,5 @@ func TestPrintProxiedGatedMolecules_sanitize(t *testing.T) {
 	}
 }
 
-func assertNoRawEscapes(t *testing.T, out, label string) {
-	t.Helper()
-	if strings.ContainsRune(out, '\x1b') {
-		t.Errorf("%s leaked a raw ESC (\\x1b): %q", label, out)
-	}
-	if strings.ContainsRune(out, '\x07') {
-		t.Errorf("%s leaked a raw BEL (\\x07): %q", label, out)
-	}
-}
+// assertNoRawEscapes is defined in dep_proxied_server_sanitize_test.go (same
+// package) — the shared 7n9y sanitize assertion helper.
