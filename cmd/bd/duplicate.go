@@ -88,22 +88,22 @@ func runDuplicate(cmd *cobra.Command, args []string) error {
 	var err error
 	duplicateID, err = utils.ResolvePartialID(ctx, store, args[0])
 	if err != nil {
-		return fmt.Errorf("failed to resolve %s: %w", args[0], err)
+		return HandleErrorRespectJSON("failed to resolve %s: %v", args[0], err)
 	}
 	canonicalID, err = utils.ResolvePartialID(ctx, store, duplicateOf)
 	if err != nil {
-		return fmt.Errorf("failed to resolve %s: %w", duplicateOf, err)
+		return HandleErrorRespectJSON("failed to resolve %s: %v", duplicateOf, err)
 	}
 
 	if duplicateID == canonicalID {
-		return fmt.Errorf("cannot mark an issue as duplicate of itself")
+		return HandleErrorRespectJSON("cannot mark an issue as duplicate of itself")
 	}
 
 	// Verify canonical issue exists
 	var canonical *types.Issue
 	canonical, err = store.GetIssue(ctx, canonicalID)
 	if err != nil || canonical == nil {
-		return fmt.Errorf("canonical issue not found: %s", canonicalID)
+		return HandleErrorRespectJSON("canonical issue not found: %s", canonicalID)
 	}
 
 	// Add a "duplicates" dependency edge (duplicate → canonical) AND close the
@@ -115,7 +115,7 @@ func runDuplicate(cmd *cobra.Command, args []string) error {
 		Type:        types.DepDuplicates,
 	}
 	if err := store.LinkAndClose(ctx, dep, actor); err != nil {
-		return fmt.Errorf("failed to mark duplicate: %w", err)
+		return HandleErrorRespectJSON("failed to mark duplicate: %v", err)
 	}
 
 	commandDidWrite.Store(true)
@@ -158,22 +158,22 @@ func runSupersede(cmd *cobra.Command, args []string) error {
 	var err error
 	oldID, err = utils.ResolvePartialID(ctx, store, args[0])
 	if err != nil {
-		return fmt.Errorf("failed to resolve %s: %w", args[0], err)
+		return HandleErrorRespectJSON("failed to resolve %s: %v", args[0], err)
 	}
 	newID, err = utils.ResolvePartialID(ctx, store, supersededWith)
 	if err != nil {
-		return fmt.Errorf("failed to resolve %s: %w", supersededWith, err)
+		return HandleErrorRespectJSON("failed to resolve %s: %v", supersededWith, err)
 	}
 
 	if oldID == newID {
-		return fmt.Errorf("cannot mark an issue as superseded by itself")
+		return HandleErrorRespectJSON("cannot mark an issue as superseded by itself")
 	}
 
 	// Verify new issue exists
 	var newIssue *types.Issue
 	newIssue, err = store.GetIssue(ctx, newID)
 	if err != nil || newIssue == nil {
-		return fmt.Errorf("replacement issue not found: %s", newID)
+		return HandleErrorRespectJSON("replacement issue not found: %s", newID)
 	}
 
 	// Add a "supersedes" dependency edge (old → new) AND close the superseded
@@ -185,7 +185,7 @@ func runSupersede(cmd *cobra.Command, args []string) error {
 		Type:        types.DepSupersedes,
 	}
 	if err := store.LinkAndClose(ctx, dep, actor); err != nil {
-		return fmt.Errorf("failed to mark superseded: %w", err)
+		return HandleErrorRespectJSON("failed to mark superseded: %v", err)
 	}
 
 	commandDidWrite.Store(true)
