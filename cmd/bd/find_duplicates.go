@@ -253,17 +253,28 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) error {
 		fmt.Printf("%s\n\n", ui.RenderMuted(fmt.Sprintf("  Showing %d of %d pairs (--limit %d)", len(pairs), totalPairs, limit)))
 	}
 
+	printDuplicatePairs(pairs)
+	return nil
+}
+
+// printDuplicatePairs renders the human-readable duplicate-pair list. Each
+// issue's Title is routed through displayTitle (ui.SanitizeForTerminal) because
+// a title can originate from an untrusted import (JSONL/markdown/SCM) carrying
+// OSC/CSI terminal-control escapes (OSC 0 window-title / OSC 52 clipboard);
+// printing it raw would inject control sequences onto the pair lines. Display-
+// only — the AI-analysis prompt (analyzeWithAI) intentionally keeps raw titles
+// so the model sees exact content. 7n9y sink-class slice.
+func printDuplicatePairs(pairs []duplicatePair) {
 	for i, p := range pairs {
 		pct := p.Similarity * 100
 		fmt.Printf("%s Pair %d (%.0f%% similar):\n", ui.RenderAccent("━━"), i+1, pct)
-		fmt.Printf("  %s %s\n", ui.RenderPass(p.IssueA.ID), p.IssueA.Title)
-		fmt.Printf("  %s %s\n", ui.RenderPass(p.IssueB.ID), p.IssueB.Title)
+		fmt.Printf("  %s %s\n", ui.RenderPass(p.IssueA.ID), displayTitle(p.IssueA.Title))
+		fmt.Printf("  %s %s\n", ui.RenderPass(p.IssueB.ID), displayTitle(p.IssueB.Title))
 		if p.Reason != "" {
 			fmt.Printf("  %s %s\n", ui.RenderAccent("Reason:"), p.Reason)
 		}
 		fmt.Printf("  %s bd show %s %s\n\n", ui.RenderAccent("Compare:"), p.IssueA.ID, p.IssueB.ID)
 	}
-	return nil
 }
 
 // tokenize splits text into lowercase word tokens, removing punctuation.
