@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/validation"
 )
@@ -104,7 +105,10 @@ Examples:
 		}
 		if jsonOutput {
 			if updatedIssue != nil {
-				return outputJSON(updatedIssue)
+				// beads-utby: emit an ARRAY to match `bd update --priority`
+				// (the documented long form) and the sibling mutation verbs,
+				// not a bare DICT — see beads-yrtx (assign/tag).
+				return outputJSON([]*types.Issue{updatedIssue})
 			}
 			return nil
 		}

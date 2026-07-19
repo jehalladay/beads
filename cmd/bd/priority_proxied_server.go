@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -28,7 +29,8 @@ func runPriorityProxiedServer(ctx context.Context, id string, priority int) erro
 
 	SetLastTouchedID(issue.ID)
 	if jsonOutput {
-		return outputJSON(issue)
+		// beads-utby: ARRAY shape, matching the direct priority path + bd update.
+		return outputJSON([]*types.Issue{issue})
 	}
 	fmt.Printf("%s Set priority of %s to P%d\n", ui.RenderPass("✓"), formatFeedbackID(issue.ID, issue.Title), priority)
 	return nil

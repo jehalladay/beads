@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stdout with rc=0, ignoring `--json` entirely — a script consuming `bd edit ... --json` got unparseable
   text. Both terminal paths now emit the mutated (or unchanged) issue as a one-element JSON array, matching
   the `bd update`/`bd priority`/`bd assign`/`bd tag`/`bd note` single-issue mutation contract (ARRAY shape).
+- **`bd priority <id> <n> --json` now emits a one-element ARRAY, matching the documented long form `bd update --priority` (beads-utby).**
+  `bd priority` is a shorthand for `bd update --priority`, but its `--json` output emitted a bare object
+  (`{...}`) while `bd update` and the sibling mutation verbs emit an array (`[{...}]`) — the same
+  single-vs-slice divergence fixed for `bd assign`/`bd tag` in beads-yrtx. The direct path
+  (`cmd/bd/priority.go`) and its proxied-server sibling (`cmd/bd/priority_proxied_server.go`) now wrap
+  the updated issue in `[]*types.Issue{...}` before `outputJSON`. Text-mode output is unchanged.
 
 - **`bd history <id> --json` now emits snake_case field names (`commit_hash`, `committer`, `commit_date`, `issue`) instead of PascalCase (beads-8slh).**
   The `storage.HistoryEntry` struct (`internal/storage/versioned.go`) carried no json tags, so
