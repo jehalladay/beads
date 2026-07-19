@@ -555,6 +555,15 @@ func runFormulaConvert(cmd *cobra.Command, args []string) error {
 	} else {
 		jsonPath = findFormulaJSON(name)
 		if jsonPath == "" {
+			// beads-e0o3d: mirror formula show @207 — under --json a bare
+			// stderr write + SilentExit leaves stdout EMPTY, breaking JSON
+			// parsers. Fold the search-paths hint into the error string (a
+			// bare Fprintf can't carry it into the JSON error object) so the
+			// failure is emitted as a JSON object on stdout. Plain-text mode
+			// keeps the multi-line search-paths listing.
+			if jsonOutput {
+				return HandleErrorRespectJSON("JSON formula %q not found. Search paths: %s", name, strings.Join(getFormulaSearchPaths(), ", "))
+			}
 			fmt.Fprintf(os.Stderr, "Error: JSON formula %q not found\n", name)
 			fmt.Fprintf(os.Stderr, "\nSearch paths:\n")
 			for _, p := range getFormulaSearchPaths() {
@@ -567,12 +576,12 @@ func runFormulaConvert(cmd *cobra.Command, args []string) error {
 	parser := formula.NewParser()
 	f, err := parser.ParseFile(jsonPath)
 	if err != nil {
-		return HandleError("parsing %s: %v", jsonPath, err)
+		return HandleErrorRespectJSON("parsing %s: %v", jsonPath, err)
 	}
 
 	tomlData, err := formulaToTOML(f)
 	if err != nil {
-		return HandleError("converting to TOML: %v", err)
+		return HandleErrorRespectJSON("converting to TOML: %v", err)
 	}
 
 	if convertStdout {
@@ -583,7 +592,7 @@ func runFormulaConvert(cmd *cobra.Command, args []string) error {
 	tomlPath := strings.TrimSuffix(jsonPath, formula.FormulaExtJSON) + formula.FormulaExtTOML
 
 	if err := os.WriteFile(tomlPath, tomlData, 0600); err != nil {
-		return HandleError("writing %s: %v", tomlPath, err)
+		return HandleErrorRespectJSON("writing %s: %v", tomlPath, err)
 	}
 
 	fmt.Printf("✓ Converted: %s\n", tomlPath)
