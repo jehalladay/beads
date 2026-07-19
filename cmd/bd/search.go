@@ -482,7 +482,7 @@ func outputSearchResults(issues []*types.Issue, query string, longFormat bool, t
 		fmt.Printf("\nFound %d issues matching '%s':\n\n", totalMatches, query)
 		for _, issue := range issues {
 			fmt.Printf("%s [P%d] [%s] %s\n", issue.ID, issue.Priority, issue.IssueType, issue.Status)
-			fmt.Printf("  %s\n", issue.Title)
+			fmt.Printf("  %s\n", displayTitle(issue.Title))
 			if issue.Assignee != "" {
 				fmt.Printf("  Assignee: %s\n", issue.Assignee)
 			}
@@ -505,7 +505,7 @@ func outputSearchResults(issues []*types.Issue, query string, longFormat bool, t
 			}
 			fmt.Printf("%s [P%d] [%s] %s%s%s - %s\n",
 				issue.ID, issue.Priority, issue.IssueType, issue.Status,
-				assigneeStr, labelsStr, issue.Title)
+				assigneeStr, labelsStr, displayTitle(issue.Title))
 		}
 	}
 
