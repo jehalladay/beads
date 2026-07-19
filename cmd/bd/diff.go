@@ -62,7 +62,11 @@ Examples:
 func renderDiff(entries []*storage.DiffEntry, fromRef, toRef string) error {
 	if len(entries) == 0 {
 		if jsonOutput {
-			return outputJSON(entries)
+			// beads-guib: entries may be a nil []*storage.DiffEntry here, which
+			// marshals to `null` rather than the array a --json consumer
+			// expects. Emit an explicit empty array so `bd diff X X --json`
+			// (no changes) returns `[]`, not `null`.
+			return outputJSON([]*storage.DiffEntry{})
 		}
 		fmt.Printf("No changes between %s and %s\n", fromRef, toRef)
 		return nil

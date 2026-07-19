@@ -74,6 +74,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while the sibling `bd ado status --json` already embedded its error in the JSON result. The reachable-under-json
   error paths in `runADOProjects`/`runADOSync` now route through `HandleErrorRespectJSON`, matching the 8lqh
   JSON-error contract. (Distinct axis from the pk3y `SilenceUsage`/`SilenceErrors` usage-dump fix on the same file.)
+- **`bd diff <ref> <ref> --json` now emits `[]` instead of `null` on a no-change diff (beads-guib).**
+  `renderDiff` (cmd/bd/diff.go) passed a nil `[]*storage.DiffEntry` to `outputJSON` in the empty-result
+  branch, which `json.Marshal`s to the literal `null` rather than the array a `--json` consumer expects — so
+  `bd diff main main --json` returned `null` (rc 0), breaking a scripted `... --json | jq '.[]'` pipeline. The
+  empty branch now emits an explicit empty array. Because `renderDiff` is shared by the direct and
+  proxied-server paths, the single fix covers both. Same nil-slice array-contract class as beads-tamf.
 
 - **`bd search` now reports the true match count in its header, not the `--limit`-truncated page size (beads-4wn0).**
   The header printed `Found %d issues matching '<q>'` using the already-`--limit`-truncated result slice, so
