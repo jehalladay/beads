@@ -286,6 +286,41 @@ func TestListDisplayPrettyList(t *testing.T) {
 	}
 }
 
+// TestDisplayPrettyListFooterTruncated pins the beads-l39v fix: the summary
+// footer must not claim "Total" when the passed slice is only a --limit page.
+// A truncated view says "Showing:"; a complete view keeps "Total:". Both keep
+// the page-local counts (the count itself is not corrected — the word is).
+func TestDisplayPrettyListFooterTruncated(t *testing.T) {
+	issues := []*types.Issue{
+		{ID: "bd-1", Title: "A", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: "bd-2", Title: "B", Status: types.StatusInProgress, Priority: 1, IssueType: types.TypeFeature},
+	}
+
+	// Not truncated → the footer is a true total.
+	full := captureStdout(t, func() error {
+		displayPrettyListWithDepsTruncated(issues, false, nil, false)
+		return nil
+	})
+	if !strings.Contains(full, "Total: 2 issues") {
+		t.Fatalf("non-truncated footer should say Total, got: %q", full)
+	}
+	if strings.Contains(full, "Showing:") {
+		t.Fatalf("non-truncated footer must not say Showing, got: %q", full)
+	}
+
+	// Truncated → the word "Total" would be a lie (more rows matched).
+	trunc := captureStdout(t, func() error {
+		displayPrettyListWithDepsTruncated(issues, false, nil, true)
+		return nil
+	})
+	if !strings.Contains(trunc, "Showing: 2 issues") {
+		t.Fatalf("truncated footer should say Showing, got: %q", trunc)
+	}
+	if strings.Contains(trunc, "Total:") {
+		t.Fatalf("truncated footer must NOT say Total (the assertion beads-l39v removes), got: %q", trunc)
+	}
+}
+
 func TestDisplayWatchedIssueList_UsesDependencyHierarchy(t *testing.T) {
 	parent := &types.Issue{ID: "bd-zparent", Title: "Parent", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic}
 	child := &types.Issue{ID: "bd-achild", Title: "Child", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
@@ -298,7 +333,7 @@ func TestDisplayWatchedIssueList_UsesDependencyHierarchy(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() error {
-		displayWatchedIssueList(context.Background(), store, []*types.Issue{child, parent})
+		displayWatchedIssueList(context.Background(), store, []*types.Issue{child, parent}, false)
 		return nil
 	})
 

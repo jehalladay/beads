@@ -148,8 +148,23 @@ func displayPrettyList(issues []*types.Issue, showHeader bool) {
 	displayPrettyListWithDeps(issues, showHeader, nil)
 }
 
-// displayPrettyListWithDeps displays issues in tree format using dependency data
+// displayPrettyListWithDeps displays issues in tree format using dependency data.
+// It assumes the caller passed the COMPLETE result set (no --limit truncation);
+// callers that truncate must use displayPrettyListWithDepsTruncated so the
+// summary footer does not falsely assert "Total".
 func displayPrettyListWithDeps(issues []*types.Issue, showHeader bool, allDeps map[string][]*types.Dependency) {
+	displayPrettyListWithDepsTruncated(issues, showHeader, allDeps, false)
+}
+
+// displayPrettyListWithDepsTruncated is displayPrettyListWithDeps plus a flag for
+// whether the passed slice was truncated by --limit (beads-l39v). When truncated,
+// the summary footer says "Showing: N issues" instead of "Total: N issues" — the
+// counts are page-local, so calling them the "Total" is factually false whenever
+// more rows matched than were shown (e.g. the default --limit 50 on a >50-issue
+// workspace). The counts stay page-local either way (computing a ground-truth
+// total would need a separate unlimited COUNT query, not available on every call
+// path); relabeling stops the word from asserting completeness it doesn't have.
+func displayPrettyListWithDepsTruncated(issues []*types.Issue, showHeader bool, allDeps map[string][]*types.Dependency, truncated bool) {
 	if showHeader {
 		// Clear screen and show header
 		fmt.Print("\033[2J\033[H")
@@ -184,7 +199,14 @@ func displayPrettyListWithDeps(issues []*types.Issue, showHeader bool, allDeps m
 			inProgressCount++
 		}
 	}
-	fmt.Printf("Total: %d issues (%d open, %d in progress)\n", len(issues), openCount, inProgressCount)
+	label := "Total"
+	if truncated {
+		// The slice is only a page; do not claim it is the total. The
+		// stderr truncation hint (printTruncationHint) still explains how to
+		// see all rows — this just keeps the stdout footer word honest.
+		label = "Showing"
+	}
+	fmt.Printf("%s: %d issues (%d open, %d in progress)\n", label, len(issues), openCount, inProgressCount)
 	fmt.Println()
 	fmt.Println("Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred")
 }

@@ -224,9 +224,9 @@ func loadWatchedIssues(ctx context.Context, store storage.DoltStorage, filter ty
 	return issues, nil
 }
 
-func displayWatchedIssueList(ctx context.Context, store watchListDependencyStore, issues []*types.Issue) {
+func displayWatchedIssueList(ctx context.Context, store watchListDependencyStore, issues []*types.Issue, truncated bool) {
 	allDeps := displayedIssueDeps(ctx, store, issues)
-	displayPrettyListWithDeps(issues, true, allDeps)
+	displayPrettyListWithDepsTruncated(issues, true, allDeps, truncated)
 }
 
 func watchIssues(ctx context.Context, store storage.DoltStorage, filter types.IssueFilter, ready bool, parentID string, sortBy string, reverse bool, effectiveLimit int) {
@@ -240,7 +240,7 @@ func watchIssues(ctx context.Context, store storage.DoltStorage, filter types.Is
 	if truncated {
 		issues = issues[:effectiveLimit]
 	}
-	displayWatchedIssueList(ctx, store, issues)
+	displayWatchedIssueList(ctx, store, issues, truncated)
 	printTruncationHint(truncated, effectiveLimit)
 	lastSnapshot := issueSnapshot(issues)
 
@@ -273,7 +273,7 @@ func watchIssues(ctx context.Context, store storage.DoltStorage, filter types.Is
 			snap := issueSnapshot(issues)
 			if snap != lastSnapshot {
 				lastSnapshot = snap
-				displayWatchedIssueList(ctx, store, issues)
+				displayWatchedIssueList(ctx, store, issues, truncated)
 				printTruncationHint(truncated, effectiveLimit)
 				fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
 			}
@@ -668,7 +668,7 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 		}
 
 		allDeps := displayedIssueDeps(ctx, activeStore, issues)
-		displayPrettyListWithDeps(issues, false, allDeps)
+		displayPrettyListWithDepsTruncated(issues, false, allDeps, truncated)
 		printTruncationHint(truncated, in.effectiveLimit)
 		printSkipLabelsFooter(in.skipLabels)
 		return nil
