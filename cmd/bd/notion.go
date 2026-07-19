@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -688,10 +687,17 @@ func saveNotionTargetConfig(ctx context.Context, dataSourceID, viewURL string) e
 	return nil
 }
 
-func writeNotionJSON(cmd *cobra.Command, value interface{}) error {
-	encoder := json.NewEncoder(cmd.OutOrStdout())
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(value)
+// writeNotionJSON emits a notion command's --json response. beads-lav0
+// (missed site): it previously used a raw json.NewEncoder on cmd.OutOrStdout(),
+// bypassing outputJSON→wrapWithSchemaVersion, so every notion --json object
+// omitted the top-level schema_version and ignored BD_JSON_ENVELOPE=1. The
+// lav0 discovery grep matched json.NewEncoder(os.Stdout) but missed the
+// cmd.OutOrStdout() variant. All 5 callers pass an object payload, so routing
+// through outputJSON adds schema_version in both plain and envelope mode,
+// matching every other --json verb. (cmd.OutOrStdout() == os.Stdout for all
+// callers, which are real commands writing to stdout.)
+func writeNotionJSON(_ *cobra.Command, value interface{}) error {
+	return outputJSON(value)
 }
 
 func firstNonEmpty(values ...string) string {
