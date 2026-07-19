@@ -219,7 +219,7 @@ func TestDisplayReadyList(t *testing.T) {
 	t.Run("WithParentEpics", func(t *testing.T) {
 		epicMap := map[string]string{"bd-1": "My Epic"}
 		out := captureStdout(t, func() error {
-			displayReadyList(issues, epicMap)
+			displayReadyList(issues, epicMap, false)
 			return nil
 		})
 		if !strings.Contains(out, "bd-1") || !strings.Contains(out, "bd-2") {
@@ -235,7 +235,7 @@ func TestDisplayReadyList(t *testing.T) {
 
 	t.Run("WithNilEpicMap", func(t *testing.T) {
 		out := captureStdout(t, func() error {
-			displayReadyList(issues, nil)
+			displayReadyList(issues, nil, false)
 			return nil
 		})
 		if !strings.Contains(out, "bd-1") || !strings.Contains(out, "bd-2") {
@@ -243,6 +243,26 @@ func TestDisplayReadyList(t *testing.T) {
 		}
 		if !strings.Contains(out, "Ready: 2 issues") {
 			t.Errorf("Expected summary footer in output: %q", out)
+		}
+	})
+
+	// beads-48g6: on a --limit-truncated page the "Ready: N" footer would print
+	// the page size and contradict the caller's "Showing K of N ready issues"
+	// line. When truncated=true the footer line must be suppressed (the issues
+	// still render; the status legend still prints).
+	t.Run("TruncatedSuppressesFooter", func(t *testing.T) {
+		out := captureStdout(t, func() error {
+			displayReadyList(issues, nil, true)
+			return nil
+		})
+		if !strings.Contains(out, "bd-1") || !strings.Contains(out, "bd-2") {
+			t.Errorf("Expected both issue IDs still rendered: %q", out)
+		}
+		if strings.Contains(out, "Ready: 2 issues") {
+			t.Errorf("truncated view must NOT print the page-size 'Ready: N' footer (beads-48g6): %q", out)
+		}
+		if !strings.Contains(out, "Status: ○ open") {
+			t.Errorf("status legend should still print when truncated: %q", out)
 		}
 	})
 }

@@ -324,7 +324,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			}
 			fmt.Println()
 		} else {
-			displayReadyList(issues, parentEpicMap)
+			displayReadyList(issues, parentEpicMap, truncated)
 		}
 
 		if truncated {
@@ -445,8 +445,14 @@ func buildParentEpicMap(ctx context.Context, s storage.DoltStorage, issues []*ty
 	return result
 }
 
-// displayReadyList displays ready issues in pretty format with optional parent epic context
-func displayReadyList(issues []*types.Issue, parentEpicMap map[string]string) {
+// displayReadyList displays ready issues in pretty format with optional parent
+// epic context. truncated reports whether the passed slice is only a --limit
+// page (beads-48g6): when true, the "Ready: N" footer would print the page size
+// and contradict the "Showing K of N ready issues" line the caller prints just
+// below, so the footer is suppressed and the caller's line carries the true
+// count. When not truncated, len(issues) IS the full ready set, so the footer
+// prints normally.
+func displayReadyList(issues []*types.Issue, parentEpicMap map[string]string, truncated bool) {
 	for _, issue := range issues {
 		epicTitle := ""
 		if parentEpicMap != nil {
@@ -458,7 +464,13 @@ func displayReadyList(issues []*types.Issue, parentEpicMap map[string]string) {
 	// Summary footer
 	fmt.Println()
 	fmt.Println(strings.Repeat("-", 80))
-	fmt.Printf("Ready: %d issues with no active blockers\n", len(issues))
+	if !truncated {
+		// len(issues) is the complete ready set here, so it is a true count.
+		// On a truncated page we skip this line — the caller's "Showing K of N
+		// ready issues" line below carries the authoritative total, and a
+		// "Ready: <page size>" here would directly contradict it (beads-48g6).
+		fmt.Printf("Ready: %d issues with no active blockers\n", len(issues))
+	}
 	fmt.Println()
 	fmt.Println("Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred")
 }

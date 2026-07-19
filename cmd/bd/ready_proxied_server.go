@@ -145,7 +145,7 @@ func runReadyProxiedList(ctx context.Context, uw uow.UnitOfWork, in readyInput) 
 		}
 		fmt.Println()
 	} else {
-		displayReadyList(issues, parentEpicMap)
+		displayReadyList(issues, parentEpicMap, truncated)
 	}
 
 	if truncated {
