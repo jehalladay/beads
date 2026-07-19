@@ -179,7 +179,11 @@ func writePreflightChecklist(w io.Writer, jsonOutput bool) error {
 	if jsonOutput {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(ChecklistResult{Items: preflightChecklistItems, Hint: preflightChecklistHint}); err != nil {
+		// beads-lav0: wrap so the checklist --json carries the top-level
+		// schema_version and honors BD_JSON_ENVELOPE, matching outputJSON. We
+		// wrap-then-encode (rather than call outputJSON) to preserve the
+		// io.Writer seam this function is built around.
+		if err := enc.Encode(wrapWithSchemaVersion(ChecklistResult{Items: preflightChecklistItems, Hint: preflightChecklistHint})); err != nil {
 			return HandleError("encoding preflight checklist: %v", err)
 		}
 		return nil
@@ -258,9 +262,7 @@ func runChecks(jsonOutput, skipLint bool) error {
 			Passed:  allPassed,
 			Summary: summary,
 		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(result); err != nil {
+		if err := outputJSON(result); err != nil {
 			return HandleError("encoding preflight result: %v", err)
 		}
 		if !allPassed {

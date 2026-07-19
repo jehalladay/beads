@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
@@ -398,9 +397,7 @@ func runShowProxiedThread(ctx context.Context, uw uow.UnitOfWork, in *showProxie
 	})
 
 	if jsonOutput {
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		_ = encoder.Encode(threadMessages)
+		_ = outputJSON(threadMessages)
 		return
 	}
 

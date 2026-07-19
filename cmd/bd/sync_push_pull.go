@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -220,9 +219,7 @@ func init() {
 // outputSyncResult writes sync results as JSON or human-readable text.
 func outputSyncResult(result *tracker.SyncResult, dryRun bool) {
 	if jsonOutput {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(result)
+		_ = outputJSON(result)
 		return
 	}
 	if dryRun {

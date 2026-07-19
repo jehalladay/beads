@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
@@ -135,9 +133,7 @@ func runMergeSlotCreate(cmd *cobra.Command, args []string) error {
 			"id":     issue.ID,
 			"status": string(issue.Status),
 		}
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(result)
+		return outputJSON(result)
 	}
 
 	fmt.Printf("%s Created merge slot: %s\n", ui.RenderPass("✓"), issue.ID)
@@ -162,9 +158,7 @@ func runMergeSlotCheck(cmd *cobra.Command, args []string) error {
 					"available": false,
 					"error":     "not found",
 				}
-				encoder := json.NewEncoder(os.Stdout)
-				encoder.SetIndent("", "  ")
-				return encoder.Encode(result)
+				return outputJSON(result)
 			}
 			fmt.Printf("Merge slot not found: %s\n", slotID)
 			fmt.Printf("Run 'bd merge-slot create' to create one.\n")
@@ -180,9 +174,7 @@ func runMergeSlotCheck(cmd *cobra.Command, args []string) error {
 			"holder":    nilIfEmpty(status.Holder),
 			"waiters":   status.Waiters,
 		}
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(result)
+		return outputJSON(result)
 	}
 
 	if status.Available {
@@ -231,9 +223,7 @@ func runMergeSlotAcquire(cmd *cobra.Command, args []string) error {
 				"acquired": false,
 				"holder":   result.Holder,
 			}
-			encoder := json.NewEncoder(os.Stdout)
-			encoder.SetIndent("", "  ")
-			if eerr := encoder.Encode(out); eerr != nil {
+			if eerr := outputJSON(out); eerr != nil {
 				return eerr
 			}
 			return SilentExit()
@@ -252,9 +242,7 @@ func runMergeSlotAcquire(cmd *cobra.Command, args []string) error {
 				"holder":   result.Holder,
 				"position": result.Position,
 			}
-			encoder := json.NewEncoder(os.Stdout)
-			encoder.SetIndent("", "  ")
-			if eerr := encoder.Encode(out); eerr != nil {
+			if eerr := outputJSON(out); eerr != nil {
 				return eerr
 			}
 			return SilentExit()
@@ -273,9 +261,7 @@ func runMergeSlotAcquire(cmd *cobra.Command, args []string) error {
 			"acquired": true,
 			"holder":   holder,
 		}
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(out)
+		return outputJSON(out)
 	}
 
 	fmt.Printf("%s Acquired merge slot: %s\n", ui.RenderPass("✓"), result.SlotID)
@@ -305,9 +291,7 @@ func runMergeSlotRelease(cmd *cobra.Command, args []string) error {
 			"id":       slotID,
 			"released": true,
 		}
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(out)
+		return outputJSON(out)
 	}
 
 	slotID := storage.MergeSlotID(rootCtx, store)

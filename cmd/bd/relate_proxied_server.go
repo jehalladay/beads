@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/storage/uow"
@@ -39,9 +37,7 @@ func runRelateProxiedServer(ctx context.Context, args []string) error {
 	if alreadyRelated, checkErr := proxiedRelatesToLinkExists(ctx, uw, id1, id2); checkErr == nil && alreadyRelated {
 		if jsonOutput {
 			result := map[string]interface{}{"id1": id1, "id2": id2, "related": true, "unchanged": true}
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			return enc.Encode(result)
+			return outputJSON(result)
 		}
 		fmt.Printf("%s Already related, no change: %s ↔ %s\n", ui.RenderPass("✓"), id1, id2)
 		return nil
@@ -63,9 +59,7 @@ func runRelateProxiedServer(ctx context.Context, args []string) error {
 
 	if jsonOutput {
 		result := map[string]interface{}{"id1": id1, "id2": id2, "related": true}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result)
+		return outputJSON(result)
 	}
 	fmt.Printf("%s Linked %s ↔ %s\n", ui.RenderPass("✓"), id1, id2)
 	return nil
@@ -108,9 +102,7 @@ func runUnrelateProxiedServer(ctx context.Context, args []string) error {
 
 	if jsonOutput {
 		result := map[string]interface{}{"id1": id1, "id2": id2, "unrelated": true}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result)
+		return outputJSON(result)
 	}
 	fmt.Printf("%s Unlinked %s ↔ %s\n", ui.RenderPass("✓"), id1, id2)
 	return nil

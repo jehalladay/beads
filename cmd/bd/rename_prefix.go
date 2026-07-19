@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -165,9 +164,7 @@ NOTE: This is a rare operation. Most users never need this command.`,
 				"new_prefix":   newPrefix,
 				"issues_count": len(issues),
 			}
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			if eerr := enc.Encode(result); eerr != nil {
+			if eerr := outputJSON(result); eerr != nil {
 				return eerr
 			}
 		}
@@ -345,9 +342,7 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 			"issues_repaired":  len(incorrectIssues),
 			"issues_unchanged": len(correctIssues),
 		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(result)
+		_ = outputJSON(result)
 	}
 
 	return nil

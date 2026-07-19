@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -226,9 +225,7 @@ func runWorktreeCreate(cmd *cobra.Command, args []string) error {
 			"path":   worktreePath,
 			"branch": branch,
 		}
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(result)
+		return outputJSON(result)
 	}
 
 	fmt.Printf("%s Created worktree: %s\n", ui.RenderPass("✓"), worktreePath)
@@ -284,9 +281,7 @@ func runWorktreeList(cmd *cobra.Command, args []string) error {
 	}
 
 	if jsonOutput {
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(worktrees)
+		return outputJSON(worktrees)
 	}
 
 	// Human-readable output
@@ -389,9 +384,7 @@ func runWorktreeRemove(cmd *cobra.Command, args []string) error {
 		result := map[string]interface{}{
 			"removed": worktreePath,
 		}
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(result)
+		return outputJSON(result)
 	}
 
 	fmt.Printf("%s Removed worktree: %s\n", ui.RenderPass("✓"), worktreePath)
@@ -426,9 +419,7 @@ func runWorktreeInfo(cmd *cobra.Command, args []string) error {
 			result := map[string]interface{}{
 				"is_worktree": false,
 			}
-			encoder := json.NewEncoder(os.Stdout)
-			encoder.SetIndent("", "  ")
-			return encoder.Encode(result)
+			return outputJSON(result)
 		}
 		fmt.Println("Not in a git worktree (this is the main repository)")
 		return nil
@@ -456,9 +447,7 @@ func runWorktreeInfo(cmd *cobra.Command, args []string) error {
 			result["beads_local"] = redirectInfo.LocalDir
 			result["beads_target"] = redirectInfo.TargetDir
 		}
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(result)
+		return outputJSON(result)
 	}
 
 	fmt.Printf("Worktree: %s\n", cwd)
@@ -533,9 +522,7 @@ func listWorktreesWithoutBeads(ctx context.Context, repoRoot string) error {
 	}
 
 	if jsonOutput {
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(worktrees)
+		return outputJSON(worktrees)
 	}
 
 	// Human-readable output

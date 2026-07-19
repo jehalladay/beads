@@ -94,7 +94,7 @@ shared across all clones of this repository.`,
 				"added": true,
 				"path":  repoPath,
 			}
-			return json.NewEncoder(os.Stdout).Encode(result)
+			return outputJSON(result)
 		}
 
 		fmt.Printf("Added repository: %s\n", repoPath)
@@ -165,7 +165,7 @@ that came from the removed repository.`,
 				"path":           repoPath,
 				"issues_deleted": deletedCount,
 			}
-			return json.NewEncoder(os.Stdout).Encode(result)
+			return outputJSON(result)
 		}
 
 		fmt.Printf("Removed repository: %s\n", repoPath)
@@ -212,7 +212,7 @@ repositories configured for hydration.`,
 				"primary":    primary,
 				"additional": repos.Additional,
 			}
-			return json.NewEncoder(os.Stdout).Encode(result)
+			return outputJSON(result)
 		}
 
 		primary := repos.Primary
@@ -406,7 +406,7 @@ Also triggers Dolt push/pull if a remote is configured.`,
 				"repos_skipped":   totalSkipped,
 				"issues_imported": totalImported,
 			}
-			return json.NewEncoder(os.Stdout).Encode(result)
+			return outputJSON(result)
 		}
 
 		if totalImported > 0 {

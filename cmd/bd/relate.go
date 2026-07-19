@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
@@ -119,9 +117,7 @@ func runRelate(cmd *cobra.Command, args []string) error {
 	if alreadyRelated, checkErr := relatesToLinkExists(ctx, id1, id2); checkErr == nil && alreadyRelated {
 		if jsonOutput {
 			result := map[string]interface{}{"id1": id1, "id2": id2, "related": true, "unchanged": true}
-			encoder := json.NewEncoder(os.Stdout)
-			encoder.SetIndent("", "  ")
-			return encoder.Encode(result)
+			return outputJSON(result)
 		}
 		fmt.Printf("%s Already related, no change: %s ↔ %s\n", ui.RenderPass("✓"), id1, id2)
 		return nil
@@ -160,9 +156,7 @@ func runRelate(cmd *cobra.Command, args []string) error {
 			"id2":     id2,
 			"related": true,
 		}
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(result)
+		return outputJSON(result)
 	}
 
 	fmt.Printf("%s Linked %s ↔ %s\n", ui.RenderPass("✓"), id1, id2)
@@ -257,9 +251,7 @@ func runUnrelate(cmd *cobra.Command, args []string) error {
 			"id2":       id2,
 			"unrelated": true,
 		}
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(result)
+		return outputJSON(result)
 	}
 
 	fmt.Printf("%s Unlinked %s ↔ %s\n", ui.RenderPass("✓"), id1, id2)

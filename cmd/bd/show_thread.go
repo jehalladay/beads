@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 
@@ -85,9 +83,7 @@ func showMessageThread(ctx context.Context, messageID string, jsonOutput bool) e
 	})
 
 	if jsonOutput {
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(threadMessages)
+		return outputJSON(threadMessages)
 	}
 
 	// Display the thread
