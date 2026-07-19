@@ -354,7 +354,10 @@ Examples:
 		}
 
 		fmt.Printf("%s Created gate %s (type: %s)\n", ui.RenderPass("✓"), ui.RenderID(gate.ID), gateType)
-		fmt.Printf("  Blocks: %s (%s)\n", targetIssue.ID, targetIssue.Title)
+		// beads-mvb6a: sanitize the target title for terminal display (7n9y
+		// holdout) — targetIssue is store-read and an untrusted imported title
+		// can carry OSC/CSI escapes; matches the sibling gate.go:415.
+		fmt.Printf("  Blocks: %s (%s)\n", targetIssue.ID, displayTitle(targetIssue.Title))
 		if reason != "" {
 			fmt.Printf("  Reason: %s\n", reason)
 		}
