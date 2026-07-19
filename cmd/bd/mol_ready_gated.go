@@ -95,20 +95,31 @@ func runMolReadyGatedCore(_ *cobra.Command, _ []string) error {
 	fmt.Printf("\n%s Molecules ready for gate-resume dispatch (%d):\n\n",
 		ui.RenderAccent(""), len(molecules))
 
-	for i, mol := range molecules {
-		fmt.Printf("%d. %s: %s\n", i+1, ui.RenderID(mol.MoleculeID), mol.MoleculeTitle)
-		if mol.ClosedGate != nil {
-			fmt.Printf("   Gate closed: %s (%s)\n", mol.ClosedGate.ID, mol.ClosedGate.AwaitType)
-		}
-		if mol.ReadyStep != nil {
-			fmt.Printf("   Ready step: %s - %s\n", mol.ReadyStep.ID, mol.ReadyStep.Title)
-		}
-		fmt.Println()
-	}
+	printGatedReadyMolecules(molecules)
 
 	fmt.Println("To dispatch a molecule:")
 	fmt.Println("  bd sling <agent> --mol <molecule-id>")
 	return nil
+}
+
+// printGatedReadyMolecules renders the human-readable gate-ready molecule list.
+// Each molecule title and ready-step title is routed through displayTitle
+// (ui.SanitizeForTerminal) because a title can originate from an untrusted
+// import (JSONL/markdown/SCM) carrying OSC/CSI terminal-control escapes (OSC 0
+// window-title / OSC 52 clipboard); printing it raw would inject control
+// sequences onto these lines. Display-only — stored titles are unchanged. 7n9y
+// sink-class slice.
+func printGatedReadyMolecules(molecules []*GatedMolecule) {
+	for i, mol := range molecules {
+		fmt.Printf("%d. %s: %s\n", i+1, ui.RenderID(mol.MoleculeID), displayTitle(mol.MoleculeTitle))
+		if mol.ClosedGate != nil {
+			fmt.Printf("   Gate closed: %s (%s)\n", mol.ClosedGate.ID, mol.ClosedGate.AwaitType)
+		}
+		if mol.ReadyStep != nil {
+			fmt.Printf("   Ready step: %s - %s\n", mol.ReadyStep.ID, displayTitle(mol.ReadyStep.Title))
+		}
+		fmt.Println()
+	}
 }
 
 // findGateReadyMolecules finds molecules where a gate has closed and work can resume.
