@@ -63,8 +63,10 @@ func runEditProxiedServer(ctx context.Context, id, fieldToEdit string) error {
 	}
 
 	// Write via the shared proxied update core (same field allowlist + audit).
+	// force=false: edit is a plain single-field mutation with no force-override
+	// semantics (matches assign/tag/defer/label/priority callers).
 	in := &updateInput{fields: map[string]any{fieldToEdit: newValue}}
-	updated, ok := applyUpdateProxiedOne(ctx, resolvedID, in)
+	updated, ok := applyUpdateProxiedOne(ctx, resolvedID, in, false)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "Your edits are preserved in: %s\n", tmpPath)
 		return &exitError{Code: 1}
