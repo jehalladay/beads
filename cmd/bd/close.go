@@ -260,7 +260,12 @@ the flags appear in the command line.`,
 
 		// Handle --claim-next flag
 		var claimedNextIssue *types.Issue
-		if claimNext && closedCount > 0 && !continueFlag {
+		// beads-zub66: track whether the --claim-next path was engaged so the
+		// --json output shape stays STABLE regardless of runtime outcome (a
+		// claim-next invocation always emits the {closed,claimed} dict, even when
+		// no candidate was available — see the jsonOutput block below).
+		claimNextEngaged := claimNext && closedCount > 0 && !continueFlag
+		if claimNextEngaged {
 			readyIssues, err := postCloseStore.GetReadyWork(ctx, types.WorkFilter{
 				Status:     "open",
 				Limit:      1,
@@ -289,7 +294,15 @@ the flags appear in the command line.`,
 		}
 
 		if jsonOutput && len(closedIssues) > 0 {
-			if claimedNextIssue != nil {
+			if claimNextEngaged {
+				// beads-zub66: emit a STABLE dict shape for --claim-next --json
+				// regardless of whether a next issue was actually claimed.
+				// Previously this flipped by runtime outcome — a dict when a
+				// candidate was claimed, but a bare array [closed] when none was
+				// available — so a consumer could not statically type the payload.
+				// Always emit {closed:[...], claimed:<obj|null>}; claimed is null
+				// when no candidate was available (or a claim race was lost). The
+				// no-flag close --json baseline still emits the house-style array.
 				if err := outputJSON(map[string]interface{}{
 					"closed":  closedIssues,
 					"claimed": claimedNextIssue,
