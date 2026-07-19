@@ -51,22 +51,34 @@ func TestAttachUnknownSubcommandGuards(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			root := mk()
-			root.SetArgs(tt.args)
-			root.SetOut(&bytes.Buffer{})
-			var errBuf bytes.Buffer
-			root.SetErr(&errBuf)
+			// beads-dthi: the guard now routes its error through
+			// HandleErrorRespectJSON, which WRITES the message to stderr (plain
+			// mode) and returns the opaque &exitError{1} sentinel — so the
+			// message is no longer carried on err.Error(). Pin plain mode and
+			// capture stderr to assert the message; assert err is the non-nil
+			// exit sentinel.
+			t.Setenv("BEADS_JSON", "")
+			savedJSON := jsonOutput
+			jsonOutput = false
+			t.Cleanup(func() { jsonOutput = savedJSON })
 
-			err := root.Execute()
+			var execErr error
+			stderr := captureStderr(t, func() {
+				root := mk()
+				root.SetArgs(tt.args)
+				root.SetOut(&bytes.Buffer{})
+				root.SetErr(&bytes.Buffer{})
+				execErr = root.Execute()
+			})
 			if tt.wantErr {
-				if err == nil {
+				if execErr == nil {
 					t.Fatalf("args=%v: expected an error (non-zero exit), got nil", tt.args)
 				}
-				if tt.wantErrHas != "" && !strings.Contains(err.Error(), tt.wantErrHas) {
-					t.Errorf("args=%v: error = %q, want it to contain %q", tt.args, err.Error(), tt.wantErrHas)
+				if tt.wantErrHas != "" && !strings.Contains(stderr, tt.wantErrHas) {
+					t.Errorf("args=%v: stderr = %q, want it to contain %q", tt.args, stderr, tt.wantErrHas)
 				}
-			} else if err != nil {
-				t.Fatalf("args=%v: expected no error, got %v", tt.args, err)
+			} else if execErr != nil {
+				t.Fatalf("args=%v: expected no error, got %v", tt.args, execErr)
 			}
 		})
 	}
@@ -81,14 +93,23 @@ func TestUnknownSubcommandErrorNamesTheParent(t *testing.T) {
 	root.AddCommand(cfg)
 	attachUnknownSubcommandGuards(root)
 
-	root.SetArgs([]string{"config", "gett"})
-	root.SetOut(&bytes.Buffer{})
-	root.SetErr(&bytes.Buffer{})
-	err := root.Execute()
-	if err == nil {
+	// beads-dthi: message is on stderr (HandleErrorRespectJSON), not err.Error().
+	t.Setenv("BEADS_JSON", "")
+	savedJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = savedJSON })
+
+	var execErr error
+	stderr := captureStderr(t, func() {
+		root.SetArgs([]string{"config", "gett"})
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&bytes.Buffer{})
+		execErr = root.Execute()
+	})
+	if execErr == nil {
 		t.Fatal("config gett: expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "bd config --help") {
-		t.Errorf("error should point at 'bd config --help'; got: %q", err.Error())
+	if !strings.Contains(stderr, "bd config --help") {
+		t.Errorf("error should point at 'bd config --help'; got stderr: %q", stderr)
 	}
 }
