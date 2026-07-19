@@ -573,7 +573,14 @@ func RunAudit(rulesDir string, threshold float64) (*AuditResult, error) {
 	entries, err := os.ReadDir(rulesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &AuditResult{}, nil
+			// beads-tamf: normalize nil→[] on the missing-dir path too (the
+			// DEFAULT for most repos), matching the other two return paths below
+			// — else `bd rules audit --json` emits contradictions/merge_candidates
+			// as null on the common path while [] when the dir exists.
+			return &AuditResult{
+				Contradictions:  []ContradictionReport{},
+				MergeCandidates: []MergeCandidate{},
+			}, nil
 		}
 		return nil, fmt.Errorf("read rules directory: %w", err)
 	}

@@ -434,6 +434,35 @@ func TestRulesRunAudit_EmptyDir(t *testing.T) {
 	}
 }
 
+// TestRulesRunAudit_MissingDirJSONArrays covers beads-tamf: the missing-dir
+// early return (the DEFAULT for most repos, which have no .claude/rules/) must
+// normalize Contradictions/MergeCandidates to non-nil slices so `bd rules audit
+// --json` emits [] not null, matching the dir-present path.
+func TestRulesRunAudit_MissingDirJSONArrays(t *testing.T) {
+	// A path that does not exist → the os.IsNotExist early return.
+	missing := filepath.Join(tempRulesDir(t), "does-not-exist")
+
+	result, err := RunAudit(missing, 0.6)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Contradictions == nil {
+		t.Error("Contradictions must be a non-nil slice on the missing-dir path (else --json emits null)")
+	}
+	if result.MergeCandidates == nil {
+		t.Error("MergeCandidates must be a non-nil slice on the missing-dir path (else --json emits null)")
+	}
+	// The serialized shape must be [] not null (the actual --json contract).
+	b, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(b)
+	if strings.Contains(s, `"contradictions":null`) || strings.Contains(s, `"merge_candidates":null`) {
+		t.Errorf("missing-dir --json must emit [] not null, got %s", s)
+	}
+}
+
 func TestRulesRunAudit_SingleRule(t *testing.T) {
 	dir := tempRulesDir(t)
 	writeRule(t, dir, "only-rule", `# Only Rule
