@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/metrics"
 )
@@ -23,6 +24,24 @@ func exitCodeFromError(err error) (int, bool) {
 		return ee.Code, true
 	}
 	return 0, false
+}
+
+// isArgCountError reports whether err is a cobra positional-arg-count
+// validation error (from cobra.ExactArgs/MinimumNArgs/MaximumNArgs/RangeArgs).
+// These fire inside rootCmd.ExecuteC() BEFORE a command's RunE, so they never
+// reach a --json-aware handler; the main.go error branch uses this to honor
+// the --json contract for arg-count failures (beads-71br). The messages are
+// cobra's stable literals (args.go): "accepts %d arg(s), received %d",
+// "requires at least %d arg(s), only received %d", "accepts at most %d
+// arg(s)...", "accepts between %d and %d arg(s)...".
+func isArgCountError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "arg(s), received ") ||
+		strings.Contains(msg, "arg(s), only received ") ||
+		strings.Contains(msg, "accepts between ")
 }
 
 func activeWorkspaceNotFoundError() string {

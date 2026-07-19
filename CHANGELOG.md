@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd <cmd> --json` with the wrong positional arg count now emits a JSON error object on stdout, not plaintext on stderr (beads-71br).**
+  cobra positional-arg-count validators (`ExactArgs`/`MinimumNArgs`/…) fire inside `rootCmd.ExecuteC()` *before* a
+  command's RunE, so an arg-count failure (e.g. `bd diff a --json`, which needs 2 args) never reached a `--json`-aware
+  handler — it produced rc=1 with empty stdout and a plaintext `Error: accepts 2 arg(s), received 1` on stderr,
+  unparseable by a `--json` consumer. The main.go ExecuteC error branch now detects an arg-count error and, when
+  `--json` is set on the executed command, emits `{error, schema_version}` on stdout (matching
+  `HandleErrorRespectJSON`) before exit. Central single-site fix covering all leaf commands with an `Args:` validator
+  (diff/link/supersede/promote/reopen/dep-tree/gate add-waiter …); the non-`--json` path is unchanged. Same
+  error-contract class as beads-dthi (unknown-subcommand) / uwis (extra-positional). Teeth:
+  TestArgCountErrorJSON_EmitsStdoutErrorObject.
+
 - **`bd hooks list --json` inner hook objects now use snake_case keys, not raw Go PascalCase field names (beads-nbhp).**
   The `HookStatus` struct had no JSON tags, so the inner `hooks[]` objects marshaled verbatim as
   `{Name, Installed, Version, IsShim, Outdated}` — breaking the snake_case house style (`bd list`/`show` emit

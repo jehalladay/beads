@@ -1520,6 +1520,18 @@ func main() {
 		if code, ok := exitCodeFromError(err); ok {
 			os.Exit(code)
 		}
+		// beads-71br: cobra positional-arg-count validators (ExactArgs/
+		// MinimumNArgs/...) fire inside ExecuteC BEFORE the command's RunE, so an
+		// arg-count failure never reaches a --json-aware handler and would leak as
+		// plaintext stderr + empty stdout. When --json is set on the executed
+		// command, honor the contract centrally: emit {error,schema_version} to
+		// STDOUT (matching HandleErrorRespectJSON) instead of the plaintext path.
+		if executedCmd != nil && isArgCountError(err) {
+			if jf := executedCmd.Flags().Lookup("json"); jf != nil && jf.Value.String() == "true" {
+				jsonStdoutError(err.Error(), "")
+				os.Exit(1)
+			}
+		}
 		if executedCmd != nil && executedCmd.SilenceErrors {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
 		}
