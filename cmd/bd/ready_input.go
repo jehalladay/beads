@@ -241,6 +241,17 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 	if tc, _ := cmd.Flags().GetString("title-contains"); tc != "" {
 		in.filter.TitleContains = tc
 	}
+	// beads-v8e8: --label-pattern (glob) / --label-regex on the PROXIED ready path
+	// too (parity with bd list, which got them via v5i7). Shared input path, so
+	// setting them here covers runReadyProxiedServer; the direct ready.go RunE sets
+	// them separately (same split as --title-contains). BuildReadyWorkWhere emits
+	// the LIKE/REGEXP clauses for both paths (globToLike-translated glob).
+	if lp, _ := cmd.Flags().GetString("label-pattern"); lp != "" {
+		in.filter.LabelPattern = lp
+	}
+	if lr, _ := cmd.Flags().GetString("label-regex"); lr != "" {
+		in.filter.LabelRegex = lr
+	}
 	// beads-gqcmu: --no-labels / --empty-description on the PROXIED ready path too
 	// (parity with bd list). Plain bools; the direct ready.go RunE sets them separately.
 	in.filter.NoLabels, _ = cmd.Flags().GetBool("no-labels")

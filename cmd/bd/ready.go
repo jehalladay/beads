@@ -107,6 +107,8 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		labels, _ := cmd.Flags().GetStringSlice("label")
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		excludeLabels, _ := cmd.Flags().GetStringSlice("exclude-label")
+		labelPattern, _ := cmd.Flags().GetString("label-pattern")
+		labelRegex, _ := cmd.Flags().GetString("label-regex")
 		issueType, _ := cmd.Flags().GetString("type")
 		issueType = utils.NormalizeIssueType(issueType) // Expand aliases (mr→merge-request, etc.)
 		// beads-gddf: validate --type like list/count/search do. Previously
@@ -175,6 +177,8 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			Labels:           labels,
 			LabelsAny:        labelsAny,
 			ExcludeLabels:    excludeLabels,
+			LabelPattern:     labelPattern, // beads-v8e8: --label-pattern glob (parity with bd list)
+			LabelRegex:       labelRegex,   // beads-v8e8: --label-regex (parity with bd list)
 			IncludeDeferred:  includeDeferred,  // GH#820: respect --include-deferred flag
 			IncludeEphemeral: includeEphemeral, // bd-i5k5x: allow ephemeral issues (e.g., merge-requests)
 			ExcludeTypes:     excludeTypes,
@@ -931,6 +935,8 @@ func init() {
 	readyCmd.Flags().StringSlice("exclude-label", []string{}, "Exclude issues that have ANY of these labels")
 	readyCmd.Flags().Bool("no-labels", false, "Filter issues with no labels")
 	readyCmd.Flags().Bool("empty-description", false, "Filter issues with empty or missing description")
+	readyCmd.Flags().String("label-pattern", "", "Filter by label glob pattern (e.g., 'tech-*' matches tech-debt, tech-legacy)")
+	readyCmd.Flags().String("label-regex", "", "Filter by label regex pattern (e.g., 'tech-(debt|legacy)')")
 	readyCmd.Flags().StringP("type", "t", "", "Filter by issue type (task, bug, feature, epic, decision, merge-request). Aliases: mr→merge-request, feat→feature, mol→molecule, dec/adr→decision")
 	readyCmd.Flags().String("title-contains", "", "Filter by title substring (case-insensitive)")
 	readyCmd.Flags().String("mol", "", "Filter to steps within a specific molecule")

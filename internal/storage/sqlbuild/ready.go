@@ -279,6 +279,20 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 		}
 		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) IN (%s))", tables.Labels, strings.Join(placeholders, ", ")))
 	}
+	// --label-pattern (glob) / --label-regex: feature-parity with bd list
+	// (beads-v5i7 added them there). Without these clauses the flags flowed into
+	// WorkFilter but no ready-path query consumed them, so they'd be silently
+	// ignored and return everything (the same silent-ignore v5i7 fixed for list;
+	// beads-v8e8). Case-insensitive LIKE (glob translated by globToLike) and SQL
+	// REGEXP, mirroring BuildLabelDrivenSearch, in the ready path's id-IN style.
+	if pattern := strings.TrimSpace(filter.LabelPattern); pattern != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) LIKE LOWER(?))", tables.Labels))
+		args = append(args, globToLike(pattern))
+	}
+	if regex := strings.TrimSpace(filter.LabelRegex); regex != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE label REGEXP ?)", tables.Labels))
+		args = append(args, regex)
+	}
 	// Identity/registration labels (gt:agent/role/rig) are excluded from ready
 	// work by default (beads-wqs), merged with any caller-supplied ExcludeLabels.
 	// An explicit `filter.Labels` request for an identity label wins over the
