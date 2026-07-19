@@ -46,11 +46,26 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 		if store == nil {
 			return HandleErrorWithHint("database not initialized", diagHint())
 		}
+		// beads-en28: under --json these per-item messages must NOT interleave
+		// plain text onto the stream a `2>&1` consumer parses. On a wholly-failed
+		// batch the terminal HandleErrorRespectJSON stdout object is the sole
+		// error, so stderr must stay clean; on PARTIAL success the found array is
+		// on stdout, so per-item failures flush to stderr as JSON objects. Defer
+		// them and decide at the end, mirroring show.go's reportShowItemError
+		// (beads-fg6/beads-92tz). Non-JSON keeps immediate stderr (correct today).
+		var deferredItemErrors []string
+		reportReopenItemError := func(format string, a ...interface{}) {
+			if jsonOutput {
+				deferredItemErrors = append(deferredItemErrors, fmt.Sprintf(format, a...))
+				return
+			}
+			fmt.Fprintf(os.Stderr, format+"\n", a...)
+		}
 		for _, id := range args {
 			// Resolve with prefix routing (supports cross-rig reopens like `bd reopen xe-5ls`)
 			result, err := resolveAndGetIssueForMutation(ctx, store, id)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+				reportReopenItemError("Error resolving %s: %v", id, err)
 				hasError = true
 				continue
 			}
@@ -66,9 +81,9 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 			// clear message (matching the long-standing already-open behavior).
 			if issue.Status != types.StatusClosed {
 				if issue.Status == types.StatusOpen {
-					fmt.Fprintf(os.Stderr, "%s is already open\n", fullID)
+					reportReopenItemError("%s is already open", fullID)
 				} else {
-					fmt.Fprintf(os.Stderr, "%s is not closed (status: %s); reopen only applies to closed issues\n", fullID, issue.Status)
+					reportReopenItemError("%s is not closed (status: %s); reopen only applies to closed issues", fullID, issue.Status)
 				}
 				result.Close()
 				continue
@@ -82,7 +97,7 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 			// guard above returned for every non-closed status).
 			if !forceFlag {
 				if closedEpics := closedEpicParents(ctx, issueStore, fullID); len(closedEpics) > 0 {
-					fmt.Fprintf(os.Stderr, "cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override\n", fullID, closedEpics)
+					reportReopenItemError("cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override", fullID, closedEpics)
 					hasError = true
 					result.Close()
 					continue
@@ -90,7 +105,7 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 			}
 
 			if err := issueStore.ReopenIssue(ctx, fullID, reason, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Error reopening %s: %v\n", fullID, err)
+				reportReopenItemError("Error reopening %s: %v", fullID, err)
 				hasError = true
 				result.Close()
 				continue
@@ -133,6 +148,11 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 		}
 
 		if jsonOutput && len(reopenedIssues) > 0 {
+			// Partial success: stdout carries the reopened array, so any deferred
+			// per-item failures flush to stderr as JSON objects (beads-en28/fg6).
+			for _, msg := range deferredItemErrors {
+				reportItemError("%s", msg)
+			}
 			if jerr := outputJSON(reopenedIssues); jerr != nil {
 				return jerr
 			}
@@ -150,6 +170,16 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 				return HandleErrorRespectJSON("no issues reopened matching the provided IDs")
 			}
 			return SilentExit()
+		}
+		// No-op-only --json path (e.g. every id was already open / not closed, so
+		// hasError stayed false and nothing was reopened): stdout is empty, so
+		// flush the deferred status messages to stderr as JSON objects rather than
+		// dropping them — keeps the info visible without interleaving plain text
+		// onto a 2>&1 stream (beads-en28).
+		if jsonOutput && len(reopenedIssues) == 0 {
+			for _, msg := range deferredItemErrors {
+				reportItemError("%s", msg)
+			}
 		}
 		return nil
 	},

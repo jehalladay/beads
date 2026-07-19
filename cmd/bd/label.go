@@ -101,12 +101,14 @@ func collectLabelArgs(args []string, flagLabels []string) (issueIDs []string, la
 
 // filterUpdatableIDs drops ids that must not be label-mutated — currently
 // template molecules, which are read-only (beads-dwlg). Rejected ids are
-// appended to *unresolved and their error printed to stderr, mirroring the
-// partial-resolution handling in the label add/remove resolve loops so a
+// appended to *unresolved and their error reported via reportItemErr, mirroring
+// the partial-resolution handling in the label add/remove resolve loops so a
 // mixed batch still labels the updatable ids while exiting non-zero. A fetch
 // error leaves the id in (validateIssueUpdatable treats nil as updatable, and
-// the downstream mutation reports any real store error).
-func filterUpdatableIDs(ctx context.Context, ids []string, unresolved *[]string) []string {
+// the downstream mutation reports any real store error). reportItemErr defers
+// the message under --json (beads-en28) so it never interleaves plain text onto
+// the 2>&1 JSON stream; pass a nil-safe reporter.
+func filterUpdatableIDs(ctx context.Context, ids []string, unresolved *[]string, reportItemErr func(string, ...interface{})) []string {
 	kept := ids[:0:0]
 	for _, id := range ids {
 		issue, err := store.GetIssue(ctx, id)
@@ -116,13 +118,25 @@ func filterUpdatableIDs(ctx context.Context, ids []string, unresolved *[]string)
 			continue
 		}
 		if verr := validateIssueUpdatable(id, issue); verr != nil {
-			fmt.Fprintf(os.Stderr, "%s\n", verr)
+			reportItemErr("%s", verr)
 			*unresolved = append(*unresolved, id)
 			continue
 		}
 		kept = append(kept, id)
 	}
 	return kept
+}
+
+// flushDeferredItemErrors emits per-item errors that were deferred under --json
+// (beads-en28). It is called on the SUCCESS/partial-success paths — where stdout
+// carries the results payload — so the deferred failures go to stderr as JSON
+// objects (reportItemError) rather than being dropped. On wholly-failed batches
+// the terminal HandleErrorRespectJSON stdout object is the sole error and the
+// slice is intentionally NOT flushed (stderr stays clean for the 2>&1 consumer).
+func flushDeferredItemErrors(msgs []string) {
+	for _, msg := range msgs {
+		reportItemError("%s", msg)
+	}
 }
 
 func parseLabelArgs(args []string) (issueIDs []string, label string) {
@@ -180,12 +194,25 @@ var labelAddCmd = &cobra.Command{
 		ctx := rootCtx
 		resolvedIDs := make([]string, 0, len(issueIDs))
 		var unresolved []string
+		// beads-en28: under --json defer these per-item resolve errors so they
+		// don't interleave plain text onto the 2>&1 stream a JSON consumer parses.
+		// On a wholly-failed batch the terminal HandleErrorRespectJSON stdout
+		// object is the sole error (stderr clean); on partial success the results
+		// array is on stdout, so failures flush to stderr as JSON (fg6/92tz).
+		var deferredItemErrors []string
+		reportLabelItemError := func(format string, a ...interface{}) {
+			if jsonOutput {
+				deferredItemErrors = append(deferredItemErrors, fmt.Sprintf(format, a...))
+				return
+			}
+			fmt.Fprintf(os.Stderr, format+"\n", a...)
+		}
 		for _, id := range issueIDs {
 			var fullID string
 			var err error
 			fullID, err = utils.ResolvePartialID(ctx, store, id)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+				reportLabelItemError("Error resolving %s: %v", id, err)
 				unresolved = append(unresolved, id)
 				continue
 			}
@@ -201,7 +228,7 @@ var labelAddCmd = &cobra.Command{
 		// shorthand for this add, so the two doors to the same mutation must
 		// agree — templates are read-only. Skip a template id (do not mutate it)
 		// but exit non-zero, mirroring the partial-resolution semantics above.
-		issueIDs = filterUpdatableIDs(ctx, issueIDs, &unresolved)
+		issueIDs = filterUpdatableIDs(ctx, issueIDs, &unresolved, reportLabelItemError)
 		if len(issueIDs) == 0 {
 			if len(unresolved) > 0 {
 				return HandleErrorRespectJSON("no updatable issue id resolved: %s", strings.Join(unresolved, ", "))
@@ -215,6 +242,11 @@ var labelAddCmd = &cobra.Command{
 			}); err != nil {
 			return err
 		}
+		// At least one id was labeled (issueIDs>0 here): under --json stdout now
+		// carries the results array, so flush any deferred per-item resolve/
+		// template failures to stderr as JSON objects (beads-en28). Non-JSON
+		// already printed them immediately, so the slice is empty.
+		flushDeferredItemErrors(deferredItemErrors)
 		if len(unresolved) > 0 {
 			return HandleErrorRespectJSON("could not resolve %d of %d issue id(s): %s",
 				len(unresolved), len(unresolved)+len(issueIDs), strings.Join(unresolved, ", "))
@@ -249,12 +281,21 @@ var labelRemoveCmd = &cobra.Command{
 		ctx := rootCtx
 		resolvedIDs := make([]string, 0, len(issueIDs))
 		var unresolved []string
+		// beads-en28: defer per-item resolve errors under --json (see label add).
+		var deferredItemErrors []string
+		reportLabelItemError := func(format string, a ...interface{}) {
+			if jsonOutput {
+				deferredItemErrors = append(deferredItemErrors, fmt.Sprintf(format, a...))
+				return
+			}
+			fmt.Fprintf(os.Stderr, format+"\n", a...)
+		}
 		for _, id := range issueIDs {
 			var fullID string
 			var err error
 			fullID, err = utils.ResolvePartialID(ctx, store, id)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+				reportLabelItemError("Error resolving %s: %v", id, err)
 				unresolved = append(unresolved, id)
 				continue
 			}
@@ -266,7 +307,7 @@ var labelRemoveCmd = &cobra.Command{
 		}
 		// beads-dwlg: reject template molecules (read-only), matching the
 		// NotTemplate guard `bd tag` enforces — see the add path above.
-		issueIDs = filterUpdatableIDs(ctx, issueIDs, &unresolved)
+		issueIDs = filterUpdatableIDs(ctx, issueIDs, &unresolved, reportLabelItemError)
 		if len(issueIDs) == 0 {
 			if len(unresolved) > 0 {
 				return HandleErrorRespectJSON("no updatable issue id resolved: %s", strings.Join(unresolved, ", "))
@@ -279,6 +320,9 @@ var labelRemoveCmd = &cobra.Command{
 			}); err != nil {
 			return err
 		}
+		// Partial/whole success: flush deferred per-item failures to stderr as
+		// JSON objects now that stdout carries the results array (beads-en28).
+		flushDeferredItemErrors(deferredItemErrors)
 		if len(unresolved) > 0 {
 			return HandleErrorRespectJSON("could not resolve %d of %d issue id(s): %s",
 				len(unresolved), len(unresolved)+len(issueIDs), strings.Join(unresolved, ", "))
