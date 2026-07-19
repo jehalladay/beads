@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 type readyInput struct {
@@ -158,7 +159,17 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 		ExcludeTypes:     excludeTypes,
 	}
 	if cmd.Flags().Changed("priority") {
-		priority, _ := cmd.Flags().GetInt("priority")
+		// beads-57tt: parse via ValidatePriority (StringP flag) so the PROXIED
+		// ready path rejects an out-of-range/non-numeric --priority like
+		// list/count/create — gatherReadyInput is the shared input path for
+		// runReadyProxiedServer (the direct ready.go RunE guards it separately,
+		// since it does NOT go through gatherReadyInput — same split as --limit
+		// and beads-gddf --type). FatalErrorRespectJSON matches the neighbors.
+		priorityStr, _ := cmd.Flags().GetString("priority")
+		priority, err := validation.ValidatePriority(priorityStr)
+		if err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
 		in.filter.Priority = &priority
 	}
 	if assignee != "" && !unassigned {

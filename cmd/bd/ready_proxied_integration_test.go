@@ -732,6 +732,29 @@ func TestProxiedServerReady(t *testing.T) {
 		}
 	})
 
+	// beads-57tt: `bd ready --priority 99` / `-5` used to silently return rc0 +
+	// empty (matched nothing) because --priority was registered IntP + read via
+	// GetInt, unlike list/count/create (StringP + ValidatePriority). Now it must
+	// reject out-of-range values AND accept the P0-P4 form, on the proxied path.
+	t.Run("priority_validation_rejects_out_of_range", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "rpv")
+		out := bdProxiedReadyFail(t, bd, p, "--priority", "99")
+		if !strings.Contains(out, "invalid priority") {
+			t.Errorf("expected 'invalid priority' error for --priority 99, got: %s", out)
+		}
+		out = bdProxiedReadyFail(t, bd, p, "--priority=-5")
+		if !strings.Contains(out, "invalid priority") {
+			t.Errorf("expected 'invalid priority' error for --priority=-5, got: %s", out)
+		}
+		// Valid numeric and P-prefixed forms must both succeed (no false reject).
+		if _, _, err := bdProxiedRunBuffers(t, bd, p.dir, "ready", "--priority", "2"); err != nil {
+			t.Errorf("bd ready --priority 2 should succeed, got err: %v", err)
+		}
+		if _, _, err := bdProxiedRunBuffers(t, bd, p.dir, "ready", "--priority", "P2"); err != nil {
+			t.Errorf("bd ready --priority P2 should succeed, got err: %v", err)
+		}
+	})
+
 	t.Run("claim_combo_guards", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "rcc")
 		bdProxiedCreate(t, bd, p.dir, "Seed")

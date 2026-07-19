@@ -270,6 +270,32 @@ func TestEmbeddedReady(t *testing.T) {
 			t.Errorf("expected '--offset is only supported under --proxied-server' error, got: %s", out)
 		}
 	})
+
+	// beads-57tt: the DIRECT (non-proxied) RunE guards --priority via
+	// ValidatePriority (StringP flag). An out-of-range value used to be accepted
+	// silently (IntP + GetInt → matched nothing, exit 0). Also confirms the
+	// P0-P4 form now parses (IntP could not).
+	t.Run("priority_validation_direct", func(t *testing.T) {
+		cmd := exec.Command(bd, "ready", "--priority", "99")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("bd ready --priority 99 should have failed, got: %s", out)
+		}
+		if !strings.Contains(string(out), "invalid priority") {
+			t.Errorf("expected 'invalid priority' error, got: %s", out)
+		}
+		// P-prefixed and plain numeric forms both succeed (no false reject).
+		for _, val := range []string{"P2", "2"} {
+			c := exec.Command(bd, "ready", "--priority", val)
+			c.Dir = dir
+			c.Env = bdEnv(dir)
+			if o, err := c.CombinedOutput(); err != nil {
+				t.Errorf("bd ready --priority %s should succeed, got err: %v\n%s", val, err, o)
+			}
+		}
+	})
 }
 
 func TestEmbeddedReadyConcurrent(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 var readyCmd = &cobra.Command{
@@ -179,8 +180,15 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			ExcludeTypes:     excludeTypes,
 		}
 		// Use Changed() to properly handle P0 (priority=0)
+		// beads-57tt: parse via ValidatePriority (StringP flag) so an
+		// out-of-range/non-numeric --priority is rejected here (mirrors
+		// list_input.go); the proxied path guards the same in gatherReadyInput.
 		if cmd.Flags().Changed("priority") {
-			priority, _ := cmd.Flags().GetInt("priority")
+			priorityStr, _ := cmd.Flags().GetString("priority")
+			priority, err := validation.ValidatePriority(priorityStr)
+			if err != nil {
+				return HandleErrorRespectJSON("%v", err)
+			}
 			filter.Priority = &priority
 		}
 		if assignee != "" && !unassigned {
@@ -808,7 +816,12 @@ type MoleculeReadyOutput struct {
 func init() {
 	readyCmd.Flags().IntP("limit", "n", 100, "Maximum issues to show (use 0 for unlimited)")
 	readyCmd.Flags().Int("offset", 0, "Skip the first N matching results (0-based). Only supported under --proxied-server.")
-	readyCmd.Flags().IntP("priority", "p", 0, "Filter by priority")
+	// beads-57tt: register --priority as StringP + ValidatePriority (like
+	// list/count/create) so it accepts 0-4 AND P0-P4 and REJECTS out-of-range
+	// / non-numeric values. Previously IntP + GetInt silently accepted
+	// --priority 99 / -5 (matched nothing, exit 0 = false-negative footgun) and
+	// could not parse the P2 form the other filter commands accept.
+	registerPriorityFlag(readyCmd, "")
 	readyCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
 	readyCmd.Flags().BoolP("unassigned", "u", false, "Show only unassigned issues")
 	readyCmd.Flags().StringP("sort", "s", "priority", "Sort policy: priority (default), hybrid, oldest")
