@@ -505,7 +505,10 @@ var createCmd = &cobra.Command{
 			// use `bd update` to modify an existing issue.
 			if !forceCreate {
 				if _, err := store.GetIssue(ctx, explicitID); err == nil {
-					return HandleErrorWithHint(
+					// beads-rafd: honor the --json error contract — emit the JSON
+					// error object on stdout (RespectJSON), not stderr, so a
+					// `bd create --json --id <existing>` consumer can parse it.
+					return HandleErrorWithHintRespectJSON(
 						fmt.Sprintf("issue %s already exists", explicitID),
 						"Use 'bd update' to modify it, or pass --force to overwrite.")
 				} else if !errors.Is(err, storage.ErrNotFound) {
