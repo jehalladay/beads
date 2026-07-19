@@ -12,11 +12,15 @@ import (
 // the issues table. It does NOT compute BlockedIssues or ReadyIssues — callers
 // fill those in using their own blocked-ID computation strategy.
 func ScanIssueCountsInTx(ctx context.Context, tx DBTX, stats *types.Statistics) error {
+	// beads-2pzw: 'hooked' (a worker has attached the bead to its hook) is
+	// CategoryWIP alongside in_progress — export_obsidian/show already display it
+	// as in-progress. Fold it into the in_progress count so the stats summary
+	// reconciles to Total (previously hooked beads were in Total but no bucket).
 	if err := tx.QueryRowContext(ctx, `
 		SELECT
 			COUNT(*) AS total,
 			COALESCE(SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status IN ('in_progress', 'hooked') THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN status = 'deferred' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN pinned = 1 THEN 1 ELSE 0 END), 0)

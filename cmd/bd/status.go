@@ -200,7 +200,9 @@ func getAssignedStatistics(assignee string) *types.Statistics {
 		switch issue.Status {
 		case types.StatusOpen:
 			stats.OpenIssues++
-		case types.StatusInProgress:
+		case types.StatusInProgress, types.StatusHooked:
+			// beads-2pzw: hooked is CategoryWIP; count it as in-progress so the
+			// assigned summary reconciles to Total (matches ScanIssueCountsInTx).
 			stats.InProgressIssues++
 		case types.StatusBlocked:
 			stats.BlockedIssues++

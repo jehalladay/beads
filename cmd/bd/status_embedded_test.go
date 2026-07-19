@@ -143,6 +143,25 @@ func TestEmbeddedStatus(t *testing.T) {
 		}
 	})
 
+	// ===== hooked counts as in-progress in the summary (beads-2pzw leg 2) =====
+
+	t.Run("hooked_counted_as_in_progress", func(t *testing.T) {
+		// 'hooked' is CategoryWIP (a worker attached the bead to its hook) and is
+		// displayed as in-progress elsewhere, but was counted in Total and NO
+		// summary bucket. Assert a hooked issue lands in in_progress_issues.
+		before := int(bdStatusJSON(t, bd, dir)["summary"].(map[string]interface{})["in_progress_issues"].(float64))
+
+		h := bdCreate(t, bd, dir, "To be hooked", "--type", "task")
+		if out, err := bdRunWithFlockRetry(t, bd, dir, "update", h.ID, "--status", "hooked"); err != nil {
+			t.Fatalf("bd update --status hooked failed: %v\n%s", err, out)
+		}
+
+		after := int(bdStatusJSON(t, bd, dir)["summary"].(map[string]interface{})["in_progress_issues"].(float64))
+		if after != before+1 {
+			t.Errorf("hooking an issue should raise in_progress_issues by 1 (beads-2pzw): before=%d after=%d", before, after)
+		}
+	})
+
 	// ===== --assigned =====
 
 	t.Run("assigned_filter", func(t *testing.T) {
