@@ -2,6 +2,7 @@ package linear
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -274,12 +275,30 @@ func PriorityToBeads(linearPriority int, config *MappingConfig) int {
 // PriorityToLinear maps Beads priority (0-4) to Linear priority (0-4).
 // Uses configurable mapping by inverting linear.priority_map.* config.
 func PriorityToLinear(beadsPriority int, config *MappingConfig) int {
-	// Build inverse map from config
+	// Build inverse map from config. Iterate the linear keys in sorted order so
+	// a NON-INJECTIVE priority_map (two linear priorities mapping to the same
+	// beads priority) resolves to a STABLE linear value instead of a randomized
+	// one — Go map iteration order is non-deterministic, which otherwise makes
+	// PriorityToLinear flip-flop across runs and can cause PushFieldsEqual to
+	// report spurious "changed" and re-push (beads-5y8t). The default bijective
+	// map is unaffected. Sorted-ascending → the smallest linear value wins a
+	// collision, deterministically.
+	linearKeys := make([]string, 0, len(config.PriorityMap))
+	for linearKey := range config.PriorityMap {
+		linearKeys = append(linearKeys, linearKey)
+	}
+	sort.Strings(linearKeys)
+
 	inverseMap := make(map[int]int)
-	for linearKey, beadsVal := range config.PriorityMap {
+	seen := make(map[int]bool)
+	for _, linearKey := range linearKeys {
+		beadsVal := config.PriorityMap[linearKey]
 		var linearVal int
 		if _, err := fmt.Sscanf(linearKey, "%d", &linearVal); err == nil {
-			inverseMap[beadsVal] = linearVal
+			if !seen[beadsVal] {
+				inverseMap[beadsVal] = linearVal
+				seen[beadsVal] = true
+			}
 		}
 	}
 
