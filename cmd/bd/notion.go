@@ -403,7 +403,10 @@ func renderNotionStatus(cmd *cobra.Command, auth *notion.ResolvedAuth, cfg notio
 		_, _ = fmt.Fprintf(out, "View URL:    %s\n", cfg.ViewURL)
 	}
 	if result.Database != nil {
-		_, _ = fmt.Fprintf(out, "Database:    %s\n", result.Database.Title)
+		// beads-a01ve: sanitize the title for terminal display (7n9y sink
+		// slice) — Database.Title is JSON-decoded from an external Notion API
+		// response (untrusted) and can carry OSC/CSI terminal-control escapes.
+		_, _ = fmt.Fprintf(out, "Database:    %s\n", displayTitle(result.Database.Title))
 	}
 
 	statusLine := "○ Not configured"
