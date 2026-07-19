@@ -15,8 +15,14 @@ var epicCmd = &cobra.Command{
 	Short:   "Epic management commands",
 }
 var epicStatusCmd = &cobra.Command{
-	Use:           "status",
-	Short:         "Show epic completion status",
+	Use:   "status",
+	Short: "Show epic completion status",
+	// NoArgs: `epic status` lists ALL epics' closure-eligibility; it has no
+	// per-epic mode and ignores any positional arg. Without this, a stray arg
+	// (`epic status <id>` / typo / garbage) was silently accepted and produced
+	// the whole-workspace listing anyway (beads-qvys) — a false "filtered by id"
+	// read. Matches the sibling epicCloseEligibleCmd (cobra.NoArgs).
+	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
