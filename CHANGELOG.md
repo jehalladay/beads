@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd status`/`stats`, `bd bootstrap`, and `bd recompute-blocked` now reject stray positional args (beads-kz1w).**
+  These leaf commands had no `Args` validator, so a query-style habit (`bd stats status=open`) or a
+  fat-fingered positional was silently ignored and the command ran anyway with rc=0. Each now uses
+  `cobra.NoArgs` (residual to the beads-ib1u/6jzt NoArgs sweep).
 - **`bd edit <id> --json` now emits the issue as a JSON array instead of plaintext (beads-8872).**
   Both the direct (`cmd/bd/edit.go`) and proxied-server (`cmd/bd/edit_proxied_server.go`) paths printed
   the plaintext `✓ Updated <field> for issue: <id>` success glyph (and `No changes made` on a no-op) to

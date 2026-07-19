@@ -30,6 +30,9 @@ var statusCmd = &cobra.Command{
 	Use:     "status",
 	GroupID: "views",
 	Aliases: []string{"stats"},
+	// beads-kz1w: reject stray positionals (e.g. `bd stats status=open` from a
+	// query-habit) instead of silently ignoring them and running anyway (rc=0).
+	Args: cobra.NoArgs,
 	Short:   "Show issue database overview and statistics",
 	Long: `Show a quick snapshot of the issue database state and statistics.
 

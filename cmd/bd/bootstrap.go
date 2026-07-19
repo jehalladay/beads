@@ -97,7 +97,10 @@ var checkBootstrapServerDB = func(probeCfg bootstrapServerProbeConfig) bootstrap
 var bootstrapCmd = &cobra.Command{
 	Use:     "bootstrap",
 	GroupID: "setup",
-	Short:   "Non-destructive database setup for fresh clones and recovery",
+	// beads-kz1w: reject stray positionals instead of silently ignoring them
+	// (rc=0) — bootstrap is flag-driven and takes no positional args.
+	Args:  cobra.NoArgs,
+	Short: "Non-destructive database setup for fresh clones and recovery",
 	Long: `Bootstrap sets up the beads database without destroying existing data.
 Unlike 'bd init --force', bootstrap will never delete existing issues.
 

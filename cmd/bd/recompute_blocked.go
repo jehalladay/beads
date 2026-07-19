@@ -11,6 +11,9 @@ import (
 var recomputeBlockedCmd = &cobra.Command{
 	Use:     "recompute-blocked",
 	GroupID: "maint",
+	// beads-kz1w: reject stray positionals instead of silently ignoring them
+	// (rc=0) — recompute-blocked takes no positional args.
+	Args: cobra.NoArgs,
 	Short:   "Recompute is_blocked for all issues (repairs stale flags after a pull)",
 	Long: `Recompute the denormalized is_blocked flag for every issue and wisp.
 

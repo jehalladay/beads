@@ -30,6 +30,11 @@ func TestNoArgsSweep_RejectsPositional(t *testing.T) {
 		{"config", "validate"},
 		{"config", "apply"},
 		{"config", "drift"},
+		// beads-kz1w: residual leaf commands that also silently ignored stray
+		// positionals. "status" carries the "stats" alias (bd stats == bd status).
+		{"status"},
+		{"bootstrap"},
+		{"recompute-blocked"},
 	}
 
 	for _, path := range commands {
