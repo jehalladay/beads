@@ -159,6 +159,25 @@ Examples:
 				}
 			}
 		}
+
+		// beads-9iia: default-status-scope parity with bd list. With no explicit
+		// --status (and not `--status all`), bd list excludes closed/pinned +
+		// custom done/frozen statuses (list_filter.go); bd count did not, so a
+		// plain `bd count` counted closed work — inflating the "how many issues"
+		// answer vs the sibling `bd list` total, silently and with no flag. Mirror
+		// list's default-exclude here. Skipped for --by-status (grouping is meant
+		// to show every status bucket, closed included) and when the caller passed
+		// an explicit status or `--status all`.
+		if status == "" && groupBy != "status" {
+			excludeStatuses := []types.Status{types.StatusClosed, types.StatusPinned}
+			for _, cs := range filterCfg.customStatuses {
+				if cs.Category == types.CategoryDone || cs.Category == types.CategoryFrozen {
+					excludeStatuses = append(excludeStatuses, types.Status(cs.Name))
+				}
+			}
+			filter.ExcludeStatus = excludeStatuses
+		}
+
 		if cmd.Flags().Changed("priority") {
 			// beads-vcpq: parse via ValidatePriority (accepts 0-4 AND P0-P4),
 			// mirroring bd list (list_input.go). Subsumes deud's 0-4 range check
