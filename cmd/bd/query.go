@@ -312,7 +312,9 @@ func outputQueryResults(issues []*types.Issue, queryStr string, longFormat, trun
 		fmt.Printf("\n%s\n\n", header)
 		for _, issue := range issues {
 			fmt.Printf("%s [P%d] [%s] %s\n", issue.ID, issue.Priority, issue.IssueType, issue.Status)
-			fmt.Printf("  %s\n", issue.Title)
+			// beads-asjzp: sanitize the title for terminal display (7n9y sink
+			// slice) — an untrusted imported title can carry OSC/CSI escapes.
+			fmt.Printf("  %s\n", displayTitle(issue.Title))
 			if issue.Assignee != "" {
 				fmt.Printf("  Assignee: %s\n", issue.Assignee)
 			}
@@ -349,7 +351,7 @@ func formatQueryIssue(buf *strings.Builder, issue *types.Issue) {
 	if issue.Status == types.StatusClosed {
 		line := fmt.Sprintf("%s %s [P%d] [%s]%s%s - %s",
 			statusIcon, issue.ID, issue.Priority,
-			issue.IssueType, assigneeStr, labelsStr, issue.Title)
+			issue.IssueType, assigneeStr, labelsStr, displayTitle(issue.Title))
 		buf.WriteString(ui.RenderClosedLine(line))
 		buf.WriteString("\n")
 	} else {
@@ -358,7 +360,7 @@ func formatQueryIssue(buf *strings.Builder, issue *types.Issue) {
 			ui.RenderID(issue.ID),
 			ui.RenderPriority(issue.Priority),
 			ui.RenderType(string(issue.IssueType)),
-			assigneeStr, labelsStr, issue.Title))
+			assigneeStr, labelsStr, displayTitle(issue.Title)))
 	}
 }
 
