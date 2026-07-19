@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd search` now reports the true match count in its header, not the `--limit`-truncated page size (beads-4wn0).**
+  The header printed `Found %d issues matching '<q>'` using the already-`--limit`-truncated result slice, so
+  `bd search <term> --limit 2` on 3 matches reported `Found 2 issues` — an undercount with no "showing 2 of 3" hint.
+  Since `--limit` defaults to 50, a plain `bd search <common-term>` returning >50 matches hit this too. `bd search`
+  now reports the real total (re-querying with an unbounded limit when the page fills, mirroring `bd ready`) and adds
+  a muted `Showing K of N matching issues` line when the view is truncated. Both the direct and proxied-server paths
+  are fixed; the `--json` path was already unaffected. Same display-limited-view-vs-ground-truth class as beads-x2e9.
+
 - **`bd backup status` no longer reports a misleading "Database size: 0 B" for a hub-connected (server/proxied) crew (beads-dnuk).**
   `doltBackupSize` summed the LOCAL Dolt data dir, which in server/proxied mode is a ~33K stub (the authoritative
   database lives on the remote hub), so a workspace with 800+ issues reported `0 B` (and `"bytes": 0` in `--json`) —

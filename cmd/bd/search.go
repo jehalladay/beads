@@ -9,6 +9,7 @@ import (
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/internal/validation"
 )
@@ -107,7 +108,21 @@ func runSearchDirect(cmd *cobra.Command, args []string) error {
 	for _, issue := range issues {
 		issue.Labels = labelsMap[issue.ID]
 	}
-	outputSearchResults(issues, query, params.longFormat)
+	// beads-4wn0: report the TRUE match count in the header, not the
+	// --limit-truncated page size. When the returned page fills the limit,
+	// re-query with Limit=0 to learn the real total (mirrors bd ready's
+	// truncation-detection at ready.go). Otherwise `bd search <common> --limit
+	// N` (and a plain search >50 matches, since --limit defaults to 50)
+	// reported "Found N" == page size, undercounting silently.
+	totalMatches := len(issues)
+	if params.filter.Limit > 0 && len(issues) == params.filter.Limit {
+		countFilter := params.filter
+		countFilter.Limit = 0
+		if allIssues, cErr := store.SearchIssues(ctx, query, countFilter); cErr == nil && len(allIssues) > len(issues) {
+			totalMatches = len(allIssues)
+		}
+	}
+	outputSearchResults(issues, query, params.longFormat, totalMatches)
 	return nil
 }
 
@@ -419,16 +434,23 @@ func parseSearchParams(cmd *cobra.Command, cfg listFilterConfig) (searchParams, 
 	}, nil
 }
 
-// outputSearchResults formats and displays search results
-func outputSearchResults(issues []*types.Issue, query string, longFormat bool) {
+// outputSearchResults formats and displays search results. totalMatches is the
+// true number of matching issues (>= len(issues) when the view is
+// --limit-truncated); the header reports it, and a "Showing K of N" line is
+// added when the shown page is truncated (beads-4wn0).
+func outputSearchResults(issues []*types.Issue, query string, longFormat bool, totalMatches int) {
 	if len(issues) == 0 {
 		fmt.Printf("No issues found matching '%s'\n", query)
 		return
 	}
+	if totalMatches < len(issues) {
+		totalMatches = len(issues)
+	}
+	truncated := totalMatches > len(issues)
 
 	if longFormat {
 		// Long format: multi-line with details
-		fmt.Printf("\nFound %d issues matching '%s':\n\n", len(issues), query)
+		fmt.Printf("\nFound %d issues matching '%s':\n\n", totalMatches, query)
 		for _, issue := range issues {
 			fmt.Printf("%s [P%d] [%s] %s\n", issue.ID, issue.Priority, issue.IssueType, issue.Status)
 			fmt.Printf("  %s\n", issue.Title)
@@ -442,7 +464,7 @@ func outputSearchResults(issues []*types.Issue, query string, longFormat bool) {
 		}
 	} else {
 		// Compact format: one line per issue
-		fmt.Printf("Found %d issues matching '%s':\n", len(issues), query)
+		fmt.Printf("Found %d issues matching '%s':\n", totalMatches, query)
 		for _, issue := range issues {
 			labelsStr := ""
 			if len(issue.Labels) > 0 {
@@ -456,6 +478,10 @@ func outputSearchResults(issues []*types.Issue, query string, longFormat bool) {
 				issue.ID, issue.Priority, issue.IssueType, issue.Status,
 				assigneeStr, labelsStr, issue.Title)
 		}
+	}
+
+	if truncated {
+		fmt.Printf("\n%s\n", ui.RenderMuted(fmt.Sprintf("Showing %d of %d matching issues. Use -n to show more.", len(issues), totalMatches)))
 	}
 }
 

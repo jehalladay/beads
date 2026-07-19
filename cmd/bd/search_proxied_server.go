@@ -69,6 +69,16 @@ func runSearchProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	for _, issue := range issues {
 		issue.Labels = labelsMap[issue.ID]
 	}
-	outputSearchResults(issues, query, params.longFormat)
+	// beads-4wn0: report the TRUE match count (not the --limit-truncated page
+	// size). Mirror the direct path: re-query with Limit=0 when the page fills.
+	totalMatches := len(issues)
+	if params.filter.Limit > 0 && len(issues) == params.filter.Limit {
+		countFilter := params.filter
+		countFilter.Limit = 0
+		if allPage, cErr := uw.IssueUseCase().SearchIssues(ctx, query, countFilter); cErr == nil && len(allPage.Items) > len(issues) {
+			totalMatches = len(allPage.Items)
+		}
+	}
+	outputSearchResults(issues, query, params.longFormat, totalMatches)
 	return nil
 }
