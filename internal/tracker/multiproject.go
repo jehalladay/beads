@@ -45,5 +45,11 @@ func ResolveProjectIDs(cliOverride []string, pluralVal, singularVal string) []st
 	if singularVal != "" {
 		return []string{singularVal}
 	}
-	return nil
+	// beads-jxel: return a non-nil empty slice, not nil. Callers embed this
+	// result directly in --json status output (linear "team_ids", jira
+	// "jira_projects", ado "projects"); a nil slice marshals to JSON null,
+	// forcing consumers to special-case null vs []. All callers gate on
+	// len(...)>0, so the empty slice is behaviorally identical while giving a
+	// stable array contract on the unconfigured path.
+	return []string{}
 }
