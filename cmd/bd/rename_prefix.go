@@ -123,17 +123,51 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		}
 
 		if len(issues) == 0 {
-			fmt.Printf("No issues to rename. Updating prefix to %s\n", newPrefix)
+			// beads-rvmpg: under --json emit a structured result, not the
+			// human line (else the JSON consumer gets "No issues to rename..."
+			// on stdout and no object). Suppress the human print behind !jsonOutput.
+			if !jsonOutput {
+				fmt.Printf("No issues to rename. Updating prefix to %s\n", newPrefix)
+			}
 			if !dryRun {
 				if err := store.SetConfig(ctx, "issue_prefix", newPrefix); err != nil {
 					return HandleErrorRespectJSON("failed to update prefix: %v", err)
 				}
 				commandDidWrite.Store(true)
 			}
+			if jsonOutput {
+				return outputJSON(map[string]interface{}{
+					"old_prefix":   oldPrefix,
+					"new_prefix":   newPrefix,
+					"issues_count": 0,
+					"dry_run":      dryRun,
+				})
+			}
 			return nil
 		}
 
 		if dryRun {
+			// beads-rvmpg: under --json emit the planned renames as a structured
+			// result instead of the human DRY RUN text (which would otherwise be
+			// the only thing on stdout, unparseable as JSON).
+			if jsonOutput {
+				planned := make([]map[string]interface{}, 0, len(issues))
+				for _, issue := range issues {
+					oldID := fmt.Sprintf("%s-%s", oldPrefix, strings.TrimPrefix(issue.ID, oldPrefix+"-"))
+					newID := fmt.Sprintf("%s-%s", newPrefix, strings.TrimPrefix(issue.ID, oldPrefix+"-"))
+					planned = append(planned, map[string]interface{}{
+						"old_id": oldID,
+						"new_id": newID,
+					})
+				}
+				return outputJSON(map[string]interface{}{
+					"old_prefix":      oldPrefix,
+					"new_prefix":      newPrefix,
+					"issues_count":    len(issues),
+					"dry_run":         true,
+					"planned_renames": planned,
+				})
+			}
 			fmt.Printf("DRY RUN: Would rename %d issues from prefix '%s' to '%s'\n\n", len(issues), oldPrefix, newPrefix)
 			fmt.Printf("Sample changes:\n")
 			for i, issue := range issues {
@@ -271,6 +305,27 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 	}
 
 	if dryRun {
+		// beads-rvmpg: under --json emit a structured preview (same key-set as
+		// the applied path + dry_run:true + planned_renames) instead of the
+		// human DRY RUN text, which would otherwise be unparseable stdout.
+		if jsonOutput {
+			planned := make([]map[string]interface{}, 0, len(incorrectIssues))
+			for _, is := range incorrectIssues {
+				oldID := is.issue.ID
+				planned = append(planned, map[string]interface{}{
+					"old_id": oldID,
+					"new_id": renameMap[oldID],
+				})
+			}
+			return outputJSON(map[string]interface{}{
+				"target_prefix":    targetPrefix,
+				"prefixes_found":   len(prefixes),
+				"issues_repaired":  len(incorrectIssues),
+				"issues_unchanged": len(correctIssues),
+				"dry_run":          true,
+				"planned_renames":  planned,
+			})
+		}
 		fmt.Printf("DRY RUN: Would repair %d issues with incorrect prefixes\n\n", len(incorrectIssues))
 		fmt.Printf("Issues with correct prefix (%s): %d\n", ui.RenderAccent(targetPrefix), len(correctIssues))
 		fmt.Printf("Issues to repair: %d\n\n", len(incorrectIssues))

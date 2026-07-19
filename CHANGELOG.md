@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd rename-prefix --json` now emits a structured JSON object on the no-issues and dry-run paths (beads-rvmpg).**
+  Follow-on to beads-qpiw (which fixed the pollution + error legs). Three reachable `--json` paths still printed
+  human plaintext and returned without any JSON object, so a `--json` consumer got unparseable stdout instead of a
+  result: the `len(issues)==0` "No issues to rename..." path, the rename `--dry-run` "DRY RUN: Would rename..."
+  path, and the `--repair` consolidate dry-run path. Each now suppresses the human print under `--json` and emits a
+  structured result (dry-run adds `dry_run:true` + a `planned_renames` array of `{old_id, new_id}`; the applied
+  paths keep their existing key-set). Teeth: TestRenamePrefixDryRunJSONContract_rvmpg (RED→GREEN mutation-verified).
+
 - **`bd dep A --blocks B --json` now uses the same endpoint key vocabulary as `bd dep add` (beads-xcujl).**
   The two commands are documented as equivalent (`dep --blocks` help: "is equivalent to: bd dep add"), but their
   `--json` output named the endpoints differently for the identical stored edge — `dep add` emitted
