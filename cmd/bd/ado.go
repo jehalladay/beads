@@ -62,23 +62,29 @@ existing linked items). Filters can also be persisted via config:
   ado.filter.area_path, ado.filter.iteration_path,
   ado.filter.types, ado.filter.states
 CLI flags override config values when both are set.`,
-	RunE: runADOSync,
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE:          runADOSync,
 }
 
 // adoStatusCmd displays Azure DevOps configuration and sync status.
 var adoStatusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show Azure DevOps sync status",
-	Long:  `Display current Azure DevOps configuration and sync status.`,
-	RunE:  runADOStatus,
+	Use:           "status",
+	Short:         "Show Azure DevOps sync status",
+	Long:          `Display current Azure DevOps configuration and sync status.`,
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE:          runADOStatus,
 }
 
 // adoProjectsCmd lists accessible Azure DevOps projects.
 var adoProjectsCmd = &cobra.Command{
-	Use:   "projects",
-	Short: "List accessible Azure DevOps projects",
-	Long:  `List Azure DevOps projects that the configured token has access to.`,
-	RunE:  runADOProjects,
+	Use:           "projects",
+	Short:         "List accessible Azure DevOps projects",
+	Long:          `List Azure DevOps projects that the configured token has access to.`,
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE:          runADOProjects,
 }
 
 var (
