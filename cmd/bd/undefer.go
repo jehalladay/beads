@@ -60,20 +60,37 @@ Examples:
 			return HandleErrorWithHint("database not initialized", diagHint())
 		}
 
+		// beads-bqs9: under --json these per-item messages must NOT interleave
+		// plain text onto the stream a `2>&1` consumer parses. On a wholly-failed
+		// batch the terminal HandleErrorRespectJSON stdout object below is the
+		// sole error, so stderr must stay clean; on PARTIAL success the
+		// undeferred array is on stdout, so per-item failures flush to stderr as
+		// JSON objects. Defer them and decide at the end, mirroring show.go's
+		// reportShowItemError / beads-en28 / beads-n96g. Non-JSON keeps immediate
+		// stderr (correct today).
+		var deferredItemErrors []string
+		reportUndeferItemError := func(format string, a ...interface{}) {
+			if jsonOutput {
+				deferredItemErrors = append(deferredItemErrors, fmt.Sprintf(format, a...))
+				return
+			}
+			fmt.Fprintf(os.Stderr, format+"\n", a...)
+		}
+
 		for _, id := range args {
 			fullID, err := utils.ResolvePartialID(ctx, store, id)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+				reportUndeferItemError("Error resolving %s: %v", id, err)
 				continue
 			}
 
 			issue, err := store.GetIssue(ctx, fullID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting %s: %v\n", fullID, err)
+				reportUndeferItemError("Error getting %s: %v", fullID, err)
 				continue
 			}
 			if issue.Status != types.StatusDeferred {
-				fmt.Fprintf(os.Stderr, "%s is not deferred (status: %s)\n", fullID, string(issue.Status))
+				reportUndeferItemError("%s is not deferred (status: %s)", fullID, string(issue.Status))
 				continue
 			}
 
@@ -83,7 +100,7 @@ Examples:
 			}
 
 			if err := store.UpdateIssue(ctx, fullID, updates, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Error undeferring %s: %v\n", fullID, err)
+				reportUndeferItemError("Error undeferring %s: %v", fullID, err)
 				continue
 			}
 			undeferredCount++
@@ -103,6 +120,16 @@ Examples:
 		}
 
 		if jsonOutput && len(undeferredIssues) > 0 {
+			// Partial success: stdout carries the undeferred array, so any
+			// deferred per-item failures flush to stderr as JSON objects now
+			// rather than being dropped (beads-bqs9/en28). On a wholly-failed
+			// batch undeferredIssues is empty, so we skip this and the terminal
+			// HandleErrorRespectJSON below is the sole error (stderr stays clean).
+			// reportItemError (errors.go:131) JSON-wraps each message to stderr
+			// under --json.
+			for _, msg := range deferredItemErrors {
+				reportItemError("%s", msg)
+			}
 			if err := outputJSON(undeferredIssues); err != nil {
 				return err
 			}
