@@ -31,7 +31,11 @@ func TestValidateConfigValueType(t *testing.T) {
 		// untyped / unknown keys: stored as-is, never rejected here
 		{"untyped custom key", "custom.whatever", "anything goes", false},
 		{"untyped string key", "actor", "someuser", false},
-		{"unknown key", "compact_batch_size", "not_a_number", false},
+		{"unknown key", "truly_unknown_key", "not_a_number", false},
+		// compaction knobs are now recognized typed keys (beads-22pp):
+		// compact_batch_size is an int, so a non-numeric value is rejected here.
+		{"compact int valid", "compact_batch_size", "50", false},
+		{"compact int not-a-number", "compact_batch_size", "not_a_number", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

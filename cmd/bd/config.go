@@ -995,6 +995,21 @@ var recognizedConfigKeys = map[string]bool{
 	"create.require-description": true, "beads.role": true,
 	"auto_compact_enabled": true, "schema_version": true,
 	"output.title-length": true,
+	// beads-22pp: the compaction knobs are first-class engine-read config keys —
+	// seeded as defaults (migration 0016_default_config.up.sql), exposed by
+	// `config list`/`config get`, and live-read by the compaction engine
+	// (issueops/compaction.go, storage/dolt/compact.go) via their bare
+	// (non-namespaced) key. They must be settable via `bd config set`; without
+	// them here isRecognizedConfigKey rejects the documented, honored knobs as
+	// "not a recognized config key", leaving them visible+readable but untunable.
+	"compaction_enabled":       true,
+	"compact_tier1_days":       true,
+	"compact_tier1_dep_levels": true,
+	"compact_tier2_days":       true,
+	"compact_tier2_dep_levels": true,
+	"compact_tier2_commits":    true,
+	"compact_batch_size":       true,
+	"compact_parallel_workers": true,
 }
 
 // boolConfigKeys and intConfigKeys name config keys whose values are parsed as
@@ -1007,10 +1022,22 @@ var boolConfigKeys = map[string]bool{
 	"no-db": true, "json": true, "no-push": true, "no-git-ops": true,
 	"create.require-description": true, "auto_compact_enabled": true,
 	"export.auto": true, "export.git-add": true, "backup.enabled": true,
+	// beads-22pp: compaction_enabled is parsed as a bool by the engine.
+	"compaction_enabled": true,
 }
 
 var intConfigKeys = map[string]bool{
 	"output.title-length": true, "schema_version": true,
+	// beads-22pp: the compaction tier/batch/worker knobs are all parsed as
+	// integers by the compaction engine, so reject a non-integer at set-time
+	// rather than letting it surface later when the engine's Atoi runs.
+	"compact_tier1_days":       true,
+	"compact_tier1_dep_levels": true,
+	"compact_tier2_days":       true,
+	"compact_tier2_dep_levels": true,
+	"compact_tier2_commits":    true,
+	"compact_batch_size":       true,
+	"compact_parallel_workers": true,
 }
 
 // validateConfigValueType rejects a value that does not parse as the key's
