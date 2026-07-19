@@ -52,6 +52,11 @@ func runGateListProxied(ctx context.Context, filter types.IssueFilter, allFlag b
 		return HandleErrorRespectJSON("%v", err)
 	}
 	if jsonOutput {
+		// beads-tamf: normalize nil→[] so an empty result marshals to a JSON []
+		// (not null), matching the direct path and the array contract.
+		if issues == nil {
+			issues = []*types.Issue{}
+		}
 		return outputJSON(issues)
 	}
 	displayGates(issues, allFlag)

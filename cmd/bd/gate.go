@@ -91,6 +91,11 @@ By default, shows only open gates. Use --all to include closed gates.`,
 		}
 
 		if jsonOutput {
+			// beads-tamf: normalize nil→[] so an empty result marshals to a JSON
+			// [] (not null), matching the ready/blocked/list array contract.
+			if issues == nil {
+				issues = []*types.Issue{}
+			}
 			return outputJSON(issues)
 		}
 

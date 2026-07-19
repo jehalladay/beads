@@ -190,6 +190,11 @@ Examples:
 		}
 
 		if jsonOutput {
+			// beads-tamf: normalize nil→[] so the nested "results" field marshals
+			// to a JSON [] (not null) on a clean db, matching the array contract.
+			if results == nil {
+				results = []LintResult{}
+			}
 			output := struct {
 				Total           int                   `json:"total"`
 				Issues          int                   `json:"issues"`

@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // beads-tamf: bd orphans --json and bd formula list --json emitted the bare
@@ -40,7 +42,28 @@ func TestFormulaListEmptyMarshalsToArrayNotNull(t *testing.T) {
 	}
 }
 
-// Guard the class invariant: a NIL slice of either type marshals to null (the
+func TestGateListEmptyMarshalsToArrayNotNull(t *testing.T) {
+	t.Parallel()
+
+	// gate list (direct + proxied) normalizes its []*types.Issue result nil→[].
+	empty := []*types.Issue{}
+	if b, err := json.Marshal(empty); err != nil || string(b) != "[]" {
+		t.Errorf("empty gate list --json must marshal to [], got %q (err %v)", b, err)
+	}
+}
+
+func TestLintResultsEmptyMarshalsToArrayNotNull(t *testing.T) {
+	t.Parallel()
+
+	// lint --json nests a "results" array; on a clean db it must be [] not null.
+	results := []LintResult{}
+	b, err := json.Marshal(results)
+	if err != nil || string(b) != "[]" {
+		t.Errorf("empty lint results must marshal to [], got %q (err %v)", b, err)
+	}
+}
+
+// Guard the class invariant: a NIL slice of each type marshals to null (the
 // bug), proving the non-nil init at the call site is load-bearing.
 func TestNilSlicesMarshalToNull_ProvesInitLoadBearing(t *testing.T) {
 	t.Parallel()
@@ -52,5 +75,13 @@ func TestNilSlicesMarshalToNull_ProvesInitLoadBearing(t *testing.T) {
 	var nilEntries []FormulaListEntry
 	if b, _ := json.Marshal(nilEntries); string(b) != "null" {
 		t.Errorf("a nil formula slice should marshal to null (proves init matters), got %q", b)
+	}
+	var nilIssues []*types.Issue
+	if b, _ := json.Marshal(nilIssues); string(b) != "null" {
+		t.Errorf("a nil issue slice should marshal to null (proves init matters), got %q", b)
+	}
+	var nilLint []LintResult
+	if b, _ := json.Marshal(nilLint); string(b) != "null" {
+		t.Errorf("a nil lint slice should marshal to null (proves init matters), got %q", b)
 	}
 }
