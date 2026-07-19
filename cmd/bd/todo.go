@@ -86,7 +86,10 @@ var addTodoCmd = &cobra.Command{
 		}
 
 		if err := getStore().CreateIssue(ctx, issue, getActorWithGit()); err != nil {
-			return HandleError("failed to create TODO: %v", err)
+			// beads-j9ir: honor the --json error contract on the store-error path
+			// (bd todo add --json marshals the issue on success, so a store error
+			// must emit a JSON error object on stdout, not plain-text stderr).
+			return HandleErrorRespectJSON("failed to create TODO: %v", err)
 		}
 
 		commandDidWrite.Store(true)
@@ -140,7 +143,9 @@ func runTodoListCore(cmd *cobra.Command, _ []string) error {
 
 	issues, err := getStore().SearchIssues(ctx, "", filter)
 	if err != nil {
-		return HandleError("failed to list TODOs: %v", err)
+		// beads-j9ir: honor the --json error contract on the store-error path
+		// (bd todo / bd todo list --json marshals the list on success).
+		return HandleErrorRespectJSON("failed to list TODOs: %v", err)
 	}
 
 	if jsonOutput {
