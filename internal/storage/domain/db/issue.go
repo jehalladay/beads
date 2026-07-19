@@ -205,7 +205,24 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 		return fmt.Errorf("db: Update %s: rows affected: %w", id, err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("db: Update %s: %w", id, sql.ErrNoRows)
+		// beads-j91h: RowsAffected==0 conflates two distinct cases — the row
+		// does not exist, OR the row exists but every SET value already equals
+		// its current value (a no-op update; MySQL/Dolt report 0 changed rows
+		// without CLIENT_FOUND_ROWS). The direct store path does not gate on
+		// rows==0 at all, so a same-value update succeeds there; treating it as
+		// ErrNoRows here made the proxied path hard-error on a no-op where the
+		// direct path succeeds (direct-vs-proxied asymmetry). Disambiguate with
+		// an existence check: a present row means a no-op (success); only a
+		// truly missing row is ErrNoRows.
+		exists, existsErr := r.Exists(ctx, id, opts)
+		if existsErr != nil {
+			return fmt.Errorf("db: Update %s: %w", id, existsErr)
+		}
+		if !exists {
+			return fmt.Errorf("db: Update %s: %w", id, sql.ErrNoRows)
+		}
+		// Row exists, update was a no-op — fall through so the event is still
+		// recorded (matches the direct path's behavior of always succeeding).
 	}
 
 	if err := r.events.Record(ctx, domain.Event{
