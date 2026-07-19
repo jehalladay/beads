@@ -71,6 +71,41 @@ func TestEmbeddedVC(t *testing.T) {
 		if commit, _ := result["commit"].(string); commit == "" {
 			t.Error("expected non-empty commit hash")
 		}
+		// beads-xz6e: the help promises uncommitted-changes reporting; the JSON
+		// path must carry the fields (a fresh init auto-commits, so a bool +
+		// a (possibly empty) changed_tables list must both be present).
+		if _, ok := result["uncommitted"]; !ok {
+			t.Errorf("expected 'uncommitted' field in status --json, got: %s", out)
+		}
+		if _, ok := result["changed_tables"]; !ok {
+			t.Errorf("expected 'changed_tables' field in status --json, got: %s", out)
+		}
+	})
+
+	t.Run("status_reports_uncommitted", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "vcunc")
+		// Dirty the working set without committing: bd sql direct-writes a table
+		// (config) so dolt_status has a pending change the auto-commit didn't take.
+		cmd := exec.Command(bd, "sql", "--exec", "INSERT INTO config (key, value) VALUES ('vcunc_probe', '1')")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("could not dirty working set (sql exec failed, env-dependent): %v\n%s", err, out)
+		}
+
+		out := bdVC(t, bd, dir, "status", "--json")
+		var result map[string]interface{}
+		if err := json.Unmarshal([]byte(out), &result); err != nil {
+			t.Fatalf("failed to parse JSON: %v\n%s", err, out)
+		}
+		if unc, _ := result["uncommitted"].(bool); !unc {
+			t.Errorf("expected uncommitted=true after a pending write, got: %s", out)
+		}
+		// Human path must surface it too (the help's promise).
+		human := bdVC(t, bd, dir, "status")
+		if !strings.Contains(human, "Uncommitted changes") {
+			t.Errorf("human status must report uncommitted changes, got: %s", human)
+		}
 	})
 
 	t.Run("commit_with_message", func(t *testing.T) {

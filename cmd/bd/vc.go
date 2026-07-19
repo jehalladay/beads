@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -236,16 +237,47 @@ Examples:
 			currentCommit = "(unknown)"
 		}
 
+		// beads-xz6e: the help promises "uncommitted changes" but the command
+		// never reported them. Query the working-set status (dolt_status via the
+		// existing Status accessor) so the human + JSON paths honor the help. A
+		// Status error is non-fatal — still show branch/commit, just omit the
+		// uncommitted detail (best-effort, matches GetCurrentCommit's leniency).
+		var staged, unstaged []storage.StatusEntry
+		if st, serr := store.Status(ctx); serr == nil && st != nil {
+			staged, unstaged = st.Staged, st.Unstaged
+		}
+		uncommitted := len(staged)+len(unstaged) > 0
+
 		if jsonOutput {
+			changedTables := make([]string, 0, len(staged)+len(unstaged))
+			for _, e := range staged {
+				changedTables = append(changedTables, e.Table)
+			}
+			for _, e := range unstaged {
+				changedTables = append(changedTables, e.Table)
+			}
 			return outputJSON(map[string]interface{}{
-				"branch": currentBranch,
-				"commit": currentCommit,
+				"branch":         currentBranch,
+				"commit":         currentCommit,
+				"uncommitted":    uncommitted,
+				"changed_tables": changedTables,
 			})
 		}
 
 		fmt.Printf("\n%s Version Control Status\n\n", ui.RenderAccent("📊"))
 		fmt.Printf("  Branch: %s\n", ui.StatusInProgressStyle.Render(currentBranch))
 		fmt.Printf("  Commit: %s\n", ui.RenderMuted(currentCommit[:8]))
+		if uncommitted {
+			fmt.Printf("  Uncommitted changes: %d table(s)\n", len(staged)+len(unstaged))
+			for _, e := range staged {
+				fmt.Printf("    %s %s (staged)\n", ui.RenderWarn("●"), e.Table)
+			}
+			for _, e := range unstaged {
+				fmt.Printf("    %s %s\n", ui.RenderWarn("●"), e.Table)
+			}
+		} else {
+			fmt.Printf("  Uncommitted changes: %s\n", ui.RenderMuted("none"))
+		}
 		fmt.Println()
 		return nil
 	},
