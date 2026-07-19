@@ -137,7 +137,7 @@ func displayStaleIssues(issues []*types.Issue, days int, truncated bool, effecti
 	now := time.Now()
 	for i, issue := range issues {
 		daysStale := int(now.Sub(issue.UpdatedAt).Hours() / 24)
-		fmt.Printf("%d. [%s] %s: %s\n", i+1, ui.RenderPriority(issue.Priority), ui.RenderID(issue.ID), issue.Title)
+		fmt.Printf("%d. [%s] %s: %s\n", i+1, ui.RenderPriority(issue.Priority), ui.RenderID(issue.ID), displayTitle(issue.Title))
 		fmt.Printf("   Status: %s, Last updated: %d days ago\n", ui.RenderStatus(string(issue.Status)), daysStale)
 		if issue.Assignee != "" {
 			fmt.Printf("   Assignee: %s\n", issue.Assignee)
