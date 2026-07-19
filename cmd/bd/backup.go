@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -48,28 +47,19 @@ var backupStatusCmd = &cobra.Command{
 
 		dir, err := backupDir()
 		if err != nil {
-			return err
+			// beads-51fl (8lqh error-half): under --json this reachable guard
+			// error must be a parseable JSON object on stdout, not a raw error
+			// cobra prints as plain text to stderr.
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		state, err := loadBackupState(dir)
 		if err != nil {
-			return err
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		if jsonOutput {
-			result := map[string]interface{}{
-				"backup": state,
-				"dolt":   showDoltBackupStatusJSON(),
-			}
-			if dbSize := showDBSizeJSON(); dbSize != nil {
-				result["database_size"] = dbSize
-			}
-			data, err := json.MarshalIndent(result, "", "  ")
-			if err != nil {
-				return err
-			}
-			fmt.Println(string(data))
-			return nil
+			return emitBackupStatusJSON(state)
 		}
 
 		hasBackup := state.LastDoltCommit != ""
@@ -119,6 +109,31 @@ var backupStatusCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+// backupStatusJSON builds the `bd backup status --json` payload. Kept as a
+// pure, store-free helper so the schema_version contract (beads-51fl) can be
+// exercised directly in a test without a live backend.
+func backupStatusJSON(state *backupState) map[string]interface{} {
+	result := map[string]interface{}{
+		"backup": state,
+		"dolt":   showDoltBackupStatusJSON(),
+	}
+	if dbSize := showDBSizeJSON(); dbSize != nil {
+		result["database_size"] = dbSize
+	}
+	return result
+}
+
+// emitBackupStatusJSON writes the backup-status payload as JSON. beads-51fl: it
+// routes through outputJSON so the payload carries the top-level schema_version
+// and honors BD_JSON_ENVELOPE=1, like every other --json verb. The prior
+// json.MarshalIndent+fmt.Println block bypassed outputJSON→wrapWithSchemaVersion
+// (the lav0 MARSHAL-variant blind spot), emitting a bare object with no
+// schema_version. Kept as a named function so a regression at this emit site is
+// caught by TestBackupStatusJSON* (which drive this exact path).
+func emitBackupStatusJSON(state *backupState) error {
+	return outputJSON(backupStatusJSON(state))
 }
 
 func init() {

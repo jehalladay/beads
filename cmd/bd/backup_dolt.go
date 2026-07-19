@@ -133,13 +133,17 @@ Run 'bd backup init <path>' first to configure a destination.`,
 		}()
 
 		ctx := rootCtx
+		// beads-51fl (8lqh error-half): these reachable error paths must honor
+		// the --json contract — a parseable JSON error object on stdout via
+		// HandleErrorRespectJSON, not a raw fmt.Errorf that cobra prints as
+		// plain text to stderr (SilenceErrors is set, so main() prints it raw).
 		if store == nil {
-			return fmt.Errorf("no store available")
+			return HandleErrorRespectJSON("no store available")
 		}
 
 		bs, ok := storage.UnwrapStore(store).(storage.BackupStore)
 		if !ok {
-			return fmt.Errorf("storage backend does not support backup operations")
+			return HandleErrorRespectJSON("storage backend does not support backup operations")
 		}
 
 		// First, commit any pending changes so they're included in the backup
@@ -154,9 +158,9 @@ Run 'bd backup init <path>' first to configure a destination.`,
 		if err := bs.BackupSync(ctx, defaultDoltBackupName); err != nil {
 			if strings.Contains(err.Error(), "no backup") ||
 				strings.Contains(err.Error(), "not found") {
-				return fmt.Errorf("no backup destination configured. Run 'bd backup init <path>' first")
+				return HandleErrorRespectJSON("no backup destination configured. Run 'bd backup init <path>' first")
 			}
-			return fmt.Errorf("backup sync failed: %w", err)
+			return HandleErrorRespectJSON("backup sync failed: %v", err)
 		}
 
 		elapsed := time.Since(start)
@@ -445,20 +449,22 @@ backup configuration. The backup data at the destination is not deleted.`,
 		}()
 
 		ctx := rootCtx
+		// beads-51fl (8lqh error-half): honor the --json error contract on the
+		// reachable guard/failure paths (see backupSyncCmd above).
 		if store == nil {
-			return fmt.Errorf("no store available")
+			return HandleErrorRespectJSON("no store available")
 		}
 
 		bs, ok := storage.UnwrapStore(store).(storage.BackupStore)
 		if !ok {
-			return fmt.Errorf("storage backend does not support backup operations")
+			return HandleErrorRespectJSON("storage backend does not support backup operations")
 		}
 
 		if err := bs.BackupRemove(ctx, defaultDoltBackupName); err != nil {
 			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no backup") {
-				return fmt.Errorf("no backup destination configured")
+				return HandleErrorRespectJSON("no backup destination configured")
 			}
-			return fmt.Errorf("failed to remove backup: %w", err)
+			return HandleErrorRespectJSON("failed to remove backup: %v", err)
 		}
 
 		// Also remove backup_export if it exists (auto-export may have created it at same URL)

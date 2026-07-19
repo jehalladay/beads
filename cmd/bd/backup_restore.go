@@ -50,18 +50,21 @@ To initialize and restore in one step, use: bd init && bd backup restore`,
 			var err error
 			dir, err = backupDir()
 			if err != nil {
-				return fmt.Errorf("failed to find backup directory: %w", err)
+				// beads-51fl (8lqh error-half): honor the --json error contract
+				// on reachable error paths — a JSON error object on stdout, not a
+				// raw error cobra prints as plain text to stderr (SilenceErrors).
+				return HandleErrorRespectJSON("failed to find backup directory: %v", err)
 			}
 		}
 
 		if err := validateBackupRestoreDir(dir); err != nil {
-			return err
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		force, _ := cmd.Flags().GetBool("force")
 
 		if err := runBackupRestore(ctx, store, dir, force); err != nil {
-			return err
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		if !jsonOutput {
