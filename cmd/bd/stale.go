@@ -47,6 +47,38 @@ This helps identify:
 		if status != "" && status != "open" && status != "in_progress" && status != "blocked" && status != "deferred" {
 			return HandleErrorRespectJSON("invalid status '%s'. Valid values: open, in_progress, blocked, deferred", status)
 		}
+		// beads-phmp: --limit truncates the result set, and the human header read
+		// len(issues) as if it were the true stale count — a plain `bd stale` on a
+		// workspace with >50 stale issues printed "Stale issues (50 ...)" while more
+		// existed. Fetch one extra row to detect truncation, then trim + qualify the
+		// header, mirroring the `bd list` fetch-one-extra convention (list.go:43-44).
+		effectiveLimit := limit
+		if limit > 0 {
+			filter := types.StaleFilter{Days: days, Status: status, Limit: limit + 1}
+			ctx := rootCtx
+			issues, err := store.GetStaleIssues(ctx, filter)
+			if err != nil {
+				return HandleErrorRespectJSON("%v", err)
+			}
+			truncated := len(issues) > effectiveLimit
+			if truncated {
+				issues = issues[:effectiveLimit]
+			}
+			if jsonOutput {
+				if issues == nil {
+					issues = []*types.Issue{}
+				}
+				if err := outputJSON(issues); err != nil {
+					return err
+				}
+				printTruncationHint(truncated, effectiveLimit)
+				return nil
+			}
+			displayStaleIssues(issues, days, truncated, effectiveLimit)
+			printTruncationHint(truncated, effectiveLimit)
+			return nil
+		}
+
 		filter := types.StaleFilter{
 			Days:   days,
 			Status: status,
@@ -64,17 +96,26 @@ This helps identify:
 			}
 			return outputJSON(issues)
 		}
-		displayStaleIssues(issues, days)
+		displayStaleIssues(issues, days, false, effectiveLimit)
 		return nil
 	},
 }
 
-func displayStaleIssues(issues []*types.Issue, days int) {
+func displayStaleIssues(issues []*types.Issue, days int, truncated bool, effectiveLimit int) {
 	if len(issues) == 0 {
 		fmt.Printf("\n%s No stale issues found (all active)\n\n", ui.RenderPass("✨"))
 		return
 	}
-	fmt.Printf("\n%s Stale issues (%d not updated in %d+ days):\n\n", ui.RenderWarn("⏰"), len(issues), days)
+	if truncated {
+		// Qualify the count so it is not read as a complete total (beads-phmp,
+		// the l39v sibling). The exact overflow count needs a separate unlimited
+		// COUNT query (a store change); the "+ more" hint plus the stderr
+		// truncation notice make the partial view unmistakable without one.
+		fmt.Printf("\n%s Showing %d stale issues (limit %d; not updated in %d+ days — more exist):\n\n",
+			ui.RenderWarn("⏰"), len(issues), effectiveLimit, days)
+	} else {
+		fmt.Printf("\n%s Stale issues (%d not updated in %d+ days):\n\n", ui.RenderWarn("⏰"), len(issues), days)
+	}
 	now := time.Now()
 	for i, issue := range issues {
 		daysStale := int(now.Sub(issue.UpdatedAt).Hours() / 24)
