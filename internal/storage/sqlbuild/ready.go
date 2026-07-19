@@ -119,8 +119,24 @@ type ReadyWorkWhereInputs struct {
 // suite); all ready predicates live here.
 func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyWorkWhereInputs) (string, []any, error) {
 	var statusClause string
+	var args []any
 	if filter.Status != "" {
-		statusClause = "status = ?"
+		// beads-inb4: `bd ready --include-deferred` was a dead flag — the CLI
+		// ready path passes Status:"open", which became `status = 'open'` and
+		// excluded deferred-STATUS rows before the defer_until relaxation below
+		// could matter. Since the only way to set a future defer_until
+		// (create/update --defer <future>) ALSO flips status→deferred, admit the
+		// deferred status alongside the requested one when IncludeDeferred is set
+		// so upcoming deferred work actually surfaces.
+		if filter.IncludeDeferred && filter.Status != types.StatusDeferred {
+			statusClause = "status IN (?, ?)"
+			args = append(args, string(filter.Status), string(types.StatusDeferred))
+		} else {
+			statusClause = "status = ?"
+			args = append(args, string(filter.Status))
+		}
+	} else if filter.IncludeDeferred {
+		statusClause = "status IN ('open', 'in_progress', 'deferred')"
 	} else {
 		statusClause = "status IN ('open', 'in_progress')"
 	}
@@ -131,10 +147,6 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 	}
 	if !filter.IncludeEphemeral {
 		whereClauses = append(whereClauses, "(ephemeral = 0 OR ephemeral IS NULL)")
-	}
-	var args []any
-	if filter.Status != "" {
-		args = append(args, string(filter.Status))
 	}
 
 	if filter.Priority != nil {
