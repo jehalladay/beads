@@ -44,7 +44,24 @@ Example:
 		}
 		ctx := rootCtx
 
-		allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+		var allIssues []*types.Issue
+		var err error
+
+		// Proxied-server mode: the global `store` is nil (duplicates is not a
+		// noDbCommand), so fetch the issue set via the UOW stack (beads-igmz).
+		// The read/list path is a clean-mirror (SearchIssues is on the UOW). The
+		// --auto-merge WRITE path is NOT yet proxied: performMerge relies on
+		// store.GetDependentsWithMetadata, which has no UOW usecase (that gap is
+		// tracked separately as beads-crys) — so reject --auto-merge cleanly here
+		// rather than nil-panic.
+		if usesProxiedServer() {
+			if autoMerge {
+				return HandleErrorRespectJSON("bd duplicates --auto-merge is not yet supported against a proxied server (beads-crys); run the suggested merge commands manually or use a direct-mode workspace")
+			}
+			allIssues, err = fetchDuplicatesIssuesProxied(ctx)
+		} else {
+			allIssues, err = store.SearchIssues(ctx, "", types.IssueFilter{})
+		}
 		if err != nil {
 			// beads-yw6g: bd duplicates honors --json on success (below), so a
 			// plain HandleError here left stdout empty + stderr text under
@@ -258,8 +275,10 @@ func countStructuralRelationships(groups [][]*types.Issue) map[string]*issueScor
 		}
 	}
 
-	// Batch query for dependency counts
-	depCounts, err := store.GetDependencyCounts(ctx, issueIDs)
+	// Batch query for dependency counts. Proxied-aware (beads-igmz): in
+	// proxiedServerMode the global `store` is nil, so route through the UOW
+	// DependencyUseCase instead of nil-panicking on store.GetDependencyCounts.
+	depCounts, err := fetchDependencyCountsForDuplicates(ctx, issueIDs)
 	if err != nil {
 		// On error, return empty scores - fallback to text refs only
 		return scores
