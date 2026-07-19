@@ -10,6 +10,22 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// resolveInfoMode maps the runtime backend-detection signals to the mode
+// string `bd info` reports (beads-28ai). It mirrors the config mode constants
+// (configfile.DoltMode{Embedded,Server,ProxiedServer}) so the diagnostic no
+// longer hardcodes "direct" for server-backed workspaces. Proxied-server
+// implies a SQL server, so it wins over the plain server/direct classification.
+func resolveInfoMode(proxied, server bool) string {
+	switch {
+	case proxied:
+		return "proxied-server"
+	case server:
+		return "server"
+	default:
+		return "direct"
+	}
+}
+
 var infoCmd = &cobra.Command{
 	Use:     "info",
 	GroupID: "setup",
@@ -58,10 +74,14 @@ Examples:
 			absDBPath = dbPath
 		}
 
-		// Build info structure
+		// Build info structure. beads-28ai: derive the mode from the actual
+		// runtime backend detection instead of hardcoding "direct" — a
+		// server- or proxied-server-backed workspace was previously
+		// misreported as a local embedded DB.
+		mode := resolveInfoMode(usesProxiedServer(), usesSQLServer())
 		info := map[string]interface{}{
 			"database_path": absDBPath,
-			"mode":          "direct",
+			"mode":          mode,
 		}
 
 		// Get issue count from direct store
@@ -140,7 +160,7 @@ Examples:
 		fmt.Println("\nBeads Database Information")
 		fmt.Println("===========================")
 		fmt.Printf("Database: %s\n", absDBPath)
-		fmt.Printf("Mode: direct\n")
+		fmt.Printf("Mode: %s\n", mode)
 
 		// Show issue count
 		if count, ok := info["issue_count"].(int); ok {
