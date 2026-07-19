@@ -21,6 +21,17 @@ func showIssueRefs(ctx context.Context, args []string, jsonOut bool) error {
 		if err != nil {
 			return err
 		}
+		// beads-d995: GetDependentsWithMetadata returns a nil slice when the issue
+		// has no dependents (both the embedded and dolt stores). A nil slice stored
+		// as a map value marshals to JSON null, so `bd show <id> --refs --json` on
+		// the common no-refs case emits {"<id>":null,...} while an issue WITH a
+		// dependent emits an array — forcing consumers to special-case null vs [].
+		// Init to an empty slice so the array contract holds for both cases (the
+		// nil-slice→null class, siblings 5fv3/036h/guib; map-value variant). The
+		// text path below only ranges/lens refs, so [] is behaviorally identical.
+		if refs == nil {
+			refs = []*types.IssueWithDependencyMetadata{}
+		}
 		allRefs[issueID] = refs
 		return nil
 	}
