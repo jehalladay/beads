@@ -56,6 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd dep tree --format` (beads-n95d) and the silently-ignored-value class (mz2p/pbl7). `--format json`
   (case-insensitive) and the no-flag default are unaffected.
 
+- **`bd ado projects --json` and `bd ado sync --json` now emit a JSON error object on stdout instead of a plaintext-stderr line on config/setup errors (beads-uc71).**
+  The two handlers returned their missing-config / setup errors via a bare `fmt.Errorf`, so cobra printed a
+  plaintext `Error: ...` line to stderr and exited 1 with empty stdout — unparseable by a `--json` consumer —
+  while the sibling `bd ado status --json` already embedded its error in the JSON result. The reachable-under-json
+  error paths in `runADOProjects`/`runADOSync` now route through `HandleErrorRespectJSON`, matching the 8lqh
+  JSON-error contract. (Distinct axis from the pk3y `SilenceUsage`/`SilenceErrors` usage-dump fix on the same file.)
+
 - **`bd search` now reports the true match count in its header, not the `--limit`-truncated page size (beads-4wn0).**
   The header printed `Found %d issues matching '<q>'` using the already-`--limit`-truncated result slice, so
   `bd search <term> --limit 2` on 3 matches reported `Found 2 issues` — an undercount with no "showing 2 of 3" hint.

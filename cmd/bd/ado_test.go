@@ -308,12 +308,14 @@ func TestADOSyncPullPushConflict(t *testing.T) {
 	adoSyncPushOnly = true
 	adoSyncDryRun = true // avoid readonly check
 
-	err := runADOSync(&cobra.Command{}, nil)
+	stderr, err := runADOExpectStderr(t, func() error {
+		return runADOSync(&cobra.Command{}, nil)
+	})
 	if err == nil {
 		t.Fatal("runADOSync() should fail with both --pull-only and --push-only")
 	}
-	if !strings.Contains(err.Error(), "pull-only") || !strings.Contains(err.Error(), "push-only") {
-		t.Errorf("error = %v, want mention of pull-only and push-only", err)
+	if !strings.Contains(stderr, "pull-only") || !strings.Contains(stderr, "push-only") {
+		t.Errorf("stderr = %q, want mention of pull-only and push-only", stderr)
 	}
 }
 
@@ -330,12 +332,14 @@ func TestADOSyncMissingConfig(t *testing.T) {
 	t.Setenv("AZURE_DEVOPS_PROJECT", "")
 	t.Setenv("AZURE_DEVOPS_URL", "")
 
-	err := runADOSync(&cobra.Command{}, nil)
+	stderr, err := runADOExpectStderr(t, func() error {
+		return runADOSync(&cobra.Command{}, nil)
+	})
 	if err == nil {
 		t.Fatal("runADOSync() should fail with missing config")
 	}
-	if !strings.Contains(err.Error(), "ado.pat") {
-		t.Errorf("error = %v, want mention of ado.pat", err)
+	if !strings.Contains(stderr, "ado.pat") {
+		t.Errorf("stderr = %q, want mention of ado.pat", stderr)
 	}
 }
 
@@ -350,12 +354,14 @@ func TestADOSyncMissingOrg(t *testing.T) {
 	t.Setenv("AZURE_DEVOPS_PROJECT", "")
 	t.Setenv("AZURE_DEVOPS_URL", "")
 
-	err := runADOSync(&cobra.Command{}, nil)
+	stderr, err := runADOExpectStderr(t, func() error {
+		return runADOSync(&cobra.Command{}, nil)
+	})
 	if err == nil {
 		t.Fatal("runADOSync() should fail with missing org")
 	}
-	if !strings.Contains(err.Error(), "ado.org") {
-		t.Errorf("error = %v, want mention of ado.org", err)
+	if !strings.Contains(stderr, "ado.org") {
+		t.Errorf("stderr = %q, want mention of ado.org", stderr)
 	}
 }
 
@@ -370,12 +376,14 @@ func TestADOSyncMissingProject(t *testing.T) {
 	t.Setenv("AZURE_DEVOPS_PROJECT", "")
 	t.Setenv("AZURE_DEVOPS_URL", "")
 
-	err := runADOSync(&cobra.Command{}, nil)
+	stderr, err := runADOExpectStderr(t, func() error {
+		return runADOSync(&cobra.Command{}, nil)
+	})
 	if err == nil {
 		t.Fatal("runADOSync() should fail with missing project")
 	}
-	if !strings.Contains(err.Error(), "ado.project") {
-		t.Errorf("error = %v, want mention of ado.project", err)
+	if !strings.Contains(stderr, "ado.project") {
+		t.Errorf("stderr = %q, want mention of ado.project", stderr)
 	}
 }
 
@@ -741,12 +749,14 @@ func TestADOProjectsMissingPAT(t *testing.T) {
 	t.Setenv("AZURE_DEVOPS_PROJECT", "proj")
 	t.Setenv("AZURE_DEVOPS_URL", "")
 
-	err := runADOProjects(&cobra.Command{}, nil)
+	stderr, err := runADOExpectStderr(t, func() error {
+		return runADOProjects(&cobra.Command{}, nil)
+	})
 	if err == nil {
 		t.Fatal("runADOProjects() should fail with missing PAT")
 	}
-	if !strings.Contains(err.Error(), "ado.pat") {
-		t.Errorf("error = %v, want mention of ado.pat", err)
+	if !strings.Contains(stderr, "ado.pat") {
+		t.Errorf("stderr = %q, want mention of ado.pat", stderr)
 	}
 }
 
@@ -761,12 +771,14 @@ func TestADOProjectsMissingOrg(t *testing.T) {
 	t.Setenv("AZURE_DEVOPS_PROJECT", "proj")
 	t.Setenv("AZURE_DEVOPS_URL", "")
 
-	err := runADOProjects(&cobra.Command{}, nil)
+	stderr, err := runADOExpectStderr(t, func() error {
+		return runADOProjects(&cobra.Command{}, nil)
+	})
 	if err == nil {
 		t.Fatal("runADOProjects() should fail with missing org")
 	}
-	if !strings.Contains(err.Error(), "ado.org") {
-		t.Errorf("error = %v, want mention of ado.org", err)
+	if !strings.Contains(stderr, "ado.org") {
+		t.Errorf("stderr = %q, want mention of ado.org", stderr)
 	}
 }
 
@@ -829,12 +841,14 @@ func TestADOProjectsHTTPError(t *testing.T) {
 	t.Setenv("AZURE_DEVOPS_PROJECT", "proj")
 	t.Setenv("AZURE_DEVOPS_URL", server.URL)
 
-	err := runADOProjects(&cobra.Command{}, nil)
+	stderr, err := runADOExpectStderr(t, func() error {
+		return runADOProjects(&cobra.Command{}, nil)
+	})
 	if err == nil {
 		t.Fatal("runADOProjects() should fail with HTTP error")
 	}
-	if !strings.Contains(err.Error(), "failed to list projects") {
-		t.Errorf("error = %v, want mention of 'failed to list projects'", err)
+	if !strings.Contains(stderr, "failed to list projects") {
+		t.Errorf("stderr = %q, want mention of 'failed to list projects'", stderr)
 	}
 }
 
@@ -866,6 +880,49 @@ func captureADOStdout(t *testing.T, fn func()) string {
 	_ = r.Close()
 
 	return buf.String()
+}
+
+// runADOExpectStderr runs an ado RunE handler in non-JSON mode and returns the
+// captured stderr plus the returned error.
+//
+// beads-uc71: the config/setup error paths in runADOProjects/runADOSync now route
+// through HandleErrorRespectJSON. In the default (non-JSON) mode that prints the
+// human "Error: <msg>" line to os.Stderr and returns a bare *exitError whose
+// Error() is just "exit code 1" — the diagnostic message is no longer carried on
+// the returned error. So these tests must assert the message on stderr, not on
+// err.Error(). jsonOutput is pinned false for determinism (the JSON-mode contract
+// is covered by ado_json_error_test.go).
+func runADOExpectStderr(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+
+	adoStdioMutex.Lock()
+	defer adoStdioMutex.Unlock()
+
+	prevJSON := jsonOutput
+	jsonOutput = false
+	defer func() { jsonOutput = prevJSON }()
+
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+
+	var buf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&buf, r)
+		close(done)
+	}()
+
+	runErr := fn()
+	_ = w.Close()
+	os.Stderr = old
+	<-done
+	_ = r.Close()
+
+	return buf.String(), runErr
 }
 
 // TestBuildADOPushHooks_NoFilters verifies nil is returned when no filters are set.

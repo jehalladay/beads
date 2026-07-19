@@ -424,23 +424,28 @@ func runADOProjects(cmd *cobra.Command, _ []string) error {
 	}()
 
 	cfg := getADOConfig()
+	// beads-uc71: these error paths are all reachable under --json (the
+	// jsonOutput success branch is below), so route them through
+	// HandleErrorRespectJSON — under --json it emits a parseable JSON error
+	// object on stdout, matching sibling `ado status` (and the 8lqh
+	// error-contract) instead of a bare plaintext-stderr / exit-1.
 	if cfg.PAT == "" {
-		return fmt.Errorf("ado.pat not configured: set via 'bd config set ado.pat <token>' or AZURE_DEVOPS_PAT env var")
+		return HandleErrorRespectJSON("ado.pat not configured: set via 'bd config set ado.pat <token>' or AZURE_DEVOPS_PAT env var")
 	}
 	if cfg.Org == "" && cfg.URL == "" {
-		return fmt.Errorf("ado.org not configured: set via 'bd config set ado.org <org>' or AZURE_DEVOPS_ORG env var")
+		return HandleErrorRespectJSON("ado.org not configured: set via 'bd config set ado.org <org>' or AZURE_DEVOPS_ORG env var")
 	}
 
 	out := cmd.OutOrStdout()
 	client, err := getADOClient(cfg)
 	if err != nil {
-		return fmt.Errorf("invalid ADO configuration: %w", err)
+		return HandleErrorRespectJSON("invalid ADO configuration: %v", err)
 	}
 	ctx := context.Background()
 
 	projects, err := client.ListProjects(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to list projects: %w", err)
+		return HandleErrorRespectJSON("failed to list projects: %v", err)
 	}
 
 	if jsonOutput {
@@ -493,8 +498,11 @@ func runADOSync(cmd *cobra.Command, _ []string) error {
 	}()
 
 	cfg := getADOConfig()
+	// beads-uc71: route the reachable-under-json error paths through
+	// HandleErrorRespectJSON so `ado sync --json` emits a parseable JSON error
+	// on stdout (matching `ado status`) instead of plaintext-stderr / exit-1.
 	if err := validateADOConfig(cfg); err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	if !adoSyncDryRun {
@@ -502,17 +510,17 @@ func runADOSync(cmd *cobra.Command, _ []string) error {
 	}
 
 	if adoSyncPullOnly && adoSyncPushOnly {
-		return fmt.Errorf("cannot use both --pull-only and --push-only")
+		return HandleErrorRespectJSON("cannot use both --pull-only and --push-only")
 	}
 
 	// Validate conflict flags
 	conflictStrategy, err := getADOConflictStrategy(adoPreferLocal, adoPreferADO, adoPreferNewer)
 	if err != nil {
-		return fmt.Errorf("%w (--prefer-local, --prefer-ado, --prefer-newer)", err)
+		return HandleErrorRespectJSON("%v (--prefer-local, --prefer-ado, --prefer-newer)", err)
 	}
 
 	if err := ensureStoreActive(); err != nil {
-		return fmt.Errorf("database not available: %w", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 
 	out := cmd.OutOrStdout()
@@ -525,14 +533,14 @@ func runADOSync(cmd *cobra.Command, _ []string) error {
 		at.SetProjects(tracker.DeduplicateStrings(cliProjects))
 	}
 	if err := at.Init(ctx, store); err != nil {
-		return fmt.Errorf("initializing Azure DevOps tracker: %w", err)
+		return HandleErrorRespectJSON("initializing Azure DevOps tracker: %v", err)
 	}
 
 	// Build pull filters from CLI flags, falling back to config values.
 	filters := buildADOPullFilters(ctx, cmd)
 	if filters != nil {
 		if err := filters.Validate(); err != nil {
-			return fmt.Errorf("invalid pull filter: %w", err)
+			return HandleErrorRespectJSON("invalid pull filter: %v", err)
 		}
 		at.SetFilters(filters)
 	}
@@ -566,7 +574,7 @@ func runADOSync(cmd *cobra.Command, _ []string) error {
 	}
 
 	if err := applySelectiveSyncFlags(cmd, &opts, push); err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	// Map conflict resolution
@@ -587,8 +595,11 @@ func runADOSync(cmd *cobra.Command, _ []string) error {
 	// Run sync
 	result, err := engine.Sync(ctx, opts)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return err
+		// beads-uc71: honor the --json error contract here too — previously
+		// this printed a bare "Error: ..." to stderr and returned the raw
+		// error (plaintext-stderr again via cobra), so `ado sync --json`
+		// emitted no JSON on a sync failure.
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	// Link push pass: sync beads dependencies → ADO work item relations.
