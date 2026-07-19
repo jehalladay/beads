@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -142,6 +143,31 @@ func TestEmbeddedPurge(t *testing.T) {
 		out := bdPurgeFail(t, bd, dir, "--pattern", "[invalid", "--dry-run")
 		if !strings.Contains(strings.ToLower(out), "pattern") {
 			t.Errorf("expected a malformed-pattern error mentioning 'pattern', got: %q", out)
+		}
+	})
+
+	// beads-hbn3: the require-filter guard (bd prune with neither --older-than nor
+	// --pattern; requireFilter is true for prune, false for purge) previously
+	// called HandleErrorWithHint, which writes plain text to STDERR even under
+	// --json → a --json consumer got no JSON error object on stdout (8lqh
+	// json-error-contract, EMPTY-stdout shape). The fix uses
+	// HandleErrorWithHintRespectJSON so the error object lands on STDOUT. The
+	// guard is in the shared runPurgeOrPrune, so purge's confirm-required guard
+	// (the :232 site) is fixed by the same swap.
+	t.Run("prune_requirefilter_json_error_on_stdout", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "pj")
+		cmd := exec.Command(bd, "prune", "--json") // no --older-than / --pattern → require-filter guard
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Fatalf("expected prune --json (no filter) to fail; stdout=%q stderr=%q", stdout.String(), stderr.String())
+		}
+		var obj map[string]any
+		if jerr := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &obj); jerr != nil {
+			t.Errorf("prune --json guard error should emit a JSON object on STDOUT, got stdout=%q (stderr=%q): %v", stdout.String(), stderr.String(), jerr)
+		} else if _, ok := obj["error"]; !ok {
+			t.Errorf("JSON error object missing 'error' key: %v", obj)
 		}
 	})
 }

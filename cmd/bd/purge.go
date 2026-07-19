@@ -96,7 +96,10 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) error {
 	pattern, _ := cmd.Flags().GetString("pattern")
 
 	if scope.requireFilter && olderThan == "" && pattern == "" {
-		return HandleErrorWithHint(
+		// beads-hbn3: RespectJSON variant so `--json` gets a JSON error object on
+		// stdout, not plain text on stderr (8lqh json-error-contract; the hint is
+		// preserved in the JSON payload).
+		return HandleErrorWithHintRespectJSON(
 			fmt.Sprintf("bd %s requires --older-than or --pattern", scope.cmdName),
 			"Protects against accidental bulk deletion. Use `--pattern '*'` to\n"+
 				"  include all closed beads in this scope, or `--older-than 1d`\n"+
@@ -229,7 +232,8 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) error {
 		if pattern != "" {
 			hint += " --pattern " + pattern
 		}
-		return HandleErrorWithHint(
+		// beads-hbn3: RespectJSON variant (JSON error to stdout under --json).
+		return HandleErrorWithHintRespectJSON(
 			fmt.Sprintf("would %s %d bead(s)", scope.cmdName, len(issueIDs)),
 			fmt.Sprintf("Use --force to confirm or --dry-run to preview.\n  %s", hint))
 	}
