@@ -84,7 +84,11 @@ func TestReadyWorkExcludeTypes(t *testing.T) {
 		}
 		seen[typ] = true
 	}
-	for _, want := range []types.IssueType{"merge-request", types.TypeGate, types.TypeMolecule, "agent", "rig", "role", "message"} {
+	// beads-2vu8: epic is a container/parent (like molecule), never directly
+	// actionable ready work — it must be excluded from bd ready / stats, matching
+	// the molecule/gate/rig exclusions, so a childless/all-open epic does not
+	// surface as its own ready item and inflate the ready count.
+	for _, want := range []types.IssueType{"merge-request", types.TypeGate, types.TypeMolecule, types.TypeEpic, "agent", "rig", "role", "message"} {
 		if !seen[want] {
 			t.Errorf("default exclude list missing %q", want)
 		}

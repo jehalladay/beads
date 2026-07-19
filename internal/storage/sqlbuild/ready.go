@@ -18,6 +18,11 @@ func ReadyWorkExcludeTypes(extra []types.IssueType) []types.IssueType {
 		types.IssueType("merge-request"),
 		types.TypeGate,
 		types.TypeMolecule,
+		// beads-2vu8: epic is a container/parent (surfaced via bd epic status +
+		// parent-annotation on ready children), never directly-actionable ready
+		// work — exclude it like molecule so a childless/all-open epic doesn't
+		// surface as its own ready item and inflate the ready/stats count.
+		types.TypeEpic,
 		types.IssueType("rig"),
 	}
 	for _, t := range domain.DefaultInfraTypes() {
