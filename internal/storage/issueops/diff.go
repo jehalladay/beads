@@ -2,7 +2,6 @@ package issueops
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 
 	"github.com/steveyegge/beads/internal/storage"
@@ -13,7 +12,7 @@ import (
 // Dolt's dolt_diff() table function.
 //
 // nolint:gosec // G201: refs are validated by ValidateRef() - dolt_diff requires literal refs
-func DiffInTx(ctx context.Context, tx *sql.Tx, fromRef, toRef string) ([]*storage.DiffEntry, error) {
+func DiffInTx(ctx context.Context, tx DBTX, fromRef, toRef string) ([]*storage.DiffEntry, error) {
 	if err := ValidateRef(fromRef); err != nil {
 		return nil, fmt.Errorf("invalid fromRef: %w", err)
 	}

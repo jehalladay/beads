@@ -861,6 +861,10 @@ func (r *issueSQLRepositoryImpl) History(ctx context.Context, id string) ([]*sto
 	return issueops.HistoryInTx(ctx, r.runner, id)
 }
 
+func (r *issueSQLRepositoryImpl) Diff(ctx context.Context, fromRef, toRef string) ([]*storage.DiffEntry, error) {
+	return issueops.DiffInTx(ctx, r.runner, fromRef, toRef)
+}
+
 func (r *issueSQLRepositoryImpl) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
 	return issueops.UpdateIssueIDInTx(ctx, r.runner, oldID, newID, issue, actor)
 }

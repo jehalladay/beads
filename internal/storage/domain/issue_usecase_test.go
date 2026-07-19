@@ -38,6 +38,8 @@ type fakeIssueRepo struct {
 	// History
 	historyEntries []*storage.HistoryEntry
 	historyErr     error
+	diffEntries    []*storage.DiffEntry
+	diffErr        error
 	// UpdateIssueID (rename)
 	renameErr   error
 	renameCalls []struct{ oldID, newID string }
@@ -176,6 +178,9 @@ func (f *fakeIssueRepo) AsOf(context.Context, string, string) (*types.Issue, err
 }
 func (f *fakeIssueRepo) History(context.Context, string) ([]*storage.HistoryEntry, error) {
 	return f.historyEntries, f.historyErr
+}
+func (f *fakeIssueRepo) Diff(context.Context, string, string) ([]*storage.DiffEntry, error) {
+	return f.diffEntries, f.diffErr
 }
 func (f *fakeIssueRepo) UpdateIssueID(_ context.Context, oldID, newID string, _ *types.Issue, _ string) error {
 	f.renameCalls = append(f.renameCalls, struct{ oldID, newID string }{oldID, newID})

@@ -42,20 +42,37 @@ Examples:
 		fromRef := args[0]
 		toRef := args[1]
 
+		// Proxied-server mode: the global `store` is nil (diff is not a
+		// noDbCommand), so fetch via the UOW stack instead (beads-mh3e).
+		if usesProxiedServer() {
+			return runDiffProxiedServer(ctx, fromRef, toRef)
+		}
+
 		entries, err := store.Diff(ctx, fromRef, toRef)
 		if err != nil {
 			return HandleErrorRespectJSON("failed to get diff: %v", err)
 		}
 
-		if len(entries) == 0 {
-			fmt.Printf("No changes between %s and %s\n", fromRef, toRef)
-			return nil
-		}
+		return renderDiff(entries, fromRef, toRef)
+	},
+}
 
+// renderDiff emits the diff result set honoring --json (shared by the direct
+// and proxied-server paths).
+func renderDiff(entries []*storage.DiffEntry, fromRef, toRef string) error {
+	if len(entries) == 0 {
 		if jsonOutput {
 			return outputJSON(entries)
 		}
+		fmt.Printf("No changes between %s and %s\n", fromRef, toRef)
+		return nil
+	}
 
+	if jsonOutput {
+		return outputJSON(entries)
+	}
+
+	{
 		// Display diff in human-readable format
 		fmt.Printf("\n%s Changes from %s to %s (%d issues affected)\n\n",
 			ui.RenderAccent("📊"),
@@ -135,8 +152,8 @@ Examples:
 			}
 			fmt.Println()
 		}
-		return nil
-	},
+	}
+	return nil
 }
 
 // joinStrings joins strings with a separator (simple helper to avoid importing strings)

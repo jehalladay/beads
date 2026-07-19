@@ -53,6 +53,7 @@ type IssueSQLRepository interface {
 	Get(ctx context.Context, id string, opts IssueTableOpts) (*types.Issue, error)
 	AsOf(ctx context.Context, id, ref string) (*types.Issue, error)
 	History(ctx context.Context, id string) ([]*storage.HistoryEntry, error)
+	Diff(ctx context.Context, fromRef, toRef string) ([]*storage.DiffEntry, error)
 	// UpdateIssueID renames an issue/wisp (oldID→newID), rekeying its
 	// dependency edges. Routes issues↔wisps tables and rejects a cross-table
 	// id collision (beads-mgsx). issue carries the current title/body fields.
@@ -276,6 +277,7 @@ type IssueUseCase interface {
 	ApplyIssueGraph(ctx context.Context, plan GraphPlan, actor string) (GraphApplyResult, error)
 	AsOf(ctx context.Context, id, ref string) (*types.Issue, error)
 	History(ctx context.Context, id string) ([]*storage.HistoryEntry, error)
+	Diff(ctx context.Context, fromRef, toRef string) ([]*storage.DiffEntry, error)
 	RenameIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error
 	DeleteIssue(ctx context.Context, id, actor string) (DeleteIssuesResult, error)
 	DeleteIssues(ctx context.Context, params DeleteIssuesParams, actor string) (DeleteIssuesResult, error)
@@ -378,6 +380,14 @@ func (u *issueUseCaseImpl) History(ctx context.Context, id string) ([]*storage.H
 	entries, err := u.issueRepo.History(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("history %s: %w", id, err)
+	}
+	return entries, nil
+}
+
+func (u *issueUseCaseImpl) Diff(ctx context.Context, fromRef, toRef string) ([]*storage.DiffEntry, error) {
+	entries, err := u.issueRepo.Diff(ctx, fromRef, toRef)
+	if err != nil {
+		return nil, fmt.Errorf("diff %s..%s: %w", fromRef, toRef, err)
 	}
 	return entries, nil
 }
