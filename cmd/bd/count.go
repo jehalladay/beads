@@ -465,12 +465,12 @@ func init() {
 	countCmd.Flags().String("notes-contains", "", "Filter by notes substring")
 
 	// Date ranges
-	countCmd.Flags().String("created-after", "", "Filter issues created after date (YYYY-MM-DD or RFC3339)")
-	countCmd.Flags().String("created-before", "", "Filter issues created before date (YYYY-MM-DD or RFC3339)")
-	countCmd.Flags().String("updated-after", "", "Filter issues updated after date (YYYY-MM-DD or RFC3339)")
-	countCmd.Flags().String("updated-before", "", "Filter issues updated before date (YYYY-MM-DD or RFC3339)")
-	countCmd.Flags().String("closed-after", "", "Filter issues closed after date (YYYY-MM-DD or RFC3339)")
-	countCmd.Flags().String("closed-before", "", "Filter issues closed before date (YYYY-MM-DD or RFC3339)")
+	countCmd.Flags().String("created-after", "", "Filter issues created after date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
+	countCmd.Flags().String("created-before", "", "Filter issues created before date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
+	countCmd.Flags().String("updated-after", "", "Filter issues updated after date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
+	countCmd.Flags().String("updated-before", "", "Filter issues updated before date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
+	countCmd.Flags().String("closed-after", "", "Filter issues closed after date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
+	countCmd.Flags().String("closed-before", "", "Filter issues closed before date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
 
 	// Empty/null checks
 	countCmd.Flags().Bool("empty-description", false, "Filter issues with empty description")
