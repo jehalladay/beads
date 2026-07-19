@@ -81,8 +81,26 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 			// clear message (matching the long-standing already-open behavior).
 			if issue.Status != types.StatusClosed {
 				if issue.Status == types.StatusOpen {
-					reportReopenItemError("%s is already open", fullID)
+					// beads-hxc2: an already-open reopen is an idempotent no-op
+					// SUCCESS — the issue is already in reopen's target state, so
+					// exit stays 0. Reflect that state in the --json payload
+					// (mirroring close.go's already-closed path, which adds the
+					// issue to the "closed" array) rather than emitting an
+					// {"error":...}-keyed object on stderr for a non-error
+					// outcome, which mislabels the success and is asymmetric with
+					// close. Non-JSON keeps the informational stderr line.
+					if jsonOutput {
+						reopenedIssues = append(reopenedIssues, issue)
+					} else {
+						fmt.Fprintf(os.Stderr, "%s is already open\n", fullID)
+					}
 				} else {
+					// A non-closed, non-open status (deferred/in_progress/blocked):
+					// reopen deliberately does not apply here (it would silently
+					// revert real work to open). This is an advisory no-op, not a
+					// reflected target state, so it stays a deferred per-item
+					// message (JSON object on stderr under --json / plain line
+					// otherwise), distinct from the already-open success above.
 					reportReopenItemError("%s is not closed (status: %s); reopen only applies to closed issues", fullID, issue.Status)
 				}
 				result.Close()
