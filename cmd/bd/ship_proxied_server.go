@@ -44,10 +44,7 @@ func runShipProxiedServer(ctx context.Context, capability string, force, dryRun 
 	}
 
 	if len(issues) > 1 {
-		fmt.Fprintf(os.Stderr, "Error: multiple issues found with label '%s':\n", exportLabel)
-		for _, issue := range issues {
-			fmt.Fprintf(os.Stderr, "  %s: %s (%s)\n", issue.ID, issue.Title, issue.Status)
-		}
+		printShipMultiLabelMatches(os.Stderr, issues, exportLabel)
 		return HandleErrorRespectJSON("only one issue should have this label")
 	}
 

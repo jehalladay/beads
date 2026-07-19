@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -80,10 +81,7 @@ func runShip(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(issues) > 1 {
-		fmt.Fprintf(os.Stderr, "Error: multiple issues found with label '%s':\n", exportLabel)
-		for _, issue := range issues {
-			fmt.Fprintf(os.Stderr, "  %s: %s (%s)\n", issue.ID, issue.Title, issue.Status)
-		}
+		printShipMultiLabelMatches(os.Stderr, issues, exportLabel)
 		return HandleErrorRespectJSON("only one issue should have this label")
 	}
 
@@ -154,6 +152,20 @@ func runShip(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\nExternal projects can now depend on: external:%s:%s\n",
 		"<this-project>", capability)
 	return nil
+}
+
+// printShipMultiLabelMatches writes the "multiple issues carry this export
+// label" disambiguation list. Each issue title is routed through displayTitle
+// (ui.SanitizeForTerminal) because a title can originate from an untrusted
+// import (JSONL/markdown/SCM) carrying OSC/CSI terminal-control escapes;
+// printing it raw would inject control sequences onto these error lines.
+// Display-only — stored titles are unchanged. Shared by the direct and proxied
+// ship paths. 7n9y sink-class slice (beads-pwhu1).
+func printShipMultiLabelMatches(w io.Writer, issues []*types.Issue, exportLabel string) {
+	fmt.Fprintf(w, "Error: multiple issues found with label '%s':\n", exportLabel)
+	for _, issue := range issues {
+		fmt.Fprintf(w, "  %s: %s (%s)\n", issue.ID, displayTitle(issue.Title), issue.Status)
+	}
 }
 
 func init() {
