@@ -896,12 +896,18 @@ func runLinearTeams(cmd *cobra.Command, args []string) error {
 
 	client, err := buildLinearClient(ctx, "")
 	if err != nil {
-		return HandleError("%v", err)
+		// beads-ru7wr: honor the --json error contract like the sibling
+		// runLinearSync/runLinearStatus in this group. This is the
+		// auth-not-configured path; a bare HandleError left stdout empty +
+		// plaintext on stderr under `bd linear teams --json`, while
+		// `linear sync --json` emits {error,schema_version} on stdout for the
+		// SAME condition (8lqh intra-group asymmetry).
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	teams, err := client.FetchTeams(ctx)
 	if err != nil {
-		return HandleError("fetching teams: %v", err)
+		return HandleErrorRespectJSON("fetching teams: %v", err)
 	}
 
 	if len(teams) == 0 {
