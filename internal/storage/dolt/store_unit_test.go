@@ -305,6 +305,52 @@ func TestApplyConfigDefaults_TestModeBlocksProdPort(t *testing.T) {
 	}
 }
 
+// TestApplyConfigDefaults_TestModeBlocksProdHost verifies the host leg of the
+// test-mode guard (hq-sl5wbc): under BEADS_TEST_MODE=1 a NON-loopback
+// ServerHost inherited from the ambient crew shell (BEADS_DOLT_SERVER_HOST is
+// set to the production hub, e.g. 172.31.26.56, in every gt crew shell) must be
+// neutralized to loopback so a test can never CREATE DATABASE / connect against
+// the production hub. Previously the guard only forced the prod PORT to 1 and
+// never inspected the host, so any test going through applyConfigDefaults with
+// an unset cfg.ServerHost picked up the prod host and could pollute prod (the 11
+// orphan test DBs on the hub).
+func TestApplyConfigDefaults_TestModeBlocksProdHost(t *testing.T) {
+	// Simulate the crew shell: prod host + prod port both injected.
+	t.Setenv("BEADS_TEST_MODE", "1")
+	t.Setenv("BEADS_DOLT_SERVER_HOST", "172.31.26.56")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "3307")
+
+	cfg := &Config{}
+	applyConfigDefaults(cfg)
+
+	if isNonLoopbackHost(cfg.ServerHost) {
+		t.Errorf("BEADS_TEST_MODE=1 must neutralize a non-loopback host, got %q", cfg.ServerHost)
+	}
+	// The port guard still applies too.
+	if cfg.ServerPort == DefaultSQLPort {
+		t.Errorf("BEADS_TEST_MODE=1 must not leave the prod port %d intact, got %d", DefaultSQLPort, cfg.ServerPort)
+	}
+}
+
+// TestApplyConfigDefaults_TestModeKeepsLoopbackHost verifies the guard does NOT
+// disturb a legitimate loopback test host (the testcontainer path sets
+// 127.0.0.1 + a mapped port).
+func TestApplyConfigDefaults_TestModeKeepsLoopbackHost(t *testing.T) {
+	t.Setenv("BEADS_TEST_MODE", "1")
+	t.Setenv("BEADS_DOLT_SERVER_HOST", "127.0.0.1")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "43211") // explicit non-prod test port
+
+	cfg := &Config{}
+	applyConfigDefaults(cfg)
+
+	if cfg.ServerHost != "127.0.0.1" {
+		t.Errorf("loopback test host must be preserved, got %q", cfg.ServerHost)
+	}
+	if cfg.ServerPort != 43211 {
+		t.Errorf("explicit non-prod test port must be preserved, got %d", cfg.ServerPort)
+	}
+}
+
 // TestApplyConfigDefaults_EnvOverridesConfig verifies that BEADS_DOLT_PORT
 // overrides a port already set by metadata.json, even outside test mode.
 // This is the fix for hq-27t (test pollution): callers like the orchestrator set

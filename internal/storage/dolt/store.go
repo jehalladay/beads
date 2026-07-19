@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -192,6 +193,19 @@ const (
 )
 
 // applyConfigDefaults fills in default values for unset Config fields.
+// isNonLoopbackHost reports whether host is a real remote host rather than an
+// empty/loopback address. Used by the BEADS_TEST_MODE guard (hq-sl5wbc) to
+// refuse a test connection to a non-local Dolt server (the production hub). An
+// empty host is treated as loopback (the default resolves to 127.0.0.1).
+func isNonLoopbackHost(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "", "127.0.0.1", "::1", "localhost", "0.0.0.0":
+		return false
+	default:
+		return true
+	}
+}
+
 func applyConfigDefaults(cfg *Config) {
 	if cfg.Database == "" {
 		// Check env var first — this is the highest-priority override and
@@ -280,6 +294,15 @@ func applyConfigDefaults(cfg *Config) {
 		if cfg.ServerPort == 0 || cfg.ServerPort == DefaultSQLPort {
 			cfg.ServerPort = 1
 		}
+		// Host leg of the guard (hq-sl5wbc): the crew shell injects
+		// BEADS_DOLT_SERVER_HOST pointing at the production hub, which the host
+		// resolution above copies into cfg.ServerHost. A test must never reach
+		// prod, so neutralize any non-loopback host to 127.0.0.1 (paired with the
+		// forced port-1, this makes the connection fail fast instead of polluting
+		// the production hub — the source of the orphan test DBs).
+		if isNonLoopbackHost(cfg.ServerHost) {
+			cfg.ServerHost = "127.0.0.1"
+		}
 	}
 	if cfg.ServerUser == "" {
 		cfg.ServerUser = "root"
@@ -311,10 +334,10 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	// If BEADS_TEST_MODE=1 and we're about to hit the default prod port,
 	// something upstream forgot to set BEADS_DOLT_SERVER_PORT. Panic immediately
 	// so the test fails loudly instead of silently polluting prod.
-	if os.Getenv("BEADS_TEST_MODE") == "1" && cfg.ServerPort == DefaultSQLPort {
+	if os.Getenv("BEADS_TEST_MODE") == "1" && (cfg.ServerPort == DefaultSQLPort || isNonLoopbackHost(cfg.ServerHost)) {
 		panic(fmt.Sprintf(
-			"BEADS_TEST_MODE=1 but connecting to prod port %d — set BEADS_DOLT_SERVER_PORT or use test helpers (database=%q, path=%q)",
-			DefaultSQLPort, cfg.Database, cfg.Path,
+			"BEADS_TEST_MODE=1 but connecting to prod server %s:%d — set BEADS_DOLT_SERVER_HOST/PORT to a loopback test server or use test helpers (database=%q, path=%q)",
+			cfg.ServerHost, cfg.ServerPort, cfg.Database, cfg.Path,
 		))
 	}
 
