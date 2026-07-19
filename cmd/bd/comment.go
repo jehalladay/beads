@@ -70,6 +70,13 @@ Examples:
 
 		ctx := rootCtx
 
+		// Hub-connected (proxied-server) crew have a nil global `store`. Route
+		// through the proxied UOW to avoid "storage is nil" (beads-xjtk, the
+		// singular sibling of the m4vx `bd comments add` leg).
+		if usesProxiedServer() {
+			return runCommentProxiedServer(ctx, id, author, commentText)
+		}
+
 		result, err := resolveAndGetIssueForMutation(ctx, store, id)
 		if err != nil {
 			if result != nil {
