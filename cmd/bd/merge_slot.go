@@ -208,7 +208,7 @@ func runMergeSlotAcquire(cmd *cobra.Command, args []string) error {
 		holder = actor
 	}
 	if holder == "" {
-		return HandleError("no holder specified; use --holder or set BEADS_ACTOR env var")
+		return HandleErrorRespectJSON("no holder specified; use --holder or set BEADS_ACTOR env var")
 	}
 
 	result, err := store.MergeSlotAcquire(rootCtx, holder, actor, mergeSlotAddWaiter)
