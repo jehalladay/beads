@@ -98,11 +98,7 @@ Examples:
 					}
 				}
 				if jsonOutput {
-					return outputJSON(map[string]interface{}{
-						"merged":        branchName,
-						"conflicts":     len(conflicts),
-						"resolved_with": vcMergeStrategy,
-					})
+					return outputJSON(buildMergeJSON(branchName, conflicts, vcMergeStrategy))
 				}
 				fmt.Printf("Merged %s with %d conflicts resolved using '%s' strategy\n",
 					ui.RenderAccent(branchName), len(conflicts), vcMergeStrategy)
@@ -110,10 +106,7 @@ Examples:
 			}
 
 			if jsonOutput {
-				return outputJSON(map[string]interface{}{
-					"merged":    branchName,
-					"conflicts": conflicts,
-				})
+				return outputJSON(buildMergeJSON(branchName, conflicts, ""))
 			}
 
 			fmt.Printf("\n%s Merge completed with conflicts:\n\n", ui.RenderAccent("!!"))
@@ -125,15 +118,41 @@ Examples:
 		}
 
 		if jsonOutput {
-			return outputJSON(map[string]interface{}{
-				"merged":    branchName,
-				"conflicts": 0,
-			})
+			return outputJSON(buildMergeJSON(branchName, conflicts, ""))
 		}
 
 		fmt.Printf("Successfully merged %s\n", ui.RenderAccent(branchName))
 		return nil
 	},
+}
+
+// buildMergeJSON assembles the stable-shape JSON payload for `bd vc merge --json`
+// across all three outcome legs (clean / auto-resolved / unresolved), fixing the
+// beads-a3et0 shape-instability:
+//   - "conflicts" is ALWAYS a JSON array of conflict objects (empty [] on a clean
+//     merge, the set on the resolved/unresolved legs) — never a bare int on some
+//     legs and an array on others (the gf0o8-tier same-key int-vs-array flip that
+//     broke a consumer doing len(.conflicts) or .conflicts[0]).
+//   - "conflict_count" is a stable int the caller can rely on regardless of outcome.
+//   - "resolved_with" is ALWAYS present (the strategy string when the merge was
+//     auto-resolved, else null) — never a key that only appears on one leg.
+//
+// resolvedWith is "" when the merge was not auto-resolved with a strategy.
+func buildMergeJSON(branchName string, conflicts []storage.Conflict, resolvedWith string) map[string]interface{} {
+	// Normalize nil->[] so the array marshals as [] (not null) on the clean leg.
+	if conflicts == nil {
+		conflicts = []storage.Conflict{}
+	}
+	var rw interface{}
+	if resolvedWith != "" {
+		rw = resolvedWith
+	}
+	return map[string]interface{}{
+		"merged":         branchName,
+		"conflicts":      conflicts,
+		"conflict_count": len(conflicts),
+		"resolved_with":  rw,
+	}
 }
 
 var vcCommitMessage string
@@ -182,7 +201,10 @@ Examples:
 		if err := store.Commit(ctx, vcCommitMessage); err != nil {
 			if isDoltNothingToCommit(err) {
 				if jsonOutput {
-					return outputJSON(map[string]interface{}{"committed": false, "message": "nothing to commit"})
+					// beads-a3et0: always include "hash" so the key set is stable
+					// across the committed/nothing-to-commit legs (avoid omitempty,
+					// which would re-introduce the 8qf2q key-set flip).
+					return outputJSON(map[string]interface{}{"committed": false, "hash": "", "message": "nothing to commit"})
 				}
 				fmt.Println("Nothing to commit")
 				return nil
