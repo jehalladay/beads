@@ -12,6 +12,26 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
+// printBurnDryRunIssues prints the "issues to delete" tree for a burn dry-run.
+// Titles are routed through displayTitle (ui.SanitizeForTerminal) because a
+// wisp/molecule title can originate from an untrusted import (JSONL/markdown/
+// SCM) carrying OSC/CSI terminal-control escapes; the raw fmt.Printf sinks here
+// bypassed the sanitize that `bd show` applies (beads-7n9y sink-class tail,
+// sibling of j8li/ihaw). ephemeralOnly mirrors the wisp path's Ephemeral filter.
+func printBurnDryRunIssues(subgraph *TemplateSubgraph, ephemeralOnly bool) {
+	for _, issue := range subgraph.Issues {
+		if ephemeralOnly && !issue.Ephemeral {
+			continue
+		}
+		status := string(issue.Status)
+		if issue.ID == subgraph.Root.ID {
+			fmt.Printf("  - [%s] %s (%s) [ROOT]\n", status, displayTitle(issue.Title), issue.ID)
+		} else {
+			fmt.Printf("  - [%s] %s (%s)\n", status, displayTitle(issue.Title), issue.ID)
+		}
+	}
+}
+
 var molBurnCmd = &cobra.Command{
 	Use:   "burn <molecule-id> [molecule-id...]",
 	Short: "Delete a molecule without creating a digest",
@@ -283,19 +303,9 @@ func burnWispMolecule(ctx context.Context, resolvedID string, dryRun, force bool
 
 	if dryRun {
 		fmt.Printf("\nDry run: would burn wisp %s\n\n", resolvedID)
-		fmt.Printf("Root: %s\n", subgraph.Root.Title)
+		fmt.Printf("Root: %s\n", displayTitle(subgraph.Root.Title))
 		fmt.Printf("\nWisp issues to delete (%d total):\n", len(wispIDs))
-		for _, issue := range subgraph.Issues {
-			if !issue.Ephemeral {
-				continue
-			}
-			status := string(issue.Status)
-			if issue.ID == subgraph.Root.ID {
-				fmt.Printf("  - [%s] %s (%s) [ROOT]\n", status, issue.Title, issue.ID)
-			} else {
-				fmt.Printf("  - [%s] %s (%s)\n", status, issue.Title, issue.ID)
-			}
-		}
+		printBurnDryRunIssues(subgraph, true)
 		fmt.Printf("\nNo digest will be created (use 'bd mol squash' to create one).\n")
 		return nil
 	}
@@ -354,16 +364,9 @@ func burnPersistentMolecule(ctx context.Context, resolvedID string, dryRun, forc
 
 	if dryRun {
 		fmt.Printf("\nDry run: would burn mol %s\n\n", resolvedID)
-		fmt.Printf("Root: %s\n", subgraph.Root.Title)
+		fmt.Printf("Root: %s\n", displayTitle(subgraph.Root.Title))
 		fmt.Printf("\nIssues to delete (%d total):\n", len(issueIDs))
-		for _, issue := range subgraph.Issues {
-			status := string(issue.Status)
-			if issue.ID == subgraph.Root.ID {
-				fmt.Printf("  - [%s] %s (%s) [ROOT]\n", status, issue.Title, issue.ID)
-			} else {
-				fmt.Printf("  - [%s] %s (%s)\n", status, issue.Title, issue.ID)
-			}
-		}
+		printBurnDryRunIssues(subgraph, false)
 		fmt.Printf("\nNote: Persistent mol - deletions sync to remotes.\n")
 		fmt.Printf("No digest will be created (use 'bd mol squash' to create one).\n")
 		return nil
