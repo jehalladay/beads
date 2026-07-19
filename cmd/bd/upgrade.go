@@ -186,7 +186,13 @@ Examples:
 
 		cfg, err := configfile.Load(beadsDir)
 		if err != nil {
-			return HandleError("loading metadata.json: %v", err)
+			// beads-m71ko (8lqh error-half): ack sets SilenceErrors and emits
+			// outputJSON on success, so a raw HandleError here prints plain text
+			// to stderr with empty stdout under --json (a malformed metadata.json
+			// makes configfile.Load return "parsing config: ..."). Route through
+			// HandleErrorRespectJSON for a parseable JSON error object, matching
+			// the sibling backup/count commands (beads-4lg6a/51fl/huz3).
+			return HandleErrorRespectJSON("loading metadata.json: %v", err)
 		}
 		if cfg == nil {
 			cfg = configfile.DefaultConfig()
@@ -200,7 +206,8 @@ Examples:
 		cfg.LastBdVersion = Version          //nolint:staticcheck // SA1019: legacy metadata.json version field
 
 		if err := cfg.Save(beadsDir); err != nil {
-			return HandleError("saving metadata.json: %v", err)
+			// beads-m71ko: same --json error contract as the load path above.
+			return HandleErrorRespectJSON("saving metadata.json: %v", err)
 		}
 
 		upgradeAcknowledged = true
