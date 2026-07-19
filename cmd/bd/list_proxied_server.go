@@ -127,7 +127,11 @@ func runListProxiedHierarchicalParent(ctx context.Context, uw uow.UnitOfWork, in
 		return err
 	}
 
-	displayPrettyListWithDeps(treeIssues, false, depsByIssueID)
+	// beads-bubp: gatherProxiedHierarchical prepends the parent as the tree root
+	// for hierarchy context (not as a child result), so exclude it from the
+	// footer count — otherwise the human "Total: N issues" is +1 vs --json
+	// (children only). Proxied twin of the direct list.go --parent fix.
+	displayPrettyListWithDepsContextRoot(treeIssues, false, depsByIssueID, false, in.parentID)
 	printSkipLabelsFooter(in.skipLabels)
 	return nil
 }

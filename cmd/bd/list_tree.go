@@ -165,6 +165,19 @@ func displayPrettyListWithDeps(issues []*types.Issue, showHeader bool, allDeps m
 // total would need a separate unlimited COUNT query, not available on every call
 // path); relabeling stops the word from asserting completeness it doesn't have.
 func displayPrettyListWithDepsTruncated(issues []*types.Issue, showHeader bool, allDeps map[string][]*types.Dependency, truncated bool) {
+	displayPrettyListWithDepsContextRoot(issues, showHeader, allDeps, truncated, "")
+}
+
+// displayPrettyListWithDepsContextRoot is displayPrettyListWithDepsTruncated
+// plus contextRootID: the id of an issue that was prepended to `issues` purely
+// as tree-render CONTEXT (not itself a result row) and so must be excluded from
+// the footer count. beads-bubp: `bd children`/`bd list --parent` prepend the
+// queried parent as the tree root (list.go getHierarchicalChildren) for
+// hierarchy display, but the footer counted it, so the human "Total: N issues"
+// was +1 vs --json (which returns children only). Excluding contextRootID from
+// the footer count (and its open/in-progress tally) makes human == json.
+// Callers with no context root pass "" and are unaffected.
+func displayPrettyListWithDepsContextRoot(issues []*types.Issue, showHeader bool, allDeps map[string][]*types.Dependency, truncated bool, contextRootID string) {
 	if showHeader {
 		// Clear screen and show header
 		fmt.Print("\033[2J\033[H")
@@ -191,7 +204,15 @@ func displayPrettyListWithDepsTruncated(issues []*types.Issue, showHeader bool, 
 	fmt.Println(strings.Repeat("-", 80))
 	openCount := 0
 	inProgressCount := 0
+	countedRows := 0
 	for _, issue := range issues {
+		// beads-bubp: skip the context-root row (the queried parent) — it is
+		// displayed for hierarchy context but is not a child of itself, and
+		// --json omits it, so counting it makes the footer disagree with --json.
+		if contextRootID != "" && issue.ID == contextRootID {
+			continue
+		}
+		countedRows++
 		switch issue.Status {
 		case "open":
 			openCount++
@@ -206,7 +227,7 @@ func displayPrettyListWithDepsTruncated(issues []*types.Issue, showHeader bool, 
 		// see all rows — this just keeps the stdout footer word honest.
 		label = "Showing"
 	}
-	fmt.Printf("%s: %d issues (%d open, %d in progress)\n", label, len(issues), openCount, inProgressCount)
+	fmt.Printf("%s: %d issues (%d open, %d in progress)\n", label, countedRows, openCount, inProgressCount)
 	fmt.Println()
 	fmt.Println("Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred")
 }

@@ -662,7 +662,11 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 			}
 
 			allDeps := displayedIssueDeps(ctx, activeStore, treeIssues)
-			displayPrettyListWithDeps(treeIssues, false, allDeps)
+			// beads-bubp: the parent is prepended to treeIssues as tree-render
+			// context (getHierarchicalChildren), not as a child result, so exclude
+			// it from the footer count — otherwise the human "Total: N issues" is
+			// +1 vs --json (which returns children only).
+			displayPrettyListWithDepsContextRoot(treeIssues, false, allDeps, false, in.parentID)
 			printSkipLabelsFooter(in.skipLabels)
 			return nil
 		}
