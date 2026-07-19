@@ -25,8 +25,10 @@ This enables knowledge graph connections without blocking or hierarchy.
 Examples:
   bd relate bd-abc bd-xyz    # Link two related issues
   bd relate bd-123 bd-456    # Create see-also connection`,
-	Args: cobra.ExactArgs(2),
-	RunE: runRelate,
+	Args:          cobra.ExactArgs(2),
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE:          runRelate,
 }
 
 var unrelateCmd = &cobra.Command{
@@ -38,8 +40,10 @@ Removes the link in both directions.
 
 Example:
   bd unrelate bd-abc bd-xyz`,
-	Args: cobra.ExactArgs(2),
-	RunE: runUnrelate,
+	Args:          cobra.ExactArgs(2),
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE:          runUnrelate,
 }
 
 func init() {
