@@ -45,7 +45,14 @@ Example:
 
 		priority, err := validation.ValidatePriority(priorityStr)
 		if err != nil {
-			return HandleError("%v", err)
+			// beads-n8xi: bd q/quick honors --json on success (outputJSON(issue)
+			// at the direct path below + the proxied path, direct-path parity
+			// landed by beads-j54e) and this priority-validation guard runs BEFORE
+			// the usesProxiedServer() split, so ONE fix covers both modes. Route
+			// through HandleErrorRespectJSON so `bd q ... --priority=garbage --json`
+			// emits a stdout JSON error object, not empty stdout + stderr text
+			// (0wp9/21xi/v02z --json-error-contract class).
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		issue := &types.Issue{
