@@ -899,7 +899,15 @@ Examples:
 			}
 		}()
 
-		if len(resolved) > 1 && direction == "down" {
+		// beads-gf0o8: this multi-arg same-store fast path emits raw
+		// types.Dependency EDGE records ({issue_id, depends_on_id, ...}), a
+		// DIFFERENT object model than the general path's issue-with-metadata
+		// records ({id, title, ...}). For --json that made the output schema
+		// flip by arg count. The general (issue-shape) output is canonical
+		// (single-arg + --direction up + the human view all produce it), so the
+		// fast path is restricted to non-JSON output; JSON always falls through
+		// to the general path for a stable, single record schema.
+		if len(resolved) > 1 && direction == "down" && !jsonOutput {
 			allSameStore := true
 			firstStore := resolved[0].store
 			for _, r := range resolved[1:] {
@@ -915,23 +923,9 @@ Examples:
 				}
 				depMap, err := firstStore.GetDependencyRecordsForIssues(ctx, ids)
 				if err == nil {
-					var allDeps []*types.Dependency
-					for _, id := range ids {
-						for _, dep := range depMap[id] {
-							if typeFilter == "" || string(dep.Type) == typeFilter {
-								allDeps = append(allDeps, dep)
-							}
-						}
-					}
-					if jsonOutput {
-						if allDeps == nil {
-							allDeps = []*types.Dependency{}
-						}
-						if err := outputJSON(allDeps); err != nil {
-							return err
-						}
-						return depListExit(failedCount)
-					}
+					// beads-gf0o8: no jsonOutput branch here — the outer
+					// guard restricts this fast path to non-JSON output so the
+					// --json schema stays stable (issue shape, general path).
 					for _, id := range ids {
 						deps := depMap[id]
 						if len(deps) == 0 {
