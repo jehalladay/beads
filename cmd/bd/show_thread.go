@@ -87,7 +87,10 @@ func showMessageThread(ctx context.Context, messageID string, jsonOutput bool) e
 	}
 
 	// Display the thread
-	fmt.Printf("\n%s Thread: %s\n", ui.RenderAccent("📬"), rootMsg.Title)
+	// beads-s3qhv: sanitize the subject for terminal display (7n9y sink slice)
+	// — a message Title (mail Subject) is untrusted (set from --stdin / another
+	// actor) and can carry OSC/CSI escapes.
+	fmt.Printf("\n%s Thread: %s\n", ui.RenderAccent("📬"), displayTitle(rootMsg.Title))
 	fmt.Println(strings.Repeat("─", 66))
 
 	for _, msg := range threadMessages {
@@ -114,7 +117,8 @@ func showMessageThread(ctx context.Context, messageID string, jsonOutput bool) e
 		if parentID := repliesTo[msg.ID]; parentID != "" {
 			fmt.Printf("%s  Re: %s\n", indent, parentID)
 		}
-		fmt.Printf("%s  %s: %s\n", indent, ui.RenderMuted("Subject"), msg.Title)
+		// beads-s3qhv: sanitize the subject for terminal display (7n9y sink slice).
+		fmt.Printf("%s  %s: %s\n", indent, ui.RenderMuted("Subject"), displayTitle(msg.Title))
 		if msg.Description != "" {
 			// Indent the body
 			bodyLines := strings.Split(msg.Description, "\n")
