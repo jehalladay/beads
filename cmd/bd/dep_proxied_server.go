@@ -525,6 +525,17 @@ func runDepListProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 		return
 	}
 
+	printProxiedDepList(allIssues)
+	depListProxiedExit(failedCount)
+}
+
+// printProxiedDepList renders the proxied dep-list view. Each issue title is
+// routed through displayTitle (ui.SanitizeForTerminal) because a title can
+// originate from an untrusted import (JSONL/markdown/SCM) carrying OSC/CSI
+// terminal-control escapes; printing it raw would inject control sequences onto
+// the line. Display-only — stored titles are unchanged. Proxied twin of the
+// direct dep.go dep-list sink. 7n9y sink-class slice (beads-2ktwm).
+func printProxiedDepList(allIssues []*types.IssueWithDependencyMetadata) {
 	for _, iss := range allIssues {
 		var idStr string
 		switch iss.Status {
@@ -540,10 +551,9 @@ func runDepListProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 			idStr = iss.ID
 		}
 		fmt.Printf("  %s: %s [P%d] (%s) via %s\n",
-			idStr, iss.Title, iss.Priority, iss.Status, iss.DependencyType)
+			idStr, displayTitle(iss.Title), iss.Priority, iss.Status, iss.DependencyType)
 	}
 	fmt.Println()
-	depListProxiedExit(failedCount)
 }
 
 // depListProxiedExit exits non-zero when any id failed to resolve (beads-ez8b),
@@ -691,10 +701,19 @@ func runDepCyclesProxiedServer(_ *cobra.Command, ctx context.Context) {
 	}
 
 	fmt.Printf("\n%s Found %d dependency cycles:\n\n", ui.RenderFail("⚠"), len(cycles))
+	printProxiedDepCycles(cycles)
+}
+
+// printProxiedDepCycles renders the proxied dependency-cycle list. Each issue
+// title is routed through displayTitle (ui.SanitizeForTerminal) for the same
+// untrusted-import escape reason as printProxiedDepList. Display-only — stored
+// titles are unchanged. Proxied twin of the direct dep.go cycle sink. 7n9y
+// sink-class slice (beads-2ktwm).
+func printProxiedDepCycles(cycles [][]*types.Issue) {
 	for i, cycle := range cycles {
 		fmt.Printf("%d. Cycle involving:\n", i+1)
 		for _, issue := range cycle {
-			fmt.Printf("   - %s: %s\n", issue.ID, issue.Title)
+			fmt.Printf("   - %s: %s\n", issue.ID, displayTitle(issue.Title))
 		}
 		fmt.Println()
 	}
