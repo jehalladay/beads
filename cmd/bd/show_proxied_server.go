@@ -401,7 +401,20 @@ func runShowProxiedThread(ctx context.Context, uw uow.UnitOfWork, in *showProxie
 		return
 	}
 
-	fmt.Printf("\n%s Thread: %s\n", ui.RenderAccent("📬"), rootMsg.Title)
+	printProxiedThread(threadMessages, repliesTo, rootMsg)
+}
+
+// printProxiedThread renders the human-readable thread view for the proxied
+// 'bd show <id> --thread' path. The thread header title (rootMsg.Title) and
+// each message's Subject (msg.Title) are routed through displayTitle
+// (ui.SanitizeForTerminal): a message Subject is settable by other actors
+// (e.g. via --stdin) and a title imported from JSONL/markdown/SCM carries its
+// value verbatim, so an OSC/CSI terminal-control escape (OSC 0 window-title /
+// OSC 52 clipboard) would otherwise reach the terminal. Display-only — the
+// stored title and the JSON path (outputJSON above) are unchanged. This is the
+// proxied twin of the direct show_thread.go sinks fixed in beads-s3qhv.
+func printProxiedThread(threadMessages []*types.Issue, repliesTo map[string]string, rootMsg *types.Issue) {
+	fmt.Printf("\n%s Thread: %s\n", ui.RenderAccent("📬"), displayTitle(rootMsg.Title))
 	fmt.Println(strings.Repeat("─", 66))
 	for _, msg := range threadMessages {
 		depth := 0
@@ -421,7 +434,7 @@ func runShowProxiedThread(ctx context.Context, uw uow.UnitOfWork, in *showProxie
 		if parentID := repliesTo[msg.ID]; parentID != "" {
 			fmt.Printf("%s  Re: %s\n", indent, parentID)
 		}
-		fmt.Printf("%s  %s: %s\n", indent, ui.RenderMuted("Subject"), msg.Title)
+		fmt.Printf("%s  %s: %s\n", indent, ui.RenderMuted("Subject"), displayTitle(msg.Title))
 		if msg.Description != "" {
 			for _, line := range strings.Split(msg.Description, "\n") {
 				fmt.Printf("%s  %s\n", indent, line)
