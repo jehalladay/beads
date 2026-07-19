@@ -11,6 +11,13 @@ import (
 
 const JSONSchemaVersion = 1
 
+// NOTE: the reserved-JSON-key set (schema_version / data — what
+// wrapWithSchemaVersion injects below) lives in internal/storage/kvkeys
+// (kvkeys.ReservedJSONKeys / IsReservedJSONKey), the same package that owns the
+// kv/memory key prefixes, so the write-time guards in `bd kv set` and
+// `bd remember --key` share one source of truth with these injected keys
+// (beads-z0fe).
+
 func jsonEnvelopeEnabled() bool {
 	return os.Getenv("BD_JSON_ENVELOPE") == "1"
 }

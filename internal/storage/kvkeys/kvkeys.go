@@ -27,3 +27,23 @@ const (
 	// `bd kv set` keys cannot collide with the `bd remember` namespace.
 	MemoryConfigKeyPrefix = Prefix + MemoryPrefix
 )
+
+// ReservedJSONKeys are the top-level keys that cmd/bd's outputJSON /
+// wrapWithSchemaVersion inject into a --json response. A user key equal to one
+// of these silently collides with the injected key when a user-keyed map is
+// emitted flat (bd memories / bd kv list / bd config list --json), losing the
+// user value on read (beads-z0fe). bd remember / bd kv set reject such a user
+// key at WRITE time; bd config list (whose keys are built-in and cannot be
+// rejected) warns on the collision instead. Single source of truth shared by
+// the write guards and cmd/bd/output.go's injection.
+var ReservedJSONKeys = map[string]struct{}{
+	"schema_version": {}, // always injected by wrapWithSchemaVersion
+	"data":           {}, // the payload wrapper injected under BD_JSON_ENVELOPE=1
+}
+
+// IsReservedJSONKey reports whether key collides with a reserved --json
+// envelope key (see ReservedJSONKeys).
+func IsReservedJSONKey(key string) bool {
+	_, ok := ReservedJSONKeys[key]
+	return ok
+}

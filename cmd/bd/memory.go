@@ -87,6 +87,13 @@ Examples:
 		if key == "" {
 			return HandleErrorRespectJSON("could not generate key from content; use --key to specify one")
 		}
+		// Reject a key that collides with a wrapWithSchemaVersion-injected JSON
+		// key (schema_version / data): `bd memories --json` emits a flat
+		// map[string]string keyed by memory key, and wrapping would silently
+		// clobber it — data-loss (beads-z0fe, matches bd kv set).
+		if kvkeys.IsReservedJSONKey(key) {
+			return HandleErrorRespectJSON("key %q is reserved (bd injects it into --json output; it would be silently overwritten). Choose a different key", key)
+		}
 
 		storageKey := kvPrefix + memoryPrefix + key
 

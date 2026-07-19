@@ -17,3 +17,20 @@ func TestMemoryConfigKeyPrefix(t *testing.T) {
 			MemoryConfigKeyPrefix, Prefix, MemoryPrefix)
 	}
 }
+
+// TestIsReservedJSONKey pins the reserved --json envelope keys (beads-z0fe):
+// schema_version and data are what cmd/bd's wrapWithSchemaVersion injects, so a
+// user memory/kv key equal to one would be silently clobbered on a flat --json
+// read. This is the single source of truth the write-guards + config warn share.
+func TestIsReservedJSONKey(t *testing.T) {
+	for _, k := range []string{"schema_version", "data"} {
+		if !IsReservedJSONKey(k) {
+			t.Errorf("IsReservedJSONKey(%q) = false, want true (reserved --json envelope key)", k)
+		}
+	}
+	for _, k := range []string{"", "schema", "version", "data_", "mydata", "feature_flag", "SCHEMA_VERSION"} {
+		if IsReservedJSONKey(k) {
+			t.Errorf("IsReservedJSONKey(%q) = true, want false (not a reserved key)", k)
+		}
+	}
+}

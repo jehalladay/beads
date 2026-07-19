@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/remotecache"
+	"github.com/steveyegge/beads/internal/storage/kvkeys"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -422,6 +423,18 @@ var configListCmd = &cobra.Command{
 		}
 
 		if jsonOutput {
+			// beads-z0fe: a config key equal to a reserved --json envelope key
+			// (schema_version/data) is silently clobbered by wrapWithSchemaVersion
+			// when the flat cfgMap is emitted. Unlike bd remember/kv (write-time
+			// reject), these are BUILT-IN config keys that cannot be rejected, and
+			// `config list --json`'s flat-map shape is a tested contract, so we
+			// cannot nest to disambiguate. Warn on the collision so the loss is not
+			// silent (the value is still readable via `bd config get <key>`).
+			for k := range cfgMap {
+				if kvkeys.IsReservedJSONKey(k) {
+					fmt.Fprintf(os.Stderr, "Warning: config key %q collides with a bd --json envelope key and is overwritten in 'config list --json'; read it with 'bd config get %s'\n", k, k)
+				}
+			}
 			return outputJSON(cfgMap)
 		}
 

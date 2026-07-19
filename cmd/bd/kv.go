@@ -44,6 +44,13 @@ func validateKVKey(key string) error {
 		strings.HasPrefix(key, "import.") {
 		return fmt.Errorf("key cannot start with reserved prefix %q", strings.Split(key, ".")[0]+".")
 	}
+	// Reject a key that collides with a wrapWithSchemaVersion-injected JSON key
+	// (schema_version / data). `bd kv list --json` emits a flat map[string]string
+	// of user keys; wrapping merges schema_version on top, so a user key named
+	// schema_version would be silently clobbered — data-loss (beads-z0fe).
+	if kvkeys.IsReservedJSONKey(key) {
+		return fmt.Errorf("key %q is reserved (bd injects it into --json output; it would be silently overwritten). Choose a different key", key)
+	}
 	return nil
 }
 
