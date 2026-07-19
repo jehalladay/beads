@@ -153,9 +153,18 @@ func runMergeSlotCheck(cmd *cobra.Command, args []string) error {
 		if isNotFoundErr(err) {
 			slotID := storage.MergeSlotID(rootCtx, store)
 			if jsonOutput {
+				// beads-8qf2q: emit the SAME key-set as the found leg below so a
+				// consumer can statically type `merge-slot check --json` regardless
+				// of whether the slot exists. Previously not-found emitted
+				// {id,available,error} while found emitted {id,available,holder,
+				// waiters} — a key-set flip (a consumer keying on .holder/.waiters
+				// got missing keys on not-found, and vice-versa on .error). Keep
+				// holder/waiters null on not-found; error is null on the found leg.
 				result := map[string]interface{}{
 					"id":        slotID,
 					"available": false,
+					"holder":    nil,
+					"waiters":   nil,
 					"error":     "not found",
 				}
 				return outputJSON(result)
@@ -168,11 +177,14 @@ func runMergeSlotCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	if jsonOutput {
+		// beads-8qf2q: stable key-set — include "error":nil so the found and
+		// not-found legs emit the identical key-set (see the not-found leg above).
 		result := map[string]interface{}{
 			"id":        status.SlotID,
 			"available": status.Available,
 			"holder":    nilIfEmpty(status.Holder),
 			"waiters":   status.Waiters,
+			"error":     nil,
 		}
 		return outputJSON(result)
 	}
