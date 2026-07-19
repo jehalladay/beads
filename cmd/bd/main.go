@@ -705,6 +705,14 @@ var rootCmd = &cobra.Command{
 			format, _ := cmd.Root().PersistentFlags().GetString("format")
 			if strings.EqualFold(format, "json") {
 				jsonOutput = true
+			} else if format != "" {
+				// beads-f34g: the root --format alias only supports "json";
+				// any other value previously fell through silently and the
+				// command ran as plain text with rc=0 — a false-green footgun
+				// for a scripted `bd ... --format json | jq` that typos the
+				// value. Fail loud instead, matching `bd dep tree --format`
+				// (dep.go) and the silently-ignored-value class (mz2p/pbl7).
+				return HandleErrorRespectJSON("invalid --format %q (valid: json)", format)
 			}
 		}
 		// If flag wasn't explicitly set, use viper value

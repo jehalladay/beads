@@ -41,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   success path (`outputSyncResult` / `writeNotionJSON`) emits JSON. The reachable-under-json error paths now route
   through `HandleErrorRespectJSON`, matching the 8lqh JSON-error contract. Same error-half class as beads-uc71
   (ado subcommands) and beads-z2b4 (worktree); distinct from the lav0 success-half.
+- **The root `--format` alias now fails loud on an unsupported value instead of silently degrading to text output with rc=0 (beads-f34g).**
+  The hidden root `--format` flag (an alias for `--json`) only honored `json`; any other value (`--format yaml`,
+  `--format bogus`, a typo) fell through with no error and the command ran as plain text and exited 0 — a
+  false-green footgun for a scripted `bd ... --format json | jq` that mistypes the value. It now returns
+  `invalid --format "<value>" (valid: json)` via `HandleErrorRespectJSON`, matching the fail-loud
+  `bd dep tree --format` (beads-n95d) and the silently-ignored-value class (mz2p/pbl7). `--format json`
+  (case-insensitive) and the no-flag default are unaffected.
 
 - **`bd search` now reports the true match count in its header, not the `--limit`-truncated page size (beads-4wn0).**
   The header printed `Found %d issues matching '<q>'` using the already-`--limit`-truncated result slice, so
