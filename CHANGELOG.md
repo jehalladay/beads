@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd update --status closed` now defaults `close_reason` to "Closed", matching `bd close` (beads-6qo8t).**
+  Two paths reach `status=closed` but diverged on the stored `close_reason`: `bd close` defaults it to `"Closed"`,
+  while `bd update --status closed` left it NULL — a field-parity gap despite update's help claiming it mirrors
+  `bd close --force`. The close-transition auto-management (shared `issueops.ManageClosedAt` for the direct/embedded
+  path and the domain/db path for the proxied path — the same blocks that set `closed_at`) now also defaults
+  `close_reason='Closed'` on the OPEN→closed transition, only when the caller didn't set it explicitly and only on a
+  fresh close (guarded on `closed_at == nil`, so a re-close/no-op never clobbers an existing reason). Both direct and
+  proxied update paths fixed symmetrically. Teeth: update_status_closed_defaults_close_reason (+ preserves-existing).
+
 - **`bd list --parent X --limit N --pretty` no longer silently ignores `--limit` (beads-3dr5).**
   The `--parent`+`--pretty` branch renders the full subtree with no `--limit` cap or truncation hint, while every
   other output path (`--json`, compact, non-parent pretty) honors `--limit` — so a user who passed `--limit 5` got

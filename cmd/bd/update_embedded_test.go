@@ -426,6 +426,45 @@ func TestEmbeddedUpdate(t *testing.T) {
 		}
 	})
 
+	// beads-6qo8t: `bd update --status closed` must default close_reason to
+	// "Closed" on the OPEN→closed transition, matching `bd close` — the two
+	// paths previously diverged (close set 'Closed', update left it NULL)
+	// despite update's help claiming it mirrors `bd close --force`.
+	t.Run("update_status_closed_defaults_close_reason", func(t *testing.T) {
+		// bd close reference: close_reason == "Closed"
+		a := bdCreate(t, bd, dir, "close-path parity A", "--type", "task")
+		bdClose(t, bd, dir, a.ID)
+		gotA := bdShow(t, bd, dir, a.ID)
+
+		// bd update --status closed: must match
+		b := bdCreate(t, bd, dir, "update-path parity B", "--type", "task")
+		bdUpdate(t, bd, dir, b.ID, "--status", "closed")
+		gotB := bdShow(t, bd, dir, b.ID)
+
+		if gotB.Status != types.StatusClosed {
+			t.Fatalf("expected status closed after update, got %s", gotB.Status)
+		}
+		if gotB.CloseReason != "Closed" {
+			t.Errorf("update --status closed: close_reason = %q, want %q (parity with bd close, which stored %q)",
+				gotB.CloseReason, "Closed", gotA.CloseReason)
+		}
+		if gotB.CloseReason != gotA.CloseReason {
+			t.Errorf("close_reason parity gap: bd close=%q vs update --status closed=%q", gotA.CloseReason, gotB.CloseReason)
+		}
+	})
+
+	// A re-close (already-closed → closed no-op) must NOT clobber an existing
+	// close_reason with the default (guarded on oldIssue.ClosedAt == nil).
+	t.Run("update_status_closed_preserves_existing_reason", func(t *testing.T) {
+		c := bdCreate(t, bd, dir, "preserve reason C", "--type", "task")
+		bdClose(t, bd, dir, c.ID, "--reason", "specific reason")
+		bdUpdate(t, bd, dir, c.ID, "--status", "closed") // re-close no-op
+		got := bdShow(t, bd, dir, c.ID)
+		if got.CloseReason != "specific reason" {
+			t.Errorf("re-close must preserve existing close_reason, got %q want %q", got.CloseReason, "specific reason")
+		}
+	})
+
 	t.Run("update_assignee", func(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "Assign test", "--type", "task")
 		bdUpdate(t, bd, dir, issue.ID, "--assignee", "alice")

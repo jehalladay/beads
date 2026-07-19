@@ -152,6 +152,16 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 			case newStatus == types.StatusClosed && oldStatus != types.StatusClosed:
 				setClauses = append(setClauses, "closed_at = ?")
 				args = append(args, time.Now().UTC())
+				// beads-6qo8t: default close_reason to "Closed" on the OPEN→closed
+				// transition, mirroring `bd close` and the direct-path shared seam
+				// (issueops.ManageClosedAt). Keeps the domain/proxied UPDATE path in
+				// parity so `bd update --status closed` stores close_reason='Closed'
+				// like `bd close`, not NULL. Only when the caller did not set
+				// close_reason explicitly, and only on a real fresh close.
+				if _, callerSetReason := updates["close_reason"]; !callerSetReason {
+					setClauses = append(setClauses, "close_reason = ?")
+					args = append(args, "Closed")
+				}
 			case newStatus != types.StatusClosed && oldStatus == types.StatusClosed:
 				setClauses = append(setClauses, "closed_at = ?")
 				args = append(args, nil)
