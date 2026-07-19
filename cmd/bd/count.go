@@ -297,7 +297,12 @@ Examples:
 		if includeInfra, _ := cmd.Flags().GetBool("include-infra"); includeInfra {
 			cfg, err := cb.loadFilterConfig(ctx)
 			if err != nil {
-				return HandleError("%v", err)
+				// beads-huz3: honor the --json error contract on this
+				// second config-load path — the sibling load at the top of
+				// RunE (count.go:132) already uses HandleErrorRespectJSON, so
+				// under `--json` a store/config failure here must emit a JSON
+				// error object on stdout, not plain-text on stderr.
+				return HandleErrorRespectJSON("%v", err)
 			}
 			applyCountIncludeInfra(&filter, issueType, cfg)
 		} else {
