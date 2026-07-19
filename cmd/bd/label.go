@@ -248,11 +248,32 @@ var labelAddCmd = &cobra.Command{
 		// already printed them immediately, so the slice is empty.
 		flushDeferredItemErrors(deferredItemErrors)
 		if len(unresolved) > 0 {
-			return HandleErrorRespectJSON("could not resolve %d of %d issue id(s): %s",
+			// beads-uctf: a PARTIAL batch (issueIDs>0 here, so the results array
+			// was already written to stdout above). Emitting the terminal error
+			// via HandleErrorRespectJSON would write a SECOND JSON doc to stdout
+			// under --json → two concatenated docs → `json.load` fails "Extra
+			// data". The per-item resolve failures were already flushed to
+			// stderr; report this summary to stderr too and exit non-zero
+			// (rc1), matching the update.go partial-batch contract (beads-92tz/
+			// fg6/4i20): one stdout doc for the successes, errors on stderr.
+			return labelPartialFailure("could not resolve %d of %d issue id(s): %s",
 				len(unresolved), len(unresolved)+len(issueIDs), strings.Join(unresolved, ", "))
 		}
 		return nil
 	},
+}
+
+// labelPartialFailure reports a batch-label partial-failure summary. When the
+// success results array has already gone to stdout, the summary must NOT add a
+// second stdout JSON doc (beads-uctf): under --json it goes to stderr as a JSON
+// object and the command exits non-zero (rc1); otherwise it prints the human
+// error and exits non-zero. Mirrors update.go's SilentExit-on-partial contract.
+func labelPartialFailure(format string, a ...interface{}) error {
+	if jsonOutput {
+		reportItemError(format, a...)
+		return SilentExit()
+	}
+	return HandleErrorRespectJSON(format, a...)
 }
 
 //nolint:dupl // labelRemoveCmd and labelAddCmd are similar but serve different operations
@@ -356,12 +377,25 @@ var labelRemoveCmd = &cobra.Command{
 		// Partial/whole success: flush deferred per-item failures to stderr as
 		// JSON objects now that stdout carries the results array (beads-en28).
 		flushDeferredItemErrors(deferredItemErrors)
+		// beads-uctf: if at least one label was actually removed (present>0), the
+		// results array is already on stdout — a terminal HandleErrorRespectJSON
+		// would append a SECOND stdout JSON doc under --json (two concatenated
+		// docs → `json.load` "Extra data"). In that partial case route the
+		// summary to stderr + SilentExit (rc1); when NOTHING succeeded, stdout is
+		// empty so the single stdout error doc is correct (the en28 contract).
+		partial := len(present) > 0
+		fail := func(format string, a ...interface{}) error {
+			if partial {
+				return labelPartialFailure(format, a...)
+			}
+			return HandleErrorRespectJSON(format, a...)
+		}
 		if len(unresolved) > 0 {
-			return HandleErrorRespectJSON("could not resolve %d of %d issue id(s): %s",
+			return fail("could not resolve %d of %d issue id(s): %s",
 				len(unresolved), len(unresolved)+len(issueIDs), strings.Join(unresolved, ", "))
 		}
 		if len(missing) > 0 {
-			return HandleErrorRespectJSON("no label '%s' to remove on %d issue(s): %s",
+			return fail("no label '%s' to remove on %d issue(s): %s",
 				trimmedLabel, len(missing), strings.Join(missing, ", "))
 		}
 		return nil

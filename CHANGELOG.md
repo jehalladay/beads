@@ -60,6 +60,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single-vs-slice divergence fixed for `bd assign`/`bd tag` in beads-yrtx. The direct path
   (`cmd/bd/priority.go`) and its proxied-server sibling (`cmd/bd/priority_proxied_server.go`) now wrap
   the updated issue in `[]*types.Issue{...}` before `outputJSON`. Text-mode output is unchanged.
+- **`bd label add`/`remove --json` no longer emits two concatenated JSON documents on a partial batch, and the direct and proxied paths now agree on the exit code (beads-uctf).**
+  On a partial batch (≥1 resolvable id + ≥1 unresolvable) the direct path wrote the success results
+  array to stdout and *then* a terminal error object to stdout, so `json.load(stdout)` failed with
+  "Extra data". The terminal partial-failure summary now goes to stderr (as a JSON object under `--json`)
+  and the command exits non-zero, leaving exactly one JSON document (the results array) on stdout —
+  matching the `bd update` partial-batch contract (beads-92tz/fg6/4i20). The proxied-server path
+  (`label_proxied_server.go`) previously returned rc=0 on a partial batch; it now exits non-zero too, so
+  both paths end at the same contract (single stdout doc, per-item errors on stderr, rc≠0). Wholly-failed
+  batches are unchanged (a single stdout error object). Text-mode output is unchanged.
 
 - **`bd history <id> --json` now emits snake_case field names (`commit_hash`, `committer`, `commit_date`, `issue`) instead of PascalCase (beads-8slh).**
   The `storage.HistoryEntry` struct (`internal/storage/versioned.go`) carried no json tags, so

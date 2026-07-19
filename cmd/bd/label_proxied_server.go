@@ -108,13 +108,22 @@ func applyLabelBatchProxied(ctx context.Context, issueIDs, labels []string, oper
 		SetLastTouchedID(mutated[0].ID)
 	}
 
-	// Every requested ID failed → non-zero exit so scripts don't read false
-	// success; partial success keeps rc=0. Mirrors the direct label path and the
-	// update/close/defer batch paths.
+	// Every requested ID failed → the single stdout JSON error object is the
+	// sole output (stderr already carries the per-item errors).
 	if okCount == 0 {
 		if jsonOutput {
 			return HandleErrorRespectJSON("no issues labeled matching the provided IDs")
 		}
+		return SilentExit()
+	}
+	// beads-uctf: a PARTIAL batch (some ids labeled, at least one failed). The
+	// per-item errors were already printed to stderr by applyUpdateProxiedOne
+	// and the results array is on stdout — exit non-zero (rc1) WITHOUT adding a
+	// second stdout doc, so a caller scripting the batch sees the failure. This
+	// aligns the proxied path UP to the direct label path + the update/close/
+	// defer batch contract (beads-4i20), whose comment this block previously
+	// mis-described as rc=0.
+	if okCount < len(issueIDs) {
 		return SilentExit()
 	}
 	return nil
