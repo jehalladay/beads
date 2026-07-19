@@ -88,7 +88,10 @@ normal 'bd' subcommands for interactive/read operations.`,
 		}()
 
 		if store == nil {
-			return fmt.Errorf("no database connection available (%s)", diagHint())
+			// beads-2yhq: honor --json on setup errors — a bare fmt.Errorf here
+			// prints plaintext to stderr with empty stdout, unparseable by a
+			// `bd batch --json` consumer (matches sql.go:86 precedent).
+			return HandleErrorRespectJSON("no database connection available (%s)", diagHint())
 		}
 
 		filePath, _ := cmd.Flags().GetString("file")
@@ -103,7 +106,7 @@ normal 'bd' subcommands for interactive/read operations.`,
 		if filePath != "" {
 			f, err := os.Open(filePath) // #nosec G304 -- user-supplied batch file
 			if err != nil {
-				return fmt.Errorf("open batch file: %w", err)
+				return HandleErrorRespectJSON("open batch file: %v", err)
 			}
 			defer f.Close()
 			reader = f
@@ -113,7 +116,7 @@ normal 'bd' subcommands for interactive/read operations.`,
 
 		ops, err := parseBatchScript(reader)
 		if err != nil {
-			return fmt.Errorf("parsing batch input: %w", err)
+			return HandleErrorRespectJSON("parsing batch input: %v", err)
 		}
 
 		if dryRun {

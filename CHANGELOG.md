@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   human line on stdout even under `--json`, so a machine consumer parsing stdout as JSON hit a parse
   failure on a success path. Both now emit `{"status":"noop","message":"no updates specified"}` under
   `--json` (matching the existing `{status:"noop"}` convention), keeping the human line otherwise.
+- **`bd batch --json` now emits a JSON error object on setup failures instead of plain-text stderr (beads-2yhq).**
+  `bd batch` honored `--json` on its success path (`outputJSON`) and per-op error path (`outputJSONError`), but
+  three setup errors — `store == nil` ("no database connection"), a failed `os.Open` of `--file`, and a
+  `parseBatchScript` parse error — returned a bare `fmt.Errorf`, so under `--json` (which silences cobra's own
+  printing) they wrote plain text to stderr with an empty stdout, leaving a `bd batch --json` consumer with
+  nothing to parse on a bad `--file` path or malformed script. They now route through `HandleErrorRespectJSON`,
+  matching the `bd sql` precedent (sql.go). Same JSON-error-contract class as beads-uc71/z2b4/nqv0.
 
 - **`bd dolt push` pre-push fsck no longer aborts with a spurious "dangling chunk reference" when the check merely timed out or the repo could not be opened (beads-9nq1).**
   `prePushFSCK` shells out to `dolt fsck`; under heavy node contention the subprocess was killed by the fsck
