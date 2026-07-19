@@ -252,6 +252,15 @@ func analyzeMoleculeParallel(subgraph *MoleculeSubgraph) *ParallelAnalysis {
 			Status:    string(issue.Status),
 			BlockedBy: []string{},
 			Blocks:    []string{},
+			// beads-4mkg: init CanParallel too so a step OUTSIDE any parallel
+			// group emits can_parallel:[] not null. It's only appended at the
+			// parallel-group pass below (~L364), so without this a lone/serial
+			// step's []string json field (no omitempty) marshals to null while
+			// its sibling blocked_by/blocks correctly emit [] — the guib/036h/
+			// 5fv3/jxel nil-slice asymmetry. Emitted via outputJSON("parallel")
+			// and shared by analyzeMoleculeParallel's consumers (mol show/
+			// current, ready, ready/close --proxied), so this one root covers all.
+			CanParallel: []string{},
 		}
 
 		// Check what blocks this step
