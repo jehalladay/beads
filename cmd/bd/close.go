@@ -107,6 +107,24 @@ the flags appear in the command line.`,
 		closedCount := 0
 		alreadyClosedCount := 0
 
+		// beads-n96g: under --json these per-item VALIDATION errors must NOT
+		// interleave plain text onto the stream a `2>&1` consumer parses.
+		// resolveCloseTargets is atomic (a nonexistent id bails the whole batch
+		// at HandleErrorRespectJSON above), so the gap is the in-loop guard
+		// failures on EXISTING ids. On a wholly-failed batch the terminal
+		// HandleErrorRespectJSON stdout object is the sole error (stderr clean);
+		// on PARTIAL success the closed[] array is on stdout, so per-item
+		// failures flush to stderr as JSON objects. Mirror show.go's
+		// reportShowItemError / beads-en28. Non-JSON keeps immediate stderr.
+		var deferredItemErrors []string
+		reportCloseItemError := func(format string, a ...interface{}) {
+			if jsonOutput {
+				deferredItemErrors = append(deferredItemErrors, fmt.Sprintf(format, a...))
+				return
+			}
+			fmt.Fprintf(os.Stderr, format+"\n", a...)
+		}
+
 		for i, id := range resolvedIDs {
 			result := results[i]
 			activeStore := result.Store
@@ -115,7 +133,7 @@ the flags appear in the command line.`,
 			issue := result.Issue
 
 			if err := validateIssueClosable(id, issue, force); err != nil {
-				fmt.Fprintf(os.Stderr, "%s\n", err)
+				reportCloseItemError("%s", err)
 				continue
 			}
 
@@ -141,7 +159,7 @@ the flags appear in the command line.`,
 			if !force && issue != nil && issue.IssueType == types.TypeEpic {
 				openChildren := countEpicOpenChildren(ctx, activeStore, id)
 				if openChildren > 0 {
-					fmt.Fprintf(os.Stderr, "cannot close epic %s: %d open child issue(s); close children first or use --force to override\n", id, openChildren)
+					reportCloseItemError("cannot close epic %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
 					continue
 				}
 			}
@@ -149,7 +167,7 @@ the flags appear in the command line.`,
 			// Check gate satisfaction for machine-checkable gates (GH#1467)
 			if !force {
 				if err := checkGateSatisfaction(issue); err != nil {
-					fmt.Fprintf(os.Stderr, "cannot close %s: %s\n", id, err)
+					reportCloseItemError("cannot close %s: %s", id, err)
 					continue
 				}
 			}
@@ -158,17 +176,17 @@ the flags appear in the command line.`,
 			if !force {
 				blocked, blockers, err := activeStore.IsBlocked(ctx, id)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error checking blockers for %s: %v\n", id, err)
+					reportCloseItemError("Error checking blockers for %s: %v", id, err)
 					continue
 				}
 				if blocked && len(blockers) > 0 {
-					fmt.Fprintf(os.Stderr, "cannot close %s: blocked by open issues %v (use --force to override)\n", id, blockers)
+					reportCloseItemError("cannot close %s: blocked by open issues %v (use --force to override)", id, blockers)
 					continue
 				}
 			}
 
 			if err := activeStore.CloseIssue(ctx, id, reason, actor, session); err != nil {
-				fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
+				reportCloseItemError("Error closing %s: %v", id, err)
 				continue
 			}
 			mutatedStores[activeStore] = append(mutatedStores[activeStore], id)
@@ -282,6 +300,16 @@ the flags appear in the command line.`,
 				if err := outputJSON(closedIssues); err != nil {
 					return err
 				}
+			}
+			// Partial success: stdout carries the closed[] array (including
+			// already-closed no-ops), so any deferred per-item validation
+			// failures flush to stderr as JSON objects now rather than being
+			// dropped (beads-n96g/en28). On a wholly-failed batch closedIssues
+			// is empty, so we skip this and the terminal HandleErrorRespectJSON
+			// below is the sole error (stderr stays clean). reportItemError
+			// (errors.go:131) JSON-wraps each message to stderr under --json.
+			for _, msg := range deferredItemErrors {
+				reportItemError("%s", msg)
 			}
 		}
 
