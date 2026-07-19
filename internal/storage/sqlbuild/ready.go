@@ -153,6 +153,19 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 		whereClauses = append(whereClauses, "priority = ?")
 		args = append(args, *filter.Priority)
 	}
+	// beads-cseh3: honor the --priority-min/--priority-max range filters
+	// (feature-parity with bd list, whose sqlbuild WHERE builder already
+	// applies these). The direct ready.go RunE + gatherReadyInput (proxied)
+	// both populate filter.PriorityMin/Max; here is the single shared WHERE
+	// site both paths flow through. Mirrors labels.go's exact clauses.
+	if filter.PriorityMin != nil {
+		whereClauses = append(whereClauses, "priority >= ?")
+		args = append(args, *filter.PriorityMin)
+	}
+	if filter.PriorityMax != nil {
+		whereClauses = append(whereClauses, "priority <= ?")
+		args = append(args, *filter.PriorityMax)
+	}
 	if filter.Type != "" {
 		whereClauses = append(whereClauses, "issue_type = ?")
 		args = append(args, filter.Type)

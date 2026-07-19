@@ -298,6 +298,108 @@ func TestEmbeddedReady(t *testing.T) {
 	})
 }
 
+// TestEmbeddedReadyPriorityRange is the teeth for beads-cseh3: bd ready must
+// support --priority-min/--priority-max (a P0-P4 range) with the same semantics
+// as bd list, not just exact --priority. Previously ready registered only
+// --priority; the range flags were unknown and the sqlbuild WHERE builder
+// ignored filter.PriorityMin/Max even though the struct carried them.
+func TestEmbeddedReadyPriorityRange(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "rp")
+
+	// One unblocked issue at each priority P0..P4.
+	byPrio := map[int]string{}
+	for p := 0; p <= 4; p++ {
+		iss := bdCreate(t, bd, dir, fmt.Sprintf("prio-%d", p), "--type", "task", "--priority", fmt.Sprintf("%d", p))
+		byPrio[p] = iss.ID
+	}
+
+	// readyPriorities runs `bd ready --json <args>` and returns the set of
+	// priorities present in the result.
+	readyPriorities := func(t *testing.T, args ...string) map[int]bool {
+		t.Helper()
+		full := append([]string{"ready", "--json", "--limit", "0"}, args...)
+		cmd := exec.Command(bd, full...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("bd ready %v failed: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
+		}
+		var ready []types.IssueWithCounts
+		if jerr := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &ready); jerr != nil {
+			t.Fatalf("parse ready JSON (%v): %v\n%s", args, jerr, stdout.String())
+		}
+		got := map[int]bool{}
+		for _, r := range ready {
+			got[r.Priority] = true
+		}
+		return got
+	}
+
+	t.Run("priority_max_1_returns_only_P0_P1", func(t *testing.T) {
+		got := readyPriorities(t, "--priority-max", "1")
+		for p := 0; p <= 4; p++ {
+			want := p <= 1
+			if got[p] != want {
+				t.Errorf("--priority-max 1: P%d present=%v, want %v (got set %v)", p, got[p], want, got)
+			}
+		}
+	})
+
+	t.Run("priority_min_3_returns_only_P3_P4", func(t *testing.T) {
+		got := readyPriorities(t, "--priority-min", "3")
+		for p := 0; p <= 4; p++ {
+			want := p >= 3
+			if got[p] != want {
+				t.Errorf("--priority-min 3: P%d present=%v, want %v (got set %v)", p, got[p], want, got)
+			}
+		}
+	})
+
+	t.Run("priority_range_min2_max3_returns_only_P2_P3", func(t *testing.T) {
+		got := readyPriorities(t, "--priority-min", "2", "--priority-max", "3")
+		for p := 0; p <= 4; p++ {
+			want := p == 2 || p == 3
+			if got[p] != want {
+				t.Errorf("--priority-min 2 --priority-max 3: P%d present=%v, want %v (got set %v)", p, got[p], want, got)
+			}
+		}
+	})
+
+	t.Run("priority_min_P0_form_accepted_and_keeps_P0", func(t *testing.T) {
+		// P0 (=0) must not be dropped by the Changed() guard, and the P-prefixed
+		// form must parse (mirrors the exact --priority beads-57tt handling).
+		got := readyPriorities(t, "--priority-max", "P0")
+		if !got[0] {
+			t.Errorf("--priority-max P0 should include the P0 issue, got set %v", got)
+		}
+		for p := 1; p <= 4; p++ {
+			if got[p] {
+				t.Errorf("--priority-max P0: P%d must be excluded, got set %v", p, got)
+			}
+		}
+	})
+
+	t.Run("out_of_range_priority_min_rejected", func(t *testing.T) {
+		cmd := exec.Command(bd, "ready", "--priority-min", "99")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("bd ready --priority-min 99 should have failed, got: %s", out)
+		}
+		if !strings.Contains(string(out), "invalid priority") {
+			t.Errorf("expected 'invalid priority' error, got: %s", out)
+		}
+	})
+}
+
 func TestEmbeddedReadyConcurrent(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")

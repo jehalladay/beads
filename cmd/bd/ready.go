@@ -191,6 +191,26 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			}
 			filter.Priority = &priority
 		}
+		// beads-cseh3: --priority-min/--priority-max range (parity with bd
+		// list/count). Changed() so P0 (=0) is not dropped; ValidatePriority
+		// rejects out-of-range/non-numeric. The proxied path guards the same in
+		// gatherReadyInput.
+		if cmd.Flags().Changed("priority-min") {
+			s, _ := cmd.Flags().GetString("priority-min")
+			p, err := validation.ValidatePriority(s)
+			if err != nil {
+				return HandleErrorRespectJSON("parsing --priority-min: %v", err)
+			}
+			filter.PriorityMin = &p
+		}
+		if cmd.Flags().Changed("priority-max") {
+			s, _ := cmd.Flags().GetString("priority-max")
+			p, err := validation.ValidatePriority(s)
+			if err != nil {
+				return HandleErrorRespectJSON("parsing --priority-max: %v", err)
+			}
+			filter.PriorityMax = &p
+		}
 		if assignee != "" && !unassigned {
 			filter.Assignee = &assignee
 		}
@@ -822,6 +842,11 @@ func init() {
 	// --priority 99 / -5 (matched nothing, exit 0 = false-negative footgun) and
 	// could not parse the P2 form the other filter commands accept.
 	registerPriorityFlag(readyCmd, "")
+	// beads-cseh3: --priority-min/--priority-max range filters (feature-parity
+	// with bd list/count). StringP + ValidatePriority so they accept 0-4 AND
+	// P0-P4 and REJECT out-of-range/non-numeric values (mirrors count.go).
+	readyCmd.Flags().String("priority-min", "", "Filter by minimum priority (inclusive, 0-4 or P0-P4)")
+	readyCmd.Flags().String("priority-max", "", "Filter by maximum priority (inclusive, 0-4 or P0-P4)")
 	readyCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
 	readyCmd.Flags().BoolP("unassigned", "u", false, "Show only unassigned issues")
 	readyCmd.Flags().StringP("sort", "s", "priority", "Sort policy: priority (default), hybrid, oldest")

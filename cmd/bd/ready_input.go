@@ -172,6 +172,26 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 		}
 		in.filter.Priority = &priority
 	}
+	// beads-cseh3: --priority-min/--priority-max range on the PROXIED ready path
+	// too (parity with bd list/count). Shared input path, so guarding here covers
+	// runReadyProxiedServer; the direct ready.go RunE guards separately (same
+	// split as --priority / --type). FatalErrorRespectJSON matches the neighbors.
+	if cmd.Flags().Changed("priority-min") {
+		s, _ := cmd.Flags().GetString("priority-min")
+		p, err := validation.ValidatePriority(s)
+		if err != nil {
+			FatalErrorRespectJSON("parsing --priority-min: %v", err)
+		}
+		in.filter.PriorityMin = &p
+	}
+	if cmd.Flags().Changed("priority-max") {
+		s, _ := cmd.Flags().GetString("priority-max")
+		p, err := validation.ValidatePriority(s)
+		if err != nil {
+			FatalErrorRespectJSON("parsing --priority-max: %v", err)
+		}
+		in.filter.PriorityMax = &p
+	}
 	if assignee != "" && !unassigned {
 		in.filter.Assignee = &assignee
 	}

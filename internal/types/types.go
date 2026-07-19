@@ -1467,6 +1467,8 @@ type WorkFilter struct {
 	Status        Status
 	Type          string // Filter by issue type (task, bug, feature, epic, merge-request, etc.)
 	Priority      *int
+	PriorityMin   *int // beads-cseh3: minimum priority (inclusive); parity with IssueFilter/bd list
+	PriorityMax   *int // beads-cseh3: maximum priority (inclusive); parity with IssueFilter/bd list
 	Assignee      *string
 	Unassigned    bool     // Filter for issues with no assignee
 	Labels        []string // AND semantics: issue must have ALL these labels
