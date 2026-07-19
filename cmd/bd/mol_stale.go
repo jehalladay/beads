@@ -140,7 +140,7 @@ func findStaleMolecules(ctx context.Context, s storage.DoltStorage, blockingOnly
 	// Build map of issue ID -> what issues it's blocking
 	blockingMap := buildBlockingMap(blockedIssues)
 
-	var staleMolecules []*StaleMolecule
+	staleMolecules := []*StaleMolecule{}
 	blockingCount := 0
 
 	for _, es := range epicStatuses {

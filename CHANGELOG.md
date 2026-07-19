@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snake_case field-name contract used across every other `--json` command. Added the json tags so a
   machine consumer sees the same casing convention. (Go field access is unaffected; only the JSON
   wire names change.)
+- **`bd mol stale --json` now emits `"stale_molecules": []` instead of `null` when no stale molecules are found (beads-bvsm).**
+  `findStaleMolecules` (`cmd/bd/mol_stale.go`) declared its accumulator as a nil slice, so an empty
+  result serialized `"stale_molecules": null` — unlike `bd mol ready`, which already emits `[]`. A
+  `--json` consumer iterating the array broke on `null`. The slice is now initialized to
+  `[]*StaleMolecule{}` so an empty result marshals to an empty JSON array.
 
 - **`bd update <id> --json` with no field flags now emits a JSON no-op object instead of the plain-text line `No updates specified` (beads-b0lq).**
   A valid id with no mutating field flags is an idempotent no-op success (exit 0). The direct
