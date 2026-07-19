@@ -135,7 +135,7 @@ Examples:
 			if typeFilter != "" {
 				t := issueTypeFilterValue(typeFilter)
 				if !t.IsValidWithCustom(lintFilterCfg.customTypes) {
-					validTypes := "bug, feature, task, epic, chore, decision"
+					validTypes := types.ValidWorkTypesString() // beads-71j1: full 9-type list, not a stale hardcoded 6
 					if len(lintFilterCfg.customTypes) > 0 {
 						validTypes += ", " + strings.Join(lintFilterCfg.customTypes, ", ")
 					}

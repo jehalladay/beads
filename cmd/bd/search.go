@@ -306,7 +306,7 @@ func parseSearchParams(cmd *cobra.Command, cfg listFilterConfig) (searchParams, 
 	if issueType != "" {
 		t := issueTypeFilterValue(issueType)
 		if !t.IsValidWithCustom(cfg.customTypes) {
-			validTypes := "bug, feature, task, epic, chore, decision"
+			validTypes := types.ValidWorkTypesString() // beads-71j1: full 9-type list, not a stale hardcoded 6
 			if len(cfg.customTypes) > 0 {
 				validTypes += ", " + strings.Join(cfg.customTypes, ", ")
 			}

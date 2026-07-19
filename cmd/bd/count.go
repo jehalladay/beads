@@ -213,7 +213,7 @@ Examples:
 		if issueType != "" {
 			t := issueTypeFilterValue(issueType)
 			if !t.IsValidWithCustom(filterCfg.customTypes) {
-				validTypes := "bug, feature, task, epic, chore, decision"
+				validTypes := types.ValidWorkTypesString() // beads-71j1: full 9-type list, not a stale hardcoded 6
 				if len(filterCfg.customTypes) > 0 {
 					validTypes += ", " + strings.Join(filterCfg.customTypes, ", ")
 				}
