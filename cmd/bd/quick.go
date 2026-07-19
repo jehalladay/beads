@@ -88,7 +88,15 @@ Example:
 
 		ctx := rootCtx
 		if err := store.CreateIssue(ctx, issue, actor); err != nil {
-			return HandleError("%v", err)
+			// beads-wf68: route the direct-path store.CreateIssue error through
+			// HandleErrorRespectJSON so `bd q/quick <t> --json` emits a stdout JSON
+			// error object, not empty stdout + plain-text stderr. quick honors --json
+			// on its success path (outputJSON(issue) below, beads-j54e) and its
+			// priority-validation guard above (beads-n8xi), so this error path was the
+			// un-updated twin; the canonical sibling create.go:584 already routes the
+			// IDENTICAL store.CreateIssue error through RespectJSON. Same
+			// 0wp9/21xi/v02z/n8xi --json-error-contract class (defensive parity).
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		commandDidWrite.Store(true)

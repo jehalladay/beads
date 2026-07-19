@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd q`/`bd quick --json` now emits a JSON error object on a direct-path create failure, not empty stdout + plain-text stderr (beads-wf68).**
+  `bd quick` honors `--json` on its success path (`outputJSON(issue)`, beads-j54e) and on its priority-validation guard
+  (`HandleErrorRespectJSON`, beads-n8xi), but the direct-path `store.CreateIssue` error at quick.go still used a bare
+  `HandleError` — so a `bd q "t" --json` that hit a store write error produced empty stdout + stderr text, unparseable by
+  a `--json` consumer. It now routes through `HandleErrorRespectJSON`, mirroring the canonical sibling `create.go` which
+  already routes the identical `store.CreateIssue` error that way. Defensive parity with `bd create` (same
+  0wp9/21xi/v02z/n8xi `--json`-error-contract class); the deterministic priority-error path is already covered by
+  TestQuickJSONPriorityError_n8xi.
+
 - **`bd status`/`stats`, `bd bootstrap`, and `bd recompute-blocked` now reject stray positional args (beads-kz1w).**
   These leaf commands had no `Args` validator, so a query-style habit (`bd stats status=open`) or a
   fat-fingered positional was silently ignored and the command ran anyway with rc=0. Each now uses
