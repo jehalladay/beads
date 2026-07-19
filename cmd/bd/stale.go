@@ -75,7 +75,7 @@ This helps identify:
 		effectiveLimit := limit
 		if limit > 0 {
 			filter := types.StaleFilter{Days: days, Status: status, Limit: limit + 1}
-			issues, err := store.GetStaleIssues(ctx, filter)
+			issues, err := fetchStaleIssues(ctx, filter)
 			if err != nil {
 				return HandleErrorRespectJSON("%v", err)
 			}
@@ -104,7 +104,7 @@ This helps identify:
 			Limit:  limit,
 		}
 
-		issues, err := store.GetStaleIssues(ctx, filter)
+		issues, err := fetchStaleIssues(ctx, filter)
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
 		}

@@ -886,6 +886,10 @@ func (r *issueSQLRepositoryImpl) GetEpicsEligibleForClosure(ctx context.Context)
 	return issueops.GetEpicsEligibleForClosureInTx(ctx, r.runner)
 }
 
+func (r *issueSQLRepositoryImpl) GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error) {
+	return issueops.GetStaleIssuesInTx(ctx, r.runner, filter)
+}
+
 func (r *issueSQLRepositoryImpl) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
 	return issueops.UpdateIssueIDInTx(ctx, r.runner, oldID, newID, issue, actor)
 }

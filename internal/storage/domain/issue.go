@@ -59,6 +59,10 @@ type IssueSQLRepository interface {
 	// existing issueops InTx helper, so `bd epic status` / `epic close-eligible`
 	// can run through the proxied UOW on hub-connected crew.
 	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)
+	// GetStaleIssues returns issues not updated within filter.Days (beads-1xs1,
+	// exposes issueops.GetStaleIssuesInTx on the repo so the proxied UOW path
+	// can serve `bd stale` without the nil global store).
+	GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error)
 	// UpdateIssueID renames an issue/wisp (oldID→newID), rekeying its
 	// dependency edges. Routes issues↔wisps tables and rejects a cross-table
 	// id collision (beads-mgsx). issue carries the current title/body fields.
@@ -284,6 +288,7 @@ type IssueUseCase interface {
 	History(ctx context.Context, id string) ([]*storage.HistoryEntry, error)
 	Diff(ctx context.Context, fromRef, toRef string) ([]*storage.DiffEntry, error)
 	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)
+	GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error)
 	RenameIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error
 	DeleteIssue(ctx context.Context, id, actor string) (DeleteIssuesResult, error)
 	DeleteIssues(ctx context.Context, params DeleteIssuesParams, actor string) (DeleteIssuesResult, error)
@@ -404,6 +409,14 @@ func (u *issueUseCaseImpl) GetEpicsEligibleForClosure(ctx context.Context) ([]*t
 		return nil, fmt.Errorf("get epics eligible for closure: %w", err)
 	}
 	return epics, nil
+}
+
+func (u *issueUseCaseImpl) GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error) {
+	issues, err := u.issueRepo.GetStaleIssues(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("get stale issues: %w", err)
+	}
+	return issues, nil
 }
 
 func (u *issueUseCaseImpl) RenameIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
