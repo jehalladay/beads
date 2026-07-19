@@ -60,6 +60,12 @@ Examples:
 		}
 
 		if jsonOutput {
+			// beads-u86f3: normalize nil->[] so an empty result (no config, or a
+			// --source that matches nothing) marshals to a JSON [] (not null),
+			// matching the ready/blocked/list/gate(tamf)/epic array contract.
+			if entries == nil {
+				entries = []configEntry{}
+			}
 			return outputJSON(entries)
 		}
 
