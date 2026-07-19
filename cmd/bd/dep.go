@@ -1348,7 +1348,7 @@ var depCyclesCmd = &cobra.Command{
 		for i, cycle := range cycles {
 			fmt.Printf("%d. Cycle involving:\n", i+1)
 			for _, issue := range cycle {
-				fmt.Printf("   - %s: %s\n", issue.ID, issue.Title)
+				fmt.Printf("   - %s: %s\n", issue.ID, displayTitle(issue.Title))
 			}
 			fmt.Println()
 		}
@@ -1371,7 +1371,7 @@ func outputMermaidTree(tree []*types.TreeNode, rootID string) {
 	for _, node := range tree {
 		if !nodesSeen[node.ID] {
 			emoji := getStatusEmoji(node.Status)
-			label := fmt.Sprintf("%s %s: %s", emoji, node.ID, node.Title)
+			label := fmt.Sprintf("%s %s: %s", emoji, node.ID, displayTitle(node.Title))
 			// Escape quotes and backslashes in label
 			label = strings.ReplaceAll(label, "\\", "\\\\")
 			label = strings.ReplaceAll(label, "\"", "\\\"")

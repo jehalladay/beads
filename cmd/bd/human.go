@@ -208,7 +208,7 @@ func printHumanList(issues []*types.Issue) {
 
 	fmt.Printf("\n%s (%d found)\n\n", ui.RenderBold("Human-needed beads"), len(issues))
 	for _, issue := range issues {
-		fmt.Printf("  %s %s\n", ui.RenderCommand(issue.ID), issue.Title)
+		fmt.Printf("  %s %s\n", ui.RenderCommand(issue.ID), displayTitle(issue.Title))
 		if issue.Status != "open" {
 			fmt.Printf("    Status: %s\n", issue.Status)
 		}

@@ -344,7 +344,7 @@ func dryRunMarkdownBatch(templates []*IssueTemplate, filepath string) error {
 	}
 	fmt.Printf("%s [DRY RUN] Would create %d issue(s) from %s:\n", ui.RenderWarn("⚠"), len(templates), filepath)
 	for _, t := range templates {
-		fmt.Printf("  %s [P%d, %s]\n", t.Title, t.Priority, t.IssueType)
+		fmt.Printf("  %s [P%d, %s]\n", displayTitle(t.Title), t.Priority, t.IssueType)
 		if t.Assignee != "" {
 			fmt.Printf("    Assignee: %s\n", t.Assignee)
 		}
@@ -485,7 +485,7 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string, dryRun bool) er
 	}
 	fmt.Printf("%s Created %d issues from %s:\n", ui.RenderPass("✓"), len(createdIssues), filepath)
 	for _, issue := range createdIssues {
-		fmt.Printf("  %s: %s [P%d, %s]\n", issue.ID, issue.Title, issue.Priority, issue.IssueType)
+		fmt.Printf("  %s: %s [P%d, %s]\n", issue.ID, displayTitle(issue.Title), issue.Priority, issue.IssueType)
 	}
 	return nil
 }
