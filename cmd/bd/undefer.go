@@ -55,6 +55,11 @@ Examples:
 
 		undeferredIssues := []*types.Issue{}
 		undeferredCount := 0
+		// beads-36iz0: only a GENUINE error (unresolvable/not-found id, store
+		// failure) makes the batch exit non-zero — matching reopen's hasError
+		// terminal (beads-hxc2). A not-deferred input is an idempotent/advisory
+		// no-op below and must NOT set hasError.
+		var hasError bool
 
 		if store == nil {
 			return HandleErrorWithHint("database not initialized", diagHint())
@@ -81,15 +86,26 @@ Examples:
 			fullID, err := utils.ResolvePartialID(ctx, store, id)
 			if err != nil {
 				reportUndeferItemError("Error resolving %s: %v", id, err)
+				hasError = true
 				continue
 			}
 
 			issue, err := store.GetIssue(ctx, fullID)
 			if err != nil {
 				reportUndeferItemError("Error getting %s: %v", fullID, err)
+				hasError = true
 				continue
 			}
 			if issue.Status != types.StatusDeferred {
+				// beads-36iz0: undefer of a not-deferred issue is an idempotent
+				// advisory no-op, NOT an error — the issue is already in (or past)
+				// undefer's target state (open). This mirrors reopen's already-open
+				// path (beads-hxc2) and defer's already-deferred no-op, so a script
+				// `bd undefer X || handle_error` no longer fires spuriously on an
+				// already-undeferred X. A genuine not-found id (above) still sets
+				// hasError → rc1. The advisory message flushes to stderr (JSON
+				// object under --json via the deferred-flush below / plain line
+				// otherwise); hasError stays false.
 				reportUndeferItemError("%s is not deferred (status: %s)", fullID, string(issue.Status))
 				continue
 			}
@@ -101,6 +117,7 @@ Examples:
 
 			if err := store.UpdateIssue(ctx, fullID, updates, actor); err != nil {
 				reportUndeferItemError("Error undeferring %s: %v", fullID, err)
+				hasError = true
 				continue
 			}
 			undeferredCount++
@@ -139,17 +156,29 @@ Examples:
 			commandDidWrite.Store(true)
 		}
 
-		// Every requested ID failed (per-item errors already printed to
-		// stderr): exit non-zero so callers/scripts don't read false success.
-		// Under --json, stdout is still empty here, so emit a stdout JSON error
-		// object to keep the failure parseable (beads-7pcm, mirroring the
-		// deferred/update/close batch paths). Partial success
-		// (undeferredCount>0) keeps rc=0 and its JSON array above.
-		if len(args) > 0 && undeferredCount == 0 {
+		// beads-36iz0: exit non-zero only on a GENUINE failure (hasError:
+		// unresolvable/not-found id or store error), matching reopen's terminal
+		// (beads-hxc2). A batch of only not-deferred no-ops (undeferredCount==0
+		// but hasError==false) is an idempotent success → rc0. Under --json a
+		// wholly-failed batch has an empty stdout, so emit a stdout JSON error
+		// object to keep the failure parseable (beads-7pcm); partial success
+		// (undeferredCount>0) kept rc=0 and its JSON array above.
+		if hasError && undeferredCount == 0 {
 			if jsonOutput {
 				return HandleErrorRespectJSON("no issues undeferred matching the provided IDs")
 			}
 			return SilentExit()
+		}
+
+		// No-op-only --json path (every id was already not-deferred, so hasError
+		// stayed false and nothing was undeferred): stdout is empty, so flush the
+		// deferred advisory messages to stderr as JSON objects rather than
+		// dropping them — mirrors reopen's beads-en28 tail. Non-JSON already
+		// printed them immediately.
+		if jsonOutput && len(undeferredIssues) == 0 {
+			for _, msg := range deferredItemErrors {
+				reportItemError("%s", msg)
+			}
 		}
 
 		return nil

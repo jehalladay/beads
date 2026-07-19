@@ -33,16 +33,20 @@ func TestProxiedServerUndefer(t *testing.T) {
 		}
 	})
 
-	t.Run("undefer_non_deferred_reports_and_fails", func(t *testing.T) {
+	t.Run("undefer_non_deferred_is_rc0_noop", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "und2")
 		iss := bdProxiedCreate(t, bd, p.dir, "Open", "--type", "task")
-		// Not deferred → the only requested ID fails the status guard → rc!=0.
-		out, err := bdProxiedRun(t, bd, p.dir, "undefer", iss.ID)
-		if err == nil {
-			t.Errorf("expected non-zero exit undeferring a non-deferred issue, got success:\n%s", out)
+		// beads-36iz0: not-deferred is an idempotent advisory no-op on the
+		// proxied path too — undefer's target state (open) is already satisfied,
+		// so rc=0 (mirrors reopen's already-open path / the direct path). A
+		// genuine unresolvable id still fails; not-deferred does not. The advisory
+		// lands on stderr, so capture both streams.
+		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "undefer", iss.ID)
+		if err != nil {
+			t.Errorf("expected rc=0 undeferring a non-deferred issue (beads-36iz0 no-op), got error: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 		}
-		if !strings.Contains(string(out), "not deferred") {
-			t.Errorf("expected 'not deferred' message, got: %s", out)
+		if !strings.Contains(stderr, "not deferred") {
+			t.Errorf("expected 'not deferred' advisory on stderr, got stdout=%q stderr=%q", stdout, stderr)
 		}
 	})
 }

@@ -73,16 +73,18 @@ func TestUndeferJSONStderrContract_bqs9(t *testing.T) {
 	}
 
 	t.Run("wholly_failed_2>&1_is_single_json_object", func(t *testing.T) {
-		// Two resolvable open (not-deferred) issues -> both hit the guard ->
-		// nothing undeferred -> terminal stdout JSON error, clean stderr.
-		open1 := bdCreate(t, bd, dir, "bqs9 undefer open A1", "--type", "task")
-		open2 := bdCreate(t, bd, dir, "bqs9 undefer open A2", "--type", "task")
-		cmd := exec.Command(bd, "undefer", open1.ID, open2.ID, "--json")
+		// A GENUINELY-failed batch (every id unresolvable) bails at the top
+		// atomic ResolvePartialIDs pre-check -> a single terminal stdout JSON
+		// error, clean stderr. beads-36iz0 NOTE: two resolvable-but-not-deferred
+		// ids are NO LONGER a wholly-failed batch — not-deferred is now an
+		// idempotent rc0 no-op (covered by TestEmbeddedUndefer), so this invariant
+		// is exercised with unresolvable ids, which is the real wholly-failed path.
+		cmd := exec.Command(bd, "undefer", "du-nope-a1", "du-nope-a2", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
 		combined, cerr := cmd.CombinedOutput()
 		if cerr == nil {
-			t.Fatalf("expected non-zero exit when nothing undeferred\ncombined:\n%s", combined)
+			t.Fatalf("expected non-zero exit when every id is unresolvable\ncombined:\n%s", combined)
 		}
 		if n := scanJSONValues(t, string(combined)); n != 1 {
 			t.Fatalf("expected exactly ONE JSON object on wholly-failed undefer --json 2>&1 (terminal error only, clean stderr), got %d values:\n%s", n, combined)

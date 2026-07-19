@@ -122,19 +122,95 @@ func TestEmbeddedUndefer(t *testing.T) {
 		}
 	})
 
-	// IDs that RESOLVE but all fail the deferred-status check (a valid, open,
-	// not-deferred issue) reach the bottom guard: undeferredCount stays 0, so
-	// the command must exit non-zero rather than the previous unconditional
-	// rc=0 (beads-7pcm — this exercises the count-based guard, distinct from the
-	// top-level unresolvable-ID path above).
-	t.Run("undefer_resolved_but_none_deferred_exit_nonzero", func(t *testing.T) {
+	// beads-36iz0: an ID that RESOLVES but is NOT deferred (a valid, open issue)
+	// is an idempotent advisory no-op — undefer's target state (open) is already
+	// satisfied — so it must exit rc=0, matching reopen's already-open path
+	// (beads-hxc2) and defer's already-deferred no-op. This REVERSES the earlier
+	// beads-7pcm count-based rc1 for this specific case: not-deferred is not a
+	// failure. (The genuine unresolvable/not-found rc1 guard above is unchanged.)
+	t.Run("undefer_resolved_but_not_deferred_is_rc0_noop", func(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "Open not deferred", "--type", "task")
 		cmd := exec.Command(bd, "undefer", issue.ID)
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Errorf("expected rc=0 for an already-not-deferred undefer no-op (beads-36iz0), got error: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "not deferred") {
+			t.Errorf("expected 'not deferred' advisory on stderr: %s", stderr.String())
+		}
+		// The no-op must not have flipped the status.
+		if s := getIssueStatus(t, bd, dir, issue.ID); s != "open" {
+			t.Errorf("expected status unchanged (open) after not-deferred no-op, got %q", s)
+		}
+	})
+
+	// beads-36iz0: not-found is DISTINCT from not-deferred — it is a genuine
+	// error and must still exit rc=1 (a script `bd undefer X || handle` should
+	// fire on a typo/missing id, but NOT on an already-undeferred id).
+	t.Run("undefer_not_found_still_rc1", func(t *testing.T) {
+		cmd := exec.Command(bd, "undefer", "ud-nope-zzz")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
 		_, stderr, err := runCommandBuffers(t, cmd)
 		if err == nil {
-			t.Errorf("expected non-zero exit when the only ID was not deferred, got success\nstderr:\n%s", stderr.String())
+			t.Errorf("expected non-zero exit for an unresolvable undefer id (beads-36iz0), got success\nstderr:\n%s", stderr.String())
+		}
+	})
+
+	// beads-36iz0: a mixed batch (one deferred + one not-deferred) is a full
+	// success — the deferred one flips to open, the not-deferred one is a no-op,
+	// and rc stays 0 (no genuine error occurred).
+	t.Run("undefer_mixed_deferred_and_notdeferred_rc0", func(t *testing.T) {
+		deferredIssue := bdCreate(t, bd, dir, "Mixed deferred", "--type", "task")
+		bdDefer(t, bd, dir, deferredIssue.ID)
+		openIssue := bdCreate(t, bd, dir, "Mixed open", "--type", "task")
+
+		cmd := exec.Command(bd, "undefer", deferredIssue.ID, openIssue.ID)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Errorf("expected rc=0 for a mixed deferred+not-deferred batch (beads-36iz0), got error: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+		if s := getIssueStatus(t, bd, dir, deferredIssue.ID); s != "open" {
+			t.Errorf("expected the deferred issue to flip to open, got %q", s)
+		}
+		if s := getIssueStatus(t, bd, dir, openIssue.ID); s != "open" {
+			t.Errorf("expected the not-deferred issue to stay open, got %q", s)
+		}
+	})
+
+	// beads-36iz0 (--json): a not-deferred-only batch is rc0 with EMPTY stdout
+	// (no issues were undeferred, so no array) and the advisory flushed to stderr
+	// as a JSON object (mirrors reopen's no-op-only --json tail, beads-en28). This
+	// contrasts with the all-UNRESOLVABLE --json path above, which is rc1 + a
+	// stdout JSON error object.
+	t.Run("undefer_not_deferred_json_is_rc0_stderr_advisory", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "Open not deferred json", "--type", "task")
+		cmd := exec.Command(bd, "undefer", issue.ID, "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Errorf("expected rc=0 for a not-deferred-only --json undefer no-op (beads-36iz0), got error: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+		if out := strings.TrimSpace(stdout.String()); out != "" {
+			// stdout may legitimately be empty; if anything is present it must be
+			// parseable JSON (never plain text).
+			var v any
+			if jerr := json.Unmarshal([]byte(out), &v); jerr != nil {
+				t.Errorf("non-empty stdout on not-deferred --json no-op is not parseable JSON: %v\nstdout:\n%s", jerr, out)
+			}
+		}
+		// The advisory on stderr must be a parseable JSON object, not plain text.
+		se := strings.TrimSpace(stderr.String())
+		if se != "" && strings.HasPrefix(se, "{") {
+			var obj map[string]any
+			if jerr := json.Unmarshal([]byte(se), &obj); jerr != nil {
+				t.Errorf("stderr advisory under --json is not a parseable JSON object: %v\nstderr:\n%s", jerr, se)
+			}
 		}
 	})
 }
