@@ -98,6 +98,13 @@ func isProcessInDir(pid int, dir string) bool {
 	return false
 }
 
+// ReapServersUnderDir is a no-op on Windows: process CWD is not exposed through
+// standard APIs (see isProcessInDir), so a subtree-scoped reap cannot be done
+// safely. Test harnesses on Windows rely on explicit Stop()/container teardown.
+func ReapServersUnderDir(root string) []int {
+	return nil
+}
+
 // isProcessAlive checks if a process with the given PID is running.
 // Uses OpenProcess with PROCESS_QUERY_LIMITED_INFORMATION — returns error if
 // the process doesn't exist.

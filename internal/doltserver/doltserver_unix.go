@@ -118,6 +118,75 @@ func isProcessInDir(pid int, dir string) bool {
 	return false
 }
 
+// isProcessCwdUnderDir reports whether a process's cwd is the given root or a
+// descendant of it. Unlike isProcessInDir (exact match), this matches an entire
+// subtree, so it catches a dolt sql-server whose cwd is <root>/<test>/.beads/dolt
+// as well as one rooted directly at <root>. Used only for reaping test-owned
+// servers under a private test tmp root (ReapServersUnderDir).
+func isProcessCwdUnderDir(pid int, root string) bool {
+	out, err := exec.Command("lsof", "-a", "-p", strconv.Itoa(pid), "-d", "cwd", "-Fn").Output()
+	if err != nil {
+		return false
+	}
+	resolvedRoot := resolvePathForCompare(root)
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.HasPrefix(line, "n") {
+			continue
+		}
+		cwd := resolvePathForCompare(strings.TrimSpace(line[1:]))
+		if cwd == resolvedRoot || strings.HasPrefix(cwd, resolvedRoot+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// ReapServersUnderDir kills every dolt sql-server whose working directory is the
+// given root or a descendant of it, and returns the PIDs it killed.
+//
+// It is intended for TEST cleanup only: a test that auto-starts a dolt
+// sql-server rooted under its own private temp directory can leak that process
+// when the test panics, times out, or is force-killed before its own cleanup
+// runs — the temp dir is later removed but the server keeps running with a
+// now-"(deleted)" cwd (the fleet-wide orphan-dolt leak, hq-sl5wbc / gyjhtc).
+// Calling this from a package TestMain's deferred cleanup, with the test suite's
+// OWN temp root, reaps those orphans before the directory is removed.
+//
+// Safety: root MUST be a private, test-owned directory (e.g. the suite's
+// os.MkdirTemp root). Because membership is scoped to that subtree, this can
+// never touch a co-tenant/production dolt server living outside it. Passing an
+// empty root is a no-op.
+func ReapServersUnderDir(root string) []int {
+	if strings.TrimSpace(root) == "" {
+		return nil
+	}
+	var killed []int
+	for _, pid := range listDoltProcessPIDs() {
+		if pid == os.Getpid() {
+			continue
+		}
+		if !isProcessCwdUnderDir(pid, root) {
+			continue
+		}
+		if proc, err := os.FindProcess(pid); err == nil {
+			if err := proc.Signal(syscall.SIGTERM); err == nil {
+				// Give it a brief chance to flush, then force.
+				for i := 0; i < 6; i++ {
+					if !isProcessAlive(pid) {
+						break
+					}
+					time.Sleep(250 * time.Millisecond)
+				}
+			}
+			if isProcessAlive(pid) {
+				_ = proc.Kill()
+			}
+			killed = append(killed, pid)
+		}
+	}
+	return killed
+}
+
 // resolvePathForCompare returns the fully symlink-resolved absolute path for
 // comparing a process cwd (which lsof reports symlink-resolved) against a
 // configured directory (which may contain symlink components). Falls back to

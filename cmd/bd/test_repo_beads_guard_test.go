@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/doltserver"
 )
 
 // beforeTestsHook is set by CGO-tagged test files to perform setup before tests run
@@ -55,6 +56,19 @@ func testMainInner(m *testing.M) int {
 		return 1
 	}
 	defer func() { _ = forceRemoveAll(tmp) }()
+
+	// Reap any dolt sql-server this suite auto-started under tmp BEFORE the
+	// removal above (defers run LIFO, so this registers last / runs first).
+	// A test that panics, times out, or is force-killed can leave a server
+	// running with a cwd under tmp; once tmp is removed that server becomes a
+	// "(deleted)"-cwd orphan (the fleet-wide leak, hq-sl5wbc / gyjhtc). Scoped
+	// to this suite's private tmp root, so it can never touch a co-tenant or
+	// production dolt server outside it.
+	defer func() {
+		if killed := doltserver.ReapServersUnderDir(tmp); len(killed) > 0 {
+			fmt.Fprintf(os.Stderr, "test cleanup: reaped %d orphan dolt sql-server(s) under %s: %v\n", len(killed), tmp, killed)
+		}
+	}()
 
 	// Anchor package-level sync.Once builders (test binaries, isolated
 	// HOMEs) under this directory so the defer above sweeps them up too.
