@@ -15,6 +15,11 @@ import (
 
 func runQueryProxiedServer(cmd *cobra.Command, ctx context.Context, args []string) error {
 	if len(args) == 0 {
+		// Under --json, emit a JSON error object and do NOT dump help text to
+		// stdout (beads-h2d5), mirroring the direct query path.
+		if jsonOutput {
+			return HandleErrorRespectJSON("query expression is required")
+		}
 		fmt.Fprintf(os.Stderr, "Error: query expression is required\n\n")
 		if err := cmd.Help(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error displaying help: %v\n", err)

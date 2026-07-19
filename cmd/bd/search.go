@@ -146,8 +146,14 @@ func parseSearchQuery(cmd *cobra.Command, args []string) (string, error) {
 		query = queryFlag
 	}
 	if query == "" {
-		if err := cmd.Help(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error displaying help: %v\n", err)
+		// Do NOT dump help text to stdout under --json (beads-h2d5): the usage
+		// banner would precede the JSON error object, making stdout invalid
+		// JSON (double-content). The HandleErrorRespectJSON below already emits
+		// a proper JSON error object when jsonOutput is set.
+		if !jsonOutput {
+			if err := cmd.Help(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error displaying help: %v\n", err)
+			}
 		}
 		return "", HandleErrorRespectJSON("search query is required")
 	}

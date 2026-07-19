@@ -97,6 +97,12 @@ Examples:
 		}
 
 		if len(args) == 0 {
+			// Under --json, emit a JSON error object and do NOT dump help text
+			// to stdout (beads-h2d5): cmd.Help() writes the usage banner to
+			// stdout, which would pollute/break the --json contract.
+			if jsonOutput {
+				return HandleErrorRespectJSON("query expression is required")
+			}
 			fmt.Fprintf(os.Stderr, "Error: query expression is required\n\n")
 			if err := cmd.Help(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error displaying help: %v\n", err)
