@@ -208,9 +208,17 @@ repositories configured for hydration.`,
 			if primary == "" {
 				primary = "."
 			}
+			// beads-j04k: repos.Additional is []string with no init when the
+			// config has no "repos.additional" key, so it marshals to
+			// "additional":null. Normalize nil→[] so the JSON array contract
+			// holds on the empty case (json-ARRAY nil-slice class).
+			additional := repos.Additional
+			if additional == nil {
+				additional = []string{}
+			}
 			result := map[string]interface{}{
 				"primary":    primary,
-				"additional": repos.Additional,
+				"additional": additional,
 			}
 			return outputJSON(result)
 		}

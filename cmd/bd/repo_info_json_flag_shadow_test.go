@@ -50,6 +50,48 @@ func TestRepoListJSON_EmitsStdoutObject(t *testing.T) {
 	}
 }
 
+// TestRepoListJSON_AdditionalIsNonNullArray_j04k is the teeth for beads-j04k.
+// A fresh repo (bdInit) has no "repos.additional" key in config.yaml, so
+// config.ListRepos returns a ReposConfig with a nil Additional []string. The
+// success path marshaled that nil directly, so `repo list --json` emitted
+// "additional":null instead of an empty array — breaking the JSON array
+// contract for consumers that iterate the field. The fix normalizes nil→[] at
+// the emission site. This must run bd as a subprocess against a real (empty)
+// config so it exercises the actual RunE path, not a hand-built struct.
+func TestRepoListJSON_AdditionalIsNonNullArray_j04k(t *testing.T) {
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd)
+
+	cmd := exec.Command(bd, "repo", "list", "--json")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("`repo list --json` failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+
+	out := strings.TrimSpace(stdout.String())
+	// Raw-string check first: null must never appear for the additional field.
+	if strings.Contains(out, `"additional":null`) || strings.Contains(out, `"additional": null`) {
+		t.Fatalf("`repo list --json` emitted \"additional\":null on an empty config — must be an empty array []\nstdout:\n%s", out)
+	}
+
+	var obj map[string]interface{}
+	if jerr := json.Unmarshal([]byte(out), &obj); jerr != nil {
+		t.Fatalf("stdout is not a JSON object on `repo list --json`: %v\nstdout:\n%s", jerr, out)
+	}
+	add, present := obj["additional"]
+	if !present {
+		t.Fatalf("expected an \"additional\" field in `repo list --json` stdout, got: %s", out)
+	}
+	if add == nil {
+		t.Fatalf("`repo list --json` \"additional\" decoded to nil (JSON null) on an empty config — must be [] (json-ARRAY nil-slice contract)\nstdout:\n%s", out)
+	}
+	if _, ok := add.([]interface{}); !ok {
+		t.Fatalf("expected \"additional\" to be a JSON array, got %T: %s", add, out)
+	}
+}
+
 func TestInfoJSON_EmitsStdoutObject(t *testing.T) {
 	bd := buildEmbeddedBD(t)
 	dir, _, _ := bdInit(t, bd)
