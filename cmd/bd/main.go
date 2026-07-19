@@ -1105,7 +1105,12 @@ var rootCmd = &cobra.Command{
 		// Must be in shared-server mode; errors otherwise.
 		if globalFlag {
 			if !doltserver.IsSharedServerMode() {
-				return HandleError("--global requires shared-server mode (set BEADS_DOLT_SHARED_SERVER=1 or dolt.shared-server: true in config.yaml)")
+				// beads-ci4m8: honor the --json error contract. jsonOutput is
+				// resolved earlier in this PersistentPreRunE (the --format/--json/
+				// config block), so a bare HandleError here left stdout empty +
+				// plaintext on stderr for EVERY `bd <cmd> --json` that hit this
+				// root store-setup path. RespectJSON emits a JSON error on stdout.
+				return HandleErrorRespectJSON("--global requires shared-server mode (set BEADS_DOLT_SHARED_SERVER=1 or dolt.shared-server: true in config.yaml)")
 			}
 			doltCfg.Database = doltserver.GlobalDatabaseName
 		}
@@ -1117,7 +1122,7 @@ var rootCmd = &cobra.Command{
 		if proxiedServerMode {
 			p, err := newProxiedServerUOWProvider(rootCtx, beadsDir)
 			if err != nil {
-				return HandleError("failed to open uow provider: %v", err)
+				return HandleErrorRespectJSON("failed to open uow provider: %v", err)
 			}
 			uowProvider = p
 
@@ -1180,7 +1185,7 @@ var rootCmd = &cobra.Command{
 				metrics.CloseAndFlush()
 				os.Exit(1)
 			}
-			return HandleError("failed to open database: %v", err)
+			return HandleErrorRespectJSON("failed to open database: %v", err)
 		}
 
 		// Mark store as active for flush goroutine safety
@@ -1259,7 +1264,7 @@ var rootCmd = &cobra.Command{
 			// create a Dolt commit so changes don't remain only in the working set.
 			if commandDidWrite.Load() && !commandDidExplicitDoltCommit {
 				if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: cmd.Name()}); err != nil {
-					return HandleError("dolt auto-commit failed: %v", err)
+					return HandleErrorRespectJSON("dolt auto-commit failed: %v", err)
 				}
 			}
 
@@ -1268,14 +1273,14 @@ var rootCmd = &cobra.Command{
 			if commandDidWriteTipMetadata && len(commandTipIDsShown) > 0 {
 				// Only applies when dolt auto-commit is enabled and backend is versioned (Dolt).
 				if mode, err := getDoltAutoCommitMode(); err != nil {
-					return HandleError("dolt tip auto-commit failed: %v", err)
+					return HandleErrorRespectJSON("dolt tip auto-commit failed: %v", err)
 				} else if mode == doltAutoCommitOn {
 					// Apply tip metadata writes now (deferred in recordTipShown for Dolt).
 					for tipID := range commandTipIDsShown {
 						key := fmt.Sprintf("tip_%s_last_shown", tipID)
 						value := time.Now().Format(time.RFC3339)
 						if err := store.SetLocalMetadata(rootCtx, key, value); err != nil {
-							return HandleError("dolt tip auto-commit failed: %v", err)
+							return HandleErrorRespectJSON("dolt tip auto-commit failed: %v", err)
 						}
 					}
 
@@ -1285,7 +1290,7 @@ var rootCmd = &cobra.Command{
 					}
 					msg := formatDoltAutoCommitMessage("tip", getActor(), ids)
 					if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: "tip", MessageOverride: msg}); err != nil {
-						return HandleError("dolt tip auto-commit failed: %v", err)
+						return HandleErrorRespectJSON("dolt tip auto-commit failed: %v", err)
 					}
 				}
 			}
@@ -1298,7 +1303,9 @@ var rootCmd = &cobra.Command{
 			// sync guidance after machine-readable output.
 			if shouldRunPostCommandAutoExport(cmd) {
 				if err := maybeAutoExport(rootCtx, serverMode, commandAllowsEmptyAutoExport(cmd)); err != nil {
-					return HandleError("%v", err)
+					// beads-ci4m8: post-run maintenance error under --json — jsonOutput
+					// is long-since resolved here, so honor the contract.
+					return HandleErrorRespectJSON("%v", err)
 				}
 			}
 
