@@ -176,6 +176,40 @@ func TestEmbeddedFindDuplicates(t *testing.T) {
 		}
 	})
 
+	// ===== --limit does not misreport the truncated page size as the total (beads-q3oe) =====
+
+	// With threshold 0.0 all pairs match (>1), so --limit 1 truncates. The JSON
+	// "total" must reflect the true pre-truncation pair count (> the shown
+	// "count"), and the text header must report the total plus a "Showing K of
+	// N" line — previously "Found %d" used the truncated page size (== 1).
+	t.Run("limit_json_reports_true_total", func(t *testing.T) {
+		m := bdFindDupsJSON(t, bd, dir, "--threshold", "0.0", "--limit", "1")
+		count, _ := m["count"].(float64)
+		total, hasTotal := m["total"].(float64)
+		if !hasTotal {
+			t.Fatalf("expected a 'total' field in JSON, got: %v", m)
+		}
+		if count != 1 {
+			t.Errorf("expected shown count 1 with --limit 1, got %v", count)
+		}
+		if total <= count {
+			t.Errorf("expected total (%v) > shown count (%v) when truncated", total, count)
+		}
+		if tr, _ := m["truncated"].(bool); !tr {
+			t.Errorf("expected truncated=true when total > count, got: %v", m)
+		}
+	})
+
+	t.Run("limit_text_header_reports_true_total", func(t *testing.T) {
+		out := bdFindDups(t, bd, dir, "--threshold", "0.0", "--limit", "1")
+		if !strings.Contains(out, "Showing 1 of ") {
+			t.Errorf("expected a 'Showing 1 of N pairs' line when truncated, got: %s", out)
+		}
+		if strings.Contains(out, "Found 1 potential duplicate pair") {
+			t.Errorf("header must report the true total, not the --limit page size (1): %s", out)
+		}
+	})
+
 	// ===== No duplicates found =====
 
 	t.Run("no_duplicates_distinct_issues", func(t *testing.T) {

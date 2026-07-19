@@ -86,6 +86,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `invalid --format "<value>" (valid: json)` via `HandleErrorRespectJSON`, matching the fail-loud
   `bd dep tree --format` (beads-n95d) and the silently-ignored-value class (mz2p/pbl7). `--format json`
   (case-insensitive) and the no-flag default are unaffected.
+- **`bd find-duplicates --limit N` no longer reports the truncated page size as the total pair count (beads-q3oe).**
+  The header printed `Found %d potential duplicate pair(s)` using the already-`--limit`-truncated `pairs` slice, so
+  `bd find-duplicates --threshold 0 --limit 1` on many matches reported `Found 1` — an undercount with no "showing
+  1 of N" hint. Since `--limit` defaults to 50, a plain run finding >50 pairs hit this too. The header now reports
+  the true pre-truncation total and adds a muted `Showing K of N pairs` line when truncated; the `--json` object
+  gains additive `total` (true count) and `truncated` fields while `count` keeps its existing page-size meaning for
+  backward compatibility. Same limit-truncation-count class as beads-48g6/phmp/4wn0/ebpo/l39v.
 
 - **`bd ado projects --json` and `bd ado sync --json` now emit a JSON error object on stdout instead of a plaintext-stderr line on config/setup errors (beads-uc71).**
   The two handlers returned their missing-config / setup errors via a bare `fmt.Errorf`, so cobra printed a

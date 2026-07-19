@@ -194,10 +194,17 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) error {
 		return pairs[i].Similarity > pairs[j].Similarity
 	})
 
+	// Capture the true pair count before truncation so the header and JSON do
+	// not misreport the --limit page size as the total (beads-q3oe, sibling of
+	// the 48g6/phmp/4wn0/ebpo/l39v limit-truncation-count class). --limit
+	// defaults to 50, so a plain run finding >50 pairs hit this too.
+	totalPairs := len(pairs)
+
 	// Apply limit
 	if limit > 0 && len(pairs) > limit {
 		pairs = pairs[:limit]
 	}
+	truncated := totalPairs > len(pairs)
 
 	// Output
 	if jsonOutput {
@@ -223,8 +230,13 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		return outputJSON(map[string]interface{}{
-			"pairs":     jsonPairs,
+			"pairs": jsonPairs,
+			// "count" stays the number of pairs SHOWN (page size) for backward
+			// compatibility; "total" is the true pre-truncation count so a
+			// consumer can tell the view is truncated (beads-q3oe).
 			"count":     len(jsonPairs),
+			"total":     totalPairs,
+			"truncated": truncated,
 			"method":    method,
 			"threshold": threshold,
 		})
@@ -236,7 +248,10 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) error {
 	}
 
 	fmt.Printf("%s Found %d potential duplicate pair(s) (threshold: %.0f%%):\n\n",
-		ui.RenderWarn("🔍"), len(pairs), threshold*100)
+		ui.RenderWarn("🔍"), totalPairs, threshold*100)
+	if truncated {
+		fmt.Printf("%s\n\n", ui.RenderMuted(fmt.Sprintf("  Showing %d of %d pairs (--limit %d)", len(pairs), totalPairs, limit)))
+	}
 
 	for i, p := range pairs {
 		pct := p.Similarity * 100
