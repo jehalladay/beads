@@ -49,6 +49,21 @@ func runReset(cmd *cobra.Command, args []string) error {
 	}()
 
 	if err := requireServerMode("reset"); err != nil {
+		// beads-broz: mirror the sibling "not a git repository" error path below
+		// (:60) — under --json a consumer must get a structured {error} object on
+		// stdout, not plaintext on stderr with an empty stdout. This is the first
+		// error a caller hits (before the git-repo check that already honors
+		// --json), so a scripted `bd reset --json` in a non-server-mode repo got
+		// nothing parseable on stdout while every downstream reset path already
+		// respected --json.
+		if jsonOutput {
+			if jerr := outputJSON(map[string]interface{}{
+				"error": err.Error(),
+			}); jerr != nil {
+				return jerr
+			}
+			return SilentExit()
+		}
 		return HandleError("%v", err)
 	}
 	CheckReadonly("reset")
