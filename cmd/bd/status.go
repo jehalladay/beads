@@ -71,10 +71,17 @@ Examples:
 			jsonOutput = true
 		}
 
+		ctx := rootCtx
+
+		// beads-mtgy: on hub-connected crew the global `store` is nil, so route
+		// the read through the proxied UOW handler instead of `store.*`.
+		if usesProxiedServer() {
+			_ = showAll
+			return runStatusProxiedServer(ctx, showAssigned, noActivity)
+		}
+
 		var stats *types.Statistics
 		var err error
-
-		ctx := rootCtx
 
 		stats, err = store.GetStatistics(ctx)
 		if err != nil {
@@ -102,48 +109,54 @@ Examples:
 			return outputJSON(output)
 		}
 
-		// Human-readable colorized output using semantic ui package
-		fmt.Printf("\n%s Issue Database Status\n\n", ui.RenderAccent("📊"))
-		fmt.Printf("Summary:\n")
-		fmt.Printf("  Total Issues:           %d\n", stats.TotalIssues)
-		fmt.Printf("  Open:                   %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.OpenIssues)))
-		fmt.Printf("  In Progress:            %s\n", ui.RenderWarn(fmt.Sprintf("%d", stats.InProgressIssues)))
-		fmt.Printf("  Blocked:                %s\n", ui.RenderFail(fmt.Sprintf("%d", stats.BlockedIssues)))
-		fmt.Printf("  Closed:                 %d\n", stats.ClosedIssues)
-		fmt.Printf("  Ready to Work:          %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.ReadyIssues)))
-
-		// Extended statistics (only show if non-zero)
-		hasExtended := stats.PinnedIssues > 0 ||
-			stats.EpicsEligibleForClosure > 0 || stats.AverageLeadTime > 0
-		if hasExtended {
-			fmt.Printf("\nExtended:\n")
-			if stats.PinnedIssues > 0 {
-				fmt.Printf("  Pinned:                 %d\n", stats.PinnedIssues)
-			}
-			if stats.EpicsEligibleForClosure > 0 {
-				fmt.Printf("  Epics Ready to Close:   %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.EpicsEligibleForClosure)))
-			}
-			if stats.AverageLeadTime > 0 {
-				fmt.Printf("  Avg Lead Time:          %.1f hours\n", stats.AverageLeadTime)
-			}
-		}
-
-		if recentActivity != nil {
-			fmt.Printf("\nRecent Activity (last %d hours):\n", recentActivity.HoursTracked)
-			fmt.Printf("  Commits:                %d\n", recentActivity.CommitCount)
-			fmt.Printf("  Total Changes:          %d\n", recentActivity.TotalChanges)
-			fmt.Printf("  Issues Created:         %d\n", recentActivity.IssuesCreated)
-			fmt.Printf("  Issues Closed:          %d\n", recentActivity.IssuesClosed)
-			fmt.Printf("  Issues Reopened:        %d\n", recentActivity.IssuesReopened)
-			fmt.Printf("  Issues Updated:         %d\n", recentActivity.IssuesUpdated)
-		}
-
-		fmt.Printf("\nFor more details, use 'bd list' to see individual issues.\n")
-		fmt.Println()
+		renderStatusHuman(stats, recentActivity)
 
 		_ = showAll
 		return nil
 	},
+}
+
+// renderStatusHuman prints the human-readable colorized status overview.
+// Shared by the direct path and the proxied-server handler (beads-mtgy) so both
+// render identical output.
+func renderStatusHuman(stats *types.Statistics, recentActivity *RecentActivitySummary) {
+	fmt.Printf("\n%s Issue Database Status\n\n", ui.RenderAccent("📊"))
+	fmt.Printf("Summary:\n")
+	fmt.Printf("  Total Issues:           %d\n", stats.TotalIssues)
+	fmt.Printf("  Open:                   %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.OpenIssues)))
+	fmt.Printf("  In Progress:            %s\n", ui.RenderWarn(fmt.Sprintf("%d", stats.InProgressIssues)))
+	fmt.Printf("  Blocked:                %s\n", ui.RenderFail(fmt.Sprintf("%d", stats.BlockedIssues)))
+	fmt.Printf("  Closed:                 %d\n", stats.ClosedIssues)
+	fmt.Printf("  Ready to Work:          %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.ReadyIssues)))
+
+	// Extended statistics (only show if non-zero)
+	hasExtended := stats.PinnedIssues > 0 ||
+		stats.EpicsEligibleForClosure > 0 || stats.AverageLeadTime > 0
+	if hasExtended {
+		fmt.Printf("\nExtended:\n")
+		if stats.PinnedIssues > 0 {
+			fmt.Printf("  Pinned:                 %d\n", stats.PinnedIssues)
+		}
+		if stats.EpicsEligibleForClosure > 0 {
+			fmt.Printf("  Epics Ready to Close:   %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.EpicsEligibleForClosure)))
+		}
+		if stats.AverageLeadTime > 0 {
+			fmt.Printf("  Avg Lead Time:          %.1f hours\n", stats.AverageLeadTime)
+		}
+	}
+
+	if recentActivity != nil {
+		fmt.Printf("\nRecent Activity (last %d hours):\n", recentActivity.HoursTracked)
+		fmt.Printf("  Commits:                %d\n", recentActivity.CommitCount)
+		fmt.Printf("  Total Changes:          %d\n", recentActivity.TotalChanges)
+		fmt.Printf("  Issues Created:         %d\n", recentActivity.IssuesCreated)
+		fmt.Printf("  Issues Closed:          %d\n", recentActivity.IssuesClosed)
+		fmt.Printf("  Issues Reopened:        %d\n", recentActivity.IssuesReopened)
+		fmt.Printf("  Issues Updated:         %d\n", recentActivity.IssuesUpdated)
+	}
+
+	fmt.Printf("\nFor more details, use 'bd list' to see individual issues.\n")
+	fmt.Println()
 }
 
 // getGitActivity returns recent activity statistics.
