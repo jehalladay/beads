@@ -53,8 +53,20 @@ func issueIDCompletion(cmd *cobra.Command, args []string, toComplete string) ([]
 	completions := make([]string, 0, len(issues))
 	for _, issue := range issues {
 		// Format: ID\tTitle (shown during completion)
-		completions = append(completions, fmt.Sprintf("%s\t%s", issue.ID, issue.Title))
+		completions = append(completions, formatIssueCompletion(issue.ID, issue.Title))
 	}
 
 	return completions, cobra.ShellCompDirectiveNoFileComp
+}
+
+// formatIssueCompletion builds a cobra completion entry "ID\tTitle" where the
+// Title is the description shown in the shell's completion menu. The Title is
+// routed through displayTitle (beads-7n9y): a title can originate from an
+// untrusted import (JSONL/markdown/SCM) carrying OSC/CSI terminal-control
+// escapes (OSC 0 window-title / OSC 52 clipboard), so printing it RAW into the
+// completion menu injected control sequences on <TAB>. Completion MATCHING is
+// on the ID (before the tab), so sanitizing the description is safe. Sink-class
+// tail of j8li/ihaw.
+func formatIssueCompletion(id, title string) string {
+	return fmt.Sprintf("%s\t%s", id, displayTitle(title))
 }
