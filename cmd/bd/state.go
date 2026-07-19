@@ -181,10 +181,20 @@ The --reason flag provides context for the event bead (recommended).`,
 
 		if oldLabel == newLabel {
 			if jsonOutput {
+				// beads-wd2x4: emit the SAME key-set as the change leg below so a
+				// consumer can statically type `set-state --json` regardless of
+				// outcome. Previously the no-op leg reported the value under a
+				// lone "value" key (+ no old_value/new_value/event_id) while the
+				// change leg used old_value/new_value/event_id — the value payload
+				// moved between keys. On a no-op nothing changed, so
+				// old_value==new_value==current value, event_id is null, and the
+				// redundant "value" key is dropped.
 				return outputJSON(map[string]interface{}{
 					"issue_id":  fullID,
 					"dimension": dimension,
-					"value":     newValue,
+					"old_value": newValue,
+					"new_value": newValue,
+					"event_id":  nil,
 					"changed":   false,
 				})
 			}
