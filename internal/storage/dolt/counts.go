@@ -49,10 +49,14 @@ func (s *DoltStore) CountIssuesByGroup(ctx context.Context, filter types.IssueFi
 	return result, err
 }
 
-// CountDependents returns the number of issues that depend on issueID.
-// Counts both dependency tables so the total matches GetDependentsWithMetadata:
-// a dependent may be a permanent issue (edge in `dependencies`) or a wisp
-// (edge in `wisp_dependencies`, routed there by WispTableRouting on the source).
+// CountDependents returns the number of blocks-type edges that depend on
+// issueID (both dependency tables), so the scalar dependent_count matches
+// list/ready (GetDependencyCountsInTx also filters type='blocks'). beads-1d3i:
+// this count feeds only the `bd show --json` scalar; parent-child hierarchy
+// links are NOT dependents in the blocker sense and must not inflate the
+// readiness/blocker signal. A dependent may be a permanent issue (edge in
+// `dependencies`) or a wisp (edge in `wisp_dependencies`, routed there by
+// WispTableRouting on the source).
 //
 // Both tables' targets are resolved via depTargetExpr (the split physical
 // columns) rather than the STORED generated depends_on_id, which a count(*)
@@ -62,11 +66,11 @@ func (s *DoltStore) CountDependents(ctx context.Context, issueID string) (int64,
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var perm, wisp int64
 		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM dependencies WHERE `+depTargetExpr+` = ?`, issueID).Scan(&perm); err != nil {
+			`SELECT count(*) FROM dependencies WHERE `+depTargetExpr+` = ? AND type = 'blocks'`, issueID).Scan(&perm); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM wisp_dependencies WHERE `+depTargetExpr+` = ?`, issueID).Scan(&wisp); err != nil {
+			`SELECT count(*) FROM wisp_dependencies WHERE `+depTargetExpr+` = ? AND type = 'blocks'`, issueID).Scan(&wisp); err != nil {
 			return err
 		}
 		n = perm + wisp
@@ -75,21 +79,24 @@ func (s *DoltStore) CountDependents(ctx context.Context, issueID string) (int64,
 	return n, err
 }
 
-// CountDependencies returns the number of issues that issueID depends on.
-// Counts both dependency tables so the total matches GetDependenciesWithMetadata:
-// a wisp's outgoing edges live in `wisp_dependencies`, a permanent issue's in
-// `dependencies`. Counted as two separate queries summed in Go (see
-// CountDependents for why a single combined query is avoided).
+// CountDependencies returns the number of blocks-type edges that issueID
+// depends on (both dependency tables), so the scalar dependency_count matches
+// list/ready (GetDependencyCountsInTx also filters type='blocks'). beads-1d3i:
+// this count feeds only the `bd show --json` scalar; parent-child hierarchy
+// links are NOT dependencies in the blocker sense and must not inflate the
+// readiness/blocker signal. A wisp's outgoing edges live in `wisp_dependencies`,
+// a permanent issue's in `dependencies`. Counted as two separate queries summed
+// in Go (see CountDependents for why a single combined query is avoided).
 func (s *DoltStore) CountDependencies(ctx context.Context, issueID string) (int64, error) {
 	var n int64
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var perm, wisp int64
 		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM dependencies WHERE issue_id = ?`, issueID).Scan(&perm); err != nil {
+			`SELECT count(*) FROM dependencies WHERE issue_id = ? AND type = 'blocks'`, issueID).Scan(&perm); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM wisp_dependencies WHERE issue_id = ?`, issueID).Scan(&wisp); err != nil {
+			`SELECT count(*) FROM wisp_dependencies WHERE issue_id = ? AND type = 'blocks'`, issueID).Scan(&wisp); err != nil {
 			return err
 		}
 		n = perm + wisp
