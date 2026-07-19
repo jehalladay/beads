@@ -34,16 +34,11 @@ func TestResolveWhereBeadsDir_FallsBackToFindBeadsDir(t *testing.T) {
 		t.Fatalf("write config.yaml: %v", err)
 	}
 
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatalf("chdir(%q): %v", repoDir, err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chdir(originalWD)
-	})
+	// t.Chdir (Go 1.24+) captures/restores the working directory via a
+	// directory handle rather than os.Getwd()'s path lookup, so it is immune
+	// to a concurrent parallel test's t.TempDir() cleanup deleting the process
+	// cwd (which made os.Getwd() fail ENOENT) — beads-bds4.
+	t.Chdir(repoDir)
 
 	t.Setenv("BEADS_DIR", "")
 	t.Setenv("BEADS_DB", "")
@@ -79,16 +74,9 @@ func TestResolveWhereBeadsDir_ReturnsEmptyWithoutWorkspace(t *testing.T) {
 	resetCommandContext()
 
 	workspace := t.TempDir()
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(workspace); err != nil {
-		t.Fatalf("chdir(%q): %v", workspace, err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chdir(originalWD)
-	})
+	// t.Chdir restores via a directory handle, immune to a concurrent
+	// parallel test deleting the process cwd (beads-bds4).
+	t.Chdir(workspace)
 
 	t.Setenv("BEADS_DIR", "")
 	t.Setenv("BEADS_DB", "")
@@ -139,16 +127,9 @@ func TestResolveWhereBeadsDir_UsesInitializedDBPath(t *testing.T) {
 	}
 
 	cwd := t.TempDir()
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(cwd); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chdir(originalWD)
-	})
+	// t.Chdir restores via a directory handle, immune to a concurrent
+	// parallel test deleting the process cwd (beads-bds4).
+	t.Chdir(cwd)
 
 	t.Setenv("BEADS_DIR", "")
 	t.Setenv("BEADS_DB", "")
