@@ -194,11 +194,16 @@ Examples:
 				for _, rec := range records {
 					if rec != nil && rec.DependsOnID == toID && rec.Type == dt {
 						if jsonOutput {
+							// beads-xcujl: align --blocks output vocabulary with the
+							// `dep add` path (and dep list + the types.Dependency
+							// model): issue_id=the depending/blocked issue (fromID),
+							// depends_on_id=the blocker (toID). Values stay on the
+							// same variables — only the key names change.
 							return outputJSON(map[string]interface{}{
-								"status":     "unchanged",
-								"blocker_id": toID,
-								"blocked_id": fromID,
-								"type":       depType,
+								"status":        "unchanged",
+								"issue_id":      fromID,
+								"depends_on_id": toID,
+								"type":          depType,
 							})
 						}
 						fmt.Printf("%s Dependency already present, no change: %s blocks %s\n",
@@ -225,11 +230,13 @@ Examples:
 			}
 
 			if jsonOutput {
+				// beads-xcujl: align --blocks output vocabulary with `dep add`
+				// (issue_id=blocked/depending=fromID, depends_on_id=blocker=toID).
 				return outputJSON(map[string]interface{}{
-					"status":     "added",
-					"blocker_id": toID,
-					"blocked_id": fromID,
-					"type":       depType,
+					"status":        "added",
+					"issue_id":      fromID,
+					"depends_on_id": toID,
+					"type":          depType,
 				})
 			}
 

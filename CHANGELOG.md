@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd dep A --blocks B --json` now uses the same endpoint key vocabulary as `bd dep add` (beads-xcujl).**
+  The two commands are documented as equivalent (`dep --blocks` help: "is equivalent to: bd dep add"), but their
+  `--json` output named the endpoints differently for the identical stored edge — `dep add` emitted
+  `{issue_id, depends_on_id}` while `dep --blocks` emitted `{blocker_id, blocked_id}`, forcing a consumer scripting
+  "add a dependency" to handle two vocabularies by spelling. The canonical naming is `issue_id`/`depends_on_id`
+  (it matches the `types.Dependency` model and the `dep list --json` read shape), so the `--blocks` path is
+  realigned to it on both the `added` and idempotent `unchanged` branches (direct + proxied-server). Values are
+  preserved — `issue_id` is the blocked/depending issue, `depends_on_id` is the blocker — only the key names change.
+  Teeth: TestEmbeddedDepBlocksJSONVocab_xcujl.
+
 - **`bd list --parent X --limit N --pretty` no longer silently ignores `--limit` (beads-3dr5).**
   The `--parent`+`--pretty` branch renders the full subtree with no `--limit` cap or truncation hint, while every
   other output path (`--json`, compact, non-parent pretty) honors `--limit` — so a user who passed `--limit 5` got

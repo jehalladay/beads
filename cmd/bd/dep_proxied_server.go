@@ -100,11 +100,13 @@ func runDepBlocksProxiedServer(cmd *cobra.Command, ctx context.Context, blockerI
 	// idempotent, so guard against a false "✓ Added".
 	if proxiedDepEdgeExistsSameType(ctx, uw, blockedID, blockerID, types.DepBlocks) {
 		if jsonOutput {
+			// beads-xcujl: align --blocks vocabulary with `dep add` (issue_id=
+			// blocked/depending=blockedID, depends_on_id=blocker=blockerID).
 			_ = outputJSON(map[string]interface{}{
-				"status":     "unchanged",
-				"blocker_id": blockerID,
-				"blocked_id": blockedID,
-				"type":       string(types.DepBlocks),
+				"status":        "unchanged",
+				"issue_id":      blockedID,
+				"depends_on_id": blockerID,
+				"type":          string(types.DepBlocks),
 			})
 			return
 		}
@@ -137,11 +139,13 @@ func runDepBlocksProxiedServer(cmd *cobra.Command, ctx context.Context, blockerI
 	}
 
 	if jsonOutput {
+		// beads-xcujl: align --blocks vocabulary with `dep add` (issue_id=
+		// blocked/depending=blockedID, depends_on_id=blocker=blockerID).
 		_ = outputJSON(map[string]interface{}{
-			"status":     "added",
-			"blocker_id": blockerID,
-			"blocked_id": blockedID,
-			"type":       string(types.DepBlocks),
+			"status":        "added",
+			"issue_id":      blockedID,
+			"depends_on_id": blockerID,
+			"type":          string(types.DepBlocks),
 		})
 		return
 	}
