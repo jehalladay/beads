@@ -202,7 +202,9 @@ func findOrphanedIssues(path string, labels, labelsAny []string) ([]orphanIssueO
 		return nil, fmt.Errorf("unable to find orphaned issues: %w", err)
 	}
 
-	var output []orphanIssueOutput
+	// beads-tamf: non-nil init so an empty result marshals to a JSON [] (not
+	// null) under --json, matching the ready/blocked/list array contract.
+	output := []orphanIssueOutput{}
 	for _, orphan := range orphans {
 		output = append(output, orphanIssueOutput{
 			IssueID:             orphan.IssueID,

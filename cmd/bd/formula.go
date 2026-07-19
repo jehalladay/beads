@@ -107,7 +107,9 @@ func runFormulaList(cmd *cobra.Command, args []string) error {
 	searchPaths := getFormulaSearchPaths()
 
 	seen := make(map[string]bool)
-	var entries []FormulaListEntry
+	// beads-tamf: non-nil init so an empty result marshals to a JSON [] (not
+	// null) under --json, matching the ready/blocked/list array contract.
+	entries := []FormulaListEntry{}
 
 	for _, dir := range searchPaths {
 		formulas, err := scanFormulaDir(dir)
