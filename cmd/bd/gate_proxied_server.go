@@ -236,41 +236,64 @@ func runGateResolveProxied(ctx context.Context, gateID, reason string) error {
 
 // runGateAddWaiterProxied mirrors gateAddWaiterCmd's RunE via the UOW.
 func runGateAddWaiterProxied(ctx context.Context, gateID, waiter string) error {
-	// beads-mbh7: mirror the direct-path add-waiter --json contract (beads-jial)
-	// and the sibling proxied handlers (resolve=beads-u3lt, create, show) on the
-	// proxied path — errors through HandleErrorRespectJSON. A bare HandleError
-	// left stdout EMPTY + plaintext on stderr under
-	// `bd gate add-waiter <bad-id> --json` on a hub-connected crew.
-	uw, err := openGateProxiedUOW(ctx)
+	if uowProvider == nil {
+		return HandleErrorRespectJSON("proxied-server UOW provider not initialized")
+	}
+
+	// beads-ki3yd: add-waiter is a read-modify-write on the gate's single `waiters`
+	// JSON cell (read the slice, append one, write the whole slice back). On the
+	// shared Dolt sql-server two concurrent add-waiters open independent tx
+	// snapshots, both read the SAME pre-existing slice, and one loses at commit
+	// with `Error 1213 (40001) serialization failure` — surfacing a raw,
+	// unactionable Dolt error and dropping that waiter's registration. Wrap the
+	// whole read-append-write in RunInTx so a 1213 rollback replays the closure on
+	// a FRESH snapshot (re-reading the now-updated slice, re-appending), which is
+	// the town-standard proxied-write retry (create/init/quick all use it). This
+	// is the beads-1i4u/iq8zr shared-server concurrency class; RunInTx suffices
+	// here because add-waiter's larger write set DOES raise a commit-time 1213
+	// (unlike ready --claim's silent auto-cell-merge, which needs an advisory
+	// lock).
+	//
+	// alreadyRegistered captures the idempotent-success path (waiter already
+	// present) so it survives outside the retry closure without being treated as
+	// a domain error.
+	var alreadyRegistered bool
+	err := uow.RunInTxMsg(ctx, uowProvider, func(uw uow.UnitOfWork) (string, error) {
+		alreadyRegistered = false
+		issue, err := uw.IssueUseCase().GetIssue(ctx, gateID)
+		if err != nil {
+			return "", fmt.Errorf("gate not found: %s", gateID)
+		}
+		if issue.IssueType != "gate" {
+			return "", fmt.Errorf("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
+		}
+		for _, w := range issue.Waiters {
+			if w == waiter {
+				alreadyRegistered = true
+				return "", nil // no-op: nothing to commit
+			}
+		}
+		newWaiters := append(issue.Waiters, waiter)
+		updates := map[string]interface{}{
+			"waiters": newWaiters,
+		}
+		if err := uw.IssueUseCase().UpdateIssue(ctx, gateID, updates, actor); err != nil {
+			return "", fmt.Errorf("updating gate: %w", err)
+		}
+		return fmt.Sprintf("bd: gate add-waiter %s", gateID), nil
+	})
 	if err != nil {
+		// beads-mbh7: mirror the direct-path add-waiter --json contract
+		// (beads-jial) and the sibling proxied handlers (resolve=beads-u3lt,
+		// create, show) — errors through HandleErrorRespectJSON. A bare
+		// HandleError left stdout EMPTY + plaintext on stderr under
+		// `bd gate add-waiter <bad-id> --json` on a hub-connected crew.
 		return HandleErrorRespectJSON("%v", err)
 	}
-	defer uw.Close(ctx)
 
-	issue, err := uw.IssueUseCase().GetIssue(ctx, gateID)
-	if err != nil {
-		return HandleErrorRespectJSON("gate not found: %s", gateID)
-	}
-	if issue.IssueType != "gate" {
-		return HandleErrorRespectJSON("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
-	}
-
-	for _, w := range issue.Waiters {
-		if w == waiter {
-			fmt.Printf("Waiter already registered on gate %s\n", gateID)
-			return nil
-		}
-	}
-
-	newWaiters := append(issue.Waiters, waiter)
-	updates := map[string]interface{}{
-		"waiters": newWaiters,
-	}
-	if err := uw.IssueUseCase().UpdateIssue(ctx, gateID, updates, actor); err != nil {
-		return HandleErrorRespectJSON("updating gate: %v", err)
-	}
-	if err := uw.Commit(ctx, fmt.Sprintf("bd: gate add-waiter %s", gateID)); err != nil && !isDoltNothingToCommit(err) {
-		return HandleErrorRespectJSON("failed to commit: %v", err)
+	if alreadyRegistered {
+		fmt.Printf("Waiter already registered on gate %s\n", gateID)
+		return nil
 	}
 
 	fmt.Printf("%s Added waiter to gate %s: %s\n", ui.RenderPass("✓"), gateID, waiter)
