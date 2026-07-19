@@ -255,7 +255,11 @@ func findWritableFormulaDir(formulaName string) string {
 
 // getVarNames extracts variable names from replacements map
 func getVarNames(replacements map[string]string) []string {
-	var names []string
+	// beads-036h: non-nil empty slice so `bd mol distill --json` on a formula
+	// with no replacements emits "variables":[] not null (json-ARRAY nil-slice
+	// class, same as ExtractVariables). DistillResult.Variables has no omitempty
+	// and is emitted via outputJSON; downstream only ranges/lens it.
+	names := []string{}
 	for _, varName := range replacements {
 		names = append(names, varName)
 	}

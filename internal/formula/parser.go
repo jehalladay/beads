@@ -376,7 +376,11 @@ var varPattern = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}`)
 // ExtractVariables finds all {{variable}} references in a formula.
 func ExtractVariables(formula *Formula) []string {
 	seen := make(map[string]bool)
-	var vars []string
+	// beads-036h: non-nil empty slice so a var-less formula's `bd cook --json`
+	// emits "variables":[] not null (json-ARRAY nil-slice class; sibling of the
+	// swarm/tracker/diff nil-slice fixes). Callers only range/len this, so the
+	// empty slice is behaviorally identical while giving a stable array contract.
+	vars := []string{}
 
 	// Helper to extract vars from a string
 	extract := func(s string) {
