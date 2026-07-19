@@ -71,6 +71,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `!jsonOutput || dryRun`, so a JSON non-dry-run run emits exactly the single Step-7 result (which
   already embeds the plan); human output and dry-run (which has no Step-7 output) are unchanged.
 
+- **`bd assign` and `bd tag` `--json` now emit a one-element ARRAY, matching the documented long form `bd update` (beads-yrtx).**
+  Both are shorthands for `bd update --assignee` / `bd update --add-label`, but their `--json` output
+  emitted a bare object (`{...}`) while `bd update` and the sibling mutation verbs (`close`/`reopen`)
+  emit an array (`[{...}]`). A machine consumer following the shorthand docs broke on the shape
+  divergence (one needs `[0]`, the other doesn't). The direct paths (`cmd/bd/assign.go`,
+  `cmd/bd/tag.go`) and their proxied-server siblings (`cmd/bd/assign_tag_proxied_server.go`) now wrap
+  the updated issue in `[]*types.Issue{...}` before `outputJSON`, so all four code paths emit the array
+  shape. Text-mode output is unchanged.
+
 - **`bd update <id> --json` with no field flags now emits a JSON no-op object instead of the plain-text line `No updates specified` (beads-b0lq).**
   A valid id with no mutating field flags is an idempotent no-op success (exit 0). The direct
   (`cmd/bd/update.go`) and proxied-server (`cmd/bd/update_proxied_server.go`) paths both printed the

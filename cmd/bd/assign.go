@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -150,7 +151,11 @@ Examples:
 		}
 		if jsonOutput {
 			if updatedIssue != nil {
-				if err := outputJSON(updatedIssue); err != nil {
+				// beads-yrtx: emit an ARRAY to match `bd update --assignee`
+				// (the documented long form) and all sibling mutation verbs
+				// (update/close/reopen), not a bare DICT — a consumer following
+				// the shorthand docs would otherwise break on the shape.
+				if err := outputJSON([]*types.Issue{updatedIssue}); err != nil {
 					return err
 				}
 			}

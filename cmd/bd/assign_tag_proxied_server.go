@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -33,7 +34,8 @@ func runAssignProxiedServer(ctx context.Context, args []string) error {
 
 	SetLastTouchedID(issue.ID)
 	if jsonOutput {
-		return outputJSON(issue)
+		// beads-yrtx: ARRAY shape, matching the direct assign path + `bd update`.
+		return outputJSON([]*types.Issue{issue})
 	}
 	if assignee == "" {
 		fmt.Printf("%s Unassigned %s\n", ui.RenderPass("✓"), formatFeedbackID(issue.ID, issue.Title))
@@ -57,7 +59,8 @@ func runTagProxiedServer(ctx context.Context, args []string) error {
 
 	SetLastTouchedID(issue.ID)
 	if jsonOutput {
-		return outputJSON(issue)
+		// beads-yrtx: ARRAY shape, matching the direct tag path + `bd update`.
+		return outputJSON([]*types.Issue{issue})
 	}
 	fmt.Printf("%s Added label %q to %s\n", ui.RenderPass("✓"), label, formatFeedbackID(issue.ID, issue.Title))
 	return nil
