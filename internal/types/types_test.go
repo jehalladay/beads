@@ -851,6 +851,70 @@ func TestStatusNormalizeCaseInsensitive(t *testing.T) {
 	}
 }
 
+// beads-mq4d: Normalize must trim surrounding whitespace before case-folding so
+// a padded value (copy-paste / CSV / -s "$VAR") canonicalizes like its trimmed
+// form — the whitespace sibling of the case-fold fix (beads-xsdh).
+func TestStatusNormalizeTrimsWhitespace(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in   Status
+		want Status
+	}{
+		{Status(" open"), StatusOpen},
+		{Status("open "), StatusOpen},
+		{Status("  open  "), StatusOpen},
+		{Status("in_progress "), StatusInProgress},
+		{Status(" CLOSED "), StatusClosed}, // trim + case-fold together
+		{Status("\topen\n"), StatusOpen},
+	}
+	for _, tc := range cases {
+		got := tc.in.Normalize()
+		if got != tc.want {
+			t.Errorf("Status(%q).Normalize() = %q, want %q", tc.in, got, tc.want)
+		}
+		if !got.IsValid() {
+			t.Errorf("Status(%q).Normalize().IsValid() = false, want true", tc.in)
+		}
+	}
+
+	// A spaced custom status is NOT a built-in, so it stays verbatim (compared
+	// case-sensitively by IsValidWithCustom) — trimming only kicks in when the
+	// trimmed form is a built-in.
+	if got := Status(" Triage ").Normalize(); got != Status(" Triage ") {
+		t.Errorf("Status(%q).Normalize() = %q, want unchanged (spaced custom)", " Triage ", got)
+	}
+}
+
+func TestIssueTypeNormalizeTrimsWhitespace(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in   IssueType
+		want IssueType
+	}{
+		{IssueType("bug "), TypeBug},
+		{IssueType(" bug"), TypeBug},
+		{IssueType("  task  "), TypeTask},
+		{IssueType(" BUG "), TypeBug}, // trim + case-fold
+		{IssueType("\tfeature\n"), TypeFeature},
+	}
+	for _, tc := range cases {
+		got := tc.in.Normalize()
+		if got != tc.want {
+			t.Errorf("IssueType(%q).Normalize() = %q, want %q", tc.in, got, tc.want)
+		}
+		if !got.IsValid() {
+			t.Errorf("IssueType(%q).Normalize().IsValid() = false, want true", tc.in)
+		}
+	}
+
+	// A spaced alias trims then resolves (aliases are case-insensitive).
+	if got := IssueType(" enhancement ").Normalize(); got != TypeFeature {
+		t.Errorf("IssueType(%q).Normalize() = %q, want %q (spaced alias)", " enhancement ", got, TypeFeature)
+	}
+}
+
 func TestIssueTypeRequiredSections(t *testing.T) {
 	tests := []struct {
 		issueType     IssueType

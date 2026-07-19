@@ -387,6 +387,17 @@ func (s Status) IsValid() bool {
 // (compared case-sensitively by IsValidWithCustom) round-trips unchanged. This
 // mirrors IssueType.Normalize (beads-xsdh) for the status axis.
 func (s Status) Normalize() Status {
+	// Trim surrounding whitespace before case-folding so a padded value from
+	// copy-paste / CSV / -s "$VAR" (e.g. " open" / "in_progress ") canonicalizes
+	// like its trimmed form, matching the case-fold sibling (beads-xsdh) and
+	// priority parsing which already tolerate padding (beads-mq4d). Only when the
+	// trimmed+lowered form is a built-in status, so a legitimately-spaced custom
+	// status (compared verbatim by IsValidWithCustom) round-trips unchanged.
+	if trimmed := Status(strings.TrimSpace(string(s))); trimmed != s {
+		if lowered := Status(strings.ToLower(string(trimmed))); lowered.IsValid() {
+			return lowered
+		}
+	}
 	if lowered := Status(strings.ToLower(string(s))); lowered.IsValid() {
 		return lowered
 	}
@@ -688,6 +699,21 @@ var IssueTypeAliases = map[string]IssueType{
 // case of canonical built-in names. For example, "enhancement" -> "feature",
 // "investigation" -> "spike", "BUG" -> "bug". Case-insensitive.
 func (t IssueType) Normalize() IssueType {
+	// Trim surrounding whitespace before alias/case-folding so a padded value
+	// (copy-paste / CSV / -t "$VAR", e.g. "bug " / " task") canonicalizes like
+	// its trimmed form — the whitespace sibling of the case-fold fix
+	// (beads-xsdh) and priority parsing which already tolerates padding
+	// (beads-mq4d). Only when the trimmed form is a known alias or built-in, so
+	// a legitimately-spaced custom type (compared verbatim by IsValidWithCustom)
+	// round-trips unchanged.
+	if trimmed := strings.TrimSpace(string(t)); trimmed != string(t) {
+		if canonical, ok := IssueTypeAliases[strings.ToLower(trimmed)]; ok {
+			return canonical
+		}
+		if lowered := IssueType(strings.ToLower(trimmed)); lowered.IsValid() {
+			return lowered
+		}
+	}
 	if canonical, ok := IssueTypeAliases[strings.ToLower(string(t))]; ok {
 		return canonical
 	}
