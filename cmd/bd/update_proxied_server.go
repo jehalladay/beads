@@ -27,6 +27,17 @@ func runUpdateProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 
 	in := gatherUpdateInput(ctx, cmd)
 	if isUpdateInputNoop(in) {
+		// beads-b0lq: mirror the direct update path — a no-field update is an
+		// idempotent no-op SUCCESS, so under --json emit a parseable no-op
+		// status object rather than the plain-text line, keeping the JSON
+		// stdout contract intact for machine consumers on this rc=0 path.
+		if jsonOutput {
+			_ = outputJSON(map[string]string{
+				"status":  "noop",
+				"message": "no updates specified",
+			})
+			return
+		}
 		fmt.Println("No updates specified")
 		return
 	}

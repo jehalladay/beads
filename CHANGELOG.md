@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd update <id> --json` with no field flags now emits a JSON no-op object instead of the plain-text line `No updates specified` (beads-b0lq).**
+  A valid id with no mutating field flags is an idempotent no-op success (exit 0). The direct
+  (`cmd/bd/update.go`) and proxied-server (`cmd/bd/update_proxied_server.go`) paths both printed the
+  human line on stdout even under `--json`, so a machine consumer parsing stdout as JSON hit a parse
+  failure on a success path. Both now emit `{"status":"noop","message":"no updates specified"}` under
+  `--json` (matching the existing `{status:"noop"}` convention), keeping the human line otherwise.
+
 - **`bd dolt push` pre-push fsck no longer aborts with a spurious "dangling chunk reference" when the check merely timed out or the repo could not be opened (beads-9nq1).**
   `prePushFSCK` shells out to `dolt fsck`; under heavy node contention the subprocess was killed by the fsck
   context timeout with empty/partial output, and the open-failure matcher only recognized two banner

@@ -341,6 +341,18 @@ create, update, show, or close operation).`,
 		forceFlag, _ := cmd.Flags().GetBool("force")
 
 		if len(updates) == 0 && !claimFlag {
+			// beads-b0lq: a valid id with no mutating field flags is an
+			// idempotent no-op SUCCESS, not an error. Under --json emit a
+			// parseable no-op status object (matching the migrate.go/rules.go
+			// {status:"noop"} convention and the hxc2 no-op-success precedent)
+			// so a machine consumer parsing stdout as JSON does not hit a parse
+			// failure on this rc=0 path; the plain path keeps the human line.
+			if jsonOutput {
+				return outputJSON(map[string]string{
+					"status":  "noop",
+					"message": "no updates specified",
+				})
+			}
 			fmt.Println("No updates specified")
 			return nil
 		}

@@ -241,6 +241,50 @@ func TestEmbeddedUpdateAllFailedJSONSingleObject(t *testing.T) {
 	}
 }
 
+// TestEmbeddedUpdateNoFieldsJSONContract proves beads-b0lq: `bd update <id>
+// --json` with a VALID id but NO mutating field flags is a no-op SUCCESS
+// (exit 0), and under --json its stdout must be a parseable JSON object — not
+// the plain-text line "No updates specified". A machine consumer parsing
+// stdout as JSON on a rc=0 path otherwise hits a parse failure. Per the
+// hxc2/reopen precedent this is a no-op SUCCESS, so the payload reflects a
+// no-op status object rather than an {"error":...}-keyed object.
+func TestEmbeddedUpdateNoFieldsJSONContract(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt update tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "un")
+
+	issue := bdCreate(t, bd, dir, "no-op update target")
+
+	cmd := exec.Command(bd, "update", issue.ID, "--json")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("no-field update --json should be a no-op success (exit 0), got error: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	out := strings.TrimSpace(stdout.String())
+	if out == "" {
+		t.Fatalf("expected a JSON no-op object on stdout, got empty output\nstderr:\n%s", stderr.String())
+	}
+	var obj map[string]any
+	if jerr := json.Unmarshal([]byte(out), &obj); jerr != nil {
+		t.Fatalf("stdout on the no-field --json no-op path is not valid JSON (beads-b0lq): %v\nstdout:\n%s", jerr, out)
+	}
+	// The no-op is a SUCCESS, not an error — it must not be error-keyed.
+	if _, isErr := obj["error"]; isErr {
+		t.Errorf("no-op no-field update must not be reported as an error object (it is an idempotent success); got: %s", out)
+	}
+	// stderr must not carry a competing JSON object under --json.
+	errStr := strings.TrimSpace(stderr.String())
+	if errStr != "" && json.Valid([]byte(errStr)) {
+		t.Errorf("stderr must be clean of a competing JSON object on the no-field --json path; got:\n%s", errStr)
+	}
+}
+
 func TestEmbeddedUpdateBatchMetadataJSONContract(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt update tests")
