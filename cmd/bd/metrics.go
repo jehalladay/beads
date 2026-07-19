@@ -69,8 +69,14 @@ var metricsOnCmd = &cobra.Command{
 				c.CloseEventAndAdd(evt)
 			}
 		}()
+		wasEnabled := metricsEnabledByConfig()
 		if err := setMetricsDisabled(false); err != nil {
-			return HandleError("failed to update metrics setting: %v", err)
+			return HandleErrorRespectJSON("failed to update metrics setting: %v", err)
+		}
+		// beads-14xu: honor --json (silently-ignored-flag class). enabled is the
+		// new saved-config state; changed reports whether it actually flipped.
+		if jsonOutput {
+			return outputJSON(map[string]any{"enabled": true, "changed": !wasEnabled})
 		}
 		out := cmd.OutOrStdout()
 		fmt.Fprintln(out, "✓ Anonymous usage metrics are now ON. Thank you — this genuinely helps us make bd better!")
@@ -93,8 +99,16 @@ var metricsOffCmd = &cobra.Command{
 		// would flush — directly contradicting the "No usage data will be
 		// collected or sent" promise printed below. So we write the opt-out and
 		// add nothing to the collector.
+		wasEnabled := metricsEnabledByConfig()
 		if err := setMetricsDisabled(true); err != nil {
-			return HandleError("failed to update metrics setting: %v", err)
+			return HandleErrorRespectJSON("failed to update metrics setting: %v", err)
+		}
+		// beads-14xu: honor --json (silently-ignored-flag class). enabled is the
+		// new saved-config state; changed reports whether it actually flipped.
+		// Like the text path, this adds no cli_command event (privacy: the
+		// opt-out invocation must not queue telemetry the user just declined).
+		if jsonOutput {
+			return outputJSON(map[string]any{"enabled": false, "changed": wasEnabled})
 		}
 		out := cmd.OutOrStdout()
 		fmt.Fprintln(out, "Anonymous usage metrics are now OFF. No usage data will be collected or sent.")
@@ -166,6 +180,19 @@ func warnIfMetricsEnvOverride(cmd *cobra.Command, wantDisabled bool) {
 func runMetricsStatus(cmd *cobra.Command) {
 	out := cmd.OutOrStdout()
 	effective := resolveMetricsEnabled()
+	// beads-14xu: honor --json so `bd metrics --json` emits machine-readable
+	// state instead of the human prose (silently-ignored-flag class, sibling of
+	// kvmg). env_override reports whether BD_DISABLE_METRICS is set (which
+	// overrides the saved config for the current shell).
+	if jsonOutput {
+		_, envOverride := os.LookupEnv(metrics.EnvDisableMetrics)
+		_ = outputJSON(map[string]any{
+			"enabled":      effective,
+			"endpoint":     resolveMetricsEndpoint(),
+			"env_override": envOverride,
+		})
+		return
+	}
 	state := "OFF"
 	if effective {
 		state = "ON"
@@ -196,12 +223,6 @@ func runMetricsStatus(cmd *cobra.Command) {
 
 func runMetricsExample(cmd *cobra.Command) {
 	out := cmd.OutOrStdout()
-	fmt.Fprintln(out, "bd sends one kind of anonymous event: a `cli_command` record — one per")
-	fmt.Fprintln(out, "command you run. Each batch carries a machine-derived, HMAC-protected distinct")
-	fmt.Fprintln(out, "ID, the bd version, and your OS platform. The only per-event attribute is the")
-	fmt.Fprintln(out, "command name — never your issues, IDs, paths, remotes, identity, or anything")
-	fmt.Fprintln(out, "you type. A representative payload:")
-	fmt.Fprintln(out, "")
 	example := map[string]any{
 		"distinct_id": "(machine-derived, HMAC-protected — not your identity)",
 		"app_name":    "beads",
@@ -212,6 +233,18 @@ func runMetricsExample(cmd *cobra.Command) {
 			"attributes": []map[string]string{{"key": "command", "value": "ready"}},
 		}},
 	}
+	// beads-14xu: honor --json — emit the representative payload as a JSON object
+	// (the human path already renders this same structure as pretty text below).
+	if jsonOutput {
+		_ = outputJSON(map[string]any{"example_payload": example})
+		return
+	}
+	fmt.Fprintln(out, "bd sends one kind of anonymous event: a `cli_command` record — one per")
+	fmt.Fprintln(out, "command you run. Each batch carries a machine-derived, HMAC-protected distinct")
+	fmt.Fprintln(out, "ID, the bd version, and your OS platform. The only per-event attribute is the")
+	fmt.Fprintln(out, "command name — never your issues, IDs, paths, remotes, identity, or anything")
+	fmt.Fprintln(out, "you type. A representative payload:")
+	fmt.Fprintln(out, "")
 	if b, err := marshalIndentNoEscape(example); err == nil {
 		fmt.Fprintf(out, "  %s\n\n", b)
 	}
