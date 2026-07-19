@@ -195,25 +195,36 @@ func runGateCreateProxied(ctx context.Context, blocksID, gateType, reason, await
 
 // runGateResolveProxied mirrors gateResolveCmd's RunE via the UOW.
 func runGateResolveProxied(ctx context.Context, gateID, reason string) error {
+	// beads-u3lt: mirror the direct gate-resolve --json contract on the proxied
+	// path — errors through HandleErrorRespectJSON, success as a JSON doc under
+	// --json (was bare HandleError + unconditional plaintext).
 	uw, err := openGateProxiedUOW(ctx)
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	defer uw.Close(ctx)
 
 	issue, err := uw.IssueUseCase().GetIssue(ctx, gateID)
 	if err != nil {
-		return HandleError("gate not found: %s", gateID)
+		return HandleErrorRespectJSON("gate not found: %s", gateID)
 	}
 	if issue.IssueType != "gate" {
-		return HandleError("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
+		return HandleErrorRespectJSON("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
 	}
 
 	if _, err := uw.IssueUseCase().CloseIssue(ctx, gateID, domain.CloseIssueParams{Reason: reason}, actor); err != nil {
-		return HandleError("closing gate: %v", err)
+		return HandleErrorRespectJSON("closing gate: %v", err)
 	}
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: gate resolve %s", gateID)); err != nil && !isDoltNothingToCommit(err) {
-		return HandleError("failed to commit: %v", err)
+		return HandleErrorRespectJSON("failed to commit: %v", err)
+	}
+
+	if jsonOutput {
+		return outputJSON(map[string]interface{}{
+			"id":       gateID,
+			"resolved": true,
+			"reason":   reason,
+		})
 	}
 
 	fmt.Printf("%s Gate resolved: %s\n", ui.RenderPass("✓"), gateID)

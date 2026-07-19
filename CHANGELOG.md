@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd gate check`/`resolve`/`discover --json` now emit exactly one parseable JSON doc on stdout in all cases (beads-u3lt).**
+  The gate command family broadly broke the `--json` contract: `gate check --json` on the common empty case printed
+  `No open gates found.` plaintext + zero JSON (bare return before the summary block), and on the non-empty case
+  interleaved per-gate human progress lines on stdout *followed* by the JSON doc (`Extra data` for a parser);
+  `gate resolve --json` honored `--json` nowhere (plaintext success + bare `HandleError`); `gate discover --json`
+  printed plaintext on every early-return/progress path. All three now gate human progress behind `!jsonOutput`,
+  route errors through `HandleErrorRespectJSON`, and emit a single summary/success JSON object on stdout (empty and
+  non-empty alike). Direct + proxied resolve paths fixed symmetrically. Same double-emit/empty-path `--json`-contract
+  class as beads-nqbv/qpiw/tamf. Teeth: gate_check_json_empty + gate_resolve_json (embedded).
+
 - **`bd q`/`bd quick --json` now emits a JSON error object on a direct-path create failure, not empty stdout + plain-text stderr (beads-wf68).**
   `bd quick` honors `--json` on its success path (`outputJSON(issue)`, beads-j54e) and on its priority-validation guard
   (`HandleErrorRespectJSON`, beads-n8xi), but the direct-path `store.CreateIssue` error at quick.go still used a bare

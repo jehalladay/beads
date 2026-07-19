@@ -465,18 +465,30 @@ Use --reason to provide context for why the gate was resolved.`,
 
 		issue, err = store.GetIssue(ctx, gateID)
 		if err != nil {
-			return HandleError("gate not found: %s", gateID)
+			return HandleErrorRespectJSON("gate not found: %s", gateID)
 		}
 
 		if issue.IssueType != "gate" {
-			return HandleError("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
+			return HandleErrorRespectJSON("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
 		}
 
 		if err := store.CloseIssue(ctx, gateID, reason, actor, ""); err != nil {
-			return HandleError("closing gate: %v", err)
+			return HandleErrorRespectJSON("closing gate: %v", err)
 		}
 
 		commandDidWrite.Store(true)
+
+		// beads-u3lt: gate resolve honored --json NOWHERE (success printed
+		// plaintext, errors used bare HandleError) — emit a JSON success doc under
+		// --json, and route the error paths through HandleErrorRespectJSON, so the
+		// command has a parseable --json contract on every path.
+		if jsonOutput {
+			return outputJSON(map[string]interface{}{
+				"id":       gateID,
+				"resolved": true,
+				"reason":   reason,
+			})
+		}
 
 		fmt.Printf("%s Gate resolved: %s\n", ui.RenderPass("✓"), gateID)
 		if reason != "" {
@@ -575,6 +587,19 @@ Examples:
 		}
 
 		if len(filteredGates) == 0 {
+			// beads-u3lt: under --json the empty case must still emit the summary
+			// JSON doc (zero counts) on stdout, not plaintext + bare return — the
+			// bare return here previously produced plaintext + ZERO json on the
+			// COMMON empty case, so `bd gate check --json | jq` failed to parse.
+			if jsonOutput {
+				return outputJSON(map[string]interface{}{
+					"checked":   0,
+					"resolved":  0,
+					"escalated": 0,
+					"errors":    0,
+					"dry_run":   dryRun,
+				})
+			}
 			if gateTypeFilter != "" {
 				fmt.Printf("No open gates of type '%s' found.\n", gateTypeFilter)
 			} else {
@@ -628,11 +653,19 @@ Examples:
 				continue
 			}
 
+			// beads-u3lt: gate the per-gate PROGRESS prints behind !jsonOutput so
+			// under --json only the summary JSON doc (below) reaches stdout — these
+			// human-progress lines previously printed to stdout unconditionally,
+			// THEN the :673 json doc followed, yielding "human text + json" =
+			// unparseable ("Extra data"). Side effects (closeGate/escalateGate) and
+			// stderr error lines are unchanged; only the stdout progress text is gated.
 			if r.resolved {
 				resolvedCount++
 				if dryRun {
-					fmt.Printf("%s %s: would resolve - %s\n",
-						ui.RenderPass("✓"), r.gate.ID, r.reason)
+					if !jsonOutput {
+						fmt.Printf("%s %s: would resolve - %s\n",
+							ui.RenderPass("✓"), r.gate.ID, r.reason)
+					}
 				} else {
 					// Close the gate
 					closeErr := closeGate(ctx, r.gate.ID, r.reason)
@@ -640,7 +673,7 @@ Examples:
 						fmt.Fprintf(os.Stderr, "%s %s: error closing - %v\n",
 							ui.RenderFail("✗"), r.gate.ID, closeErr)
 						errorCount++
-					} else {
+					} else if !jsonOutput {
 						fmt.Printf("%s %s: resolved - %s\n",
 							ui.RenderPass("✓"), r.gate.ID, r.reason)
 					}
@@ -648,27 +681,33 @@ Examples:
 			} else if r.escalated {
 				escalatedCount++
 				if dryRun {
-					fmt.Printf("%s %s: would escalate - %s\n",
-						ui.RenderWarn("⚠"), r.gate.ID, r.reason)
+					if !jsonOutput {
+						fmt.Printf("%s %s: would escalate - %s\n",
+							ui.RenderWarn("⚠"), r.gate.ID, r.reason)
+					}
 				} else {
-					fmt.Printf("%s %s: ESCALATE - %s\n",
-						ui.RenderWarn("⚠"), r.gate.ID, r.reason)
+					if !jsonOutput {
+						fmt.Printf("%s %s: ESCALATE - %s\n",
+							ui.RenderWarn("⚠"), r.gate.ID, r.reason)
+					}
 					// Actually escalate if flag is set
 					if escalateFlag {
 						escalateGate(r.gate, r.reason)
 					}
 				}
-			} else {
+			} else if !jsonOutput {
 				// Still pending
 				fmt.Printf("%s %s: pending - %s\n",
 					ui.RenderAccent("○"), r.gate.ID, r.reason)
 			}
 		}
 
-		// Summary
-		fmt.Println()
-		fmt.Printf("Checked %d gates: %d resolved, %d escalated, %d errors\n",
-			len(results), resolvedCount, escalatedCount, errorCount)
+		// Summary (human only; under --json the summary is the JSON doc below)
+		if !jsonOutput {
+			fmt.Println()
+			fmt.Printf("Checked %d gates: %d resolved, %d escalated, %d errors\n",
+				len(results), resolvedCount, escalatedCount, errorCount)
+		}
 
 		if jsonOutput {
 			return outputJSON(map[string]interface{}{

@@ -585,6 +585,56 @@ func TestEmbeddedGateCreate(t *testing.T) {
 			t.Errorf("expected gate blocking %s in gate list", task.ID)
 		}
 	})
+
+	// ===== Gate check/resolve --json contract (beads-u3lt) =====
+
+	// parseOneJSONDoc asserts stdout is EXACTLY one parseable JSON object with no
+	// leading/trailing human text (the u3lt double-emit + empty-path failures
+	// produced plaintext, or human-progress-text followed by a json doc).
+	parseOneJSONDoc := func(t *testing.T, out, label string) map[string]interface{} {
+		t.Helper()
+		s := strings.TrimSpace(out)
+		if s == "" {
+			t.Fatalf("%s: stdout is EMPTY under --json (must be a JSON doc)", label)
+		}
+		if !strings.HasPrefix(s, "{") {
+			t.Fatalf("%s: stdout has leading non-JSON text (double-emit / plaintext), got:\n%s", label, out)
+		}
+		var obj map[string]interface{}
+		if err := json.Unmarshal([]byte(s), &obj); err != nil {
+			t.Fatalf("%s: stdout is not a single parseable JSON object: %v\n%s", label, err, out)
+		}
+		return obj
+	}
+
+	// gate check --json on the COMMON empty case must emit the summary JSON doc
+	// (zero counts), not "No open gates found." plaintext + bare return (BUG 1).
+	t.Run("gate_check_json_empty", func(t *testing.T) {
+		// Fresh workspace so there are no open evaluable gates of a checkable type.
+		edir, ebeads, _ := bdInit(t, bd, "--prefix", "ge")
+		es := openStore(t, ebeads, "ge")
+		_ = es.SetConfig(t.Context(), "types.custom", `["gate"]`)
+		es.Close()
+		out := bdGate(t, bd, edir, "check", "--json")
+		obj := parseOneJSONDoc(t, out, "gate check --json (empty)")
+		if obj["checked"] == nil {
+			t.Errorf("expected 'checked' key in empty gate check --json summary: %v", obj)
+		}
+	})
+
+	// gate resolve --json must emit a JSON success doc, not plaintext (resolve
+	// honored --json NOWHERE before u3lt).
+	t.Run("gate_resolve_json", func(t *testing.T) {
+		gate := createGate(t, bd, dir, "Resolve JSON gate")
+		out := bdGate(t, bd, dir, "resolve", gate.ID, "--json")
+		obj := parseOneJSONDoc(t, out, "gate resolve --json")
+		if obj["resolved"] != true {
+			t.Errorf("expected resolved:true in gate resolve --json, got: %v", obj)
+		}
+		if obj["id"] != gate.ID {
+			t.Errorf("expected id=%s in gate resolve --json, got: %v", gate.ID, obj["id"])
+		}
+	})
 }
 
 // TestEmbeddedGateConcurrent exercises gate operations concurrently.

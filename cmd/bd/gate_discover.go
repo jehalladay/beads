@@ -83,17 +83,33 @@ func runGateDiscover(cmd *cobra.Command, args []string) error {
 
 	ctx := rootCtx
 
+	// beads-u3lt: gate discover honored --json only on ONE match-loop branch
+	// (:119 continue) while every early-return + progress + error path printed
+	// plaintext to stdout — so `bd gate discover --json` emitted plaintext (and
+	// on the common empty paths, ZERO json). Route errors through
+	// HandleErrorRespectJSON, gate all progress prints behind !jsonOutput, and
+	// emit exactly ONE summary JSON doc on stdout in every case.
 	gates, err := findPendingGates()
 	if err != nil {
-		return HandleError("finding gates: %v", err)
+		return HandleErrorRespectJSON("finding gates: %v", err)
 	}
 
 	if len(gates) == 0 {
+		if jsonOutput {
+			return outputJSON(map[string]interface{}{
+				"pending_gates": 0,
+				"matched":       0,
+				"updated":       0,
+				"dry_run":       dryRun,
+			})
+		}
 		fmt.Println("No pending gh:run gates found (all gates have numeric run IDs)")
 		return nil
 	}
 
-	fmt.Printf("%s Found %d gate(s) awaiting run ID discovery\n\n", ui.RenderAccent("🔍"), len(gates))
+	if !jsonOutput {
+		fmt.Printf("%s Found %d gate(s) awaiting run ID discovery\n\n", ui.RenderAccent("🔍"), len(gates))
+	}
 
 	if branchFilter == "" {
 		branchFilter = getGitBranchForGateDiscovery()
@@ -101,26 +117,36 @@ func runGateDiscover(cmd *cobra.Command, args []string) error {
 
 	runs, err := queryGitHubRuns(branchFilter, limit)
 	if err != nil {
-		return HandleError("querying GitHub runs: %v", err)
+		return HandleErrorRespectJSON("querying GitHub runs: %v", err)
 	}
 
 	if len(runs) == 0 {
+		if jsonOutput {
+			return outputJSON(map[string]interface{}{
+				"pending_gates": len(gates),
+				"matched":       0,
+				"updated":       0,
+				"dry_run":       dryRun,
+			})
+		}
 		fmt.Println("No recent workflow runs found on GitHub")
 		return nil
 	}
 
-	fmt.Printf("Found %d recent workflow run(s) on branch '%s'\n\n", len(runs), branchFilter)
+	if !jsonOutput {
+		fmt.Printf("Found %d recent workflow run(s) on branch '%s'\n\n", len(runs), branchFilter)
+	}
 
 	// Step 3: Match runs to gates
 	matchCount := 0
+	updatedCount := 0
 	for _, gate := range gates {
 		match := matchGateToRun(gate, runs, maxAge)
 		if match == nil {
-			if jsonOutput {
-				continue
+			if !jsonOutput {
+				fmt.Printf("  %s %s - no matching run found\n",
+					ui.RenderFail("✗"), ui.RenderID(gate.ID))
 			}
-			fmt.Printf("  %s %s - no matching run found\n",
-				ui.RenderFail("✗"), ui.RenderID(gate.ID))
 			continue
 		}
 
@@ -128,8 +154,10 @@ func runGateDiscover(cmd *cobra.Command, args []string) error {
 		runIDStr := strconv.FormatInt(match.DatabaseID, 10)
 
 		if dryRun {
-			fmt.Printf("  %s %s → run %s (%s) [dry-run]\n",
-				ui.RenderPass("✓"), ui.RenderID(gate.ID), runIDStr, match.Status)
+			if !jsonOutput {
+				fmt.Printf("  %s %s → run %s (%s) [dry-run]\n",
+					ui.RenderPass("✓"), ui.RenderID(gate.ID), runIDStr, match.Status)
+			}
 			continue
 		}
 
@@ -139,9 +167,21 @@ func runGateDiscover(cmd *cobra.Command, args []string) error {
 				ui.RenderFail("✗"), ui.RenderID(gate.ID), err)
 			continue
 		}
+		updatedCount++
 
-		fmt.Printf("  %s %s → run %s (%s)\n",
-			ui.RenderPass("✓"), ui.RenderID(gate.ID), runIDStr, match.Status)
+		if !jsonOutput {
+			fmt.Printf("  %s %s → run %s (%s)\n",
+				ui.RenderPass("✓"), ui.RenderID(gate.ID), runIDStr, match.Status)
+		}
+	}
+
+	if jsonOutput {
+		return outputJSON(map[string]interface{}{
+			"pending_gates": len(gates),
+			"matched":       matchCount,
+			"updated":       updatedCount,
+			"dry_run":       dryRun,
+		})
 	}
 
 	fmt.Println()
