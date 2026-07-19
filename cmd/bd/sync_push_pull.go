@@ -248,7 +248,7 @@ func runADOPush(cmd *cobra.Command, args []string) error {
 	}()
 
 	if len(args) == 0 {
-		return fmt.Errorf("at least one bead ID is required")
+		return HandleErrorRespectJSON("at least one bead ID is required")
 	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if !dryRun {
@@ -257,16 +257,16 @@ func runADOPush(cmd *cobra.Command, args []string) error {
 
 	cfg := getADOConfig()
 	if err := validateADOConfig(cfg); err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if err := ensureStoreActive(); err != nil {
-		return fmt.Errorf("database not available: %w", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 
 	ctx := cmd.Context()
 	at := &ado.Tracker{}
 	if err := at.Init(ctx, store); err != nil {
-		return fmt.Errorf("initializing Azure DevOps tracker: %w", err)
+		return HandleErrorRespectJSON("initializing Azure DevOps tracker: %v", err)
 	}
 
 	engine := tracker.NewEngine(at, store, actor)
@@ -280,7 +280,7 @@ func runADOPush(cmd *cobra.Command, args []string) error {
 		IssueIDs: args,
 	})
 	if err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	outputSyncResult(result, dryRun)
 	return nil
@@ -295,7 +295,7 @@ func runADOPull(cmd *cobra.Command, args []string) error {
 	}()
 
 	if len(args) == 0 {
-		return fmt.Errorf("at least one bead ID or external reference is required")
+		return HandleErrorRespectJSON("at least one bead ID or external reference is required")
 	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if !dryRun {
@@ -304,16 +304,16 @@ func runADOPull(cmd *cobra.Command, args []string) error {
 
 	cfg := getADOConfig()
 	if err := validateADOConfig(cfg); err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if err := ensureStoreActive(); err != nil {
-		return fmt.Errorf("database not available: %w", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 
 	ctx := cmd.Context()
 	at := &ado.Tracker{}
 	if err := at.Init(ctx, store); err != nil {
-		return fmt.Errorf("initializing Azure DevOps tracker: %w", err)
+		return HandleErrorRespectJSON("initializing Azure DevOps tracker: %v", err)
 	}
 
 	engine := tracker.NewEngine(at, store, actor)
@@ -328,7 +328,7 @@ func runADOPull(cmd *cobra.Command, args []string) error {
 		IssueIDs: args,
 	})
 	if err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	outputSyncResult(result, dryRun)
 	return nil
@@ -345,7 +345,7 @@ func runJiraPush(cmd *cobra.Command, args []string) error {
 	}()
 
 	if len(args) == 0 {
-		return HandleError("at least one bead ID is required")
+		return HandleErrorRespectJSON("at least one bead ID is required")
 	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if !dryRun {
@@ -353,16 +353,16 @@ func runJiraPush(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := ensureStoreActive(); err != nil {
-		return HandleError("database not available: %v", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 	if err := validateJiraConfig(); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	ctx := rootCtx
 	jt := &jira.Tracker{}
 	if err := jt.Init(ctx, store); err != nil {
-		return HandleError("initializing Jira tracker: %v", err)
+		return HandleErrorRespectJSON("initializing Jira tracker: %v", err)
 	}
 
 	engine := tracker.NewEngine(jt, store, actor)
@@ -377,7 +377,7 @@ func runJiraPush(cmd *cobra.Command, args []string) error {
 		IssueIDs: args,
 	})
 	if err != nil {
-		return HandleError("sync failed: %v", err)
+		return HandleErrorRespectJSON("sync failed: %v", err)
 	}
 	outputSyncResult(result, dryRun)
 	return nil
@@ -392,7 +392,7 @@ func runJiraPull(cmd *cobra.Command, args []string) error {
 	}()
 
 	if len(args) == 0 {
-		return HandleError("at least one bead ID or external reference is required")
+		return HandleErrorRespectJSON("at least one bead ID or external reference is required")
 	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if !dryRun {
@@ -400,16 +400,16 @@ func runJiraPull(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := ensureStoreActive(); err != nil {
-		return HandleError("database not available: %v", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 	if err := validateJiraConfig(); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	ctx := rootCtx
 	jt := &jira.Tracker{}
 	if err := jt.Init(ctx, store); err != nil {
-		return HandleError("initializing Jira tracker: %v", err)
+		return HandleErrorRespectJSON("initializing Jira tracker: %v", err)
 	}
 
 	engine := tracker.NewEngine(jt, store, actor)
@@ -423,7 +423,7 @@ func runJiraPull(cmd *cobra.Command, args []string) error {
 		IssueIDs: args,
 	})
 	if err != nil {
-		return HandleError("sync failed: %v", err)
+		return HandleErrorRespectJSON("sync failed: %v", err)
 	}
 	outputSyncResult(result, dryRun)
 	return nil
@@ -440,7 +440,7 @@ func runLinearPush(cmd *cobra.Command, args []string) error {
 	}()
 
 	if len(args) == 0 {
-		return HandleError("at least one bead ID is required")
+		return HandleErrorRespectJSON("at least one bead ID is required")
 	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if !dryRun {
@@ -450,7 +450,7 @@ func runLinearPush(cmd *cobra.Command, args []string) error {
 	if lockDir := beads.FindBeadsDir(); lockDir != "" {
 		syncLock, err := linear.AcquireSyncLock(lockDir, true)
 		if err != nil {
-			return HandleError("acquiring sync lock: %v", err)
+			return HandleErrorRespectJSON("acquiring sync lock: %v", err)
 		}
 		defer func() {
 			if err := syncLock.Release(); err != nil {
@@ -460,25 +460,25 @@ func runLinearPush(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := ensureStoreActive(); err != nil {
-		return HandleError("database not available: %v", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 	if err := validateLinearConfig(nil); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	ctx := rootCtx
 	teamIDs := getLinearTeamIDs(ctx, nil)
 	if len(teamIDs) > 1 {
-		return HandleError("linear push does not support multiple configured teams\nUse: bd linear sync --push --team <TEAM_ID>")
+		return HandleErrorRespectJSON("linear push does not support multiple configured teams\nUse: bd linear sync --push --team <TEAM_ID>")
 	}
 
 	lt := &linear.Tracker{}
 	lt.SetTeamIDs(teamIDs)
 	if err := lt.Init(ctx, store); err != nil {
-		return HandleError("initializing Linear tracker: %v", err)
+		return HandleErrorRespectJSON("initializing Linear tracker: %v", err)
 	}
 	if err := lt.ValidatePushStateMappings(ctx); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	engine := tracker.NewEngine(lt, store, actor)
@@ -494,7 +494,7 @@ func runLinearPush(cmd *cobra.Command, args []string) error {
 		IssueIDs:         args,
 	})
 	if err != nil {
-		return HandleError("sync failed: %v", err)
+		return HandleErrorRespectJSON("sync failed: %v", err)
 	}
 	outputSyncResult(result, dryRun)
 	return nil
@@ -509,7 +509,7 @@ func runLinearPull(cmd *cobra.Command, args []string) error {
 	}()
 
 	if len(args) == 0 {
-		return HandleError("at least one bead ID or external reference is required")
+		return HandleErrorRespectJSON("at least one bead ID or external reference is required")
 	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	relations, _ := cmd.Flags().GetBool("relations")
@@ -520,7 +520,7 @@ func runLinearPull(cmd *cobra.Command, args []string) error {
 	if lockDir := beads.FindBeadsDir(); lockDir != "" {
 		syncLock, err := linear.AcquireSyncLock(lockDir, true)
 		if err != nil {
-			return HandleError("acquiring sync lock: %v", err)
+			return HandleErrorRespectJSON("acquiring sync lock: %v", err)
 		}
 		defer func() {
 			if err := syncLock.Release(); err != nil {
@@ -530,10 +530,10 @@ func runLinearPull(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := ensureStoreActive(); err != nil {
-		return HandleError("database not available: %v", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 	if err := validateLinearConfig(nil); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	ctx := rootCtx
@@ -542,7 +542,7 @@ func runLinearPull(cmd *cobra.Command, args []string) error {
 	lt := &linear.Tracker{}
 	lt.SetTeamIDs(teamIDs)
 	if err := lt.Init(ctx, store); err != nil {
-		return HandleError("initializing Linear tracker: %v", err)
+		return HandleErrorRespectJSON("initializing Linear tracker: %v", err)
 	}
 
 	engine := tracker.NewEngine(lt, store, actor)
@@ -561,7 +561,7 @@ func runLinearPull(cmd *cobra.Command, args []string) error {
 		DependencySources: linearPullDependencySources(relations),
 	})
 	if err != nil {
-		return HandleError("sync failed: %v", err)
+		return HandleErrorRespectJSON("sync failed: %v", err)
 	}
 	outputSyncResult(result, dryRun)
 	return nil
@@ -578,7 +578,7 @@ func runGitHubPush(cmd *cobra.Command, args []string) error {
 	}()
 
 	if len(args) == 0 {
-		return fmt.Errorf("at least one bead ID is required")
+		return HandleErrorRespectJSON("at least one bead ID is required")
 	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if !dryRun {
@@ -587,16 +587,16 @@ func runGitHubPush(cmd *cobra.Command, args []string) error {
 
 	config := getGitHubConfig()
 	if err := validateGitHubConfig(config); err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if err := ensureStoreActive(); err != nil {
-		return fmt.Errorf("database not available: %w", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 
 	ctx := cmd.Context()
 	gt := &github.Tracker{}
 	if err := gt.Init(ctx, store); err != nil {
-		return fmt.Errorf("initializing GitHub tracker: %w", err)
+		return HandleErrorRespectJSON("initializing GitHub tracker: %v", err)
 	}
 
 	engine := tracker.NewEngine(gt, store, actor)
@@ -610,7 +610,7 @@ func runGitHubPush(cmd *cobra.Command, args []string) error {
 		IssueIDs: args,
 	})
 	if err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	outputSyncResult(result, dryRun)
 	return nil
@@ -625,7 +625,7 @@ func runGitHubPull(cmd *cobra.Command, args []string) error {
 	}()
 
 	if len(args) == 0 {
-		return fmt.Errorf("at least one bead ID or external reference is required")
+		return HandleErrorRespectJSON("at least one bead ID or external reference is required")
 	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if !dryRun {
@@ -634,16 +634,16 @@ func runGitHubPull(cmd *cobra.Command, args []string) error {
 
 	config := getGitHubConfig()
 	if err := validateGitHubConfig(config); err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if err := ensureStoreActive(); err != nil {
-		return fmt.Errorf("database not available: %w", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 
 	ctx := cmd.Context()
 	gt := &github.Tracker{}
 	if err := gt.Init(ctx, store); err != nil {
-		return fmt.Errorf("initializing GitHub tracker: %w", err)
+		return HandleErrorRespectJSON("initializing GitHub tracker: %v", err)
 	}
 
 	engine := tracker.NewEngine(gt, store, actor)
@@ -658,7 +658,7 @@ func runGitHubPull(cmd *cobra.Command, args []string) error {
 		IssueIDs: args,
 	})
 	if err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	outputSyncResult(result, dryRun)
 	return nil
@@ -675,7 +675,7 @@ func runGitLabPush(cmd *cobra.Command, args []string) error {
 	}()
 
 	if len(args) == 0 {
-		return fmt.Errorf("at least one bead ID is required")
+		return HandleErrorRespectJSON("at least one bead ID is required")
 	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if !dryRun {
@@ -684,16 +684,16 @@ func runGitLabPush(cmd *cobra.Command, args []string) error {
 
 	config := getGitLabConfig()
 	if err := validateGitLabConfig(config); err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if err := ensureStoreActive(); err != nil {
-		return fmt.Errorf("database not available: %w", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 
 	ctx := cmd.Context()
 	gt := &gitlab.Tracker{}
 	if err := gt.Init(ctx, store); err != nil {
-		return fmt.Errorf("initializing GitLab tracker: %w", err)
+		return HandleErrorRespectJSON("initializing GitLab tracker: %v", err)
 	}
 
 	engine := tracker.NewEngine(gt, store, actor)
@@ -707,7 +707,7 @@ func runGitLabPush(cmd *cobra.Command, args []string) error {
 		IssueIDs: args,
 	})
 	if err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	outputSyncResult(result, dryRun)
 	return nil
@@ -722,7 +722,7 @@ func runGitLabPull(cmd *cobra.Command, args []string) error {
 	}()
 
 	if len(args) == 0 {
-		return fmt.Errorf("at least one bead ID or external reference is required")
+		return HandleErrorRespectJSON("at least one bead ID or external reference is required")
 	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if !dryRun {
@@ -731,16 +731,16 @@ func runGitLabPull(cmd *cobra.Command, args []string) error {
 
 	config := getGitLabConfig()
 	if err := validateGitLabConfig(config); err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if err := ensureStoreActive(); err != nil {
-		return fmt.Errorf("database not available: %w", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 
 	ctx := cmd.Context()
 	gt := &gitlab.Tracker{}
 	if err := gt.Init(ctx, store); err != nil {
-		return fmt.Errorf("initializing GitLab tracker: %w", err)
+		return HandleErrorRespectJSON("initializing GitLab tracker: %v", err)
 	}
 
 	engine := tracker.NewEngine(gt, store, actor)
@@ -755,7 +755,7 @@ func runGitLabPull(cmd *cobra.Command, args []string) error {
 		IssueIDs: args,
 	})
 	if err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	outputSyncResult(result, dryRun)
 	return nil
@@ -772,7 +772,7 @@ func runNotionPush(cmd *cobra.Command, args []string) error {
 	}()
 
 	if len(args) == 0 {
-		return fmt.Errorf("at least one bead ID is required")
+		return HandleErrorRespectJSON("at least one bead ID is required")
 	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if !dryRun {
@@ -782,19 +782,19 @@ func runNotionPush(cmd *cobra.Command, args []string) error {
 	cfg := getNotionConfig()
 	auth, err := resolveNotionAuth(cmd.Context())
 	if err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if err := validateNotionConfig(cfg, auth); err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if err := ensureStoreActive(); err != nil {
-		return fmt.Errorf("database not available: %w", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 
 	ctx := cmd.Context()
 	nt := &notion.Tracker{}
 	if err := nt.Init(ctx, store); err != nil {
-		return fmt.Errorf("initializing Notion tracker: %w", err)
+		return HandleErrorRespectJSON("initializing Notion tracker: %v", err)
 	}
 
 	engine := tracker.NewEngine(nt, store, actor)
@@ -826,7 +826,7 @@ func runNotionPull(cmd *cobra.Command, args []string) error {
 	}()
 
 	if len(args) == 0 {
-		return fmt.Errorf("at least one bead ID or external reference is required")
+		return HandleErrorRespectJSON("at least one bead ID or external reference is required")
 	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if !dryRun {
@@ -836,19 +836,19 @@ func runNotionPull(cmd *cobra.Command, args []string) error {
 	cfg := getNotionConfig()
 	auth, err := resolveNotionAuth(cmd.Context())
 	if err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if err := validateNotionConfig(cfg, auth); err != nil {
-		return err
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if err := ensureStoreActive(); err != nil {
-		return fmt.Errorf("database not available: %w", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 
 	ctx := cmd.Context()
 	nt := &notion.Tracker{}
 	if err := nt.Init(ctx, store); err != nil {
-		return fmt.Errorf("initializing Notion tracker: %w", err)
+		return HandleErrorRespectJSON("initializing Notion tracker: %v", err)
 	}
 
 	engine := tracker.NewEngine(nt, store, actor)

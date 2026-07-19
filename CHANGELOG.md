@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `runWorktreeCreate`/`runWorktreeList`/`runWorktreeRemove`/`runWorktreeInfo` (and the
   `listWorktreesWithoutBeads` fallback) now route through `HandleErrorRespectJSON`, matching the 8lqh
   JSON-error contract. Same error-half class as beads-uc71 (ado) and distinct from the lav0 success-half.
+- **`bd {ado,jira,linear,github,gitlab,notion} push/pull --json` and `bd notion sync --json` now emit a JSON error object on stdout instead of a plaintext-stderr line on config/setup/validation errors (beads-nqv0).**
+  The shared push/pull handlers in `cmd/bd/sync_push_pull.go` (all 6 trackers) and `runNotionSync` returned their
+  errors via a bare `fmt.Errorf` (ADO/GitHub/GitLab/Notion) or a plain `HandleError` (Jira/Linear) — both of which
+  write plaintext to stderr and exit 1 with empty stdout under `--json`, unparseable by a consumer — while the
+  success path (`outputSyncResult` / `writeNotionJSON`) emits JSON. The reachable-under-json error paths now route
+  through `HandleErrorRespectJSON`, matching the 8lqh JSON-error contract. Same error-half class as beads-uc71
+  (ado subcommands) and beads-z2b4 (worktree); distinct from the lav0 success-half.
 
 - **`bd search` now reports the true match count in its header, not the `--limit`-truncated page size (beads-4wn0).**
   The header printed `Found %d issues matching '<q>'` using the already-`--limit`-truncated result slice, so

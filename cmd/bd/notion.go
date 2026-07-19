@@ -444,28 +444,28 @@ func runNotionSync(cmd *cobra.Command, _ []string) error {
 	cfg := getNotionConfig()
 	auth, err := resolveNotionAuth(cmd.Context())
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if err := validateNotionConfig(cfg, auth); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if !notionSyncDryRun {
 		CheckReadonly("notion sync")
 	}
 	if notionPreferLocal && notionPreferNotion {
-		return HandleError("cannot use both --prefer-local and --prefer-notion")
+		return HandleErrorRespectJSON("cannot use both --prefer-local and --prefer-notion")
 	}
 	if notionSyncPull && notionSyncPush {
-		return HandleError("cannot use both --pull and --push")
+		return HandleErrorRespectJSON("cannot use both --pull and --push")
 	}
 	if err := ensureStoreActive(); err != nil {
-		return HandleError("database not available: %v", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 
 	ctx := cmd.Context()
 	nt := &notion.Tracker{}
 	if err := nt.Init(ctx, store); err != nil {
-		return HandleError("initializing Notion tracker: %v", err)
+		return HandleErrorRespectJSON("initializing Notion tracker: %v", err)
 	}
 
 	engine := tracker.NewEngine(nt, store, actor)
@@ -507,12 +507,12 @@ func runNotionSync(cmd *cobra.Command, _ []string) error {
 	}
 
 	if err := applySelectiveSyncFlags(cmd, &syncOpts, push); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	result, err := engine.Sync(ctx, syncOpts)
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if warning := unsupportedStats.warningText(); warning != "" {
 		result.Warnings = append(result.Warnings, warning)
