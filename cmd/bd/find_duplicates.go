@@ -126,25 +126,37 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	filter := types.IssueFilter{}
-	if status != "" && status != "all" {
-		filterCfg, cfgErr := loadDirectListFilterConfig(ctx, store)
-		if cfgErr != nil {
-			return HandleErrorRespectJSON("%v", cfgErr)
-		}
-		s := types.Status(status).Normalize()
-		if !s.IsValidWithCustom(filterCfg.customStatusNames()) {
-			return HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(filterCfg.customStatusNames()))
-		}
-		filter.Status = &s
-	}
-
 	var issues []*types.Issue
 	var err error
 
-	issues, err = store.SearchIssues(ctx, "", filter)
-	if err != nil {
-		return HandleErrorRespectJSON("fetching issues: %v", err)
+	// Proxied-server mode: the global `store` is nil (find-duplicates is not a
+	// noDbCommand), so fetch the issue set via the UOW stack instead (beads-zawz).
+	// SearchIssues + the filter-config custom-status validation both map to the
+	// same UOW usecases the landed search/list proxied handlers use.
+	if usesProxiedServer() {
+		issues, err = fetchFindDuplicatesIssuesProxied(ctx, status)
+		if err != nil {
+			// The proxied helper already formats its own errors (invalid-status
+			// validation + fetch), matching the direct path's messages.
+			return HandleErrorRespectJSON("%v", err)
+		}
+	} else {
+		filter := types.IssueFilter{}
+		if status != "" && status != "all" {
+			filterCfg, cfgErr := loadDirectListFilterConfig(ctx, store)
+			if cfgErr != nil {
+				return HandleErrorRespectJSON("%v", cfgErr)
+			}
+			s := types.Status(status).Normalize()
+			if !s.IsValidWithCustom(filterCfg.customStatusNames()) {
+				return HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(filterCfg.customStatusNames()))
+			}
+			filter.Status = &s
+		}
+		issues, err = store.SearchIssues(ctx, "", filter)
+		if err != nil {
+			return HandleErrorRespectJSON("fetching issues: %v", err)
+		}
 	}
 
 	if status == "" {
