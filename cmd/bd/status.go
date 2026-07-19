@@ -130,10 +130,16 @@ func renderStatusHuman(stats *types.Statistics, recentActivity *RecentActivitySu
 	fmt.Printf("  Ready to Work:          %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.ReadyIssues)))
 
 	// Extended statistics (only show if non-zero)
-	hasExtended := stats.PinnedIssues > 0 ||
+	hasExtended := stats.DeferredIssues > 0 || stats.PinnedIssues > 0 ||
 		stats.EpicsEligibleForClosure > 0 || stats.AverageLeadTime > 0
 	if hasExtended {
 		fmt.Printf("\nExtended:\n")
+		// beads-2pzw: Deferred is computed (ScanIssueCountsInTx) but was never
+		// rendered, so Open+InProgress+Closed did not reconcile to Total and
+		// deferred issues were invisible in `bd stats`. Show it like Pinned.
+		if stats.DeferredIssues > 0 {
+			fmt.Printf("  Deferred:               %d\n", stats.DeferredIssues)
+		}
 		if stats.PinnedIssues > 0 {
 			fmt.Printf("  Pinned:                 %d\n", stats.PinnedIssues)
 		}

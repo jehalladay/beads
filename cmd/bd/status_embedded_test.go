@@ -118,6 +118,31 @@ func TestEmbeddedStatus(t *testing.T) {
 		}
 	})
 
+	// ===== deferred is visible in the summary (beads-2pzw) =====
+
+	t.Run("deferred_shown_in_summary", func(t *testing.T) {
+		// A deferred issue was previously counted in Total but omitted from
+		// every rendered bucket, so Open+InProgress+Closed did not reconcile to
+		// Total. Defer a fresh issue and assert the human summary surfaces it.
+		def := bdCreate(t, bd, dir, "To be deferred", "--type", "task")
+		if out, err := bdRunWithFlockRetry(t, bd, dir, "defer", def.ID); err != nil {
+			t.Fatalf("bd defer failed: %v\n%s", err, out)
+		}
+
+		out := bdStatus(t, bd, dir)
+		if !strings.Contains(out, "Deferred:") {
+			t.Errorf("expected 'Deferred:' in status summary once a deferred issue exists (beads-2pzw), got:\n%s", out)
+		}
+
+		// JSON already exposed deferred_issues; assert it is non-zero so the
+		// human line and the JSON field agree.
+		m := bdStatusJSON(t, bd, dir)
+		summary := m["summary"].(map[string]interface{})
+		if dv, ok := summary["deferred_issues"].(float64); !ok || int(dv) < 1 {
+			t.Errorf("expected deferred_issues >= 1 in JSON summary, got %v", summary["deferred_issues"])
+		}
+	})
+
 	// ===== --assigned =====
 
 	t.Run("assigned_filter", func(t *testing.T) {
