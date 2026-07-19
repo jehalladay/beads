@@ -520,7 +520,7 @@ func computeReadyFronts(analysis *SwarmAnalysis) {
 
 // renderSwarmAnalysis outputs human-readable analysis.
 func renderSwarmAnalysis(analysis *SwarmAnalysis) {
-	fmt.Printf("\n%s Swarm Analysis: %s\n", ui.RenderAccent("🐝"), analysis.EpicTitle)
+	fmt.Printf("\n%s Swarm Analysis: %s\n", ui.RenderAccent("🐝"), displayTitle(analysis.EpicTitle))
 	fmt.Printf("   Epic ID: %s\n", analysis.EpicID)
 	fmt.Printf("   Total issues: %d (%d closed)\n", analysis.TotalIssues, analysis.ClosedIssues)
 
@@ -539,7 +539,7 @@ func renderSwarmAnalysis(analysis *SwarmAnalysis) {
 				if i < len(front.Titles) {
 					title = front.Titles[i]
 				}
-				fmt.Printf("      • %s: %s\n", ui.RenderID(id), title)
+				fmt.Printf("      • %s: %s\n", ui.RenderID(id), displayTitle(title))
 			}
 		}
 	}
@@ -805,7 +805,7 @@ func getSwarmStatus(ctx context.Context, s SwarmStorage, epic *types.Issue) (*Sw
 
 // renderSwarmStatus outputs human-readable swarm status.
 func renderSwarmStatus(status *SwarmStatus) {
-	fmt.Printf("\n%s Ready Front Analysis: %s\n\n", ui.RenderAccent("🐝"), status.EpicTitle)
+	fmt.Printf("\n%s Ready Front Analysis: %s\n\n", ui.RenderAccent("🐝"), displayTitle(status.EpicTitle))
 
 	// Completed
 	fmt.Printf("Completed:     ")
