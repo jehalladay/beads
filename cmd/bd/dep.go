@@ -1157,6 +1157,19 @@ Examples:
 
 		ctx := rootCtx
 
+		// beads-6i6f: promote the --format json alias to jsonOutput BEFORE the
+		// first error path (resolveIDWithRouting below). Previously this block
+		// sat after the resolve, so `bd dep tree <bad-id> --format json` hit
+		// HandleErrorRespectJSON while jsonOutput was still false → plaintext
+		// stderr instead of the JSON error object the global `--json` produces
+		// (main.go sets that pre-RunE). Hoisting it here honors the alias on
+		// every error path, matching the proxied handler (dep_proxied_server.go).
+		formatStr, _ := cmd.Flags().GetString("format")
+		if strings.EqualFold(formatStr, "json") {
+			jsonOutput = true
+			formatStr = ""
+		}
+
 		fullID, treeStore, treeCleanup, err := resolveIDWithRouting(ctx, store, args[0])
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
@@ -1168,11 +1181,6 @@ Examples:
 		reverse, _ := cmd.Flags().GetBool("reverse")
 		direction, _ := cmd.Flags().GetString("direction")
 		statusFilter, _ := cmd.Flags().GetString("status")
-		formatStr, _ := cmd.Flags().GetString("format")
-		if strings.EqualFold(formatStr, "json") {
-			jsonOutput = true
-			formatStr = ""
-		}
 
 		if direction == "" && reverse {
 			direction = "up"
