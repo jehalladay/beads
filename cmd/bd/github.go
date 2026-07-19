@@ -292,6 +292,18 @@ func getGitHubClient(config GitHubConfig) *github.Client {
 	return client
 }
 
+// githubStatusResult is the --json shape for `bd github status`. beads-5erz:
+// mirrors adoStatusResult (the good sibling) so a --json consumer gets a
+// structured {configured,error,...} object instead of the plaintext table.
+type githubStatusResult struct {
+	Owner      string `json:"owner"`
+	Repo       string `json:"repo"`
+	HasToken   bool   `json:"has_token"`
+	URL        string `json:"url,omitempty"`
+	Configured bool   `json:"configured"`
+	Error      string `json:"error,omitempty"`
+}
+
 // runGitHubStatus implements the github status command.
 func runGitHubStatus(cmd *cobra.Command, args []string) error {
 	evt := metrics.NewCommandEvent("github-status")
@@ -302,6 +314,28 @@ func runGitHubStatus(cmd *cobra.Command, args []string) error {
 	}()
 
 	config := getGitHubConfig()
+
+	// beads-5erz: honor global --json, matching `bd ado status` (ado.go). The
+	// prior code always printed the plaintext table + on validate-fail returned
+	// nil, so `github status --json` emitted unparseable plaintext on stdout.
+	// Note: like ado status, an unconfigured status is still a successful status
+	// REPORT (exit 0) — the "configured": false field carries the signal, so a
+	// --json consumer keys off that, not the exit code (parity with the sibling).
+	if jsonOutput {
+		result := githubStatusResult{
+			Owner:    config.Owner,
+			Repo:     config.Repo,
+			HasToken: config.Token != "",
+			URL:      config.URL,
+		}
+		if err := validateGitHubConfig(config); err != nil {
+			result.Configured = false
+			result.Error = err.Error()
+		} else {
+			result.Configured = true
+		}
+		return outputJSON(result)
+	}
 
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintln(out, "GitHub Configuration")
@@ -335,7 +369,7 @@ func runGitHubRepos(cmd *cobra.Command, args []string) error {
 
 	config := getGitHubConfig()
 	if config.Token == "" {
-		return HandleError("github.token is not configured. Set via 'bd config set github.token <token>' or GITHUB_TOKEN environment variable")
+		return HandleErrorRespectJSON("github.token is not configured. Set via 'bd config set github.token <token>' or GITHUB_TOKEN environment variable")
 	}
 
 	out := cmd.OutOrStdout()
@@ -344,7 +378,7 @@ func runGitHubRepos(cmd *cobra.Command, args []string) error {
 
 	repos, err := client.ListRepositories(ctx)
 	if err != nil {
-		return HandleError("failed to fetch repositories: %v", err)
+		return HandleErrorRespectJSON("failed to fetch repositories: %v", err)
 	}
 
 	_, _ = fmt.Fprintln(out, "Accessible GitHub Repositories")
@@ -377,7 +411,7 @@ func runGitHubSync(cmd *cobra.Command, args []string) error {
 
 	config := getGitHubConfig()
 	if err := validateGitHubConfig(config); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	if !githubSyncDryRun {
@@ -385,16 +419,16 @@ func runGitHubSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if githubSyncPullOnly && githubSyncPushOnly {
-		return HandleError("cannot use both --pull-only and --push-only")
+		return HandleErrorRespectJSON("cannot use both --pull-only and --push-only")
 	}
 
 	conflictStrategy, err := getGitHubConflictStrategy(githubPreferLocal, githubPreferGitHub, githubPreferNewer)
 	if err != nil {
-		return HandleError("%v (--prefer-local, --prefer-github, --prefer-newer)", err)
+		return HandleErrorRespectJSON("%v (--prefer-local, --prefer-github, --prefer-newer)", err)
 	}
 
 	if err := ensureStoreActive(); err != nil {
-		return HandleError("database not available: %v", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 
 	out := cmd.OutOrStdout()
@@ -402,7 +436,7 @@ func runGitHubSync(cmd *cobra.Command, args []string) error {
 
 	gt := &github.Tracker{}
 	if err := gt.Init(ctx, store); err != nil {
-		return HandleError("initializing GitHub tracker: %v", err)
+		return HandleErrorRespectJSON("initializing GitHub tracker: %v", err)
 	}
 
 	// Create the sync engine
@@ -424,7 +458,7 @@ func runGitHubSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := applySelectiveSyncFlags(cmd, &opts, push); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	switch conflictStrategy {
@@ -443,7 +477,7 @@ func runGitHubSync(cmd *cobra.Command, args []string) error {
 
 	result, err := engine.Sync(ctx, opts)
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	// Output results

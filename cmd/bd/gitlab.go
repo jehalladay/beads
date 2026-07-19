@@ -322,6 +322,19 @@ func getGitLabClient(config GitLabConfig) *gitlab.Client {
 	return client
 }
 
+// gitlabStatusResult is the --json shape for `bd gitlab status`. beads-5erz:
+// mirrors adoStatusResult / githubStatusResult so a --json consumer gets a
+// structured {configured,error,...} object instead of the plaintext table.
+type gitlabStatusResult struct {
+	URL              string `json:"url"`
+	ProjectID        string `json:"project_id,omitempty"`
+	GroupID          string `json:"group_id,omitempty"`
+	DefaultProjectID string `json:"default_project_id,omitempty"`
+	HasToken         bool   `json:"has_token"`
+	Configured       bool   `json:"configured"`
+	Error            string `json:"error,omitempty"`
+}
+
 // runGitLabStatus implements the gitlab status command.
 func runGitLabStatus(cmd *cobra.Command, args []string) error {
 	evt := metrics.NewCommandEvent("gitlab-status")
@@ -332,6 +345,28 @@ func runGitLabStatus(cmd *cobra.Command, args []string) error {
 	}()
 
 	config := getGitLabConfig()
+
+	// beads-5erz: honor global --json, matching `bd ado status` / github status.
+	// The prior code always printed the plaintext table + returned nil on
+	// validate-fail, so `gitlab status --json` emitted unparseable plaintext.
+	// As with ado/github, unconfigured is still a successful status REPORT
+	// (exit 0); the "configured": false field carries the signal.
+	if jsonOutput {
+		result := gitlabStatusResult{
+			URL:              config.URL,
+			ProjectID:        config.ProjectID,
+			GroupID:          config.GroupID,
+			DefaultProjectID: config.DefaultProjectID,
+			HasToken:         config.Token != "",
+		}
+		if err := validateGitLabConfig(config); err != nil {
+			result.Configured = false
+			result.Error = err.Error()
+		} else {
+			result.Configured = true
+		}
+		return outputJSON(result)
+	}
 
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintln(out, "GitLab Configuration")
@@ -393,7 +428,7 @@ func runGitLabProjects(cmd *cobra.Command, args []string) error {
 
 	config := getGitLabConfig()
 	if err := validateGitLabConfig(config); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	out := cmd.OutOrStdout()
@@ -402,7 +437,7 @@ func runGitLabProjects(cmd *cobra.Command, args []string) error {
 
 	projects, err := client.ListProjects(ctx)
 	if err != nil {
-		return HandleError("failed to fetch projects: %v", err)
+		return HandleErrorRespectJSON("failed to fetch projects: %v", err)
 	}
 
 	_, _ = fmt.Fprintln(out, "Accessible GitLab Projects")
@@ -434,7 +469,7 @@ func runGitLabSync(cmd *cobra.Command, args []string) error {
 
 	config := getGitLabConfig()
 	if err := validateGitLabConfig(config); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	if !gitlabSyncDryRun {
@@ -442,16 +477,16 @@ func runGitLabSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if gitlabSyncPullOnly && gitlabSyncPushOnly {
-		return HandleError("cannot use both --pull-only and --push-only")
+		return HandleErrorRespectJSON("cannot use both --pull-only and --push-only")
 	}
 
 	conflictStrategy, err := getConflictStrategy(gitlabPreferLocal, gitlabPreferGitLab, gitlabPreferNewer)
 	if err != nil {
-		return HandleError("%v (--prefer-local, --prefer-gitlab, --prefer-newer)", err)
+		return HandleErrorRespectJSON("%v (--prefer-local, --prefer-gitlab, --prefer-newer)", err)
 	}
 
 	if err := ensureStoreActive(); err != nil {
-		return HandleError("database not available: %v", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 
 	out := cmd.OutOrStdout()
@@ -459,7 +494,7 @@ func runGitLabSync(cmd *cobra.Command, args []string) error {
 
 	gt := &gitlab.Tracker{}
 	if err := gt.Init(ctx, store); err != nil {
-		return HandleError("initializing GitLab tracker: %v", err)
+		return HandleErrorRespectJSON("initializing GitLab tracker: %v", err)
 	}
 
 	// Apply CLI filter overrides (take precedence over config defaults)
@@ -500,7 +535,7 @@ func runGitLabSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := applySelectiveSyncFlags(cmd, &opts, push); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	switch conflictStrategy {
@@ -519,7 +554,7 @@ func runGitLabSync(cmd *cobra.Command, args []string) error {
 
 	result, err := engine.Sync(ctx, opts)
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	// Output results
