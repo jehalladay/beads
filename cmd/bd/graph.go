@@ -187,67 +187,86 @@ Returns exit code 0 if the graph is clean, 1 if issues are found.`,
 
 		ctx := rootCtx
 
-		type GraphCheckResult struct {
-			Clean   bool       `json:"clean"`
-			Cycles  [][]string `json:"cycles"`
-			Summary struct {
-				CycleCount int `json:"cycle_count"`
-			} `json:"summary"`
+		// beads-jc8k: route to the proxied-server handler when the global
+		// store is nil (proxied-server mode: main.go PersistentPreRun returns
+		// before newDoltStore). The direct body below dereferences the nil
+		// store (DetectCycles) and panics on a hub-connected crew. The parent
+		// `bd graph` RunE has a nil-store guard; this subcommand did not.
+		if usesProxiedServer() {
+			return runGraphCheckProxiedServer(ctx)
 		}
 
-		result := GraphCheckResult{Clean: true}
+		if store == nil {
+			return HandleErrorRespectJSON("no database connection")
+		}
 
 		cycles, err := store.DetectCycles(ctx)
 		if err != nil {
 			return HandleErrorRespectJSON("cycle detection failed: %v", err)
 		}
+		return renderGraphCheck(cycles)
+	},
+}
 
-		for _, cycle := range cycles {
-			ids := make([]string, len(cycle))
-			for i, issue := range cycle {
-				ids[i] = issue.ID
-			}
-			result.Cycles = append(result.Cycles, ids)
+// graphCheckResult is the --json shape for `bd graph check`, shared by the
+// direct and proxied-server paths (beads-jc8k).
+type graphCheckResult struct {
+	Clean   bool       `json:"clean"`
+	Cycles  [][]string `json:"cycles"`
+	Summary struct {
+		CycleCount int `json:"cycle_count"`
+	} `json:"summary"`
+}
+
+// renderGraphCheck builds the result payload from the detected cycles and emits
+// it in JSON or human form, returning SilentExit when the graph is dirty so the
+// command exits non-zero. Shared so both backends produce identical output.
+func renderGraphCheck(cycles [][]*types.Issue) error {
+	result := graphCheckResult{Clean: true}
+	for _, cycle := range cycles {
+		ids := make([]string, len(cycle))
+		for i, issue := range cycle {
+			ids[i] = issue.ID
 		}
-		result.Summary.CycleCount = len(cycles)
+		result.Cycles = append(result.Cycles, ids)
+	}
+	result.Summary.CycleCount = len(cycles)
+	if len(cycles) > 0 {
+		result.Clean = false
+	}
 
-		if len(cycles) > 0 {
-			result.Clean = false
+	if jsonOutput {
+		if err := outputJSON(result); err != nil {
+			return err
 		}
-
-		if jsonOutput {
-			if err := outputJSON(result); err != nil {
-				return err
-			}
-			if !result.Clean {
-				return SilentExit()
-			}
-			return nil
-		}
-
-		if result.Clean {
-			fmt.Printf("\n%s Graph integrity check passed\n\n", ui.RenderPass("✓"))
-		} else {
-			fmt.Printf("\n%s Graph integrity issues found\n\n", ui.RenderFail("✗"))
-		}
-
-		if len(result.Cycles) > 0 {
-			fmt.Printf("%s Cycles (%d):\n\n", ui.RenderFail("⚠"), len(result.Cycles))
-			for _, cycle := range result.Cycles {
-				fmt.Printf("  %s → %s\n", strings.Join(cycle, " → "), cycle[0])
-			}
-			fmt.Println()
-		} else {
-			fmt.Printf("  %s No dependency cycles\n", ui.RenderPass("✓"))
-		}
-
-		fmt.Println()
-
 		if !result.Clean {
 			return SilentExit()
 		}
 		return nil
-	},
+	}
+
+	if result.Clean {
+		fmt.Printf("\n%s Graph integrity check passed\n\n", ui.RenderPass("✓"))
+	} else {
+		fmt.Printf("\n%s Graph integrity issues found\n\n", ui.RenderFail("✗"))
+	}
+
+	if len(result.Cycles) > 0 {
+		fmt.Printf("%s Cycles (%d):\n\n", ui.RenderFail("⚠"), len(result.Cycles))
+		for _, cycle := range result.Cycles {
+			fmt.Printf("  %s → %s\n", strings.Join(cycle, " → "), cycle[0])
+		}
+		fmt.Println()
+	} else {
+		fmt.Printf("  %s No dependency cycles\n", ui.RenderPass("✓"))
+	}
+
+	fmt.Println()
+
+	if !result.Clean {
+		return SilentExit()
+	}
+	return nil
 }
 
 func init() {
