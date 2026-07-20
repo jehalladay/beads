@@ -46,6 +46,21 @@ Examples:
 
 		ctx := rootCtx
 
+		// beads-fo3c2 (aocj fail-loud class): in proxied-server mode main.go's
+		// PersistentPreRun returns early (main.go:1147) leaving the global store
+		// nil, so UnwrapStore(store)=nil → the BlockedRecomputer assertion below
+		// returns ok=false and emits "storage backend does not support is_blocked
+		// recompute" — which BLAMES THE BACKEND when the real gap is that the
+		// proxied path was never wired for this command. Fail loud with an accurate
+		// message BEFORE the UnwrapStore check (mirrors branch/merge-slot/vc), and
+		// lazy-init the direct/embedded path in case it can arrive nil too.
+		if usesProxiedServer() {
+			return HandleErrorRespectJSON("recompute-blocked is not supported in proxied-server mode (connect directly with an embedded/dolt store)")
+		}
+		if err := ensureStoreActive(); err != nil {
+			return HandleErrorWithHintRespectJSON(err.Error(), diagHint())
+		}
+
 		recomputer, ok := storage.UnwrapStore(store).(storage.BlockedRecomputer)
 		if !ok {
 			// beads-927v: this runs before the `if jsonOutput` success block below,
