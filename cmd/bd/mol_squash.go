@@ -20,16 +20,19 @@ var molSquashCmd = &cobra.Command{
 	Long: `Squash a molecule's ephemeral children into a single digest issue.
 
 This command collects all ephemeral child issues of a molecule (Ephemeral=true),
-generates a summary digest, and promotes the wisps to persistent by
-clearing their Wisp flag (or optionally deletes them).
+generates a summary digest, and by default deletes the wisps once their work is
+captured in the digest. Pass --keep-children to instead promote the wisps to
+persistent (clearing their Wisp flag) so the trace survives wisp garbage
+collection.
 
 The squash operation:
   1. Loads the molecule and all its children
   2. Filters to only wisps (ephemeral issues with Ephemeral=true)
   3. Generates a digest (summary of work done)
   4. Creates a permanent digest issue (Ephemeral=false)
-  5. Clears Wisp flag on children (promotes to persistent)
-     OR keeps them with --keep-children (default: delete)
+  5. Default: deletes the ephemeral children after the digest is created.
+     With --keep-children: clears each child's Wisp flag instead, promoting
+     them to persistent (they survive "bd mol wisp gc").
 
 AGENT INTEGRATION:
 Use --summary to provide an AI-generated summary. This keeps bd as a pure
@@ -289,6 +292,22 @@ func squashMolecule(ctx context.Context, s storage.DoltStorage, root *types.Issu
 					return fmt.Errorf("failed to delete child %s: %w", id, err)
 				}
 				result.DeletedCount++
+			}
+		} else {
+			// --keep-children: promote each preserved child to persistent by
+			// clearing its Wisp/Ephemeral flag (beads-ho61c). The help promises
+			// squash "promotes the wisps to persistent by clearing their Wisp
+			// flag"; the default path fulfills that by deleting, but the
+			// preserve path previously ONLY skipped deletion — it never cleared
+			// the flag, so kept children stayed ephemeral=true and a later
+			// `bd mol wisp gc` silently reaped the very trace the user asked to
+			// keep (data-loss worse than the explicit default delete). Uses the
+			// same storage seam + actorName as the root-clear below, inside the
+			// one atomic transact (bd-4kgbq).
+			for _, id := range childIDs {
+				if err := tx.UpdateIssue(ctx, id, map[string]interface{}{"wisp": false}, actorName); err != nil {
+					return fmt.Errorf("failed to clear ephemeral flag on kept child %s: %w", id, err)
+				}
 			}
 		}
 
