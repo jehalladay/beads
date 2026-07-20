@@ -289,11 +289,22 @@ func resolveProtoIDOrTitle(ctx context.Context, s storage.DoltStorage, input str
 	}
 
 	// Multiple matches - show them all for disambiguation
-	var matchNames []string
+	return "", formatAmbiguousProtoError(input, matches)
+}
+
+// formatAmbiguousProtoError builds the disambiguation error listing every
+// proto that matched the input. Each proto Title is routed through
+// displayTitle (ui.SanitizeForTerminal) because a proto title can originate
+// from an untrusted import (JSONL/markdown/SCM) carrying OSC/CSI terminal-
+// control escapes; printing it raw into the terminal-rendered error would
+// inject control sequences. Display-only — the stored title is untouched.
+// 7n9y sink-class slice.
+func formatAmbiguousProtoError(input string, matches []*types.Issue) error {
+	matchNames := make([]string, 0, len(matches))
 	for _, m := range matches {
-		matchNames = append(matchNames, fmt.Sprintf("%s: %s", m.ID, m.Title))
+		matchNames = append(matchNames, fmt.Sprintf("%s: %s", m.ID, displayTitle(m.Title)))
 	}
-	return "", fmt.Errorf("ambiguous: %q matches %d protos:\n  %s\nUse the ID or a more specific title", input, len(matches), strings.Join(matchNames, "\n  "))
+	return fmt.Errorf("ambiguous: %q matches %d protos:\n  %s\nUse the ID or a more specific title", input, len(matches), strings.Join(matchNames, "\n  "))
 }
 
 // extractVariables finds all {{variable}} patterns in text.
