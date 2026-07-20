@@ -22,6 +22,9 @@ func TestPrintMoleculeProgress_sanitize_mc7q(t *testing.T) {
 	mol := &MoleculeProgress{
 		MoleculeID:    "mol-root",
 		MoleculeTitle: "Mol" + osc + "Title",
+		// beads-qcboc: mol.Assignee = the root issue's Assignee (untrusted import),
+		// printed via "Assigned to: %s" — must also be sanitized at the print site.
+		Assignee: "assignee" + csi + osc + "Name",
 		Steps: []*StepStatus{
 			{
 				Issue:  &types.Issue{ID: "step-1", Title: "Step" + csi + osc + "One"},
@@ -45,7 +48,7 @@ func TestPrintMoleculeProgress_sanitize_mc7q(t *testing.T) {
 		t.Errorf("progress leaked a raw BEL (\\x07): %q", out)
 	}
 	// Visible text must survive sanitizing (escapes stripped, chars kept).
-	for _, want := range []string{"MolTitle", "StepOne", "NextStep"} {
+	for _, want := range []string{"MolTitle", "StepOne", "NextStep", "assigneeName"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("progress dropped visible title text %q: %q", want, out)
 		}

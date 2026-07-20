@@ -535,7 +535,10 @@ func printMoleculeProgress(mol *MoleculeProgress) {
 	fmt.Printf("You're working on molecule %s\n", ui.RenderAccent(mol.MoleculeID))
 	fmt.Printf("  %s\n", displayTitle(mol.MoleculeTitle))
 	if mol.Assignee != "" {
-		fmt.Printf("  Assigned to: %s\n", mol.Assignee)
+		// mol.Assignee = the molecule root issue's Assignee (untrusted import, no
+		// control-char validation) — sanitize at the display site (beads-qcboc,
+		// i8dsb axis); MoleculeTitle above already routes through displayTitle.
+		fmt.Printf("  Assigned to: %s\n", ui.SanitizeForTerminal(mol.Assignee))
 	}
 	fmt.Println()
 
