@@ -283,11 +283,23 @@ Examples:
 	},
 }
 
-// hasExplicitStatusFilter checks if the query contains an explicit status comparison
+// hasExplicitStatusFilter reports whether the query carries explicit
+// intent-to-include-closed, which disables the default closed-exclusion at the
+// call site (query.go:186). A `status` comparison is the direct signal.
+//
+// beads-6dgb3: a bare closed-date predicate (`closed>7d`, `closed=DATE`, the
+// `closed_at` alias) also counts. The closed date field is set ONLY on closed
+// issues (closed_at non-NULL <-> status=closed exactly), so default-excluding
+// closed rows strips the exact rows such a predicate could match — the query
+// self-nullifies to empty. A query naming `closed` is definitionally about
+// closed issues, so excluding them is a contradiction (same "explicit user
+// intent yields to default-exclude" principle as SWEEP-124). SCOPE: only the
+// closed date field self-nullifies — started/updated/created rows survive
+// default-exclusion and carry their timestamps, so they are NOT included here.
 func hasExplicitStatusFilter(node query.Node) bool {
 	switch n := node.(type) {
 	case *query.ComparisonNode:
-		return n.Field == "status"
+		return n.Field == "status" || n.Field == "closed" || n.Field == "closed_at"
 	case *query.AndNode:
 		return hasExplicitStatusFilter(n.Left) || hasExplicitStatusFilter(n.Right)
 	case *query.OrNode:
