@@ -95,8 +95,18 @@ func runMolBond(cmd *cobra.Command, args []string) error {
 
 	ctx := rootCtx
 
-	if store == nil {
-		return HandleErrorRespectJSON("no database connection")
+	// beads-ojyjj (aocj fail-loud class): in proxied-server mode main.go's
+	// PersistentPreRunE returns before newDoltStore (main.go:1147-1155) leaving
+	// the global store nil, so mol bond's resolve + bondProtoMol transact would
+	// nil-panic — and the bare store==nil check misdiagnoses the proxied config
+	// as a local "no database connection". Bond writes via a raw
+	// storage.Transaction the proxied UOW does not yield, so fail loud with an
+	// accurate message (mirrors mgjco/merge-slot). Guard BEFORE the nil check.
+	if usesProxiedServer() {
+		return HandleErrorRespectJSON("mol bond is not supported in proxied-server mode (connect directly with an embedded/dolt store)")
+	}
+	if err := ensureStoreActive(); err != nil {
+		return HandleErrorWithHintRespectJSON(err.Error(), diagHint())
 	}
 
 	bondType, _ := cmd.Flags().GetString("type")

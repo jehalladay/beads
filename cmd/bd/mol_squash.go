@@ -88,8 +88,18 @@ func runMolSquash(cmd *cobra.Command, args []string) error {
 
 	ctx := rootCtx
 
-	if store == nil {
-		return HandleErrorWithHint("no database connection", diagHint())
+	// beads-ojyjj (aocj fail-loud class): in proxied-server mode main.go's
+	// PersistentPreRunE returns before newDoltStore (main.go:1147-1155) leaving
+	// the global store nil, so mol squash's store.GetIssue + transact would
+	// nil-panic — and the bare store==nil check misdiagnoses the proxied config
+	// as a local "no database connection". Squash writes via a raw
+	// storage.Transaction the proxied UOW does not yield, so fail loud with an
+	// accurate message (mirrors mgjco/merge-slot). Guard BEFORE the nil check.
+	if usesProxiedServer() {
+		return HandleErrorRespectJSON("mol squash is not supported in proxied-server mode (connect directly with an embedded/dolt store)")
+	}
+	if err := ensureStoreActive(); err != nil {
+		return HandleErrorWithHintRespectJSON(err.Error(), diagHint())
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
