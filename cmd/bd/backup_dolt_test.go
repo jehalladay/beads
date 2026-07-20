@@ -202,8 +202,26 @@ func TestDirSize(t *testing.T) {
 }
 
 func TestShowDoltBackupStatusJSON_NilWhenNotConfigured(t *testing.T) {
-	t.Parallel()
-	// When no .beads dir exists, should return configured=false
+	// Isolate the workspace: showDoltBackupStatusJSON -> loadDoltBackupConfig ->
+	// doltBackupConfigPath -> beads.FindBeadsDir. Without isolation this test
+	// observed a sibling's leaked config and read configured=true (beads-1s73w):
+	// TestDoltBackupPaths_NoWorkspace calls saveDoltBackupConfig("file:///x"),
+	// and when FindBeadsDir resolves an ancestor/worktree-fallback .beads (rather
+	// than the intended empty workspace) that write persists "file:///x" to a
+	// shared dolt-backup.json, which this test then reads back.
+	//
+	// Pin BEADS_DIR at a fresh, empty .beads (via the same setupBackupBeadsDir
+	// helper the sibling round-trip tests use). BEADS_DIR is honored FIRST in
+	// FindBeadsDir — before any cwd walk-up or worktree fallback — so the resolved
+	// workspace is deterministic regardless of the cwd/worktree the suite runs in.
+	// The fresh dir has no dolt-backup.json, so loadDoltBackupConfig returns
+	// (nil, nil) and configured stays false.
+	//
+	// NOTE: t.Setenv is incompatible with t.Parallel(), so this test now runs
+	// serially — the isolation, not parallelism, is what makes it
+	// order-independent (beads-1s73w).
+	setupBackupBeadsDir(t)
+	// With a fresh empty workspace and no saved config, should return configured=false
 	result := showDoltBackupStatusJSON()
 	configured, ok := result["configured"].(bool)
 	if !ok || configured {
