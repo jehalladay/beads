@@ -81,7 +81,15 @@ Examples:
 		if reason != "" {
 			comment += ": " + reason
 		}
-		if err := store.AddComment(ctx, fullID, actor, comment); err != nil {
+		// beads-9l1it: write the promotion record (and user --reason) to the
+		// COMMENTS table via AddIssueComment, NOT the events table via
+		// AddComment. bd show / bd comments read GetIssueComments (comments
+		// table); AddComment lands an EventCommented row that no read surface
+		// surfaces, so the documented "A comment is added recording the
+		// promotion and optional reason." was silently invisible. This mirrors
+		// the already-correct proxied path (runPromoteProxiedServer →
+		// CommentUseCase().AddComment → AddIssueCommentInTx).
+		if _, err := store.AddIssueComment(ctx, fullID, actor, comment); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to add promotion comment to %s: %v\n", fullID, err)
 		}
 
