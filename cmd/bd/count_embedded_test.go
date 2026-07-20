@@ -515,8 +515,12 @@ func TestEmbeddedCountIncludeInfra(t *testing.T) {
 	}
 
 	t.Run("default_stays_durable_only", func(t *testing.T) {
-		if got := countOf("--type", "task"); got != 3 {
-			t.Errorf("bd count --type task = %d, want 3 (durable tasks only; default must stay byte-identical)", got)
+		// beads-5vanc: post-beads-9iia the plain-count default excludes closed/
+		// pinned (parity with bd list), so the 3 durable tasks minus the 1 closed
+		// durable task = 2. (The pre-9iia expectation of 3 was stale.) --include-infra
+		// counts all 3 durable tasks + the wisps tier — asserted separately below.
+		if got := countOf("--type", "task"); got != 2 {
+			t.Errorf("bd count --type task = %d, want 2 (open durable tasks; 9iia excludes the closed one by default)", got)
 		}
 	})
 
@@ -575,8 +579,9 @@ func TestEmbeddedCountIncludeInfra(t *testing.T) {
 		for _, g := range groups {
 			gm := g.(map[string]interface{})
 			if gm["group"] == "task" {
-				if got := int(gm["count"].(float64)); got != 3 {
-					t.Errorf("bd count --by-type task = %d, want 3 (durable only)", got)
+				// beads-5vanc: post-9iia default excludes the closed durable task → 2.
+				if got := int(gm["count"].(float64)); got != 2 {
+					t.Errorf("bd count --by-type task = %d, want 2 (open durable only; 9iia excludes closed)", got)
 				}
 			}
 		}

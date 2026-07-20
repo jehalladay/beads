@@ -190,14 +190,18 @@ Examples:
 		//
 		// beads-khn67: ALSO skip the default-exclude when a --closed-after/
 		// --closed-before filter is present. Those filters only match closed
-		// issues (closed_at is NULL until an issue closes), so applying the
-		// default closed/pinned EXCLUSION on top made them return 0 unless the
-		// caller also passed --status all — the closed-date filters were dead by
-		// default. A --closed-* filter implicitly scopes to closed work, so honor
-		// it rather than exclude everything it could match.
-		// Read the raw flags (filter.ClosedAfter/Before are parsed later, below).
+		// issues (closed_at is NULL until close), so the default closed/pinned
+		// EXCLUSION made them return 0 unless --status all was also passed.
+		// (filter.ClosedAfter/Before are parsed later, so read the raw flags.)
+		//
+		// beads-5vanc: ALSO skip it when --include-infra is set. The documented
+		// contract (count.go help + applyCountIncludeInfra) is that `bd count
+		// --include-infra <filters>` equals `bd list --include-infra <filters>
+		// --all` cardinality, and list --all disables the closed/pinned exclusion
+		// — so --include-infra is the count-side equivalent of --all.
 		hasClosedDateFilter := cmd.Flags().Changed("closed-after") || cmd.Flags().Changed("closed-before")
-		if status == "" && groupBy != "status" && !hasClosedDateFilter {
+		includeInfraFlag, _ := cmd.Flags().GetBool("include-infra")
+		if status == "" && groupBy != "status" && !hasClosedDateFilter && !includeInfraFlag {
 			excludeStatuses := []types.Status{types.StatusClosed, types.StatusPinned}
 			for _, cs := range filterCfg.customStatuses {
 				if cs.Category == types.CategoryDone || cs.Category == types.CategoryFrozen {
