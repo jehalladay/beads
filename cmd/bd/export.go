@@ -87,9 +87,28 @@ func runExport(cmd *cobra.Command, args []string) error {
 	// warning). Same reject-a-silently-contradictory-combination precedent as
 	// beads-a0nmp (--claim + --status) / 7f3g / 9sdix. Only fires when BOTH are
 	// explicitly set (Changed), so the deprecated-default path is unaffected.
+	// Checked before opening the export source so a bad flag combo rejects
+	// without opening a proxied read tx.
 	if cmd.Flags().Changed("include-memories") && cmd.Flags().Changed("no-memories") {
 		return HandleErrorRespectJSON("--include-memories cannot be combined with --no-memories (they are contradictory; --no-memories is deprecated — memories are excluded by default, use --include-memories to include them)")
 	}
+
+	// beads-948qg: bd export is a pure READ that must WORK on hub-connected
+	// (proxied-server) crew, not nil-panic. In proxiedServerMode the global
+	// `store` is nil (main.go PersistentPreRun returns early once uowProvider is
+	// set, before store init), and export is not a noDbCommand — so the direct
+	// store.SearchIssues below would dereference a nil interface. Route through a
+	// per-path exportSource so the emit body is shared byte-for-byte (aocj
+	// interface-ext disposition, mirror of beads-mh3e diff / list_proxied): the
+	// proxied adapter delegates to the same use-cases (which reuse the same
+	// issueops query helpers) the direct store methods call, so the JSONL is
+	// identical regardless of deployment. On any early return, the proxied
+	// adapter's UOW is rolled back via closeExportSource (read-only, no commit).
+	src, err := openExportSource(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeExportSource(ctx, src)
 
 	// Determine output destination. File output uses atomic writes
 	// (temp file + rename) so concurrent exports and crashes never
@@ -117,12 +136,13 @@ func runExport(cmd *cobra.Command, args []string) error {
 	// Exclude infra types by default (agents, roles, messages).
 	if !exportAll && !exportIncludeInfra {
 		var infraTypes []string
-		if store != nil {
-			infraSet := store.GetInfraTypes(ctx)
-			if len(infraSet) > 0 {
-				for t := range infraSet {
-					infraTypes = append(infraTypes, t)
-				}
+		infraSet, ierr := src.GetInfraTypes(ctx)
+		if ierr != nil {
+			return HandleErrorRespectJSON("failed to read infra types: %v", ierr)
+		}
+		if len(infraSet) > 0 {
+			for t := range infraSet {
+				infraTypes = append(infraTypes, t)
 			}
 		}
 		if len(infraTypes) == 0 {
@@ -147,7 +167,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 		filter.Ephemeral = &persistentOnly
 	}
 
-	issues, err := store.SearchIssues(ctx, "", filter)
+	issues, err := src.SearchIssues(ctx, "", filter)
 	if err != nil {
 		return HandleErrorRespectJSON("failed to search issues: %v", err)
 	}
@@ -170,11 +190,11 @@ func runExport(cmd *cobra.Command, args []string) error {
 		issueIDs[i] = issue.ID
 	}
 
-	labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
-	allDeps, _ := store.GetDependencyRecordsForIssues(ctx, issueIDs)
-	commentsMap, _ := store.GetCommentsForIssues(ctx, issueIDs)
-	commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
-	depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
+	labelsMap, _ := src.GetLabelsForIssues(ctx, issueIDs)
+	allDeps, _ := src.GetDependencyRecordsForIssues(ctx, issueIDs)
+	commentsMap, _ := src.GetCommentsForIssues(ctx, issueIDs)
+	commentCounts, _ := src.GetCommentCounts(ctx, issueIDs)
+	depCounts, _ := src.GetDependencyCounts(ctx, issueIDs)
 
 	// Populate relational data on each issue
 	for _, issue := range issues {
@@ -223,7 +243,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 	// Memories may contain sensitive agent context and are excluded by default.
 	memoryCount := 0
 	if (exportIncludeMemories || exportAll) && !exportNoMemories {
-		allConfig, err := store.GetAllConfig(ctx)
+		allConfig, err := src.GetAllConfig(ctx)
 		if err != nil {
 			return HandleErrorRespectJSON("failed to read config for memories: %v", err)
 		}
