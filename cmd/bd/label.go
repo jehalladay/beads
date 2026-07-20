@@ -76,6 +76,95 @@ func processBatchLabelsOperation(issueIDs []string, labels []string, operation s
 	return nil
 }
 
+// addLabelsHonoringNoChange adds labels but reports honestly per (issue,label)
+// pair: a genuinely new label is "added", a label the issue ALREADY carries is
+// "unchanged" (beads-qi8t). Without this, `bd label add <id> <lbl>` on a
+// present label printed "✓ Added label" / status:added with rc=0 — a false
+// success that a CI/agent gate reads as proof the label was newly applied.
+// AddLabel is idempotent (AddLabelInTx no-ops when the label is already present
+// and programmatic callers rely on that), so the storage contract stays
+// idempotent; only the CLI verb reports the distinction. Mirrors the landed
+// label-remove fix (beads-yaux) + dep-add (beads-w2tk). Runs on the
+// template-molecule-filtered, resolved issue set.
+//
+// A pre-read error on any issue falls back to the plain unconditional add
+// (report everything "added") rather than failing the whole batch — the
+// honest-reporting refinement must not regress a working add path.
+func addLabelsHonoringNoChange(ctx context.Context, issueIDs, labels []string, jsonOut bool) error {
+	type pairStatus struct {
+		issueID string
+		label   string
+		status  string // "added" | "unchanged"
+	}
+	statuses := make([]pairStatus, 0, len(issueIDs)*len(labels))
+	toAdd := make(map[string][]string, len(issueIDs)) // issueID -> new labels
+	for _, id := range issueIDs {
+		existing, err := store.GetLabels(ctx, id)
+		if err != nil {
+			// Pre-read failed: fall back to the plain add (idempotent storage,
+			// reports all "added") so a GetLabels hiccup can't block labeling.
+			return processBatchLabelsOperation(issueIDs, labels, "added", jsonOut,
+				func(ctx context.Context, tx storage.Transaction, issueID, lbl, act string) error {
+					return tx.AddLabel(ctx, issueID, lbl, act)
+				})
+		}
+		have := make(map[string]struct{}, len(existing))
+		for _, l := range existing {
+			have[l] = struct{}{}
+		}
+		for _, label := range labels {
+			if _, present := have[strings.TrimSpace(label)]; present {
+				statuses = append(statuses, pairStatus{id, label, "unchanged"})
+			} else {
+				statuses = append(statuses, pairStatus{id, label, "added"})
+				toAdd[id] = append(toAdd[id], label)
+			}
+		}
+	}
+
+	// Write only the genuinely-new (issue,label) pairs in one transaction.
+	newCount := 0
+	for _, ls := range toAdd {
+		newCount += len(ls)
+	}
+	if newCount > 0 {
+		commitMsg := fmt.Sprintf("bd: label add %d label(s) on %d issue(s)", newCount, len(toAdd))
+		if err := transactHonoringAutoCommit(ctx, store, commitMsg, func(tx storage.Transaction) error {
+			for id, ls := range toAdd {
+				for _, label := range ls {
+					if err := tx.AddLabel(ctx, id, label, actor); err != nil {
+						return fmt.Errorf("add label '%s' on %s: %w", label, id, err)
+					}
+				}
+			}
+			return nil
+		}); err != nil {
+			return HandleErrorRespectJSON("label add: %v", err)
+		}
+		commandDidWrite.Store(true)
+	}
+
+	if jsonOut {
+		results := make([]map[string]interface{}, 0, len(statuses))
+		for _, s := range statuses {
+			results = append(results, map[string]interface{}{
+				"status":   s.status,
+				"issue_id": s.issueID,
+				"label":    s.label,
+			})
+		}
+		return outputJSON(results)
+	}
+	for _, s := range statuses {
+		if s.status == "unchanged" {
+			fmt.Printf("%s label '%s' already present on %s (no change)\n", ui.RenderInfoIcon(), s.label, s.issueID)
+		} else {
+			fmt.Printf("%s Added label '%s' to %s\n", ui.RenderPass("✓"), s.label, s.issueID)
+		}
+	}
+	return nil
+}
+
 // collectLabelArgs merges the trailing positional label (if any) with repeatable --label
 // flag values, trims blanks, and dedupes (preserving first-seen order). When any --label
 // flag is present, ALL positional args are treated as issue IDs; otherwise the original
@@ -236,10 +325,7 @@ var labelAddCmd = &cobra.Command{
 			return HandleErrorRespectJSON("no issue id resolved")
 		}
 
-		if err := processBatchLabelsOperation(issueIDs, labels, "added", jsonOutput,
-			func(ctx context.Context, tx storage.Transaction, issueID, lbl, act string) error {
-				return tx.AddLabel(ctx, issueID, lbl, act)
-			}); err != nil {
+		if err := addLabelsHonoringNoChange(ctx, issueIDs, labels, jsonOutput); err != nil {
 			return err
 		}
 		// At least one id was labeled (issueIDs>0 here): under --json stdout now
