@@ -175,6 +175,14 @@ func gatherListInput(cmd *cobra.Command) (listInput, error) {
 		in.priorityMax = p
 		in.priorityMaxSet = true
 	}
+	// beads-wnm6g (BUG-36): a reversed priority range (min > max) builds
+	// "priority >= min AND priority <= max", which is always false, so it
+	// silently returns an empty result with no error. Reject the reversed
+	// range rather than return silently-wrong output — same precedent as
+	// beads-7f3g / beads-9sdix / beads-a0nmp.
+	if in.priorityMinSet && in.priorityMaxSet && in.priorityMin > in.priorityMax {
+		return in, HandleErrorRespectJSON("--priority-min (%d) cannot be greater than --priority-max (%d)", in.priorityMin, in.priorityMax)
+	}
 
 	in.pinnedFlag, _ = cmd.Flags().GetBool("pinned")
 	in.noPinnedFlag, _ = cmd.Flags().GetBool("no-pinned")
@@ -220,6 +228,13 @@ func gatherListInput(cmd *cobra.Command) (listInput, error) {
 	}
 	if in.createdBefore, err = parseListTimeFlag(cmd, "created-before"); err != nil {
 		return in, err
+	}
+	// beads-wnm6g (BUG-37): a reversed created-date range (after > before)
+	// builds "created_at >= after AND created_at <= before", always false, so
+	// it silently returns empty. Reject it explicitly (same class as the
+	// reversed priority range above).
+	if in.createdAfter != nil && in.createdBefore != nil && in.createdAfter.After(*in.createdBefore) {
+		return in, HandleErrorRespectJSON("--created-after (%s) cannot be later than --created-before (%s)", in.createdAfter.Format("2006-01-02"), in.createdBefore.Format("2006-01-02"))
 	}
 	if in.updatedAfter, err = parseListTimeFlag(cmd, "updated-after"); err != nil {
 		return in, err
