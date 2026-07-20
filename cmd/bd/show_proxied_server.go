@@ -430,7 +430,9 @@ func printProxiedThread(threadMessages []*types.Issue, repliesTo map[string]stri
 			statusIcon = "✓"
 		}
 		fmt.Printf("%s%s %s %s\n", indent, statusIcon, ui.RenderAccent(msg.ID), ui.RenderMuted(timeStr))
-		fmt.Printf("%s  From: %s  To: %s\n", indent, msg.Sender, msg.Assignee)
+		// beads-jxi3d: sanitize Sender/Assignee (i8dsb identity-sink axis) — the
+		// proxied twin of show_thread.go; both entry points need it.
+		fmt.Printf("%s  From: %s  To: %s\n", indent, ui.SanitizeForTerminal(msg.Sender), ui.SanitizeForTerminal(msg.Assignee))
 		if parentID := repliesTo[msg.ID]; parentID != "" {
 			fmt.Printf("%s  Re: %s\n", indent, parentID)
 		}

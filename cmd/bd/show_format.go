@@ -329,7 +329,14 @@ func formatIssueLongExtras(issue *types.Issue, formatTime func(time.Time) string
 		gateParts = append(gateParts, fmt.Sprintf("  Timeout: %s", issue.Timeout))
 	}
 	if len(issue.Waiters) > 0 {
-		gateParts = append(gateParts, fmt.Sprintf("  Waiters: %s", strings.Join(issue.Waiters, ", ")))
+		// beads-jxi3d: sanitize each waiter identity (i8dsb identity-sink axis) —
+		// gate waiters are import/proxied-sourced untrusted identities. Sanitize
+		// per-element, then Join. Never sanitize the stored value.
+		sanitizedWaiters := make([]string, len(issue.Waiters))
+		for i, w := range issue.Waiters {
+			sanitizedWaiters[i] = ui.SanitizeForTerminal(w)
+		}
+		gateParts = append(gateParts, fmt.Sprintf("  Waiters: %s", strings.Join(sanitizedWaiters, ", ")))
 	}
 	if len(gateParts) > 0 {
 		sections = append(sections, fmt.Sprintf("%s\n%s",

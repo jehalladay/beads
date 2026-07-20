@@ -113,7 +113,10 @@ func showMessageThread(ctx context.Context, messageID string, jsonOutput bool) e
 		}
 
 		fmt.Printf("%s%s %s %s\n", indent, statusIcon, ui.RenderAccent(msg.ID), ui.RenderMuted(timeStr))
-		fmt.Printf("%s  From: %s  To: %s\n", indent, msg.Sender, msg.Assignee)
+		// beads-jxi3d: sanitize Sender/Assignee for terminal display (i8dsb
+		// identity-sink axis) — the Subject one line below was covered by s3qhv
+		// but From/To was missed. Never sanitize the stored value.
+		fmt.Printf("%s  From: %s  To: %s\n", indent, ui.SanitizeForTerminal(msg.Sender), ui.SanitizeForTerminal(msg.Assignee))
 		if parentID := repliesTo[msg.ID]; parentID != "" {
 			fmt.Printf("%s  Re: %s\n", indent, parentID)
 		}
