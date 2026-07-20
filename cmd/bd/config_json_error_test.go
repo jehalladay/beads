@@ -59,3 +59,57 @@ func TestConfigSetJSON_ErrorPathEmitsStdoutObject(t *testing.T) {
 		t.Errorf("expected a non-empty \"error\" field in failing `config set --json` stdout, got: %s", out)
 	}
 }
+
+// TestConfigSetRejectJSON_StdoutObject is the beads-taffx residual leg of jjuv.
+// jjuv converted config's VALIDATION error paths (invalid role/type) to
+// HandleErrorRespectJSON, but MISSED the protected-key + dolt.debug reject
+// paths (config.go configSetCmd / configSetManyCmd), which stayed on bare
+// fmt.Fprintln(os.Stderr,...)+SilentExit() — so `config set issue_prefix X
+// --json` produced EMPTY stdout + exit 1, indistinguishable from a crash.
+//
+// issue_prefix is a protected key (rejectProtectedConfigKey) rejected before
+// any DB/git write — a deterministic, server-free error, like the beads.role
+// path above. This asserts the reject reaches stdout as a parseable JSON object.
+func TestConfigSetRejectJSON_StdoutObject(t *testing.T) {
+	bd := buildEmbeddedBD(t)
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"set protected key", []string{"config", "set", "issue_prefix", "foo", "--json"}},
+		{"set-many protected key", []string{"config", "set-many", "issue_prefix=foo", "--json"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, _, _ := bdInit(t, bd)
+			cmd := exec.Command(bd, tc.args...)
+			cmd.Dir = dir
+			cmd.Env = bdEnv(dir)
+			stdout, stderr, err := runCommandBuffers(t, cmd)
+			if err == nil {
+				t.Fatalf("%v unexpectedly succeeded\nstdout:\n%s", tc.args, stdout.String())
+			}
+
+			out := strings.TrimSpace(stdout.String())
+			if out == "" {
+				t.Fatalf("stdout is EMPTY on a failing protected-key `%v` — the reject must be emitted as a JSON object on stdout, not stderr-only+SilentExit\nstderr:\n%s", tc.args, stderr.String())
+			}
+
+			var obj map[string]interface{}
+			if jerr := json.Unmarshal([]byte(out), &obj); jerr != nil {
+				t.Fatalf("stdout is not a JSON object on `%v`: %v\nstdout:\n%s", tc.args, jerr, out)
+			}
+			msg, ok := obj["error"].(string)
+			if !ok {
+				if data, dok := obj["data"].(map[string]interface{}); dok {
+					msg, ok = data["error"].(string)
+				}
+			}
+			if !ok || msg == "" {
+				t.Errorf("expected a non-empty \"error\" field in `%v` stdout, got: %s", tc.args, out)
+			}
+		})
+	}
+}

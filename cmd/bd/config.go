@@ -139,14 +139,17 @@ var configSetCmd = &cobra.Command{
 		value := args[1]
 
 		if msg, rejected := rejectProtectedConfigKey(key); rejected {
-			fmt.Fprintln(os.Stderr, msg)
-			return SilentExit()
+			// beads-taffx: route through HandleErrorRespectJSON so a failing
+			// `config set <protected-key> --json` emits a JSON error object on
+			// stdout (jjuv contract) instead of empty stdout + stderr text. The
+			// helper's msg already carries an "Error: " prefix that HandleError
+			// re-adds in non-JSON mode, so strip it to preserve exact output.
+			return HandleErrorRespectJSON("%s", strings.TrimPrefix(msg, "Error: "))
 		}
 
 		if key == "dolt.debug" && !usesSQLServer() {
-			fmt.Fprintln(os.Stderr, "Error: dolt.debug requires a sql-server-backed project (embedded mode has no managed server).")
-			fmt.Fprintln(os.Stderr, "  To migrate: re-init with 'bd init --server' or 'bd init --shared-server'.")
-			return SilentExit()
+			// beads-taffx: same jjuv --json stdout-error contract as above.
+			return HandleErrorRespectJSON("dolt.debug requires a sql-server-backed project (embedded mode has no managed server).\n  To migrate: re-init with 'bd init --server' or 'bd init --shared-server'.")
 		}
 
 		if !isRecognizedConfigKey(key) {
@@ -868,8 +871,8 @@ Examples:
 			// DB key that 'bd create' never reads — a write that looks
 			// successful but is silently invisible.
 			if msg, rejected := rejectProtectedConfigKey(p.key); rejected {
-				fmt.Fprintln(os.Stderr, msg)
-				return SilentExit()
+				// beads-taffx: jjuv --json stdout-error contract, same as 'config set'.
+				return HandleErrorRespectJSON("%s", strings.TrimPrefix(msg, "Error: "))
 			}
 			// Reject unrecognized non-custom keys, same as 'config set'
 			// (beads-71zw). Without this, set-many warn-then-writes a typo'd
