@@ -289,6 +289,38 @@ func TestFederationStatusNestedSyncStatusJSONSnakeCase(t *testing.T) {
 	}
 }
 
+// TestFederationSyncResultJSONSnakeCase is the beads-1ex1t teeth.
+//
+// `bd federation sync --json` emits `{"results": []*storage.SyncResult}`. That
+// struct (internal/storage/sync.go) had ZERO json tags, so json.Marshal emitted
+// every field PascalCase (Peer/StartTime/Fetched/Merged/PulledCommits/Conflicts/
+// ...) — a snake_case-contract violation across the whole results payload (a
+// larger sibling of beads-ugb99's nested SyncStatus leak). The nested []Conflict
+// is already snake_case (beads-8slh); this pins the SyncResult wrapper itself.
+func TestFederationSyncResultJSONSnakeCase(t *testing.T) {
+	raw, err := json.Marshal(&storage.SyncResult{
+		Peer:          "p",
+		Fetched:       true,
+		Merged:        true,
+		PulledCommits: 3,
+		Conflicts:     []storage.Conflict{{IssueID: "x-1", Field: "title"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	body := string(raw)
+	for _, want := range []string{`"peer"`, `"fetched"`, `"merged"`, `"pulled_commits"`, `"conflicts"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected snake_case SyncResult key %s, got %s", want, body)
+		}
+	}
+	for _, bad := range []string{`"Peer"`, `"Fetched"`, `"Merged"`, `"PulledCommits"`, `"Conflicts"`, `"StartTime"`} {
+		if strings.Contains(body, bad) {
+			t.Errorf("PascalCase SyncResult key %s must not appear (snake_case contract), got %s", bad, body)
+		}
+	}
+}
+
 func TestEmbeddedFederationConcurrent(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt federation tests")
