@@ -277,7 +277,19 @@ the flags appear in the command line.`,
 				nextIssue := readyIssues[0]
 				err := postCloseStore.ClaimIssue(ctx, nextIssue.ID, actor)
 				if err == nil {
+					// beads-yt2hi: nextIssue is the PRE-claim snapshot from
+					// GetReadyWork (status:open, no assignee/started_at). ClaimIssue
+					// mutates the row but returns only an error, so emitting
+					// nextIssue at the --json `claimed` field misreports the claim
+					// as not-taken (a consumer checking claimed.status/assignee
+					// would wrongly conclude the auto-claim failed). Re-fetch so
+					// `claimed` reflects the persisted in_progress+assignee+
+					// started_at state; fall back to the snapshot if the re-read
+					// hiccups (still better than nothing, and the write succeeded).
 					claimedNextIssue = nextIssue
+					if refreshed, rerr := postCloseStore.GetIssue(ctx, nextIssue.ID); rerr == nil && refreshed != nil {
+						claimedNextIssue = refreshed
+					}
 					mutatedStores[postCloseStore] = append(mutatedStores[postCloseStore], nextIssue.ID)
 					if jsonOutput {
 						// JSON handled below

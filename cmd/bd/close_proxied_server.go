@@ -392,6 +392,13 @@ func closeProxiedClaimNextSeparate(ctx context.Context, jsonOut bool) *types.Iss
 		fmt.Fprintf(os.Stderr, "Warning: could not commit claim of next issue %s: %v\n", nextIssue.ID, err)
 		return nil
 	}
+	// beads-yt2hi: nextIssue is the PRE-claim snapshot (status:open, no
+	// assignee/started_at); the mutated row must be re-read so the --json
+	// `claimed` object reflects the persisted in_progress+assignee state,
+	// mirroring the direct path. Fall back to the snapshot on a re-read hiccup.
+	if refreshed, rerr := uw.IssueUseCase().GetIssue(ctx, nextIssue.ID); rerr == nil && refreshed != nil {
+		return refreshed
+	}
 	return nextIssue
 }
 
