@@ -259,22 +259,31 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 		whereClauses = append(whereClauses, "(assignee IS NULL OR assignee = '')")
 	}
 
+	// beads-ycoly: date range bounds are INCLUSIVE (>= / <=), matching the
+	// priority axis above (priority >= ? / priority <= ?) and the documented
+	// contract in the reversed-range guard (list_input.go / reversed_range.go),
+	// which states "Equal bounds (after==before) are valid" and describes the
+	// WHERE as "col >= after AND col <= before". Date-only flags parse to
+	// midnight, so a value stored exactly at 00:00:00 sits ON the bound; with
+	// the old strict >/< such a boundary row was dropped from BOTH --X-after D
+	// and --X-before D, and an equal-bounds point query (--X-after D --X-before D)
+	// was always empty — contradicting the guard's own promise.
 	for _, tc := range []struct {
 		col, op string
 		v       *time.Time
 	}{
-		{"created_at", ">", filter.CreatedAfter},
-		{"created_at", "<", filter.CreatedBefore},
-		{"updated_at", ">", filter.UpdatedAfter},
-		{"updated_at", "<", filter.UpdatedBefore},
-		{"closed_at", ">", filter.ClosedAfter},
-		{"closed_at", "<", filter.ClosedBefore},
-		{"started_at", ">", filter.StartedAfter},
-		{"started_at", "<", filter.StartedBefore},
-		{"defer_until", ">", filter.DeferAfter},
-		{"defer_until", "<", filter.DeferBefore},
-		{"due_at", ">", filter.DueAfter},
-		{"due_at", "<", filter.DueBefore},
+		{"created_at", ">=", filter.CreatedAfter},
+		{"created_at", "<=", filter.CreatedBefore},
+		{"updated_at", ">=", filter.UpdatedAfter},
+		{"updated_at", "<=", filter.UpdatedBefore},
+		{"closed_at", ">=", filter.ClosedAfter},
+		{"closed_at", "<=", filter.ClosedBefore},
+		{"started_at", ">=", filter.StartedAfter},
+		{"started_at", "<=", filter.StartedBefore},
+		{"defer_until", ">=", filter.DeferAfter},
+		{"defer_until", "<=", filter.DeferBefore},
+		{"due_at", ">=", filter.DueAfter},
+		{"due_at", "<=", filter.DueBefore},
 	} {
 		if tc.v != nil {
 			whereClauses = append(whereClauses, fmt.Sprintf("%s %s ?", tc.col, tc.op))

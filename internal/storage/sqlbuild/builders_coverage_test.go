@@ -191,8 +191,12 @@ func TestBuildIssueFilterClauses_TimeAndStateFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// beads-ycoly: date range bounds are INCLUSIVE (>= / <=), reconciling the
+	// SQL with the priority axis and the reversed-range guard's documented
+	// "after==before is valid" contract. The --overdue clause stays strict
+	// (due_at < now) — "overdue" means strictly past due, not due-exactly-now.
 	for _, want := range []string{
-		"created_at > ?", "created_at < ?", "updated_at > ?", "due_at < ?",
+		"created_at >= ?", "created_at <= ?", "updated_at >= ?", "due_at <= ?",
 		"(defer_until IS NOT NULL OR status = ?)",
 		"due_at IS NOT NULL AND due_at < ? AND status != ?",
 	} {

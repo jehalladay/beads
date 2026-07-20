@@ -201,13 +201,17 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 		col, op string
 		v       *time.Time
 	}{
-		{"created_at", ">", filter.CreatedAfter},
-		{"created_at", "<", filter.CreatedBefore},
-		{"updated_at", ">", filter.UpdatedAfter},
-		{"updated_at", "<", filter.UpdatedBefore},
+		// beads-ycoly: INCLUSIVE bounds (>= / <=), matching filter.go's date loop
+		// and the reversed-range guard's documented "after==before is valid" /
+		// ">= AND <=" contract. Strict >/< dropped exact-boundary rows (date-only
+		// flags parse to midnight) and made equal-bounds point queries always empty.
+		{"created_at", ">=", filter.CreatedAfter},
+		{"created_at", "<=", filter.CreatedBefore},
+		{"updated_at", ">=", filter.UpdatedAfter},
+		{"updated_at", "<=", filter.UpdatedBefore},
 		// beads-zmtp6: due_at range, parity with bd list (filter.go same loop).
-		{"due_at", ">", filter.DueAfter},
-		{"due_at", "<", filter.DueBefore},
+		{"due_at", ">=", filter.DueAfter},
+		{"due_at", "<=", filter.DueBefore},
 	} {
 		if tc.v != nil {
 			whereClauses = append(whereClauses, fmt.Sprintf("%s %s ?", tc.col, tc.op))
