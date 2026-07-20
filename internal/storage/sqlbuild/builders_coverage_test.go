@@ -44,7 +44,9 @@ func TestBuildIssueFilterClauses_Query(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !hasClause(where, "LOWER(title) LIKE ? OR id LIKE ?") {
+		// beads-b9ova: the free-text LIKE now carries ESCAPE '\' on each leg so
+		// user %/_ match literally; assert the escaped form.
+		if !hasClause(where, `LOWER(title) LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\'`) {
 			t.Fatalf("expected free-text branch, got %v", where)
 		}
 		if len(args) != 2 || args[0] != "%some words here%" {

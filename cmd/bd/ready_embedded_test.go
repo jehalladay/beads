@@ -527,6 +527,66 @@ func TestEmbeddedReadyTitleContains(t *testing.T) {
 	})
 }
 
+// TestEmbeddedReadyTitleContainsEscapesLikeMetachars is the teeth for
+// beads-b9ova: --title-contains must treat % and _ as LITERAL characters, not
+// LIKE wildcards. Runs against real Dolt so the ESCAPE '\\' clause + backslash
+// escaping are exercised end-to-end (a pure clause-string test would false-green).
+func TestEmbeddedReadyTitleContainsEscapesLikeMetachars(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "lm")
+
+	// One title literally contains '%'; the others do not. A bare '%' filter
+	// must match ONLY the literal-'%' issue, not all rows (the b9ova bug).
+	bdCreate(t, bd, dir, "reach 100% coverage", "--type", "task")
+	bdCreate(t, bd, dir, "plain alpha task", "--type", "task")
+	bdCreate(t, bd, dir, "plain beta task", "--type", "task")
+
+	readyTitles := func(t *testing.T, args ...string) []string {
+		t.Helper()
+		full := append([]string{"ready", "--json", "--limit", "0"}, args...)
+		cmd := exec.Command(bd, full...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("bd ready %v failed: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
+		}
+		var ready []types.IssueWithCounts
+		if jerr := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &ready); jerr != nil {
+			t.Fatalf("parse ready JSON (%v): %v\n%s", args, jerr, stdout.String())
+		}
+		titles := make([]string, 0, len(ready))
+		for _, r := range ready {
+			titles = append(titles, r.Title)
+		}
+		return titles
+	}
+
+	t.Run("literal_percent_matches_only_the_percent_issue", func(t *testing.T) {
+		got := readyTitles(t, "--title-contains", "%")
+		if len(got) != 1 {
+			t.Fatalf("b9ova: --title-contains '%%' should match ONLY the literal-'%%' issue, got %d: %v", len(got), got)
+		}
+		if !strings.Contains(got[0], "100%") {
+			t.Errorf("expected the '100%%' issue, got %q", got[0])
+		}
+	})
+
+	t.Run("literal_underscore_matches_none", func(t *testing.T) {
+		// No title contains '_'; a bare '_' must match NONE (not act as
+		// single-char wildcard matching every row).
+		got := readyTitles(t, "--title-contains", "_")
+		if len(got) != 0 {
+			t.Errorf("b9ova: --title-contains '_' should match none (no literal underscore), got %v", got)
+		}
+	})
+}
+
 func TestEmbeddedReadyConcurrent(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")

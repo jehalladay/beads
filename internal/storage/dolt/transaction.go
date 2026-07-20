@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
+	"github.com/steveyegge/beads/internal/storage/sqlbuild"
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -290,35 +291,39 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 	// Text search — optimized to avoid full-table scans (hq-319).
 	if query != "" {
 		lowerQuery := strings.ToLower(query)
+		// beads-b9ova: escape LIKE metachars + ESCAPE '\\' so a bare %/_ matches
+		// literally (in-tx read-your-writes twin of the sqlbuild/filter.go fix;
+		// shares sqlbuild.EscapeLikePattern so the two paths can't drift).
+		escaped := sqlbuild.EscapeLikePattern(lowerQuery)
 		if looksLikeIssueID(query) {
-			whereClauses = append(whereClauses, "(id = ? OR id LIKE ? OR LOWER(title) LIKE ?)")
-			args = append(args, lowerQuery, lowerQuery+"%", "%"+lowerQuery+"%")
+			whereClauses = append(whereClauses, `(id = ? OR id LIKE ? ESCAPE '\\' OR LOWER(title) LIKE ? ESCAPE '\\')`)
+			args = append(args, lowerQuery, escaped+"%", "%"+escaped+"%")
 		} else {
-			whereClauses = append(whereClauses, "(LOWER(title) LIKE ? OR id LIKE ?)")
-			pattern := "%" + lowerQuery + "%"
+			whereClauses = append(whereClauses, `(LOWER(title) LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\')`)
+			pattern := "%" + escaped + "%"
 			args = append(args, pattern, pattern)
 		}
 	}
 
 	if filter.TitleSearch != "" {
-		whereClauses = append(whereClauses, "LOWER(title) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filter.TitleSearch)+"%")
+		whereClauses = append(whereClauses, `LOWER(title) LIKE ? ESCAPE '\\'`)
+		args = append(args, sqlbuild.LikeContains(filter.TitleSearch))
 	}
 	if filter.TitleContains != "" {
-		whereClauses = append(whereClauses, "LOWER(title) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filter.TitleContains)+"%")
+		whereClauses = append(whereClauses, `LOWER(title) LIKE ? ESCAPE '\\'`)
+		args = append(args, sqlbuild.LikeContains(filter.TitleContains))
 	}
 	if filter.DescriptionContains != "" {
-		whereClauses = append(whereClauses, "LOWER(description) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filter.DescriptionContains)+"%")
+		whereClauses = append(whereClauses, `LOWER(description) LIKE ? ESCAPE '\\'`)
+		args = append(args, sqlbuild.LikeContains(filter.DescriptionContains))
 	}
 	if filter.NotesContains != "" {
-		whereClauses = append(whereClauses, "LOWER(notes) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filter.NotesContains)+"%")
+		whereClauses = append(whereClauses, `LOWER(notes) LIKE ? ESCAPE '\\'`)
+		args = append(args, sqlbuild.LikeContains(filter.NotesContains))
 	}
 	if filter.ExternalRefContains != "" {
-		whereClauses = append(whereClauses, "LOWER(external_ref) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filter.ExternalRefContains)+"%")
+		whereClauses = append(whereClauses, `LOWER(external_ref) LIKE ? ESCAPE '\\'`)
+		args = append(args, sqlbuild.LikeContains(filter.ExternalRefContains))
 	}
 
 	// Status

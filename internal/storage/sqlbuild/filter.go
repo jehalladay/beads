@@ -10,6 +10,28 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// EscapeLikePattern escapes the LIKE wildcard metacharacters (% and _) plus the
+// escape character itself (backslash) in a user-supplied substring, so the
+// substring is matched LITERALLY inside a `LIKE '%'+s+'%'` operand (beads-b9ova).
+// Without this a user searching --title-contains '%' (or '_') has their input
+// act as a wildcard and over-matches every row. Callers must pair the escaped
+// value with an `ESCAPE '\\'` clause on the LIKE (see LikeContains). Backslash is
+// escaped FIRST so the backslashes introduced for % and _ are not re-escaped.
+// Exported so the dolt-package in-tx read path (transaction.go) shares one
+// implementation instead of a drifting copy.
+func EscapeLikePattern(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, "%", `\%`)
+	s = strings.ReplaceAll(s, "_", `\_`)
+	return s
+}
+
+// LikeContains returns the `%`-wrapped, metachar-escaped LIKE operand for a
+// case-insensitive substring match (used with `LOWER(col) LIKE ? ESCAPE '\\'`).
+func LikeContains(s string) string {
+	return "%" + EscapeLikePattern(strings.ToLower(s)) + "%"
+}
+
 // BuildIssueFilterClauses builds WHERE clause fragments and args from a query
 // string and IssueFilter. The tables parameter controls which table names are
 // referenced in subqueries (issues vs wisps).
@@ -19,35 +41,40 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 
 	if query != "" {
 		lowerQuery := strings.ToLower(query)
+		// beads-b9ova: escape LIKE metachars in the user's query + ESCAPE '\\' so a
+		// bare %/_ matches literally instead of acting as a wildcard. The id-prefix
+		// leg (id LIKE lowerQuery+'%') is escaped too so a query with %/_ doesn't
+		// over-match on the id column either; the trailing '%' stays a wildcard.
+		escaped := EscapeLikePattern(lowerQuery)
 		if LooksLikeIssueID(query) {
-			whereClauses = append(whereClauses, "(id = ? OR id LIKE ? OR LOWER(title) LIKE ? OR LOWER(external_ref) LIKE ?)")
-			args = append(args, lowerQuery, lowerQuery+"%", "%"+lowerQuery+"%", "%"+lowerQuery+"%")
+			whereClauses = append(whereClauses, `(id = ? OR id LIKE ? ESCAPE '\\' OR LOWER(title) LIKE ? ESCAPE '\\' OR LOWER(external_ref) LIKE ? ESCAPE '\\')`)
+			args = append(args, lowerQuery, escaped+"%", "%"+escaped+"%", "%"+escaped+"%")
 		} else {
-			whereClauses = append(whereClauses, "(LOWER(title) LIKE ? OR id LIKE ?)")
-			pattern := "%" + lowerQuery + "%"
+			whereClauses = append(whereClauses, `(LOWER(title) LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\')`)
+			pattern := "%" + escaped + "%"
 			args = append(args, pattern, pattern)
 		}
 	}
 
 	if filter.TitleSearch != "" {
-		whereClauses = append(whereClauses, "LOWER(title) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filter.TitleSearch)+"%")
+		whereClauses = append(whereClauses, `LOWER(title) LIKE ? ESCAPE '\\'`)
+		args = append(args, LikeContains(filter.TitleSearch))
 	}
 	if filter.TitleContains != "" {
-		whereClauses = append(whereClauses, "LOWER(title) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filter.TitleContains)+"%")
+		whereClauses = append(whereClauses, `LOWER(title) LIKE ? ESCAPE '\\'`)
+		args = append(args, LikeContains(filter.TitleContains))
 	}
 	if filter.DescriptionContains != "" {
-		whereClauses = append(whereClauses, "LOWER(description) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filter.DescriptionContains)+"%")
+		whereClauses = append(whereClauses, `LOWER(description) LIKE ? ESCAPE '\\'`)
+		args = append(args, LikeContains(filter.DescriptionContains))
 	}
 	if filter.NotesContains != "" {
-		whereClauses = append(whereClauses, "LOWER(notes) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filter.NotesContains)+"%")
+		whereClauses = append(whereClauses, `LOWER(notes) LIKE ? ESCAPE '\\'`)
+		args = append(args, LikeContains(filter.NotesContains))
 	}
 	if filter.ExternalRefContains != "" {
-		whereClauses = append(whereClauses, "LOWER(external_ref) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filter.ExternalRefContains)+"%")
+		whereClauses = append(whereClauses, `LOWER(external_ref) LIKE ? ESCAPE '\\'`)
+		args = append(args, LikeContains(filter.ExternalRefContains))
 	}
 
 	if filter.Status != nil {

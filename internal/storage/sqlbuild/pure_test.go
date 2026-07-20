@@ -97,3 +97,36 @@ func TestLooksLikeIssueID(t *testing.T) {
 		})
 	}
 }
+
+// TestEscapeLikePattern is the teeth for beads-b9ova: LIKE wildcard metachars in
+// user substring input must be escaped so they match literally, and the escape
+// char (backslash) itself must be escaped first.
+func TestEscapeLikePattern(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"plain", "plain"},
+		{"100%", `100\%`},
+		{"a_b", `a\_b`},
+		{"%_%", `\%\_\%`},
+		{`back\slash`, `back\\slash`},
+		// backslash escaped FIRST: a literal `\%` becomes `\\` + `\%`, not `\` + `\\%`
+		{`\%`, `\\\%`},
+	}
+	for _, c := range cases {
+		if got := EscapeLikePattern(c.in); got != c.want {
+			t.Errorf("EscapeLikePattern(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestLikeContains verifies the %-wrapped, lowercased, escaped operand.
+func TestLikeContains(t *testing.T) {
+	t.Parallel()
+	if got := LikeContains("100%"); got != `%100\%%` {
+		t.Errorf("LikeContains(100%%) = %q, want %q", got, `%100\%%`)
+	}
+	if got := LikeContains("AbC"); got != "%abc%" {
+		t.Errorf("LikeContains(AbC) = %q, want %q", got, "%abc%")
+	}
+}
