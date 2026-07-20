@@ -837,7 +837,7 @@ func renderSwarmStatus(status *SwarmStatus) {
 		for _, issue := range status.Active {
 			part := fmt.Sprintf("⟳ %s", issue.ID)
 			if issue.Assignee != "" {
-				part += fmt.Sprintf(" [%s]", issue.Assignee)
+				part += fmt.Sprintf(" [%s]", ui.SanitizeForTerminal(issue.Assignee))
 			}
 			parts = append(parts, part)
 		}

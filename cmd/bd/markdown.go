@@ -346,7 +346,7 @@ func dryRunMarkdownBatch(templates []*IssueTemplate, filepath string) error {
 	for _, t := range templates {
 		fmt.Printf("  %s [P%d, %s]\n", displayTitle(t.Title), t.Priority, t.IssueType)
 		if t.Assignee != "" {
-			fmt.Printf("    Assignee: %s\n", t.Assignee)
+			fmt.Printf("    Assignee: %s\n", ui.SanitizeForTerminal(t.Assignee))
 		}
 		if len(t.Labels) > 0 {
 			fmt.Printf("    Labels: %s\n", strings.Join(t.Labels, ", "))

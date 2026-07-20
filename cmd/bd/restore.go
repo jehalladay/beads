@@ -214,7 +214,7 @@ func displayRestoredIssue(issue *types.Issue, provenance string) {
 	)
 
 	if issue.Assignee != "" {
-		fmt.Printf("%s %s\n", ui.RenderBold("Assignee:"), issue.Assignee)
+		fmt.Printf("%s %s\n", ui.RenderBold("Assignee:"), ui.SanitizeForTerminal(issue.Assignee))
 	}
 
 	if len(issue.Labels) > 0 {
