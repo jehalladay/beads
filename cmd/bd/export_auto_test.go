@@ -265,6 +265,35 @@ func TestGuardAutoExportOverwriteAllowsMemoriesWhenIncluded(t *testing.T) {
 	}
 }
 
+// TestGuardAutoExportOverwriteCountsLabelDefinedTemplate proves the shrink-guard
+// treats a canonically label-defined proto (is_template=NULL, label=template) as
+// an out-of-scope template record, same as a formula-cooked proto that carries
+// the is_template column. Before beads-pcttr the guard keyed off is_template
+// alone, so a `bd create --label template` proto slipped past as an in-scope
+// issue (same column-vs-label root as beads-v8ck8).
+func TestGuardAutoExportOverwriteCountsLabelDefinedTemplate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "issues.jsonl")
+	writeJSONLLines(t, path,
+		map[string]any{"_type": "issue", "id": "bd-1", "issue_type": "task", "title": "kept"},
+		map[string]any{"_type": "issue", "id": "bd-label-proto", "issue_type": "epic", "title": "label proto", "labels": []string{"template"}},
+	)
+
+	err := guardAutoExportOverwrite(path, nil, false)
+	if err == nil {
+		t.Fatal("expected guardAutoExportOverwrite to reject a label-defined template record, got nil")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"refusing to overwrite",
+		"1 record(s) outside auto-export scope",
+		"1 infra/template/ephemeral issues",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("guard error %q does not contain %q", msg, want)
+		}
+	}
+}
+
 func writeJSONLLines(t *testing.T, path string, records ...map[string]any) {
 	t.Helper()
 	var b strings.Builder

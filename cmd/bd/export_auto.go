@@ -503,9 +503,23 @@ func classifyExistingAutoExportRecord(line []byte, infraTypes map[string]bool, i
 		IsTemplate bool            `json:"is_template"`
 		Ephemeral  bool            `json:"ephemeral"`
 		ID         string          `json:"id"`
+		Labels     []string        `json:"labels"`
 	}
 	if err := json.Unmarshal(line, &record); err != nil {
 		return err
+	}
+	// A proto is template-ish if it carries the template LABEL OR the
+	// is_template column: the column is written only by formula-cooked protos,
+	// while a canonical `bd create --label template` proto has is_template=NULL.
+	// The shrink-guard must treat both as out-of-scope template records, else a
+	// label-defined proto slips past the guard. Same column-vs-label root as
+	// beads-v8ck8; beads-pcttr.
+	isTemplate := record.IsTemplate
+	for _, label := range record.Labels {
+		if label == BeadsTemplateLabel {
+			isTemplate = true
+			break
+		}
 	}
 
 	switch record.Type {
@@ -521,7 +535,7 @@ func classifyExistingAutoExportRecord(line []byte, infraTypes map[string]bool, i
 			stats.UnknownRecords++
 			return nil
 		}
-		if infraTypes[string(record.IssueType)] || record.IsTemplate || record.Ephemeral {
+		if infraTypes[string(record.IssueType)] || isTemplate || record.Ephemeral {
 			stats.FilteredRecords++
 			stats.FilteredIssues++
 		}

@@ -196,3 +196,32 @@ func TestFormatIssueLongExtras(t *testing.T) {
 		}
 	}
 }
+
+// TestFormatIssueLongExtrasTemplateLabel proves `bd show --long` reports
+// "Template: yes" for a canonically label-defined proto (is_template=NULL,
+// label=template) — not just for a formula-cooked proto that carries the
+// is_template column. Before beads-pcttr the display keyed off issue.IsTemplate
+// alone, so a `bd create --label template` proto showed nothing (same
+// column-vs-label root as beads-v8ck8 mol bond).
+func TestFormatIssueLongExtrasTemplateLabel(t *testing.T) {
+	fmtTime := func(tm time.Time) string { return tm.Format("2006-01-02") }
+
+	// Label-defined proto: is_template column is false/NULL, but the template
+	// label is present.
+	labelProto := &types.Issue{
+		ID: "bd-lp", Status: types.StatusOpen, IssueType: types.TypeEpic,
+		IsTemplate: false, Labels: []string{"template"},
+	}
+	if got := formatIssueLongExtras(labelProto, fmtTime); !strings.Contains(got, "Template: yes") {
+		t.Errorf("label-defined proto should show 'Template: yes' (beads-pcttr):\n%s", got)
+	}
+
+	// A plain non-template issue must NOT report Template: yes.
+	plain := &types.Issue{
+		ID: "bd-plain", Status: types.StatusOpen, IssueType: types.TypeTask,
+		Labels: []string{"backend", "urgent"},
+	}
+	if got := formatIssueLongExtras(plain, fmtTime); strings.Contains(got, "Template: yes") {
+		t.Errorf("non-template issue must not show 'Template: yes':\n%s", got)
+	}
+}

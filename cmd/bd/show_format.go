@@ -264,7 +264,13 @@ func formatIssueLongExtras(issue *types.Issue, formatTime func(time.Time) string
 	if issue.Pinned {
 		closeParts = append(closeParts, "  Pinned: yes")
 	}
-	if issue.IsTemplate {
+	// Report template-ness off the template LABEL (isProto) OR the is_template
+	// column, not the column alone. The is_template column is written only by
+	// formula-cooked protos (cook.go/molecules.go); a canonical
+	// `bd create --label template` proto has is_template=NULL, so keying off the
+	// column alone hid every label-defined proto here. Same column-vs-label root
+	// as beads-v8ck8 (mol bond dispatch); beads-pcttr.
+	if issue.IsTemplate || isProto(issue) {
 		closeParts = append(closeParts, "  Template: yes")
 	}
 	if issue.MolType != "" {
