@@ -140,7 +140,7 @@ func findInProgressMoleculeIDs(ctx context.Context, s storage.DoltStorage, agent
 
 // printMoleculeProgressStats prints molecule progress in human-readable format
 func printMoleculeProgressStats(stats *types.MoleculeProgressStats) {
-	fmt.Printf("Molecule: %s (%s)\n", ui.RenderAccent(stats.MoleculeID), stats.MoleculeTitle)
+	fmt.Printf("Molecule: %s (%s)\n", ui.RenderAccent(stats.MoleculeID), displayTitle(stats.MoleculeTitle))
 
 	// Progress bar
 	var percent float64
