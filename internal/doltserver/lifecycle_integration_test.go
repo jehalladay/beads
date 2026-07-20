@@ -109,8 +109,9 @@ func TestLifecycle_StartStopCycle(t *testing.T) {
 	diag := integration.NewDiagnostics(t, beadsDir)
 	diag.CaptureOnFailure()
 
-	// Start server.
-	state, err := doltserver.Start(beadsDir)
+	// Start server. startTracked registers the PID immediately (closing the
+	// register-timing window) and installs a dir-scoped reap backstop.
+	state, err := startTracked(t, reg, beadsDir)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -122,10 +123,6 @@ func TestLifecycle_StartStopCycle(t *testing.T) {
 	}
 	if state.Port == 0 {
 		t.Fatal("Start returned Port=0")
-	}
-	// Track for cleanup.
-	if p, err := os.FindProcess(state.PID); err == nil {
-		reg.Register(p)
 	}
 
 	t.Logf("Server started: PID=%d Port=%d", state.PID, state.Port)
@@ -186,12 +183,9 @@ func TestLifecycle_CrashRecovery(t *testing.T) {
 	diag.CaptureOnFailure()
 
 	// Start server and insert data.
-	state1, err := doltserver.Start(beadsDir)
+	state1, err := startTracked(t, reg, beadsDir)
 	if err != nil {
 		t.Fatalf("Start (first): %v", err)
-	}
-	if p, err := os.FindProcess(state1.PID); err == nil {
-		reg.Register(p)
 	}
 
 	db := connectMySQL(t, state1.Port)
@@ -227,7 +221,7 @@ func TestLifecycle_CrashRecovery(t *testing.T) {
 	}
 
 	// Start server again — should clean up stale state and work.
-	state2, err := doltserver.Start(beadsDir)
+	state2, err := startTracked(t, reg, beadsDir)
 	if err != nil {
 		t.Fatalf("Start (second): %v", err)
 	}
@@ -236,9 +230,6 @@ func TestLifecycle_CrashRecovery(t *testing.T) {
 	}
 	if state2.PID == state1.PID {
 		t.Error("second Start reused the same PID (unexpected)")
-	}
-	if p, err := os.FindProcess(state2.PID); err == nil {
-		reg.Register(p)
 	}
 
 	t.Logf("Server restarted: PID=%d Port=%d", state2.PID, state2.Port)
@@ -272,12 +263,9 @@ func TestLifecycle_RestartDataPersistence(t *testing.T) {
 	diag.CaptureOnFailure()
 
 	// Start, write data, stop.
-	state1, err := doltserver.Start(beadsDir)
+	state1, err := startTracked(t, reg, beadsDir)
 	if err != nil {
 		t.Fatalf("Start (first): %v", err)
-	}
-	if p, err := os.FindProcess(state1.PID); err == nil {
-		reg.Register(p)
 	}
 
 	db := connectMySQL(t, state1.Port)
@@ -298,12 +286,9 @@ func TestLifecycle_RestartDataPersistence(t *testing.T) {
 	reg.Deregister(state1.PID)
 
 	// Restart and verify data.
-	state2, err := doltserver.Start(beadsDir)
+	state2, err := startTracked(t, reg, beadsDir)
 	if err != nil {
 		t.Fatalf("Start (second): %v", err)
-	}
-	if p, err := os.FindProcess(state2.PID); err == nil {
-		reg.Register(p)
 	}
 
 	db2 := connectMySQL(t, state2.Port)
@@ -335,21 +320,15 @@ func TestLifecycle_MultiRepoIsolation(t *testing.T) {
 	diagB.CaptureOnFailure()
 
 	// Start both servers.
-	stateA, err := doltserver.Start(beadsDirA)
+	stateA, err := startTracked(t, reg, beadsDirA)
 	if err != nil {
 		t.Fatalf("Start(A): %v", err)
 	}
-	if p, err := os.FindProcess(stateA.PID); err == nil {
-		reg.Register(p)
-	}
 	t.Logf("Repo A: PID=%d Port=%d", stateA.PID, stateA.Port)
 
-	stateB, err := doltserver.Start(beadsDirB)
+	stateB, err := startTracked(t, reg, beadsDirB)
 	if err != nil {
 		t.Fatalf("Start(B): %v", err)
-	}
-	if p, err := os.FindProcess(stateB.PID); err == nil {
-		reg.Register(p)
 	}
 	t.Logf("Repo B: PID=%d Port=%d", stateB.PID, stateB.Port)
 
@@ -394,12 +373,14 @@ func TestLifecycle_ConcurrentIsRunningStart(t *testing.T) {
 	var startErr atomic.Pointer[error]
 	ready := make(chan struct{})
 
-	// Goroutine 1: Start the server.
+	// Goroutine 1: Start the server. startTracked registers the PID inside the
+	// goroutine (before returning), closing the previously-widest window where
+	// the PID was registered only after wg.Wait().
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		<-ready
-		state, err := doltserver.Start(beadsDir)
+		state, err := startTracked(t, reg, beadsDir)
 		if err != nil {
 			startErr.Store(&err)
 			return
@@ -441,9 +422,6 @@ func TestLifecycle_ConcurrentIsRunningStart(t *testing.T) {
 	state := startState.Load()
 	if state == nil {
 		t.Fatal("Start returned nil state")
-	}
-	if p, err := os.FindProcess(state.PID); err == nil {
-		reg.Register(p)
 	}
 
 	// Check for IsRunning errors (panics, data races).

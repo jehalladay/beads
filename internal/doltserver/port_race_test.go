@@ -5,7 +5,6 @@ package doltserver_test
 import (
 	"fmt"
 	"net"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -37,7 +36,10 @@ func TestPortRace_ConcurrentStart(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-ready
-			state, err := doltserver.Start(beadsDir)
+			// startTracked registers the PID inside the goroutine (closing the
+			// window). flock serializes, so all goroutines return the same PID;
+			// duplicate registration is a map-keyed no-op and Stop is idempotent.
+			state, err := startTracked(t, reg, beadsDir)
 			mu.Lock()
 			states[idx] = state
 			errs[idx] = err
@@ -75,12 +77,6 @@ func TestPortRace_ConcurrentStart(t *testing.T) {
 		}
 	}
 
-	if firstPID != 0 {
-		if p, err := os.FindProcess(firstPID); err == nil {
-			reg.Register(p)
-		}
-	}
-
 	// Cleanup.
 	if err := doltserver.Stop(beadsDir); err != nil {
 		t.Logf("Stop: %v", err)
@@ -109,15 +105,12 @@ func TestPortRace_EphemeralPortRetry(t *testing.T) {
 
 	// Start() uses ephemeral port allocation (port 0) by default.
 	// It should succeed even with one port occupied because it retries.
-	state, err := doltserver.Start(beadsDir)
+	state, err := startTracked(t, reg, beadsDir)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if state.Port == occupiedPort {
 		t.Errorf("Start allocated the occupied port %d", occupiedPort)
-	}
-	if p, err := os.FindProcess(state.PID); err == nil {
-		reg.Register(p)
 	}
 
 	t.Logf("Server started on port %d (occupied port was %d)", state.Port, occupiedPort)
@@ -136,12 +129,9 @@ func TestPortRace_LoopbackBinding(t *testing.T) {
 	diag := integration.NewDiagnostics(t, beadsDir)
 	diag.CaptureOnFailure()
 
-	state, err := doltserver.Start(beadsDir)
+	state, err := startTracked(t, reg, beadsDir)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
-	}
-	if p, err := os.FindProcess(state.PID); err == nil {
-		reg.Register(p)
 	}
 
 	// Verify loopback connection works.
@@ -179,11 +169,13 @@ func TestPortRace_MultiRepoPortCollision(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		stateA, errA = doltserver.Start(beadsDirA)
+		// startTracked registers each server's PID inside its goroutine,
+		// closing the window that post-wg.Wait() registration left open.
+		stateA, errA = startTracked(t, reg, beadsDirA)
 	}()
 	go func() {
 		defer wg.Done()
-		stateB, errB = doltserver.Start(beadsDirB)
+		stateB, errB = startTracked(t, reg, beadsDirB)
 	}()
 	wg.Wait()
 
@@ -192,17 +184,6 @@ func TestPortRace_MultiRepoPortCollision(t *testing.T) {
 	}
 	if errB != nil {
 		t.Fatalf("Start(B): %v", errB)
-	}
-
-	if stateA.PID != 0 {
-		if p, err := os.FindProcess(stateA.PID); err == nil {
-			reg.Register(p)
-		}
-	}
-	if stateB.PID != 0 {
-		if p, err := os.FindProcess(stateB.PID); err == nil {
-			reg.Register(p)
-		}
 	}
 
 	// Verify different ports.

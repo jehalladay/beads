@@ -135,6 +135,7 @@ func startDoltServer(t *testing.T, dir string, sqlPort, remotesAPIPort int) func
 		"--loglevel", "error",
 	)
 	cmd.Dir = dir
+	setSpawnPgid(cmd)
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start dolt sql-server: %v", err)
@@ -146,7 +147,7 @@ func startDoltServer(t *testing.T, dir string, sqlPort, remotesAPIPort int) func
 		deadline := time.Now().Add(30 * time.Second)
 		for {
 			if time.Now().After(deadline) {
-				cmd.Process.Kill() //nolint:errcheck
+				killSpawnGroup(cmd)
 				t.Fatalf("dolt sql-server did not start on %s within 30s", addr)
 			}
 			conn, err := net.DialTimeout("tcp", addr, time.Second)
@@ -158,10 +159,5 @@ func startDoltServer(t *testing.T, dir string, sqlPort, remotesAPIPort int) func
 		}
 	}
 
-	return func() {
-		if cmd.Process != nil {
-			cmd.Process.Kill() //nolint:errcheck
-			cmd.Wait()         //nolint:errcheck
-		}
-	}
+	return func() { killSpawnGroup(cmd) }
 }

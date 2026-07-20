@@ -1170,13 +1170,11 @@ func TestGitRemoteExternalServerRouting(t *testing.T) {
 		"-P", fmt.Sprintf("%d", port),
 	)
 	serverCmd.Dir = serverDataDir
+	setSpawnPgid(serverCmd)
 	if err := serverCmd.Start(); err != nil {
 		t.Fatalf("failed to start dolt sql-server: %v", err)
 	}
-	t.Cleanup(func() {
-		_ = serverCmd.Process.Kill()
-		_ = serverCmd.Wait()
-	})
+	t.Cleanup(func() { killSpawnGroup(serverCmd) })
 
 	if !testutil.WaitForServer(port, 15*time.Second) {
 		t.Fatal("dolt sql-server did not become ready within timeout")
@@ -1271,23 +1269,19 @@ func TestSQLRemotePersistsAcrossExternalServerRestart(t *testing.T) {
 			"-P", fmt.Sprintf("%d", port),
 		)
 		cmd.Dir = serverDataDir
+		setSpawnPgid(cmd)
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("failed to start dolt sql-server: %v", err)
 		}
 		if !testutil.WaitForServer(port, 15*time.Second) {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
+			killSpawnGroup(cmd)
 			t.Fatal("dolt sql-server did not become ready within timeout")
 		}
 		return cmd
 	}
 	stopServer := func(cmd *exec.Cmd) {
 		t.Helper()
-		if cmd == nil || cmd.Process == nil {
-			return
-		}
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		killSpawnGroup(cmd)
 	}
 
 	serverCmd := startServer()
@@ -1420,13 +1414,11 @@ func TestCredentialCLIRoutingE2E(t *testing.T) {
 		"-P", fmt.Sprintf("%d", port),
 	)
 	serverCmd.Dir = serverDataDir
+	setSpawnPgid(serverCmd)
 	if err := serverCmd.Start(); err != nil {
 		t.Fatalf("failed to start dolt sql-server: %v", err)
 	}
-	t.Cleanup(func() {
-		_ = serverCmd.Process.Kill()
-		_ = serverCmd.Wait()
-	})
+	t.Cleanup(func() { killSpawnGroup(serverCmd) })
 
 	if !testutil.WaitForServer(port, 15*time.Second) {
 		t.Fatal("dolt sql-server did not become ready within timeout")

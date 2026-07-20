@@ -3,7 +3,6 @@
 package doltserver_test
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
@@ -48,15 +47,12 @@ func TestDirtyState_StalePIDAliveNonDolt(t *testing.T) {
 	}
 
 	// Start should succeed after cleaning up stale state.
-	startState, err := doltserver.Start(beadsDir)
+	startState, err := startTracked(t, reg, beadsDir)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if !startState.Running {
 		t.Fatal("Start returned Running=false")
-	}
-	if p, err := os.FindProcess(startState.PID); err == nil {
-		reg.Register(p)
 	}
 
 	// Verify the sleep process was NOT killed (wrong process protection).
@@ -99,12 +95,9 @@ func TestDirtyState_StalePIDDead(t *testing.T) {
 	}
 
 	// Start should succeed.
-	startState, err := doltserver.Start(beadsDir)
+	startState, err := startTracked(t, reg, beadsDir)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
-	}
-	if p, err := os.FindProcess(startState.PID); err == nil {
-		reg.Register(p)
 	}
 
 	if err := doltserver.Stop(beadsDir); err != nil {
@@ -126,15 +119,12 @@ func TestDirtyState_StalePortOnly(t *testing.T) {
 	corruptor.WriteStalePort(13306)
 
 	// Start should succeed.
-	state, err := doltserver.Start(beadsDir)
+	state, err := startTracked(t, reg, beadsDir)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if !state.Running {
 		t.Fatal("Start returned Running=false")
-	}
-	if p, err := os.FindProcess(state.PID); err == nil {
-		reg.Register(p)
 	}
 
 	if err := doltserver.Stop(beadsDir); err != nil {
@@ -183,15 +173,12 @@ func TestDirtyState_TruncatedMetadata(t *testing.T) {
 
 	// Start should not panic. It may succeed (ignoring corrupt metadata)
 	// or return an error — either is acceptable.
-	state, err := doltserver.Start(beadsDir)
+	state, err := startTracked(t, reg, beadsDir)
 	if err != nil {
 		t.Logf("Start returned error (acceptable): %v", err)
 		return
 	}
 
-	if p, err := os.FindProcess(state.PID); err == nil {
-		reg.Register(p)
-	}
 	if err := doltserver.Stop(beadsDir); err != nil {
 		t.Logf("Stop: %v", err)
 	}
@@ -210,15 +197,12 @@ func TestDirtyState_PortZero(t *testing.T) {
 	corruptor.WritePortZero()
 
 	// Start should succeed — port 0 is treated as "no port".
-	state, err := doltserver.Start(beadsDir)
+	state, err := startTracked(t, reg, beadsDir)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if state.Port == 0 {
 		t.Error("Start returned port 0 — should have allocated a real port")
-	}
-	if p, err := os.FindProcess(state.PID); err == nil {
-		reg.Register(p)
 	}
 
 	if err := doltserver.Stop(beadsDir); err != nil {
@@ -240,15 +224,12 @@ func TestDirtyState_CombinedStalePIDAndPort(t *testing.T) {
 	corruptor.CreateCombinedStaleState(99999999, 13306)
 
 	// Start should clean up and succeed.
-	state, err := doltserver.Start(beadsDir)
+	state, err := startTracked(t, reg, beadsDir)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if !state.Running {
 		t.Fatal("Start returned Running=false")
-	}
-	if p, err := os.FindProcess(state.PID); err == nil {
-		reg.Register(p)
 	}
 
 	// Verify we can actually connect.
@@ -283,14 +264,11 @@ func TestDirtyState_OrphanNomsLock(t *testing.T) {
 	}
 
 	// Start should succeed (dolt handles orphan LOCK files).
-	state, err := doltserver.Start(beadsDir)
+	state, err := startTracked(t, reg, beadsDir)
 	if err != nil {
 		// Some dolt versions may fail here — log but don't hard-fail.
 		t.Logf("Start with orphan LOCK: %v (may be dolt version dependent)", err)
 		return
-	}
-	if p, err := os.FindProcess(state.PID); err == nil {
-		reg.Register(p)
 	}
 
 	// Give server time to initialize.

@@ -71,13 +71,11 @@ func TestCredentialCLIRoutingE2ESharedServer(t *testing.T) {
 		"-P", fmt.Sprintf("%d", port),
 	)
 	serverCmd.Dir = sharedDoltDir
+	setSpawnPgid(serverCmd)
 	if err := serverCmd.Start(); err != nil {
 		t.Fatalf("failed to start dolt sql-server: %v", err)
 	}
-	t.Cleanup(func() {
-		_ = serverCmd.Process.Kill()
-		_ = serverCmd.Wait()
-	})
+	t.Cleanup(func() { killSpawnGroup(serverCmd) })
 
 	if !testutil.WaitForServer(port, 15*time.Second) {
 		t.Fatal("dolt sql-server did not become ready within timeout")
