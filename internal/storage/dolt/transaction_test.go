@@ -406,3 +406,63 @@ func assertTableCount(ctx context.Context, t *testing.T, db *sql.DB, table, id s
 		t.Fatalf("%s count for %s = %d, want %d", table, id, got, want)
 	}
 }
+
+// TestTxGetIssueHydratesLabels proves the storage.Transaction read-your-writes
+// GetIssue path hydrates .Labels in the same transaction, mirroring the live
+// issueops.GetIssueInTx path (beads-5rn1c). doltTransaction.GetIssue is the
+// lone hand-copied GetIssue variant; before the fix it scanned the row and
+// returned with Labels=nil (the sibling drift to the kyr9q filter-drop on this
+// same object). Covers BOTH tables — a regular issue (labels) and an active
+// wisp (wisp_labels) — since the label table is routed by wisp status.
+func TestTxGetIssueHydratesLabels(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	regular := &types.Issue{
+		ID:        "test-5rn1c-regular",
+		Title:     "regular issue with labels for in-tx GetIssue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Labels:    []string{"beta", "alpha"}, // stored sorted -> [alpha beta]
+	}
+	wisp := &types.Issue{
+		ID:        "test-5rn1c-wisp",
+		Title:     "wisp with labels for in-tx GetIssue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+		Labels:    []string{"gamma"},
+	}
+	if err := store.RunInTransaction(ctx, "test: 5rn1c create labeled issue+wisp", func(tx storage.Transaction) error {
+		return tx.CreateIssues(ctx, []*types.Issue{regular, wisp}, "tester")
+	}); err != nil {
+		t.Fatalf("RunInTransaction create labeled issue+wisp: %v", err)
+	}
+
+	// Read them back via the in-tx GetIssue path and assert .Labels is hydrated.
+	if err := store.RunInTransaction(ctx, "test: 5rn1c in-tx GetIssue labels", func(tx storage.Transaction) error {
+		gotReg, err := tx.GetIssue(ctx, regular.ID)
+		if err != nil {
+			return err
+		}
+		if len(gotReg.Labels) != 2 || gotReg.Labels[0] != "alpha" || gotReg.Labels[1] != "beta" {
+			return fmt.Errorf("in-tx GetIssue(%s).Labels = %v, want [alpha beta] (labels dropped, beads-5rn1c)", regular.ID, gotReg.Labels)
+		}
+
+		gotWisp, err := tx.GetIssue(ctx, wisp.ID)
+		if err != nil {
+			return err
+		}
+		if len(gotWisp.Labels) != 1 || gotWisp.Labels[0] != "gamma" {
+			return fmt.Errorf("in-tx GetIssue(%s).Labels = %v, want [gamma] (wisp_labels dropped, beads-5rn1c)", wisp.ID, gotWisp.Labels)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("in-tx GetIssue label hydration: %v", err)
+	}
+}

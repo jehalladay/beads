@@ -259,10 +259,30 @@ func (t *doltTransaction) CreateIssues(ctx context.Context, issues []*types.Issu
 // Checks wisps table for active wisps (including explicit-ID ephemerals).
 func (t *doltTransaction) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
 	table := "issues"
+	labelTable := "labels"
 	if t.isActiveWisp(ctx, id) {
 		table = "wisps"
+		labelTable = "wisp_labels"
 	}
-	return scanIssueTxFromTable(ctx, t.txFor(table), table, id)
+	tx := t.txFor(table)
+	issue, err := scanIssueTxFromTable(ctx, tx, table, id)
+	if err != nil {
+		return nil, err
+	}
+	// Hydrate labels in the SAME transaction, mirroring the live in-tx path
+	// issueops.getIssueFromTableInTx (get_issue.go:48). Without this the
+	// storage.Transaction read-your-writes GetIssue returned Labels=nil while
+	// every other GetIssue variant hydrates (beads-5rn1c; sibling of the
+	// kyr9q filter-drop on this same hand-copied doltTransaction). Same-tx (not
+	// a separate query) is required to avoid the MaxOpenConns=1 deadlock the
+	// canonical path documents. Follow-up (not done here, larger surface):
+	// delegate GetIssue to issueops.GetIssueInTx to retire the hand-copy.
+	labels, err := issueops.GetLabelsInTx(ctx, tx, labelTable, id)
+	if err != nil {
+		return nil, fmt.Errorf("get issue labels: %w", err)
+	}
+	issue.Labels = labels
+	return issue, nil
 }
 
 // SearchIssues searches for issues within the transaction.
