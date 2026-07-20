@@ -93,9 +93,12 @@ func (s *testSuite) uccReopenReasonComment() {
 		domain.ReopenIssueParams{Reason: "qa found a regression"}, "tester")
 	s.Require().NoError(err)
 
+	// beads-bimd0: assert the reason is visible in the COMMENTS table (what bd
+	// show / bd comments read), not an invisible EventCommented row in events.
+	// The old events-table assertion was a false-green — it proved the reason
+	// was written somewhere, not that a user could ever see it.
 	var comment string
 	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
-		"SELECT comment FROM events WHERE issue_id = ? AND event_type = ?",
-		"bd-ucc-ro-cmt", string(types.EventCommented)).Scan(&comment))
+		"SELECT text FROM comments WHERE issue_id = ?", "bd-ucc-ro-cmt").Scan(&comment))
 	s.Equal("qa found a regression", comment)
 }

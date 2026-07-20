@@ -124,10 +124,13 @@ func (s *testSuite) reopenAppendsComment() {
 		domain.ReopenRowParams{Reason: "regression spotted"}, "tester", domain.IssueTableOpts{})
 	s.Require().NoError(err)
 
+	// beads-bimd0: the reopen reason must land in the COMMENTS table (the only
+	// surface bd show / bd comments read), NOT an EventCommented row in events
+	// that no read path surfaces. Asserting the events row here was a false-
+	// green: it "passed" while the user-visible comment was silently missing.
 	var comment string
 	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
-		"SELECT comment FROM events WHERE issue_id = ? AND event_type = ?",
-		"bd-ro-cmt", string(types.EventCommented)).Scan(&comment))
+		"SELECT text FROM comments WHERE issue_id = ?", "bd-ro-cmt").Scan(&comment))
 	s.Equal("regression spotted", comment)
 }
 
@@ -142,9 +145,9 @@ func (s *testSuite) reopenNoCommentEmptyReason() {
 		domain.ReopenRowParams{}, "tester", domain.IssueTableOpts{})
 	s.Require().NoError(err)
 
+	// beads-bimd0: an empty reason must add no comment on the visible surface.
 	var cmtCount int
 	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
-		"SELECT COUNT(*) FROM events WHERE issue_id = ? AND event_type = ?",
-		"bd-ro-nocmt", string(types.EventCommented)).Scan(&cmtCount))
+		"SELECT COUNT(*) FROM comments WHERE issue_id = ?", "bd-ro-nocmt").Scan(&cmtCount))
 	s.Equal(0, cmtCount)
 }
