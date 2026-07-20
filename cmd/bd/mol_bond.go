@@ -265,7 +265,7 @@ func printMolBondDryRun(issueA, issueB *types.Issue, formulaA, formulaB, argA, a
 	}
 	if aIsProto && bIsProto {
 		fmt.Printf("  Result: compound proto\n")
-		if customTitle != "" {
+		if customTitleProvided(customTitle) {
 			fmt.Printf("  Custom title: %s\n", displayTitle(customTitle))
 		}
 	} else if aIsProto || bIsProto {
@@ -296,12 +296,25 @@ func operandType(isProtoIssue bool) string {
 	return "molecule"
 }
 
+// customTitleProvided reports whether a `bd mol bond --as` value should override
+// the computed "Compound: A + B" title. --as is an OPTIONAL free-text override
+// with no default, so a whitespace-only value (beads-2itry, the in93a
+// whitespace-override class: dolt commit -m by9ph, mol squash --summary au0rt,
+// todo done --reason 07sko) must be treated as NOT provided and fall through to
+// the computed title rather than clobbering it with blank whitespace. A genuine
+// title is accepted as-provided and used VERBATIM. Both consumers — the dry-run
+// display (printMolBondDryRun) and the store leg (bondProtoProto) — gate on this
+// so they agree by construction.
+func customTitleProvided(customTitle string) bool {
+	return strings.TrimSpace(customTitle) != ""
+}
+
 // bondProtoProto bonds two protos to create a compound proto
 func bondProtoProto(ctx context.Context, s storage.DoltStorage, protoA, protoB *types.Issue, bondType, customTitle, actorName string) (*BondResult, error) {
 	// Create compound proto: a new root that references both protos as children
 	// The compound root will be a new issue that ties them together
 	compoundTitle := fmt.Sprintf("Compound: %s + %s", protoA.Title, protoB.Title)
-	if customTitle != "" {
+	if customTitleProvided(customTitle) {
 		compoundTitle = customTitle
 	}
 
