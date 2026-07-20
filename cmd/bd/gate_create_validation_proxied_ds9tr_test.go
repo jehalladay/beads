@@ -49,4 +49,30 @@ func TestProxiedGateCreateRejectsUnresolvableGates(t *testing.T) {
 			t.Errorf("expected gate-created, got: %s", stdout)
 		}
 	})
+
+	// beads-9jtzh (proxied twin): a gh:pr gate with no --await-id can never
+	// resolve → reject at create, matching the direct path.
+	t.Run("ghpr_without_await_id_rejected", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "gpp")
+		target := bdProxiedCreate(t, bd, p.dir, "Gate target ghpr", "--type", "task")
+		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "gate", "create", "--type", "gh:pr", "--blocks", target.ID)
+		if err == nil {
+			t.Fatalf("gh:pr without --await-id must be rejected, got success:\n%s", stdout)
+		}
+		if !strings.Contains(stdout+stderr, "requires --await-id") {
+			t.Errorf("expected gh:pr-requires-await-id rejection, got stdout=%q stderr=%q", stdout, stderr)
+		}
+	})
+
+	t.Run("ghpr_with_await_id_accepted", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "gpq")
+		target := bdProxiedCreate(t, bd, p.dir, "Gate target ghpr-ok", "--type", "task")
+		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "gate", "create", "--type", "gh:pr", "--await-id", "42", "--blocks", target.ID)
+		if err != nil {
+			t.Fatalf("gh:pr+await-id must be accepted: %v\n%s\n%s", err, stdout, stderr)
+		}
+		if !strings.Contains(stdout, "Created gate") {
+			t.Errorf("expected gate-created, got: %s", stdout)
+		}
+	})
 }

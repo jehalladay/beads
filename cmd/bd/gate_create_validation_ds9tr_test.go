@@ -71,4 +71,27 @@ func TestGateCreateRejectsUnresolvableGates(t *testing.T) {
 			t.Errorf("gh:pr must be accepted: %s", out)
 		}
 	})
+
+	// beads-9jtzh: a gh:pr gate with no --await-id can never resolve (checkGHPR
+	// returns "no PR number specified" forever; no discover path fills it, unlike
+	// gh:run) → the blocked issue is stranded out of bd ready. Reject at create,
+	// mirroring the timer-requires-timeout guard.
+	t.Run("ghpr_without_await_id_rejected", func(t *testing.T) {
+		task := bdCreate(t, bd, dir, "Task ghpr-no-await", "--type", "task")
+		out := bdGateFail(t, bd, dir, "create", "--type", "gh:pr", "--blocks", task.ID)
+		if !strings.Contains(out, "requires --await-id") {
+			t.Errorf("expected gh:pr-requires-await-id rejection, got: %s", out)
+		}
+	})
+
+	// The gh:run sibling must stay accepted with no --await-id — discover fills
+	// await_id post-create, so this is by-design, not a strand (guards the fix
+	// against over-broadening the requirement to gh:run).
+	t.Run("ghrun_without_await_id_still_accepted", func(t *testing.T) {
+		task := bdCreate(t, bd, dir, "Task ghrun-no-await", "--type", "task")
+		out := bdGate(t, bd, dir, "create", "--type", "gh:run", "--blocks", task.ID)
+		if !strings.Contains(out, "Created gate") {
+			t.Errorf("gh:run without --await-id must still be accepted (discover fills it): %s", out)
+		}
+	})
 }

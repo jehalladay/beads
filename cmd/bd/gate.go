@@ -313,7 +313,7 @@ Examples:
 		// timer with no timeout, or an unknown type gate check silently skips),
 		// stranding the blocked issue out of bd ready forever with manual close
 		// the only escape.
-		if verr := validateGateCreate(gateType, timeoutStr); verr != nil {
+		if verr := validateGateCreate(gateType, awaitID, timeoutStr); verr != nil {
 			return HandleErrorRespectJSON("%v", verr)
 		}
 
@@ -1057,10 +1057,22 @@ func init() {
 // skipped by gate check (default: continue) and a timer without --timeout errors
 // on every check ("no timeout set") — either way the blocked issue is stranded
 // out of bd ready forever, with manual close the only escape.
-func validateGateCreate(gateType, timeoutStr string) error {
+//
+// beads-9jtzh (uncovered ds9tr leg): a gh:pr gate requires --await-id (the PR
+// number) at create. Unlike gh:run — which self-rescues via `bd gate discover`
+// populating await_id post-create (needsDiscovery is gated to gh:run only) —
+// gh:pr has NO discover path and NO post-create await_id setter, so checkGHPR
+// on an empty AwaitID returns "no PR number specified" (pending, never resolves,
+// never escalates) → the blocked issue is stranded forever. Requiring await_id
+// up front is the ds9tr-consistent create-time guard.
+func validateGateCreate(gateType, awaitID, timeoutStr string) error {
 	switch gateType {
-	case "human", "gh:run", "gh:pr":
+	case "human", "gh:run":
 		// resolvable types; no timeout required
+	case "gh:pr":
+		if awaitID == "" {
+			return fmt.Errorf("gate type \"gh:pr\" requires --await-id (a PR number); a gh:pr gate has no auto-discovery, so without a PR number it can never resolve and would block the issue forever")
+		}
 	case "timer":
 		if timeoutStr == "" {
 			return fmt.Errorf("gate type \"timer\" requires --timeout (an infinite timer can never resolve and would block the issue forever)")
