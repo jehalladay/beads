@@ -1446,3 +1446,138 @@ func TestGetBlockedIssues_WithBlockerDetails(t *testing.T) {
 }
 
 // Note: testContext is already defined in dolt_test.go for this package
+
+// countNodeOccurrences counts how many TreeNodes carry the given issue ID.
+func countNodeOccurrences(tree []*types.TreeNode, id string) int {
+	n := 0
+	for _, node := range tree {
+		if node.ID == id {
+			n++
+		}
+	}
+	return n
+}
+
+// TestGetDependencyTree_DiamondEmitsSharedNode pins beads-lhq7s defect 1: in a
+// diamond/DAG, a node reachable by >1 path must still be EMITTED on the second
+// path (as a shallow re-visit node the renderer marks "(shown above)"), never
+// silently pruned to a bare childless leaf. Diamond: D blocks B and A; B blocks
+// C; A blocks C. The forward tree of D reaches shared node C via BOTH B and A.
+// Before the fix the second visit returned nil, so C rendered once as a leaf and
+// its real edge was dropped from the other path.
+func TestGetDependencyTree_DiamondEmitsSharedNode(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	d := &types.Issue{ID: "diamond-d", Title: "D", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	b := &types.Issue{ID: "diamond-b", Title: "B", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	a := &types.Issue{ID: "diamond-a", Title: "A", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	c := &types.Issue{ID: "diamond-c", Title: "C", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	for _, issue := range []*types.Issue{d, b, a, c} {
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("create issue %s: %v", issue.ID, err)
+		}
+	}
+	// D blocks B, D blocks A, B blocks C, A blocks C  (C is the diamond bottom).
+	for _, dep := range []*types.Dependency{
+		{IssueID: d.ID, DependsOnID: b.ID, Type: types.DepBlocks},
+		{IssueID: d.ID, DependsOnID: a.ID, Type: types.DepBlocks},
+		{IssueID: b.ID, DependsOnID: c.ID, Type: types.DepBlocks},
+		{IssueID: a.ID, DependsOnID: c.ID, Type: types.DepBlocks},
+	} {
+		if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("add dependency %s->%s: %v", dep.IssueID, dep.DependsOnID, err)
+		}
+	}
+
+	tree, err := store.GetDependencyTree(ctx, d.ID, 5, false, false)
+	if err != nil {
+		t.Fatalf("GetDependencyTree: %v", err)
+	}
+
+	// C must appear on BOTH paths (once fully expanded, once as the re-visit
+	// marker node) — not silently dropped from one path (beads-lhq7s defect 1).
+	if got := countNodeOccurrences(tree, c.ID); got != 2 {
+		t.Fatalf("shared node %s appears %d times in tree, want 2 (once per diamond path — silently dropped, beads-lhq7s); tree=%v", c.ID, got, treeNodeIDs(tree))
+	}
+	// The shared node reaches D via both B and A: assert both parent edges exist.
+	parents := map[string]bool{}
+	for _, node := range tree {
+		if node.ID == c.ID {
+			parents[node.ParentID] = true
+		}
+	}
+	if !parents[b.ID] || !parents[a.ID] {
+		t.Fatalf("shared node %s parents = %v, want both %s and %s (one path dropped, beads-lhq7s)", c.ID, parents, b.ID, a.ID)
+	}
+}
+
+// TestGetDependencyTree_ShowAllPathsExpandsDiamond pins beads-lhq7s defect 2:
+// --show-all-paths must fully expand every path to a shared node instead of
+// deduping — so it returns strictly MORE nodes than the default for a diamond
+// whose shared node itself has a child. Before the fix showAllPaths was accepted
+// but never threaded into the recursion, so both modes produced identical output.
+func TestGetDependencyTree_ShowAllPathsExpandsDiamond(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	d := &types.Issue{ID: "sap-d", Title: "D", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	b := &types.Issue{ID: "sap-b", Title: "B", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	a := &types.Issue{ID: "sap-a", Title: "A", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	c := &types.Issue{ID: "sap-c", Title: "C", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	e := &types.Issue{ID: "sap-e", Title: "E", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	for _, issue := range []*types.Issue{d, b, a, c, e} {
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("create issue %s: %v", issue.ID, err)
+		}
+	}
+	// Diamond D->{B,A}->C, and C->E so the shared node has its own subtree.
+	for _, dep := range []*types.Dependency{
+		{IssueID: d.ID, DependsOnID: b.ID, Type: types.DepBlocks},
+		{IssueID: d.ID, DependsOnID: a.ID, Type: types.DepBlocks},
+		{IssueID: b.ID, DependsOnID: c.ID, Type: types.DepBlocks},
+		{IssueID: a.ID, DependsOnID: c.ID, Type: types.DepBlocks},
+		{IssueID: c.ID, DependsOnID: e.ID, Type: types.DepBlocks},
+	} {
+		if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("add dependency %s->%s: %v", dep.IssueID, dep.DependsOnID, err)
+		}
+	}
+
+	deduped, err := store.GetDependencyTree(ctx, d.ID, 6, false, false)
+	if err != nil {
+		t.Fatalf("GetDependencyTree (deduped): %v", err)
+	}
+	expanded, err := store.GetDependencyTree(ctx, d.ID, 6, true, false)
+	if err != nil {
+		t.Fatalf("GetDependencyTree (show-all-paths): %v", err)
+	}
+
+	// --show-all-paths expands C AND its child E on both paths; the default emits
+	// C's subtree once and a shallow marker on the second path. So expanded must
+	// have strictly more nodes (dead-flag no-op would make them equal, beads-lhq7s
+	// defect 2). Concretely: E is fully expanded on both paths only with the flag.
+	if len(expanded) <= len(deduped) {
+		t.Fatalf("--show-all-paths node count = %d, want > deduped %d (flag is a dead no-op, beads-lhq7s); expanded=%v deduped=%v", len(expanded), len(deduped), treeNodeIDs(expanded), treeNodeIDs(deduped))
+	}
+	// E (the shared node's child) must appear twice under show-all-paths (once per
+	// full path) — proof the subtree is expanded, not deduped/marked.
+	if got := countNodeOccurrences(expanded, e.ID); got != 2 {
+		t.Fatalf("--show-all-paths: shared subtree child %s appears %d times, want 2 (both paths fully expanded, beads-lhq7s)", e.ID, got)
+	}
+}
+
+// treeNodeIDs is a local helper for readable failure messages.
+func treeNodeIDs(tree []*types.TreeNode) []string {
+	ids := make([]string, 0, len(tree))
+	for _, node := range tree {
+		ids = append(ids, node.ID)
+	}
+	return ids
+}

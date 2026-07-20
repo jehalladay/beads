@@ -11,16 +11,61 @@ import (
 // GetDependencyTreeInTx returns a flattened dependency tree for visualization.
 // It performs a recursive BFS traversal up to maxDepth, using GetIssueInTx and
 // GetDependenciesInTx/GetDependentsInTx which handle wisp routing.
+//
+// showAllPaths controls diamond/DAG handling (beads-lhq7s): when false (the
+// default), a node reachable by more than one path is fully expanded on its
+// FIRST visit and emitted as a shallow re-visit node (rendered "(shown above)")
+// on later visits, so its edges are never silently dropped. When true, the
+// cross-path dedup is skipped so every path is fully expanded, gated only by a
+// per-path recursion-stack guard against true cycles.
 func GetDependencyTreeInTx(ctx context.Context, tx DBTX, issueID string, maxDepth int, showAllPaths bool, reverse bool) ([]*types.TreeNode, error) {
 	visited := make(map[string]bool)
-	return buildDependencyTreeInTx(ctx, tx, issueID, 0, maxDepth, reverse, visited, "", "")
+	onPath := make(map[string]bool)
+	return buildDependencyTreeInTx(ctx, tx, issueID, 0, maxDepth, reverse, showAllPaths, visited, onPath, "", "")
 }
 
-func buildDependencyTreeInTx(ctx context.Context, tx DBTX, issueID string, depth, maxDepth int, reverse bool, visited map[string]bool, parentID string, edgeFromParent types.DependencyType) ([]*types.TreeNode, error) {
-	if depth >= maxDepth || visited[issueID] {
+func buildDependencyTreeInTx(ctx context.Context, tx DBTX, issueID string, depth, maxDepth int, reverse, showAllPaths bool, visited, onPath map[string]bool, parentID string, edgeFromParent types.DependencyType) ([]*types.TreeNode, error) {
+	if depth >= maxDepth {
 		return nil, nil
 	}
+
+	// Cross-path dedup (default). A node reachable by >1 path is emitted as a
+	// shallow re-visit node so the renderer prints its "(shown above)" diamond
+	// marker (cmd/bd/dep.go renderNode r.seen) — previously the builder returned
+	// nil BEFORE emitting, so the node rendered as a bare childless leaf with its
+	// real edges silently dropped (beads-lhq7s defect 1). --show-all-paths skips
+	// this so every path is fully expanded (defect 2).
+	if !showAllPaths && visited[issueID] {
+		issue, err := GetIssueInTx(ctx, tx, issueID)
+		if err != nil {
+			if depth > 0 && errors.Is(err, storage.ErrNotFound) {
+				return []*types.TreeNode{{
+					Issue:          unresolvedDepTargetIssue(issueID),
+					Depth:          depth,
+					ParentID:       parentID,
+					EdgeFromParent: edgeFromParent,
+				}}, nil
+			}
+			return nil, err
+		}
+		return []*types.TreeNode{{
+			Issue:          *issue,
+			Depth:          depth,
+			ParentID:       parentID,
+			EdgeFromParent: edgeFromParent,
+		}}, nil
+	}
+
+	// Per-path recursion-stack guard: prevents infinite recursion on a true
+	// dependency cycle regardless of showAllPaths (in --show-all-paths mode the
+	// cross-path `visited` dedup is off, so this is the ONLY cycle protection).
+	if onPath[issueID] {
+		return nil, nil
+	}
+
 	visited[issueID] = true
+	onPath[issueID] = true
+	defer func() { onPath[issueID] = false }()
 
 	issue, err := GetIssueInTx(ctx, tx, issueID)
 	if err != nil {
@@ -69,7 +114,7 @@ func buildDependencyTreeInTx(ctx context.Context, tx DBTX, issueID string, depth
 		if !isDependencyTreeEdge(rel.DependencyType) {
 			continue
 		}
-		children, err := buildDependencyTreeInTx(ctx, tx, rel.ID, depth+1, maxDepth, reverse, visited, issueID, rel.DependencyType)
+		children, err := buildDependencyTreeInTx(ctx, tx, rel.ID, depth+1, maxDepth, reverse, showAllPaths, visited, onPath, issueID, rel.DependencyType)
 		if err != nil {
 			return nil, err
 		}
