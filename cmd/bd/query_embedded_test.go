@@ -330,3 +330,38 @@ func TestEmbeddedQueryConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddedQueryJSONTruncationWarnsOnStderr is the teeth for beads-it9n7:
+// bd query --json must warn on stderr when truncated by --limit (proxied twin
+// of the direct fix), UNCONDITIONALLY (not terminal-gated) so a piped consumer
+// still learns results were hidden — matching bd list (qyoff)/search/ready.
+func TestEmbeddedQueryJSONTruncationWarnsOnStderr(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "qt")
+	for i := 1; i <= 3; i++ {
+		bdCreate(t, bd, dir, fmt.Sprintf("qtrunc item %d", i), "--type", "task")
+	}
+
+	cmd := exec.Command(bd, "query", "status=open", "--json", "--limit", "2")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd query --json --limit 2 failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	var results []map[string]interface{}
+	if jerr := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &results); jerr != nil {
+		t.Fatalf("beads-it9n7: stdout must stay a valid JSON array, got %v:\n%s", jerr, stdout.String())
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 elements under --limit 2, got %d:\n%s", len(results), stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "more results matched but were hidden by --limit") {
+		t.Fatalf("beads-it9n7: expected truncation warning on (non-terminal) stderr, got:\n%s", stderr.String())
+	}
+}

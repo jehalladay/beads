@@ -143,7 +143,9 @@ func runQueryProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 		if err := outputJSON(iwc); err != nil {
 			return err
 		}
-		printTruncationHint(truncated, limit)
+		// beads-it9n7: non-terminal-gated warn so a piped JSON consumer still
+		// learns of truncation (twin of the direct query.go fix + qyoff/list).
+		printJSONTruncationWarn(truncated, limit)
 		return nil
 	}
 

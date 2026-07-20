@@ -241,7 +241,11 @@ Examples:
 			if err := outputJSON(iwc); err != nil {
 				return err
 			}
-			printTruncationHint(truncated, effectiveLimit)
+			// beads-it9n7: JSON path uses the non-terminal-gated warn so a piped
+			// consumer still learns the result was truncated (matches bd
+			// list/search/ready). printTruncationHint here would be terminal-gated
+			// and silently drop the signal under a pipe.
+			printJSONTruncationWarn(truncated, effectiveLimit)
 			return nil
 		}
 
