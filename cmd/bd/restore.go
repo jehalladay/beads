@@ -218,7 +218,18 @@ func displayRestoredIssue(issue *types.Issue, provenance string) {
 	}
 
 	if len(issue.Labels) > 0 {
-		fmt.Printf("%s %s\n", ui.RenderBold("Labels:"), strings.Join(issue.Labels, ", "))
+		// beads-slq18: sanitize each restored label at the display site. Labels
+		// come from an untrusted backup JSONL / Dolt snapshot and validateLabelValue
+		// permits ESC/OSC/CSI bytes, so a poisoned label would inject terminal
+		// control sequences here — mirroring the Description/Assignee sanitize
+		// already applied above in this same function (ihaw/i8dsb). Display-only:
+		// the stored labels are untouched (round-trip fidelity), and the --json
+		// path uses outputJSON, which does not route through here.
+		sanitized := make([]string, len(issue.Labels))
+		for i, l := range issue.Labels {
+			sanitized[i] = ui.SanitizeForTerminal(l)
+		}
+		fmt.Printf("%s %s\n", ui.RenderBold("Labels:"), strings.Join(sanitized, ", "))
 	}
 
 	fmt.Printf("\n%s %s\n", ui.RenderBold("Created:"), issue.CreatedAt.Format("2006-01-02 15:04:05"))
