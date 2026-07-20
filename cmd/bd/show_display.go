@@ -127,7 +127,11 @@ func displayShowIssueReturn(ctx context.Context, issueID string) *types.Issue {
 	// Labels
 	labels, _ := issueStore.GetLabels(ctx, issue.ID)
 	if len(labels) > 0 {
-		fmt.Printf("\n%s %s\n", ui.RenderBold("LABELS:"), strings.Join(labels, ", "))
+		// displayLabels sanitizes terminal-control escapes for display only
+		// (beads-35asp — the bd show --watch reuse of the detail-view LABELS
+		// sink, sibling of show.go/show_proxied_server.go); stored labels +
+		// JSON paths are unchanged.
+		fmt.Printf("\n%s %s\n", ui.RenderBold("LABELS:"), strings.Join(displayLabels(labels), ", "))
 	}
 
 	// Dependencies (what this issue depends on)
