@@ -152,6 +152,84 @@ func TestEmbeddedState(t *testing.T) {
 		_ = out
 	})
 
+	// beads-brk7c: set-state must remove ALL existing labels for the dimension,
+	// not just the first. A dimension can carry 2+ labels via the public
+	// `bd label add <dim>:X` command; a break-on-first-match cleanup left stale
+	// siblings, so `bd state <dim>` (first-match) and `bd state list`
+	// (map last-wins) then disagreed on the value.
+	t.Run("set_state_clears_all_duplicate_dimension_labels", func(t *testing.T) {
+		si := bdCreate(t, bd, dir, "brk7c multi-label", "--type", "task")
+
+		// Seed two same-dimension labels: set-state one, then add a sibling via
+		// the public label command.
+		bdSetState(t, bd, dir, si.ID, "mode=normal")
+		bdLabelAdd := func(t *testing.T, lbl string) {
+			t.Helper()
+			cmd := exec.Command(bd, "label", "add", si.ID, lbl)
+			cmd.Dir = dir
+			cmd.Env = bdEnv(dir)
+			if stdout, stderr, err := runCommandBuffers(t, cmd); err != nil {
+				t.Fatalf("label add %s failed: %v\n%s\n%s", lbl, err, stdout.String(), stderr.String())
+			}
+		}
+		bdLabelAdd(t, "mode:degraded")
+
+		// Now set-state to a third value: it must clear BOTH mode:normal and
+		// mode:degraded, leaving exactly one mode: label.
+		bdSetState(t, bd, dir, si.ID, "mode=failing")
+
+		// state list is the map-last-wins reader; state <dim> is first-match.
+		// Both must agree post-fix (the bug made them diverge).
+		single := strings.TrimSpace(bdState(t, bd, dir, si.ID, "mode"))
+		listOut := bdState(t, bd, dir, "list", si.ID)
+		if !strings.Contains(single, "failing") {
+			t.Errorf("bd state mode should be 'failing', got: %q", single)
+		}
+		// The stale siblings (normal, degraded) must be gone from BOTH readers.
+		if strings.Contains(single, "normal") || strings.Contains(single, "degraded") {
+			t.Errorf("bd state mode leaked a stale sibling value: %q", single)
+		}
+		if strings.Contains(listOut, "normal") || strings.Contains(listOut, "degraded") {
+			t.Errorf("bd state list leaked a stale sibling label (brk7c): %s", listOut)
+		}
+		if !strings.Contains(listOut, "failing") {
+			t.Errorf("bd state list should show mode=failing, got: %s", listOut)
+		}
+
+		// Belt-and-suspenders: the JSON label list on the issue must hold exactly
+		// one mode: label. `bd show --json` emits a JSON array of issues.
+		cmd := exec.Command(bd, "show", si.ID, "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("bd show --json failed: %v\n%s", err, stderr.String())
+		}
+		s := stdout.String()
+		start := strings.Index(s, "[")
+		if start < 0 {
+			t.Fatalf("bd show --json emitted no array:\n%s", s)
+		}
+		var arr []struct {
+			Labels []string `json:"labels"`
+		}
+		if e := json.Unmarshal([]byte(s[start:]), &arr); e != nil {
+			t.Fatalf("bd show --json invalid: %v\n%s", e, s)
+		}
+		if len(arr) != 1 {
+			t.Fatalf("bd show --json expected 1 issue, got %d:\n%s", len(arr), s)
+		}
+		modeCount := 0
+		for _, l := range arr[0].Labels {
+			if strings.HasPrefix(l, "mode:") {
+				modeCount++
+			}
+		}
+		if modeCount != 1 {
+			t.Errorf("expected exactly one mode: label after set-state, got %d: %v", modeCount, arr[0].Labels)
+		}
+	})
+
 	t.Run("set_state_overwrites", func(t *testing.T) {
 		bdSetState(t, bd, dir, issue.ID, "phase=development")
 		bdSetState(t, bd, dir, issue.ID, "phase=testing")
