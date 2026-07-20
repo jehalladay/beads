@@ -2187,6 +2187,98 @@ func TestTxSearchIssues_DateRangeInclusive(t *testing.T) {
 	}
 }
 
+// TestTxSearchIssues_SortAndOffset gives beads-vq0bu teeth: the in-transaction
+// SearchIssues (doltTransaction.SearchIssues, the storage.Transaction interface
+// read-your-writes path) must honor filter.SortBy/SortDesc and filter.Offset,
+// not just filter.Limit. The old code hardcoded "ORDER BY priority ASC,
+// created_at DESC" and applied only LIMIT, silently DROPPING a same-tx
+// --sort/--offset request — a read-path divergence from the live search path
+// (issueops.searchTableInTx -> sqlbuild.OrderBy + applyOffsetLimit), the same
+// hand-mirror class as beads-u9zr/kyr9q/zxlib/b9ova/3px4 on this method.
+//
+// Must exercise the transaction path, not store.SearchIssues — the store path
+// delegates to the already-correct sqlbuild/issueops builders, so a store-level
+// test has NO teeth on the transaction.go ordering/pagination.
+func TestTxSearchIssues_SortAndOffset(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Titles chosen so title-ASC order (so-a, so-b, so-c) differs from the
+	// default priority order. Priorities are all equal so priority is not a
+	// tiebreaker that masks the sort key.
+	ids := []string{"so-c", "so-a", "so-b"}
+	for _, id := range ids {
+		iss := &types.Issue{ID: id, Title: id, Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+
+	search := func(name string, f types.IssueFilter) []*types.Issue {
+		var res []*types.Issue
+		if err := store.RunInTransaction(ctx, name, func(tx storage.Transaction) error {
+			r, err := tx.SearchIssues(ctx, "", f)
+			res = r
+			return err
+		}); err != nil {
+			t.Fatalf("%s: tx.SearchIssues error: %v", name, err)
+		}
+		return res
+	}
+	idsOf := func(res []*types.Issue) []string {
+		out := make([]string, len(res))
+		for i, r := range res {
+			out[i] = r.ID
+		}
+		return out
+	}
+	eq := func(got, want []string) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	// SortBy=title ASC must return so-a, so-b, so-c. The dropped SortBy clause ->
+	// hardcoded priority/created order (RED); honored -> title order (GREEN).
+	if got := idsOf(search("vq0bu sort-title-asc", types.IssueFilter{SortBy: "title"})); !eq(got, []string{"so-a", "so-b", "so-c"}) {
+		t.Fatalf("SortBy=title ASC: got %v, want [so-a so-b so-c] (SortBy dropped, beads-vq0bu)", got)
+	}
+
+	// SortBy=title DESC must reverse to so-c, so-b, so-a — proves SortDesc is
+	// threaded too (dropped -> ignored -> still ASC or priority order = RED).
+	if got := idsOf(search("vq0bu sort-title-desc", types.IssueFilter{SortBy: "title", SortDesc: true})); !eq(got, []string{"so-c", "so-b", "so-a"}) {
+		t.Fatalf("SortBy=title DESC: got %v, want [so-c so-b so-a] (SortDesc dropped, beads-vq0bu)", got)
+	}
+
+	// SortBy=id is a Go-side sort key (sqlbuild.IsGoSideSort) — SQL emits no
+	// ORDER BY, so the Go-side sort must order it (so-a, so-b, so-c).
+	if got := idsOf(search("vq0bu sort-id-goside", types.IssueFilter{SortBy: "id"})); !eq(got, []string{"so-a", "so-b", "so-c"}) {
+		t.Fatalf("SortBy=id (go-side): got %v, want [so-a so-b so-c] (go-side sort not applied, beads-vq0bu)", got)
+	}
+
+	// Offset=1 over title-ASC must skip so-a and return so-b, so-c. The dropped
+	// Offset -> full unpaginated slice starting at so-a (RED); honored -> the
+	// window [so-b so-c] (GREEN).
+	if got := idsOf(search("vq0bu offset", types.IssueFilter{SortBy: "title", Offset: 1})); !eq(got, []string{"so-b", "so-c"}) {
+		t.Fatalf("SortBy=title Offset=1: got %v, want [so-b so-c] (Offset dropped, beads-vq0bu)", got)
+	}
+
+	// Offset + Limit together: skip 1, take 1 over title-ASC -> just so-b. Proves
+	// Offset is applied BEFORE Limit (a naive LIMIT-only would return so-a).
+	if got := idsOf(search("vq0bu offset-limit", types.IssueFilter{SortBy: "title", Offset: 1, Limit: 1})); !eq(got, []string{"so-b"}) {
+		t.Fatalf("SortBy=title Offset=1 Limit=1: got %v, want [so-b] (Offset+Limit window wrong, beads-vq0bu)", got)
+	}
+}
+
 // TestSearchIssues_ByExternalRef verifies two things:
 //  1. A free-text query like "BE-1521" (which looksLikeIssueID returns true for)
 //     matches an issue whose external_ref contains that string.
