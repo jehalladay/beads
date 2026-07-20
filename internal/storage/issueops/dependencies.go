@@ -367,8 +367,10 @@ func markDirectBlockingDependencySourceInTx(ctx context.Context, tx *sql.Tx, sou
 // valid edge (e.g. a reparent that closes no parent cycle but shares nodes with
 // a blocks chain). Parent-child cycles are exactly as corrupting as blocks
 // cycles — they break tree/epic-rollup/descendant traversal — so parent-child
-// is no longer exempt (beads-8qij). Types outside a checked family (e.g.
-// waits-for) still skip the graph walk.
+// is no longer exempt (beads-8qij), nor are supersedes (beads-8ix02) or
+// waits-for (beads-vdqra). Types outside a checked family (e.g. related /
+// relates-to loose knowledge edges, which legitimately allow cycles) still skip
+// the graph walk.
 //
 // tx is a DBTX (only QueryRowContext is used), so both a *sql.Tx and a plain
 // db.Runner satisfy it — the proxied/domain dependency use-case reuses this
@@ -462,7 +464,11 @@ func checkDuplicateChainInTx(ctx context.Context, tx DBTX, dep *types.Dependency
 // cycleCheckTypesFor returns the edge-type family whose graph must stay acyclic
 // for the given new-edge type, or nil if the type is not cycle-checked. A
 // blocks/conditional-blocks edge walks the blocking graph; a parent-child edge
-// walks the parent-child graph (beads-8qij).
+// walks the parent-child graph (beads-8qij); a supersedes edge walks the
+// supersedes graph (beads-8ix02); a waits-for edge walks the waits-for graph
+// (beads-vdqra). Each blocking-family relationship is checked over its OWN
+// family only — mixing families would wrongly reject a valid edge that merely
+// shares nodes with another family's chain.
 func cycleCheckTypesFor(t types.DependencyType) []string {
 	switch t {
 	case types.DepBlocks, types.DepConditionalBlocks:
@@ -488,6 +494,26 @@ func cycleCheckTypesFor(t types.DependencyType) []string {
 		// because a dup-of-a-dup is invalid; a supersede chain is valid, so
 		// supersedes needs only this cycle check.
 		return []string{string(types.DepSupersedes)}
+	case types.DepWaitsFor:
+		// beads-vdqra: a `waits-for` edge is a HARD BLOCKING edge everywhere else
+		// (IsBlockingEdge and AffectsReadyWork both include it, types.go:974/981;
+		// AddDependencyInTx already guards a waits-for SELF-loop unconditionally,
+		// beads-jg2s) — but it was the lone blocking-family member still falling
+		// through to `default: return nil` here, so `bd dep add A B --type
+		// waits-for` then `B A --type waits-for` accepted a mutual cycle (blocks
+		// and conditional-blocks reject the identical sequence). A waits-for is a
+		// fanout GATE (wait for a target's dynamic children); a mutual A⇄B — or a
+		// longer A→B→C→A — is two gates each gating on the other = a latent
+		// deadlock that corrupts fanout-gate traversal. Walk the waits-for graph
+		// as its OWN family (NOT unioned with the blocks family): a waits-for is a
+		// distinct relationship from blocks/conditional-blocks, and mixing
+		// families would wrongly reject a valid edge that merely shares nodes with
+		// a blocking chain (the family-isolation rule at CheckDependencyCycleInTx
+		// above). Reachability permits a legal acyclic fanout-gate DAG while
+		// rejecting a cycle — exactly the beads-8ix02 supersede reasoning. The
+		// shared seam's single caller CheckDependencyCycleInTx covers ALL entry
+		// points (`bd dep add --type waits-for` and any proxied path) at once.
+		return []string{string(types.DepWaitsFor)}
 	default:
 		return nil
 	}
