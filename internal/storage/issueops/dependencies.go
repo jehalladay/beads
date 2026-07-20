@@ -459,38 +459,59 @@ func checkDuplicateChainInTx(ctx context.Context, tx DBTX, dep *types.Dependency
 		dep.DependsOnID, root, dep.IssueID, root)
 }
 
-// cycleCheckTypesFor returns the edge-type family whose graph must stay acyclic
-// for the given new-edge type, or nil if the type is not cycle-checked. A
-// blocks/conditional-blocks edge walks the blocking graph; a parent-child edge
-// walks the parent-child graph (beads-8qij).
-func cycleCheckTypesFor(t types.DependencyType) []string {
-	switch t {
-	case types.DepBlocks, types.DepConditionalBlocks:
-		return []string{string(types.DepBlocks), string(types.DepConditionalBlocks)}
-	case types.DepParentChild:
-		return []string{string(types.DepParentChild)}
-	case types.DepSupersedes:
+// cycleAuditedFamilies returns the edge-type families that must each stay
+// acyclic, as disjoint groups of types walked together on one graph:
+//
+//   - {blocks, conditional-blocks} — the blocking graph
+//   - {parent-child}               — beads-8qij
+//   - {supersedes}                 — beads-8ix02
+//
+// This is the SINGLE SOURCE OF TRUTH for the town's acyclic invariant. Both the
+// create-time write guard (cycleCheckTypesFor, via AddDependencyInTx) AND the
+// read-side audit (DetectCyclesInTx / `bd dep cycles`) derive their family set
+// from here, so adding a 4th must-be-acyclic family updates enforcement and the
+// audit atomically — they can never drift (beads-cjvxq; the "hand-mirrored copy
+// is the defect generator" class, kyr9q/u9zr lineage, applied to the
+// invariant/audit pair). A group's types share a graph because they are
+// semantically the same relation for cycle purposes; distinct groups are
+// checked independently because e.g. a blocks→parent-child→blocks path is not a
+// real cycle in either family.
+func cycleAuditedFamilies() [][]string {
+	return [][]string{
+		{string(types.DepBlocks), string(types.DepConditionalBlocks)},
+		{string(types.DepParentChild)},
 		// beads-8ix02: a `supersedes` edge (old→new) must stay acyclic. A
 		// forward version chain v1→v2→v3 is legitimate and MUST stay allowed;
 		// the reachability walk permits it (v1 cannot reach v3's new edge back,
 		// reachable=0) while rejecting a genuine cycle — `bd supersede A --with
-		// B` then `B --with A`, or the longer A→B→C→A. Earlier this family was
-		// deliberately excluded here (returned nil) to protect version chains,
-		// but reachability already protects chains, so the exclusion was
-		// over-broad and left `bd dep add --type supersedes` able to close a
-		// supersede cycle (the supersede-seam reciprocal guard in
-		// cmd/bd/duplicate.go, beads-02v2k, does not cover dep-add). Walking the
-		// supersedes graph here at the shared seam covers ALL entry points —
-		// `bd supersede`, its proxied twin, AND `bd dep add --type supersedes` —
-		// and catches longer cycles the narrow reciprocal guard misses, exactly
-		// as the beads-dfzre duplicates guard does. Distinct from duplicates:
-		// duplicates ALSO needs an acyclic-CHAIN reject (checkDuplicateChainInTx),
-		// because a dup-of-a-dup is invalid; a supersede chain is valid, so
-		// supersedes needs only this cycle check.
-		return []string{string(types.DepSupersedes)}
-	default:
-		return nil
+		// B` then `B --with A`, or the longer A→B→C→A.
+		{string(types.DepSupersedes)},
 	}
+}
+
+// cycleCheckTypesFor returns the edge-type family whose graph must stay acyclic
+// for the given new-edge type, or nil if the type is not cycle-checked. It looks
+// up the family from cycleAuditedFamilies (the shared source the read-side audit
+// also consumes). A blocks/conditional-blocks edge walks the blocking graph; a
+// parent-child edge walks the parent-child graph (beads-8qij); a supersedes edge
+// walks the supersedes graph (beads-8ix02 — earlier this family was deliberately
+// excluded to protect version chains, but reachability already protects chains,
+// so the exclusion was over-broad and left `bd dep add --type supersedes` able
+// to close a supersede cycle; walking it here at the shared seam covers ALL
+// entry points and catches longer cycles the narrow reciprocal guard in
+// cmd/bd/duplicate.go, beads-02v2k, misses, exactly as beads-dfzre does for
+// duplicates. Distinct from duplicates: duplicates ALSO needs an acyclic-CHAIN
+// reject (checkDuplicateChainInTx) because a dup-of-a-dup is invalid; a
+// supersede chain is valid, so supersedes needs only this cycle check).
+func cycleCheckTypesFor(t types.DependencyType) []string {
+	for _, family := range cycleAuditedFamilies() {
+		for _, member := range family {
+			if types.DependencyType(member) == t {
+				return family
+			}
+		}
+	}
+	return nil
 }
 
 // sqlTypeInList renders a quoted, comma-separated SQL IN list for the given
