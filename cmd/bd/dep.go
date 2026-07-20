@@ -411,6 +411,20 @@ Examples:
 			return HandleErrorRespectJSON("unknown dependency type %q; valid types: %s", depType, createDepsAcceptedTypeList())
 		}
 
+		// beads-hf1c6: a relates-to link is BIDIRECTIONAL (bd dep relate writes
+		// both id1->id2 and id2->id1 atomically; unrelate removes both). A plain
+		// `dep add --type relates-to A B` would mint only the A->B edge, an
+		// asymmetric one-sided link that violates the invariant and that ri535
+		// must later heal. Refuse and redirect to the invariant's owner rather
+		// than let dep-add mint invalid state. This is the add-side sibling of
+		// the dep-remove refusal (beads-xlplm) — dep add/remove stay the
+		// directional-types primitives, dep relate/unrelate own bidirectional
+		// relates-to, so no duplicated 2-dep logic can drift (the class that
+		// created ri535).
+		if dt == types.DepRelatesTo {
+			return HandleErrorRespectJSON("cannot add a relates-to link with 'dep add' (it is bidirectional); use 'bd dep relate %s %s'", fromID, toID)
+		}
+
 		dep := &types.Dependency{
 			IssueID:     fromID,
 			DependsOnID: toID,
@@ -680,8 +694,13 @@ func readBulkDepEdges(file string, defaultType string) ([]bulkDepEdge, error) {
 		} else if !dt.IsWellKnown() {
 			// beads-qfka: parity with `bd dep add` / `bd create --deps`.
 			errs = append(errs, fmt.Sprintf("line %d: unknown dependency type %q; valid types: %s", lineNo, depType, createDepsAcceptedTypeList()))
+		} else if dt == types.DepRelatesTo {
+			// beads-hf1c6: relates-to is bidirectional; bulk dep-add would mint a
+			// one-sided edge just like the single-edge path. Refuse here too and
+			// redirect to the invariant owner (bd dep relate).
+			errs = append(errs, fmt.Sprintf("line %d: cannot add a relates-to link with 'dep add --file' (it is bidirectional); use 'bd dep relate %s %s'", lineNo, from, to))
 		}
-		if from == "" || to == "" || !dt.IsValid() || !dt.IsWellKnown() {
+		if from == "" || to == "" || !dt.IsValid() || !dt.IsWellKnown() || dt == types.DepRelatesTo {
 			continue
 		}
 

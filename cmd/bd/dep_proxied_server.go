@@ -203,6 +203,11 @@ func runDepAddProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	if !dt.IsWellKnown() {
 		FatalErrorRespectJSON("unknown dependency type %q; valid types: %s", depType, createDepsAcceptedTypeList())
 	}
+	// beads-hf1c6: refuse a relates-to link (bidirectional — use bd dep relate),
+	// mirroring the direct path. A plain dep-add would mint a one-sided edge.
+	if dt == types.DepRelatesTo {
+		FatalErrorRespectJSON("cannot add a relates-to link with 'dep add' (it is bidirectional); use 'bd dep relate %s %s'", fromID, toID)
+	}
 
 	uw := openDepProxiedUOW(ctx)
 	defer uw.Close(ctx)
