@@ -16,6 +16,20 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// compactDisplayTitle sanitizes an issue title for the compact candidate tables
+// then truncates it to the 40-col TITLE column (beads-1y75t, 7n9y sink class).
+// A title can originate from an untrusted import (JSONL/markdown/SCM), so it is
+// sanitized BEFORE truncation — both to strip OSC/CSI terminal-control escapes
+// and so the length check operates on the visible text (truncation can never
+// split a control sequence). Display-only: the stored title is untouched.
+func compactDisplayTitle(title string) string {
+	title = displayTitle(title)
+	if len(title) > 40 {
+		title = title[:37] + "..."
+	}
+	return title
+}
+
 var (
 	compactDryRun  bool
 	compactTier    int
@@ -316,10 +330,7 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store s
 
 		fmt.Printf("DRY RUN - Tier %d compaction\n\n", compactTier)
 		fmt.Printf("  %-12s %-40s %8s %10s\n", "ID", "TITLE", "AGE", "SIZE")
-		title := issue.Title
-		if len(title) > 40 {
-			title = title[:37] + "..."
-		}
+		title := compactDisplayTitle(issue.Title)
 		fmt.Printf("  %-12s %-40s %5dd %10d B\n", issueID, title, ageDays, originalSize)
 		fmt.Printf("\nSummary: 1 candidate, %d bytes total content\n", originalSize)
 		return
@@ -460,10 +471,7 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store stor
 		fmt.Printf("DRY RUN - Tier %d compaction\n\n", compactTier)
 		fmt.Printf("  %-12s %-40s %8s %10s\n", "ID", "TITLE", "AGE", "SIZE")
 		for _, c := range dryCandidates {
-			title := c.Title
-			if len(title) > 40 {
-				title = title[:37] + "..."
-			}
+			title := compactDisplayTitle(c.Title)
 			fmt.Printf("  %-12s %-40s %5dd %10d B\n", c.ID, title, c.AgeDays, c.ContentSize)
 		}
 		fmt.Printf("\nSummary: %d candidates, %d bytes total content\n", len(dryCandidates), totalSize)
@@ -652,10 +660,7 @@ func runCompactAnalyze(ctx context.Context, store storage.DoltStorage) {
 		if c.Compacted {
 			compactStatus = " *"
 		}
-		title := c.Title
-		if len(title) > 40 {
-			title = title[:37] + "..."
-		}
+		title := compactDisplayTitle(c.Title)
 		fmt.Printf("  %-12s %-40s %5dd %10d B%s\n", c.ID, title, c.AgeDays, c.SizeBytes, compactStatus)
 		totalSize += c.SizeBytes
 	}

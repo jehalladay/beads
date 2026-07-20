@@ -141,7 +141,7 @@ func renderDeletePreview(in *deleteInput, preview domain.DeletePreview, res doma
 		if iss, ok := preview.Issues[id]; ok && iss != nil {
 			title = iss.Title
 		}
-		fmt.Printf("  %s: %s\n", id, title)
+		fmt.Printf("  %s: %s\n", id, displayTitle(title))
 	}
 	if in.cascade {
 		fmt.Printf("\nCascade enabled — dependent issues will also be removed.\n")
@@ -162,7 +162,7 @@ func renderDeletePreview(in *deleteInput, preview domain.DeletePreview, res doma
 			if iss != nil {
 				title = iss.Title
 			}
-			fmt.Printf("  %s: %s\n", id, title)
+			fmt.Printf("  %s: %s\n", id, displayTitle(title))
 		}
 	}
 
