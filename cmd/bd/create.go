@@ -883,7 +883,17 @@ func renderCreateDryRunPreview(issue *types.Issue, labels, deps []string) {
 		fmt.Printf("  Description: %s\n", ui.SanitizeForTerminal(issue.Description))
 	}
 	if len(labels) > 0 {
-		fmt.Printf("  Labels: %s\n", strings.Join(labels, ", "))
+		// beads-tt13r: sanitize each label at the display site. Dry-run labels
+		// come from --label / inherited labels, and validateLabelValue permits
+		// ESC/OSC/CSI bytes, so a poisoned label would inject terminal control
+		// sequences here — mirroring the Title/Description (ihaw), Assignee
+		// (i8dsb) and EventKind (k86xm) sanitize already applied in this same
+		// preview function. Display-only: the stored/created labels are untouched.
+		sanitizedLabels := make([]string, len(labels))
+		for i, l := range labels {
+			sanitizedLabels[i] = ui.SanitizeForTerminal(l)
+		}
+		fmt.Printf("  Labels: %s\n", strings.Join(sanitizedLabels, ", "))
 	}
 	if len(deps) > 0 {
 		fmt.Printf("  Dependencies: %s\n", strings.Join(deps, ", "))

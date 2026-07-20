@@ -349,7 +349,17 @@ func dryRunMarkdownBatch(templates []*IssueTemplate, filepath string) error {
 			fmt.Printf("    Assignee: %s\n", ui.SanitizeForTerminal(t.Assignee))
 		}
 		if len(t.Labels) > 0 {
-			fmt.Printf("    Labels: %s\n", strings.Join(t.Labels, ", "))
+			// beads-tt13r: sanitize each label at the display site. --from-markdown
+			// labels are parsed from an untrusted '### Labels' markdown file and
+			// validateLabelValue permits ESC/OSC/CSI bytes, so a poisoned label
+			// would inject terminal control sequences here — mirroring the Title
+			// (displayTitle) and Assignee (SanitizeForTerminal) already sanitized
+			// in this same dry-run preview. Display-only: parsed labels untouched.
+			sanitizedLabels := make([]string, len(t.Labels))
+			for i, l := range t.Labels {
+				sanitizedLabels[i] = ui.SanitizeForTerminal(l)
+			}
+			fmt.Printf("    Labels: %s\n", strings.Join(sanitizedLabels, ", "))
 		}
 		if len(t.Dependencies) > 0 {
 			fmt.Printf("    Dependencies: %s\n", strings.Join(t.Dependencies, ", "))
