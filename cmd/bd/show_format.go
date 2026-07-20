@@ -256,17 +256,23 @@ func formatIssueLongExtras(issue *types.Issue, formatTime func(time.Time) string
 	if issue.ClosedAt != nil {
 		closeParts = append(closeParts, fmt.Sprintf("  Closed at: %s", formatTime(*issue.ClosedAt)))
 	}
+	// ClosedBySession/SourceSystem/Sender are identity/federation strings set
+	// verbatim from an untrusted import (JSONL/SCM) — insertIssueRow persists them
+	// as-is and there is no control-char validation, so they can carry OSC/CSI
+	// terminal escapes. Sanitize at the display site only (beads-k86xm, i8dsb
+	// sibling axis on the event/source/federation fields); never mutate the stored
+	// value (federation data must round-trip verbatim).
 	if issue.ClosedBySession != "" {
-		closeParts = append(closeParts, fmt.Sprintf("  Closed by session: %s", issue.ClosedBySession))
+		closeParts = append(closeParts, fmt.Sprintf("  Closed by session: %s", ui.SanitizeForTerminal(issue.ClosedBySession)))
 	}
 	if issue.EstimatedMinutes != nil {
 		closeParts = append(closeParts, fmt.Sprintf("  Estimated: %d minutes", *issue.EstimatedMinutes))
 	}
 	if issue.SourceSystem != "" {
-		closeParts = append(closeParts, fmt.Sprintf("  Source system: %s", issue.SourceSystem))
+		closeParts = append(closeParts, fmt.Sprintf("  Source system: %s", ui.SanitizeForTerminal(issue.SourceSystem)))
 	}
 	if issue.Sender != "" {
-		closeParts = append(closeParts, fmt.Sprintf("  Sender: %s", issue.Sender))
+		closeParts = append(closeParts, fmt.Sprintf("  Sender: %s", ui.SanitizeForTerminal(issue.Sender)))
 	}
 	if issue.Ephemeral {
 		closeParts = append(closeParts, "  Ephemeral: yes")
@@ -353,19 +359,22 @@ func formatIssueLongExtras(issue *types.Issue, formatTime func(time.Time) string
 			ui.RenderBold("BONDED FROM"), strings.Join(refs, "\n")))
 	}
 
-	// Event fields
+	// Event fields (EventKind/Actor/Target/Payload) are set verbatim from an
+	// untrusted import and persisted as-is — sanitize at the display site so
+	// escape-laden event data can't inject terminal control sequences (beads-k86xm);
+	// the stored value is left untouched.
 	var eventParts []string
 	if issue.EventKind != "" {
-		eventParts = append(eventParts, fmt.Sprintf("  Kind: %s", issue.EventKind))
+		eventParts = append(eventParts, fmt.Sprintf("  Kind: %s", ui.SanitizeForTerminal(issue.EventKind)))
 	}
 	if issue.Actor != "" {
-		eventParts = append(eventParts, fmt.Sprintf("  Actor: %s", issue.Actor))
+		eventParts = append(eventParts, fmt.Sprintf("  Actor: %s", ui.SanitizeForTerminal(issue.Actor)))
 	}
 	if issue.Target != "" {
-		eventParts = append(eventParts, fmt.Sprintf("  Target: %s", issue.Target))
+		eventParts = append(eventParts, fmt.Sprintf("  Target: %s", ui.SanitizeForTerminal(issue.Target)))
 	}
 	if issue.Payload != "" {
-		eventParts = append(eventParts, fmt.Sprintf("  Payload: %s", issue.Payload))
+		eventParts = append(eventParts, fmt.Sprintf("  Payload: %s", ui.SanitizeForTerminal(issue.Payload)))
 	}
 	if len(eventParts) > 0 {
 		sections = append(sections, fmt.Sprintf("%s\n%s",

@@ -889,7 +889,10 @@ func renderCreateDryRunPreview(issue *types.Issue, labels, deps []string) {
 		fmt.Printf("  Dependencies: %s\n", strings.Join(deps, ", "))
 	}
 	if issue.EventKind != "" {
-		fmt.Printf("  Event category: %s\n", issue.EventKind)
+		// Sanitize the event-kind at the display site (beads-k86xm): it can carry
+		// terminal escapes from an untrusted source, same axis as the Assignee sink
+		// sanitized above; the stored value is untouched.
+		fmt.Printf("  Event category: %s\n", ui.SanitizeForTerminal(issue.EventKind))
 	}
 }
 
