@@ -553,3 +553,167 @@ func TestTxSearchIssuesMergesNoHistoryWisps(t *testing.T) {
 		t.Fatalf("in-tx SearchIssues NoHistory merge: %v", err)
 	}
 }
+
+// TestTxReadsMatchStoreReads is the beads-898t2 parity gate. It proves the
+// storage.Transaction read path (doltTransaction.GetIssue / SearchIssues, now
+// delegating to issueops.GetIssueInTxSplit / SearchIssuesInTxSplit) returns the
+// SAME results as the store-level DoltStore.GetIssue / SearchIssues across a
+// battery of full IssueFilter shapes AND hydrates labels identically.
+//
+// This is the durable closer for the transaction.go hand-copy DEFECT-GENERATOR
+// class: kyr9q (EmptyNotes/Blocked filters), 5rn1c (label hydration), vq0bu
+// (sort/offset), u9zr (statuses/exclude), and nyhdd (wisps-merge for NoHistory)
+// were each landed as a per-field patch to a PRIVATE reimplementation of the
+// search/get SQL. By delegating both in-tx reads to the shared issueops code,
+// the two paths are now literally the same code — this test asserts that
+// equality so any future filter field added to the shared path cannot silently
+// diverge in the transaction path again. Mutation check: revert the delegation
+// (restore the hand-copy) and a filter the hand-copy dropped goes RED here.
+func TestTxReadsMatchStoreReads(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Seed a diverse fixture that exercises every parity-relevant axis:
+	// - regular issues in the issues table with varying priority/status/type
+	// - a NoHistory bead (ephemeral=0, stored in wisps — must merge, GH#3649)
+	// - labels (single + multi), assignee, notes (kyr9q EmptyNotes axis)
+	// - a closed issue (status filters, u9zr)
+	assignee := "parity-assignee"
+	seed := []*types.Issue{
+		{ID: "parity-a", Title: "alpha regular", Status: types.StatusOpen, Priority: 0, IssueType: types.TypeBug, Assignee: assignee, Labels: []string{"seed", "ax"}},
+		{ID: "parity-b", Title: "bravo regular", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, Labels: []string{"seed"}},
+		{ID: "parity-c", Title: "charlie regular", Status: types.StatusInProgress, Priority: 1, IssueType: types.TypeFeature, Notes: "has notes here"},
+		{ID: "parity-d", Title: "delta closed", Status: types.StatusOpen, Priority: 3, IssueType: types.TypeTask},
+		{ID: "parity-nohist", Title: "echo nohistory", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, NoHistory: true, Labels: []string{"seed", "wisp-side"}},
+	}
+	for _, is := range seed {
+		if err := store.CreateIssue(ctx, is, "tester"); err != nil {
+			t.Fatalf("seed CreateIssue %s: %v", is.ID, err)
+		}
+	}
+	// Close one to populate the closed-status / closed-date axes.
+	if err := store.CloseIssue(ctx, "parity-d", "done", "tester", ""); err != nil {
+		t.Fatalf("seed CloseIssue parity-d: %v", err)
+	}
+
+	statusOpen := types.StatusOpen
+	prio2 := 2
+	typeTask := types.TypeTask
+	noEph := false
+
+	// The parity battery: each filter must produce byte-identical results from
+	// the store path and the in-tx path. IDs (ordered) + hydrated Labels are the
+	// two axes the hand-copy historically dropped.
+	filters := []struct {
+		name   string
+		query  string
+		filter types.IssueFilter
+	}{
+		{"unfiltered", "", types.IssueFilter{}},
+		{"status_open", "", types.IssueFilter{Status: &statusOpen}},
+		{"statuses_in", "", types.IssueFilter{Statuses: []types.Status{types.StatusOpen, types.StatusInProgress}}},
+		{"exclude_closed", "", types.IssueFilter{ExcludeStatus: []types.Status{types.StatusClosed}}},
+		{"priority_2", "", types.IssueFilter{Priority: &prio2}},
+		{"type_task", "", types.IssueFilter{IssueType: &typeTask}},
+		{"assignee", "", types.IssueFilter{Assignee: &assignee}},
+		{"labels_and", "", types.IssueFilter{Labels: []string{"seed"}}},
+		{"labels_any", "", types.IssueFilter{LabelsAny: []string{"ax", "wisp-side"}}},
+		{"exclude_labels", "", types.IssueFilter{ExcludeLabels: []string{"seed"}}},
+		{"nonephemeral_merge", "", types.IssueFilter{Ephemeral: &noEph}},
+		{"notes_contains", "", types.IssueFilter{NotesContains: "notes here"}},
+		{"text_query", "regular", types.IssueFilter{}},
+		{"sort_id_asc", "", types.IssueFilter{SortBy: "id", SortDesc: false}},
+		{"sort_priority", "", types.IssueFilter{SortBy: "priority"}},
+		{"limit_2", "", types.IssueFilter{SortBy: "id", Limit: 2}},
+		{"offset_1_limit_2", "", types.IssueFilter{SortBy: "id", Offset: 1, Limit: 2}},
+	}
+
+	idSeq := func(issues []*types.Issue) []string {
+		ids := make([]string, len(issues))
+		for i, is := range issues {
+			ids[i] = is.ID
+		}
+		return ids
+	}
+	labelMap := func(issues []*types.Issue) map[string][]string {
+		m := make(map[string][]string, len(issues))
+		for _, is := range issues {
+			m[is.ID] = append([]string(nil), is.Labels...)
+		}
+		return m
+	}
+	eqStr := func(a, b []string) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for i := range a {
+			if a[i] != b[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	for _, f := range filters {
+		f := f
+		t.Run("search/"+f.name, func(t *testing.T) {
+			storeRes, err := store.SearchIssues(ctx, f.query, f.filter)
+			if err != nil {
+				t.Fatalf("store.SearchIssues(%s): %v", f.name, err)
+			}
+			var txRes []*types.Issue
+			if err := store.RunInTransaction(ctx, "", func(tx storage.Transaction) error {
+				var e error
+				txRes, e = tx.SearchIssues(ctx, f.query, f.filter)
+				return e
+			}); err != nil {
+				t.Fatalf("tx.SearchIssues(%s): %v", f.name, err)
+			}
+			storeIDs, txIDs := idSeq(storeRes), idSeq(txRes)
+			if !eqStr(storeIDs, txIDs) {
+				t.Fatalf("beads-898t2 parity FAILED for %s:\n  store IDs = %v\n  tx    IDs = %v", f.name, storeIDs, txIDs)
+			}
+			// Labels must hydrate identically (5rn1c axis).
+			storeLabels, txLabels := labelMap(storeRes), labelMap(txRes)
+			for id, sl := range storeLabels {
+				if !eqStr(sl, txLabels[id]) {
+					t.Fatalf("beads-898t2 label parity FAILED for %s / %s:\n  store labels = %v\n  tx    labels = %v", f.name, id, sl, txLabels[id])
+				}
+			}
+		})
+	}
+
+	// GetIssue parity: every seeded ID (regular + NoHistory wisp) must read
+	// identically via the store and via the transaction (issues-first table
+	// order + label hydration).
+	for _, is := range seed {
+		id := is.ID
+		t.Run("get/"+id, func(t *testing.T) {
+			storeIssue, storeErr := store.GetIssue(ctx, id)
+			if storeErr != nil {
+				t.Fatalf("store.GetIssue(%s): %v", id, storeErr)
+			}
+			var txIssue *types.Issue
+			if err := store.RunInTransaction(ctx, "", func(tx storage.Transaction) error {
+				var e error
+				txIssue, e = tx.GetIssue(ctx, id)
+				return e
+			}); err != nil {
+				t.Fatalf("tx.GetIssue(%s): %v", id, err)
+			}
+			if storeIssue.ID != txIssue.ID {
+				t.Fatalf("beads-898t2 GetIssue ID parity FAILED for %s: store=%s tx=%s", id, storeIssue.ID, txIssue.ID)
+			}
+			if storeIssue.Status != txIssue.Status || storeIssue.Priority != txIssue.Priority {
+				t.Fatalf("beads-898t2 GetIssue field parity FAILED for %s: store={%s,%d} tx={%s,%d}",
+					id, storeIssue.Status, storeIssue.Priority, txIssue.Status, txIssue.Priority)
+			}
+			if !eqStr(storeIssue.Labels, txIssue.Labels) {
+				t.Fatalf("beads-898t2 GetIssue label parity FAILED for %s: store=%v tx=%v", id, storeIssue.Labels, txIssue.Labels)
+			}
+		})
+	}
+}

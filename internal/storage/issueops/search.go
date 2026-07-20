@@ -17,9 +17,26 @@ import (
 // Set filter.SkipWisps=true for callers that never need ephemeral results; this
 // avoids the unconditional full-table wisps scan (Q2 perf opt).
 func SearchIssuesInTx(ctx context.Context, tx DBTX, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	// Single-connection callers (embeddeddolt, the DoltStore read path) see both
+	// the issues and wisps tables on one tx, so both table scans share it.
+	return SearchIssuesInTxSplit(ctx, tx, tx, query, filter)
+}
+
+// SearchIssuesInTxSplit is the two-connection form of SearchIssuesInTx. It scans
+// the issues table on issuesTx and the wisps table on wispsTx, then merges,
+// re-sorts, and paginates the combined result exactly as SearchIssuesInTx does.
+//
+// The Dolt SQL-server transaction (dolt.doltTransaction) pins issues to a
+// versioned connection and wisps to a separate dolt_ignore'd connection so that
+// same-transaction wisp writes are read-your-own-writes visible (and DOLT_COMMIT
+// does not stage the ignored tables). Passing that split here lets the shared
+// issueops SQL retire the hand-copied in-tx SearchIssues (beads-898t2) without
+// collapsing the two connections. Callers with a single connection use
+// SearchIssuesInTx, which passes the same tx for both.
+func SearchIssuesInTxSplit(ctx context.Context, issuesTx, wispsTx DBTX, query string, filter types.IssueFilter) ([]*types.Issue, error) {
 	// Route ephemeral-only queries to wisps table.
 	if filter.Ephemeral != nil && *filter.Ephemeral {
-		results, err := searchTableInTx(ctx, tx, query, filter, WispsFilterTables)
+		results, err := searchTableInTx(ctx, wispsTx, query, filter, WispsFilterTables)
 		if err != nil && !isTableNotExistError(err) {
 			return nil, fmt.Errorf("search wisps (ephemeral filter): %w", err)
 		}
@@ -29,7 +46,7 @@ func SearchIssuesInTx(ctx context.Context, tx DBTX, query string, filter types.I
 		// Fall through: wisps table doesn't exist or returned no results
 	}
 
-	results, err := searchTableInTx(ctx, tx, query, filter, IssuesFilterTables)
+	results, err := searchTableInTx(ctx, issuesTx, query, filter, IssuesFilterTables)
 	if err != nil {
 		return nil, fmt.Errorf("search issues: %w", err)
 	}
@@ -47,14 +64,14 @@ func SearchIssuesInTx(ctx context.Context, tx DBTX, query string, filter types.I
 	// querying wisps here with Ephemeral=&false returns only NoHistory beads
 	// while correctly excluding true ephemeral wisps. (GH#3659)
 	if filter.Ephemeral == nil || !*filter.Ephemeral {
-		empty, probeErr := wispsTableEmptyOrMissingInTx(ctx, tx)
+		empty, probeErr := wispsTableEmptyOrMissingInTx(ctx, wispsTx)
 		if probeErr != nil {
 			return nil, fmt.Errorf("search wisps (merge): probe: %w", probeErr)
 		}
 		if empty {
 			return applyOffsetLimit(results, filter), nil
 		}
-		wispResults, wispErr := searchTableInTx(ctx, tx, query, filter, WispsFilterTables)
+		wispResults, wispErr := searchTableInTx(ctx, wispsTx, query, filter, WispsFilterTables)
 		if wispErr != nil && !isTableNotExistError(wispErr) {
 			return nil, fmt.Errorf("search wisps (merge): %w", wispErr)
 		}
