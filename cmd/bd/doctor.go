@@ -1195,7 +1195,7 @@ func runMigrationValidation(path string, phase string) error {
 		check = convertDoctorCheck(dc)
 		result = mr
 	default:
-		return HandleError("invalid migration phase %q (use 'pre' or 'post')", phase)
+		return HandleErrorRespectJSON("invalid migration phase %q (use 'pre' or 'post')", phase)
 	}
 
 	if jsonOutput {
