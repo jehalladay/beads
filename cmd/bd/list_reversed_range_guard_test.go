@@ -22,8 +22,12 @@ func newListRangeGuardCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "list"}
 	cmd.Flags().String("priority-min", "", "")
 	cmd.Flags().String("priority-max", "", "")
-	cmd.Flags().String("created-after", "", "")
-	cmd.Flags().String("created-before", "", "")
+	// beads-yqh4j: register every date axis bd list exposes so the guard tests
+	// can exercise all of them (wnm6g only registered created).
+	for _, axis := range []string{"created", "updated", "closed", "defer", "due"} {
+		cmd.Flags().String(axis+"-after", "", "")
+		cmd.Flags().String(axis+"-before", "", "")
+	}
 	return cmd
 }
 
@@ -79,5 +83,40 @@ func TestGatherListInput_DateRangeNormalOK(t *testing.T) {
 	}
 	if _, err := gatherListInput(cmd); err != nil {
 		t.Errorf("normal date range should be valid, got: %v", err)
+	}
+}
+
+// TestGatherListInput_AllDateAxesReversedErrors is the beads-yqh4j completeness
+// teeth: wnm6g guarded only --created, but bd list exposes updated/closed/
+// defer/due date ranges too, each of which builds an always-false WHERE when
+// reversed. Every axis must reject a reversed range; equal/ordered bounds stay
+// valid. RED-verified by running before the guard loop (each new axis returned
+// nil error with an empty result).
+func TestGatherListInput_AllDateAxesReversedErrors(t *testing.T) {
+	for _, axis := range []string{"created", "updated", "closed", "defer", "due"} {
+		t.Run(axis+"_reversed_rejected", func(t *testing.T) {
+			cmd := newListRangeGuardCmd()
+			if err := cmd.Flags().Set(axis+"-after", "2099-12-31"); err != nil {
+				t.Fatalf("set --%s-after: %v", axis, err)
+			}
+			if err := cmd.Flags().Set(axis+"-before", "2020-01-01"); err != nil {
+				t.Fatalf("set --%s-before: %v", axis, err)
+			}
+			if _, err := gatherListInput(cmd); err == nil {
+				t.Fatalf("expected an error for reversed --%s-after/--%s-before (silently returns empty)", axis, axis)
+			}
+		})
+		t.Run(axis+"_ordered_ok", func(t *testing.T) {
+			cmd := newListRangeGuardCmd()
+			if err := cmd.Flags().Set(axis+"-after", "2020-01-01"); err != nil {
+				t.Fatalf("set --%s-after: %v", axis, err)
+			}
+			if err := cmd.Flags().Set(axis+"-before", "2099-12-31"); err != nil {
+				t.Fatalf("set --%s-before: %v", axis, err)
+			}
+			if _, err := gatherListInput(cmd); err != nil {
+				t.Errorf("ordered --%s range should be valid, got: %v", axis, err)
+			}
+		})
 	}
 }

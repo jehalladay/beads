@@ -229,13 +229,6 @@ func gatherListInput(cmd *cobra.Command) (listInput, error) {
 	if in.createdBefore, err = parseListTimeFlag(cmd, "created-before"); err != nil {
 		return in, err
 	}
-	// beads-wnm6g (BUG-37): a reversed created-date range (after > before)
-	// builds "created_at >= after AND created_at <= before", always false, so
-	// it silently returns empty. Reject it explicitly (same class as the
-	// reversed priority range above).
-	if in.createdAfter != nil && in.createdBefore != nil && in.createdAfter.After(*in.createdBefore) {
-		return in, HandleErrorRespectJSON("--created-after (%s) cannot be later than --created-before (%s)", in.createdAfter.Format("2006-01-02"), in.createdBefore.Format("2006-01-02"))
-	}
 	if in.updatedAfter, err = parseListTimeFlag(cmd, "updated-after"); err != nil {
 		return in, err
 	}
@@ -259,6 +252,27 @@ func gatherListInput(cmd *cobra.Command) (listInput, error) {
 	}
 	if in.dueBefore, err = parseListTimeFlag(cmd, "due-before"); err != nil {
 		return in, err
+	}
+	// beads-wnm6g (BUG-37) + beads-yqh4j completeness: a reversed date range
+	// (after > before) builds "col >= after AND col <= before", always false, so
+	// it silently returns empty. wnm6g guarded only --created; extend to every
+	// date axis bd list exposes (updated/closed/defer/due). Equal bounds stay
+	// valid. Same reject-a-silently-contradictory-combination class as the
+	// reversed priority range above.
+	for _, axis := range []struct {
+		name          string
+		after, before *time.Time
+	}{
+		{"created", in.createdAfter, in.createdBefore},
+		{"updated", in.updatedAfter, in.updatedBefore},
+		{"closed", in.closedAfter, in.closedBefore},
+		{"defer", in.deferAfter, in.deferBefore},
+		{"due", in.dueAfter, in.dueBefore},
+	} {
+		if axis.after != nil && axis.before != nil && axis.after.After(*axis.before) {
+			return in, HandleErrorRespectJSON("--%s-after (%s) cannot be later than --%s-before (%s)",
+				axis.name, axis.after.Format("2006-01-02"), axis.name, axis.before.Format("2006-01-02"))
+		}
 	}
 
 	metadataFieldFlags, _ := cmd.Flags().GetStringArray("metadata-field")
