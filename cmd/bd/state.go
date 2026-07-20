@@ -166,20 +166,29 @@ The --reason flag provides context for the event bead (recommended).`,
 			return HandleErrorRespectJSON("%v", err)
 		}
 
+		// beads-brk7c: collect ALL labels for this dimension, not just the first.
+		// The docstring promises "removes any existing label for the dimension";
+		// a break-on-first-match left stale siblings whenever a dimension already
+		// carried 2+ labels (reachable via `bd label add <dim>:X`), which then
+		// made `bd state` (first-match) and `bd state list` (map last-wins)
+		// disagree, permanently unfixable by set-state (it cleared at most one).
 		prefix := dimension + ":"
-		var oldLabel string
+		var oldLabels []string
 		var oldValue string
 		for _, label := range labels {
 			if strings.HasPrefix(label, prefix) {
-				oldLabel = label
-				oldValue = strings.TrimPrefix(label, prefix)
-				break
+				oldLabels = append(oldLabels, label)
+				if oldValue == "" {
+					oldValue = strings.TrimPrefix(label, prefix)
+				}
 			}
 		}
 
 		newLabel := dimension + ":" + newValue
 
-		if oldLabel == newLabel {
+		// Only a true no-op when exactly one label exists AND it is already the
+		// target — if a stale sibling is present we must still proceed to clean it.
+		if len(oldLabels) == 1 && oldLabels[0] == newLabel {
 			if jsonOutput {
 				// beads-wd2x4: emit the SAME key-set as the change leg below so a
 				// consumer can statically type `set-state --json` regardless of
@@ -243,7 +252,12 @@ The --reason flag provides context for the event bead (recommended).`,
 
 		eventID = childID
 
-		if oldLabel != "" {
+		// beads-brk7c: remove every existing label for this dimension (including
+		// stale siblings), not just the first match.
+		for _, oldLabel := range oldLabels {
+			if oldLabel == newLabel {
+				continue // will be (re)added below; skip a redundant remove/add churn
+			}
 			if err := store.RemoveLabel(ctx, fullID, oldLabel, actor); err != nil {
 				WarnError("failed to remove old label %s: %v", oldLabel, err)
 			}

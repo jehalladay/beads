@@ -69,6 +69,53 @@ func TestProxiedServerSetState(t *testing.T) {
 		}
 	})
 
+	// beads-brk7c (proxied twin): set-state must clear ALL same-dimension labels,
+	// not just the first — the proxied path had the identical break-on-first bug.
+	t.Run("set_state_clears_all_duplicate_dimension_labels", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "spd")
+		issue := bdProxiedCreate(t, bd, p.dir, "brk7c proxied multi", "--type", "task")
+
+		// Seed two mode: labels — one via set-state, a sibling via `bd label add`.
+		if _, _, err := bdProxiedRunBuffers(t, bd, p.dir, "set-state", issue.ID, "mode=normal"); err != nil {
+			t.Fatalf("seed set-state failed: %v", err)
+		}
+		if _, err := bdProxiedRun(t, bd, p.dir, "label", "add", issue.ID, "mode:degraded"); err != nil {
+			t.Fatalf("seed label add failed: %v", err)
+		}
+
+		// set-state to a third value must remove BOTH stale siblings.
+		if _, _, err := bdProxiedRunBuffers(t, bd, p.dir, "set-state", issue.ID, "mode=failing"); err != nil {
+			t.Fatalf("set-state mode=failing failed: %v", err)
+		}
+
+		show := bdProxiedShowRaw(t, bd, p.dir, issue.ID)
+		if strings.Contains(show, "mode:normal") || strings.Contains(show, "mode:degraded") {
+			t.Errorf("proxied set-state left a stale mode sibling (brk7c):\n%s", show)
+		}
+		if !strings.Contains(show, "mode:failing") {
+			t.Errorf("expected mode:failing after proxied set-state:\n%s", show)
+		}
+
+		// The two read surfaces must agree on the value.
+		single, err := bdProxiedRun(t, bd, p.dir, "state", issue.ID, "mode")
+		if err != nil {
+			t.Fatalf("proxied bd state read failed: %v", err)
+		}
+		listOut, err := bdProxiedRun(t, bd, p.dir, "state", "list", issue.ID)
+		if err != nil {
+			t.Fatalf("proxied bd state list failed: %v", err)
+		}
+		if !strings.Contains(string(single), "failing") {
+			t.Errorf("proxied bd state mode should be 'failing', got: %s", single)
+		}
+		if strings.Contains(string(listOut), "normal") || strings.Contains(string(listOut), "degraded") {
+			t.Errorf("proxied bd state list leaked a stale sibling (brk7c): %s", listOut)
+		}
+		if !strings.Contains(string(listOut), "failing") {
+			t.Errorf("proxied bd state list should show mode=failing, got: %s", listOut)
+		}
+	})
+
 	t.Run("set_state_nonexistent_fails", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "spn")
 		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "set-state", "spn-nope999", "patrol=active")

@@ -44,19 +44,27 @@ func runSetStateProxiedServer(ctx context.Context, issueID, dimension, newValue,
 		return HandleErrorRespectJSON("%v", err)
 	}
 
+	// beads-brk7c: collect ALL labels for this dimension, not just the first —
+	// see the direct path (cmd/bd/state.go) for the full rationale. A
+	// break-on-first-match left stale same-dimension siblings, permanently
+	// unfixable by set-state and making `bd state` vs `bd state list` disagree.
 	prefix := dimension + ":"
-	var oldLabel, oldValue string
+	var oldLabels []string
+	var oldValue string
 	for _, label := range labels {
 		if strings.HasPrefix(label, prefix) {
-			oldLabel = label
-			oldValue = strings.TrimPrefix(label, prefix)
-			break
+			oldLabels = append(oldLabels, label)
+			if oldValue == "" {
+				oldValue = strings.TrimPrefix(label, prefix)
+			}
 		}
 	}
 
 	newLabel := dimension + ":" + newValue
 
-	if oldLabel == newLabel {
+	// Only a true no-op when exactly one label exists AND it is already the
+	// target — a stale sibling still needs cleaning.
+	if len(oldLabels) == 1 && oldLabels[0] == newLabel {
 		if jsonOutput {
 			return outputJSON(map[string]interface{}{
 				"issue_id":  fullID,
@@ -107,7 +115,12 @@ func runSetStateProxiedServer(ctx context.Context, issueID, dimension, newValue,
 		WarnError("failed to add parent-child dependency: %v", err)
 	}
 
-	if oldLabel != "" {
+	// beads-brk7c: remove every existing label for this dimension (including
+	// stale siblings), not just the first match.
+	for _, oldLabel := range oldLabels {
+		if oldLabel == newLabel {
+			continue // (re)added below; skip redundant remove/add churn
+		}
 		if err := labelUC.RemoveLabel(ctx, fullID, oldLabel, actor); err != nil {
 			WarnError("failed to remove old label %s: %v", oldLabel, err)
 		}
