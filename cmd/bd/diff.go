@@ -102,9 +102,12 @@ func renderDiff(entries []*storage.DiffEntry, fromRef, toRef string) error {
 			fmt.Printf("%s Added (%d):\n", ui.RenderAccent("+"), len(added))
 			for _, entry := range added {
 				if entry.NewValue != nil {
+					// beads-mihle: sanitize the user-controlled title before it
+					// reaches the terminal (i8dsb/7n9y display-sanitize class);
+					// bd diff was skipped by the sweep like bd history (f956y).
 					fmt.Printf("  + %s: %s\n",
 						ui.StatusOpenStyle.Render(entry.IssueID),
-						entry.NewValue.Title)
+						ui.SanitizeForTerminal(entry.NewValue.Title))
 				} else {
 					fmt.Printf("  + %s\n", ui.StatusOpenStyle.Render(entry.IssueID))
 				}
@@ -147,9 +150,12 @@ func renderDiff(entries []*storage.DiffEntry, fromRef, toRef string) error {
 			fmt.Printf("%s Removed (%d):\n", ui.RenderAccent("-"), len(removed))
 			for _, entry := range removed {
 				if entry.OldValue != nil {
+					// beads-mihle: sanitize BEFORE RenderMuted — RenderMuted only
+					// applies lipgloss styling and does NOT strip control escapes,
+					// so a raw OSC/CSI title would survive it (i8dsb/7n9y class).
 					fmt.Printf("  - %s: %s\n",
 						ui.RenderMuted(entry.IssueID),
-						ui.RenderMuted(entry.OldValue.Title))
+						ui.RenderMuted(ui.SanitizeForTerminal(entry.OldValue.Title)))
 				} else {
 					fmt.Printf("  - %s\n", ui.RenderMuted(entry.IssueID))
 				}
