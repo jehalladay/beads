@@ -77,7 +77,13 @@ func formatPrettyIssueWithContext(issue *types.Issue, parentEpic string) string 
 	if parentEpic == "" {
 		return base
 	}
-	return base + " " + ui.RenderMuted("← "+parentEpic)
+	// beads-cmzco: sanitize the parent-epic title (untrusted stored/imported
+	// content) before the muted "← <epic>" annotation. RenderMuted is lipgloss
+	// styling only (no SanitizeForTerminal), so a raw parentEpic would leak
+	// OSC/CSI escapes to the terminal in default `bd ready` output — the
+	// issue's own title is already sanitized via formatPrettyIssue→displayTitle,
+	// but the appended parent-epic suffix was the 7n9y sink aoz1q missed.
+	return base + " " + ui.RenderMuted("← "+displayTitle(parentEpic))
 }
 
 // formatIssueLong formats a single issue in long format to a buffer.
