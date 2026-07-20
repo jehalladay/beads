@@ -413,7 +413,7 @@ var showCmd = &cobra.Command{
 			if len(comments) > 0 {
 				fmt.Printf("\n%s\n", ui.RenderBold("COMMENTS"))
 				for _, comment := range comments {
-					fmt.Printf("  %s %s\n", ui.RenderMuted(formatTime(comment.CreatedAt)), comment.Author)
+					fmt.Printf("  %s %s\n", ui.RenderMuted(formatTime(comment.CreatedAt)), ui.SanitizeForTerminal(comment.Author))
 					rendered := uimd.RenderMarkdown(comment.Text)
 					// TrimRight removes trailing newlines that Glamour adds, preventing extra blank lines
 					for _, line := range strings.Split(strings.TrimRight(rendered, "\n"), "\n") {

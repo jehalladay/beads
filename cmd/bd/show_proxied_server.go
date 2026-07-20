@@ -760,7 +760,7 @@ func proxiedRenderIssue(ctx context.Context, uw uow.UnitOfWork, issue *types.Iss
 	if len(comments) > 0 {
 		fmt.Printf("\n%s\n", ui.RenderBold("COMMENTS"))
 		for _, c := range comments {
-			fmt.Printf("  %s %s\n", ui.RenderMuted(formatTime(c.CreatedAt)), c.Author)
+			fmt.Printf("  %s %s\n", ui.RenderMuted(formatTime(c.CreatedAt)), ui.SanitizeForTerminal(c.Author))
 			rendered := uimd.RenderMarkdown(c.Text)
 			for _, line := range strings.Split(strings.TrimRight(rendered, "\n"), "\n") {
 				fmt.Printf("    %s\n", line)

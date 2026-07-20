@@ -221,7 +221,7 @@ func displayShowIssueReturn(ctx context.Context, issueID string) *types.Issue {
 	if len(comments) > 0 {
 		fmt.Printf("\n%s\n", ui.RenderBold("COMMENTS"))
 		for _, comment := range comments {
-			fmt.Printf("  %s %s\n", ui.RenderMuted(comment.CreatedAt.UTC().Format("2006-01-02 15:04")), comment.Author)
+			fmt.Printf("  %s %s\n", ui.RenderMuted(comment.CreatedAt.UTC().Format("2006-01-02 15:04")), ui.SanitizeForTerminal(comment.Author))
 			rendered := uimd.RenderMarkdown(comment.Text)
 			for _, line := range strings.Split(strings.TrimRight(rendered, "\n"), "\n") {
 				fmt.Printf("    %s\n", line)
