@@ -321,6 +321,27 @@ func (l *Lexer) readIdent(startPos int) (Token, error) {
 		sb.WriteRune(r)
 	}
 
+	// Allow a single trailing '*' so the bare wildcard form documented in
+	// `bd query --help` (e.g. id=beads-*) lexes into the value, matching the
+	// quoted form id="beads-*" and the evaluator's HasSuffix("*") handling
+	// (beads-p0hw). Only a genuinely TRAILING star is consumed: the '*' must be
+	// followed by a value terminator (whitespace, operator, ')' or EOF), not
+	// another ident char. This keeps `id=be*ads` erroring at the '*' as before
+	// (a mid-value star is not a wildcard) rather than silently splitting it
+	// into two tokens. '*' is not an operator anywhere in the grammar.
+	if l.peek() == '*' {
+		save := l.pos
+		l.next() // consume '*'
+		if isIdentChar(l.peek()) {
+			// Not a trailing star (more value follows) — leave the '*' for the
+			// main lexer to reject as an unexpected character, preserving the
+			// pre-p0hw error for a mid-value star.
+			l.pos = save
+		} else {
+			sb.WriteRune('*')
+		}
+	}
+
 	value := sb.String()
 	upper := strings.ToUpper(value)
 
