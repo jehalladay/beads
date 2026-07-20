@@ -30,6 +30,7 @@ package formula
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // FormulaType categorizes formulas by their purpose.
@@ -595,6 +596,13 @@ func (f *Formula) Validate() error {
 			errs = append(errs, fmt.Sprintf("%s (%s): priority must be 0-4", prefix, step.ID))
 		}
 
+		// Validate the step's gate timeout invariant (beads-luk9k, twin of the
+		// bd gate create --timer guard cx0eu): a timer gate authored with a
+		// zero or negative timeout strands the gate (0 => "no timeout set" on
+		// every check; negative => expires before it starts), so reject it at
+		// cook/lint before the gate is poured, on both this step and children.
+		validateStepGate(step, &errs, prefix)
+
 		// Collect child IDs (for dependency validation)
 		collectChildIDs(step.Children, stepIDLocations, &errs, prefix)
 	}
@@ -667,6 +675,24 @@ func (f *Formula) Validate() error {
 
 // collectChildIDs recursively collects step IDs from children.
 // idLocations maps ID -> location where first defined (for better duplicate error messages).
+// validateStepGate enforces the gate-timeout invariant on a step and all of its
+// descendants (children are poured into gate issues by cook's collectSteps
+// recursion just like top-level steps). For a "timer" gate, a well-formed but
+// non-positive duration (0s / negative) can never hold the issue as intended, so
+// it is rejected here — mirroring the bd gate create guard (beads-cx0eu). A
+// malformed duration string is left to the parse-error owner; this only guards
+// the positivity of a value that parses cleanly.
+func validateStepGate(step *Step, errs *[]string, prefix string) {
+	if step.Gate != nil && step.Gate.Type == "timer" && step.Gate.Timeout != "" {
+		if d, perr := time.ParseDuration(step.Gate.Timeout); perr == nil && d <= 0 {
+			*errs = append(*errs, fmt.Sprintf("%s (%s): gate type \"timer\" requires a positive timeout (got %q); a zero timer errors on every check (\"no timeout set\") and a negative timer expires before it starts, so neither can hold the step's gate as intended", prefix, step.ID, step.Gate.Timeout))
+		}
+	}
+	for i, child := range step.Children {
+		validateStepGate(child, errs, fmt.Sprintf("%s.children[%d]", prefix, i))
+	}
+}
+
 func collectChildIDs(children []*Step, idLocations map[string]string, errs *[]string, prefix string) {
 	for i, child := range children {
 		childPrefix := fmt.Sprintf("%s.children[%d]", prefix, i)
