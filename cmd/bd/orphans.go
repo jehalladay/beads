@@ -80,13 +80,7 @@ Examples:
 			return orphans[i].IssueID < orphans[j].IssueID
 		})
 
-		for i, orphan := range orphans {
-			fmt.Printf("%d. %s: %s\n", i+1, ui.RenderID(orphan.IssueID), orphan.Title)
-			fmt.Printf("   Status: %s\n", orphan.Status)
-			if details && orphan.LatestCommit != "" {
-				fmt.Printf("   Latest commit: %s - %s\n", orphan.LatestCommit, orphan.LatestCommitMessage)
-			}
-		}
+		fmt.Print(renderOrphanList(orphans, details))
 
 		if fix {
 			fmt.Println()
@@ -190,6 +184,25 @@ func getIssueProvider(labels, labelsAny []string) (types.IssueProvider, func(), 
 // findOrphanedIssues wraps the shared doctor package function and converts to output format.
 // It respects the --db flag for cross-repo orphan detection.
 // labels and labelsAny are passed to the issue provider to restrict which issues are considered.
+// renderOrphanList renders the human-readable orphan list. Titles and the raw
+// git commit message are routed through displayTitle (ui.SanitizeForTerminal)
+// so an untrusted-import title or a crafted commit message can't inject
+// OSC/CSI terminal-control escapes (beads-rpntv, 7n9y sink-enum delta). The
+// --json path emits the raw fields unchanged (machine-readable). Callers sort
+// the slice first. Returns the rendered text so it is unit-testable without a
+// live git-orphan fixture.
+func renderOrphanList(orphans []orphanIssueOutput, details bool) string {
+	var b strings.Builder
+	for i, orphan := range orphans {
+		fmt.Fprintf(&b, "%d. %s: %s\n", i+1, ui.RenderID(orphan.IssueID), displayTitle(orphan.Title))
+		fmt.Fprintf(&b, "   Status: %s\n", orphan.Status)
+		if details && orphan.LatestCommit != "" {
+			fmt.Fprintf(&b, "   Latest commit: %s - %s\n", orphan.LatestCommit, displayTitle(orphan.LatestCommitMessage))
+		}
+	}
+	return b.String()
+}
+
 func findOrphanedIssues(path string, labels, labelsAny []string) ([]orphanIssueOutput, error) {
 	provider, cleanup, err := getIssueProvider(labels, labelsAny)
 	if err != nil {
