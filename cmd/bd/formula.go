@@ -94,6 +94,23 @@ type FormulaListEntry struct {
 	Vars        int    `json:"vars"`
 }
 
+// validateFormulaTypeFilter rejects an unrecognized `bd formula list --type`
+// value up front. Without this, a typo (e.g. "expansions" vs "expansion") falls
+// through the exact-match filter in runFormulaList, matches zero formulas, and
+// prints "No formulas found." with exit 0 — a false all-clear that hides the
+// real formulas of the intended type (beads-coaqt, the FILTER-flag axis of the
+// fail-late enum-reject class; sibling of beads-68cgv gate check --type). Empty
+// means "all types" and is allowed. Reuses the canonical FormulaType.IsValid().
+func validateFormulaTypeFilter(typeFilter string) error {
+	if typeFilter == "" {
+		return nil
+	}
+	if !formula.FormulaType(typeFilter).IsValid() {
+		return fmt.Errorf("invalid formula type filter %q (must be workflow, expansion, aspect, or convoy)", typeFilter)
+	}
+	return nil
+}
+
 func runFormulaList(cmd *cobra.Command, args []string) error {
 	evt := metrics.NewCommandEvent("formula-list")
 	defer func() {
@@ -103,6 +120,9 @@ func runFormulaList(cmd *cobra.Command, args []string) error {
 	}()
 
 	typeFilter, _ := cmd.Flags().GetString("type")
+	if err := validateFormulaTypeFilter(typeFilter); err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
 
 	searchPaths := getFormulaSearchPaths()
 
