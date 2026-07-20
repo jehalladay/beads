@@ -774,17 +774,34 @@ func IsBlockedInTx(ctx context.Context, tx DBTX, issueID string) (bool, []string
 	for _, e := range edges {
 		blockerIDs = append(blockerIDs, e.dependsOnID)
 	}
-	statusByID, err := loadStatusByIDInTx(ctx, tx, blockerIDs)
+	// beads-g60zz: load status AND close_reason so the blockers list applies the
+	// same reason-aware conditional-blocks rule as the is_blocked recompute
+	// (beads-a3hm), mirroring the mxe4b fix in GetBlockedIssuesInTx. The old
+	// status-only skip dropped a success-closed conditional-blocks blocker: is_blocked
+	// (returned above) correctly stayed 1, but this list came back EMPTY, so the
+	// close/update blocked-guards (close.go / update.go / batch.go — they gate on
+	// `blocked && len(blockers) > 0`) let a genuinely-blocked issue close WITHOUT
+	// --force. A conditional-blocks edge ("B runs only if A FAILS") still holds B
+	// while A is closed non-failure.
+	stateByID, err := loadStatusAndReasonByIDInTx(ctx, tx, blockerIDs)
 	if err != nil {
 		return false, nil, fmt.Errorf("check blocker status: %w", err)
 	}
 	var blockers []string
 	for _, e := range edges {
-		status, ok := statusByID[e.dependsOnID]
+		ts, ok := stateByID[e.dependsOnID]
 		if !ok {
 			continue
 		}
-		if status == types.StatusClosed || status == types.StatusPinned {
+		// Base: blocks/waits-for hold only while the target is open (unchanged).
+		// Only widen the conditional-blocks case to also hold on a success close —
+		// isActiveConditionalOrHardBlocker returns false for waits-for, so keep the
+		// open-check as the base and override only for conditional-blocks.
+		active := ts.status != types.StatusClosed && ts.status != types.StatusPinned
+		if e.depType == string(types.DepConditionalBlocks) {
+			active = isActiveConditionalOrHardBlocker(types.DepConditionalBlocks, ts)
+		}
+		if !active {
 			continue
 		}
 		if e.depType != "blocks" {
