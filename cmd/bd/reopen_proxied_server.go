@@ -115,6 +115,16 @@ func reopenProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string,
 			fmt.Fprintf(os.Stderr, "cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override\n", id, closedEpics)
 			return reopenProxiedOutcome{}, false
 		}
+		// Duplicate-issue guard (beads-8nugc), mirrored on the proxied path so a
+		// hub-connected crew can't bypass it: reopening an issue that still carries
+		// an outgoing `duplicates` edge leaves the contradictory "open but duplicate"
+		// state, and since `duplicates` is non-blocking the issue reappears in
+		// `bd ready`. The direct reopen path enforces this (cmd/bd/reopen.go
+		// duplicatesTargets); this is its proxied twin. Overridable with --force.
+		if dups := proxiedDuplicatesTargets(ctx, uw, id, isWisp); len(dups) > 0 {
+			fmt.Fprintf(os.Stderr, "cannot reopen %s: it is a duplicate of %v; remove the duplicates link (bd dep remove %s <target> --type duplicates) or use --force to override\n", id, dups, id)
+			return reopenProxiedOutcome{}, false
+		}
 	}
 
 	params := domain.ReopenIssueParams{Reason: reason}
@@ -138,6 +148,25 @@ func reopenProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string,
 	}
 	auditStatusChange(id, oldStatus, string(types.StatusOpen), actor, reason)
 	return reopenProxiedOutcome{id: id, before: current, after: res.Issue, reopened: res.Reopened}, true
+}
+
+// proxiedDuplicatesTargets returns the IDs of the canonical issues `id` is a
+// duplicate of (i.e. id has an outgoing `duplicates` dep). Proxied twin of the
+// direct-path duplicatesTargets (cmd/bd/reopen.go, beads-8nugc); mirrors
+// proxiedClosedEpicParents — proxiedListDeps returns the OUTGOING deps, each
+// carrying the target Issue + DependencyType.
+func proxiedDuplicatesTargets(ctx context.Context, uw uow.UnitOfWork, id string, isWisp bool) []string {
+	deps, err := proxiedListDeps(ctx, uw, id, isWisp, domain.DepListFilter{Direction: domain.DepDirectionOut})
+	if err != nil {
+		return nil
+	}
+	var targets []string
+	for _, dep := range deps {
+		if dep.DependencyType == types.DepDuplicates {
+			targets = append(targets, dep.Issue.ID)
+		}
+	}
+	return targets
 }
 
 func reopenProxiedCommitMessage(outcomes []reopenProxiedOutcome) string {
