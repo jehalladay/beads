@@ -64,13 +64,35 @@ Example:
 
 func showMolecule(subgraph *MoleculeSubgraph) error {
 	if jsonOutput {
+		// beads-1sq7f: normalize the three nil-able slices to [] so a plain
+		// molecule emits []-not-null under --json. dependencies is nil for a
+		// root-only/no-internal-dep molecule, variables (extractAllVariables ->
+		// template.go's `var vars []string`) is nil with no {{handlebars}}, and
+		// bonded_from is nil for a non-compound root. All three feed no-omitempty
+		// json fields via this raw map, so a nil slice marshals to null while the
+		// sibling --parallel path (analyzeMoleculeParallel) inits every slice to
+		// [] — the guib/5fv3/036h/4mkg json-ARRAY nil-slice contract. Distinct
+		// emit site from 036h (internal/formula + mol_distill) and 4mkg
+		// (ParallelInfo struct).
+		deps := subgraph.Dependencies
+		if deps == nil {
+			deps = []*types.Dependency{}
+		}
+		vars := extractAllVariables(subgraph)
+		if vars == nil {
+			vars = []string{}
+		}
+		bondedFrom := subgraph.Root.BondedFrom
+		if bondedFrom == nil {
+			bondedFrom = []types.BondRef{}
+		}
 		return outputJSON(map[string]interface{}{
 			"root":         subgraph.Root,
 			"issues":       subgraph.Issues,
-			"dependencies": subgraph.Dependencies,
-			"variables":    extractAllVariables(subgraph),
+			"dependencies": deps,
+			"variables":    vars,
 			"is_compound":  subgraph.Root.IsCompound(),
-			"bonded_from":  subgraph.Root.BondedFrom,
+			"bonded_from":  bondedFrom,
 		})
 	}
 
