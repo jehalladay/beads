@@ -113,8 +113,13 @@ func runRelate(cmd *cobra.Command, args []string) error {
 	// pair would print "✓ Linked" as if it changed something. Report an honest
 	// "already related, no change" (rc=0 — a benign no-op, the relate-side
 	// sibling of the unrelate fix beads-piud above and the bwla dep-add re-add
-	// case), reusing the same relatesToLinkExists helper the unrelate path uses.
-	if alreadyRelated, checkErr := relatesToLinkExists(ctx, id1, id2); checkErr == nil && alreadyRelated {
+	// case).
+	// beads-ri535: gate the no-op on the FULLY-bidirectional check, not the
+	// either-direction relatesToLinkExists. On an ASYMMETRIC link (one
+	// direction present, from an imported one-sided row or legacy data) fall
+	// through to the atomic 2-dep add below, which HEALS the missing reciprocal
+	// (AddDependency is idempotent, so re-adding the present edge is a no-op).
+	if fullyRelated, checkErr := relatesToLinkFullyBidirectional(ctx, id1, id2); checkErr == nil && fullyRelated {
 		if jsonOutput {
 			result := map[string]interface{}{"id1": id1, "id2": id2, "related": true, "unchanged": true}
 			return outputJSON(result)
@@ -285,6 +290,34 @@ func relatesToLinkExists(ctx context.Context, id1, id2 string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// relatesToLinkFullyBidirectional reports whether BOTH id1->id2 AND id2->id1
+// relates-to edges exist. Distinct from relatesToLinkExists (either-direction):
+// beads-ri535 — the relate no-op guard must only short-circuit when the link is
+// FULLY bidirectional, so `bd relate` on an ASYMMETRIC link (one direction
+// present, from an imported one-sided row or legacy pre-oyy1 data) proceeds to
+// the atomic 2-dep add and HEALS the missing reciprocal instead of falsely
+// reporting "already related". (unrelate keeps using the either-direction
+// check, since a half-link should still be removable.)
+func relatesToLinkFullyBidirectional(ctx context.Context, id1, id2 string) (bool, error) {
+	hasEdge := func(from, to string) (bool, error) {
+		recs, err := store.GetDependencyRecords(ctx, from)
+		if err != nil {
+			return false, err
+		}
+		for _, rec := range recs {
+			if rec != nil && rec.DependsOnID == to && rec.Type == types.DepRelatesTo {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	fwd, err := hasEdge(id1, id2)
+	if err != nil || !fwd {
+		return false, err
+	}
+	return hasEdge(id2, id1)
 }
 
 // Note: contains, remove, formatRelatesTo functions removed per Decision 004
