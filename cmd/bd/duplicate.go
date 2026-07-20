@@ -128,6 +128,44 @@ func runDuplicate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// beads-cjl9y (duplicate-side twin of beads-pmaud): reject re-marking an issue
+	// that ALREADY has a live canonical by a DIFFERENT target. LinkAndClose is
+	// idempotent for an identical (duplicateID -duplicates-> canonicalID) edge, so
+	// a same-target re-duplicate correctly dedups to one edge — but a DIFFERENT
+	// canonicalID would UNCONDITIONALLY add a SECOND outgoing duplicates edge,
+	// leaving duplicateID a duplicate of two live canonicals ("duplicate of [C D]").
+	// That makes "duplicate of" ambiguous and can resurface duplicateID via either
+	// canonical; reopen/tracer logic (reopen.go duplicatesTargets, beads-8nugc)
+	// assumes ≤1 live duplicates edge. The wqrfi guard above only rejects a
+	// canonical that is ITSELF a closed duplicate; this is the uncovered
+	// multiple-live-canonicals sibling on the source side. Same-target → idempotent
+	// no-op notice (mirror close.go's beads-dr3 / the pmaud supersede guard: rc0,
+	// reflect the STORED target); different-target → reject and point the operator
+	// at the existing link.
+	dupDeps, derr := store.GetDependenciesWithMetadata(ctx, duplicateID)
+	if derr != nil {
+		return HandleErrorRespectJSON("checking %s: %v", duplicateID, derr)
+	}
+	for _, d := range dupDeps {
+		if d.DependencyType != types.DepDuplicates {
+			continue
+		}
+		if d.ID == canonicalID {
+			// Idempotent: already a duplicate of exactly this canonical. No second
+			// write, no false "✓ Marked ..." transition glyph.
+			if isJSONOutput() {
+				return outputJSON(map[string]interface{}{
+					"duplicate": duplicateID,
+					"canonical": canonicalID,
+					"status":    "closed",
+				})
+			}
+			fmt.Printf("%s %s is already a duplicate of %s (no change)\n", ui.RenderInfoIcon(), duplicateID, canonicalID)
+			return nil
+		}
+		return HandleErrorRespectJSON("%s is already a duplicate of %s — remove the existing duplicates link or reopen %s first (a second canonical would leave %s a duplicate of multiple live issues)", duplicateID, d.ID, duplicateID, duplicateID)
+	}
+
 	// Add a "duplicates" dependency edge (duplicate → canonical) AND close the
 	// duplicate atomically (beads-njnw): a mid-sequence failure must not leave
 	// the edge added while the issue stays open.

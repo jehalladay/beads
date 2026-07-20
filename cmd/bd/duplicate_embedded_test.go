@@ -183,6 +183,72 @@ func TestEmbeddedDuplicate(t *testing.T) {
 			t.Errorf("expected dep-add duplicates onto a plain canonical to succeed, got: %s", out)
 		}
 	})
+
+	// ===== beads-cjl9y: re-marking as a duplicate of a DIFFERENT canonical is rejected =====
+	// A --of C then A --of D (A already a closed duplicate of C) must NOT silently
+	// add a SECOND outgoing duplicates edge (leaving A "duplicate of [C D]" = two
+	// live canonicals). It must fail; A must keep exactly one duplicates edge (to
+	// C, the first canonical). Duplicate-side twin of the pmaud supersede guard.
+	t.Run("error_different_canonical_re_duplicate_cjl9y", func(t *testing.T) {
+		a := bdCreate(t, bd, dir, "cjl9y A", "--type", "bug")
+		c := bdCreate(t, bd, dir, "cjl9y C", "--type", "bug")
+		d := bdCreate(t, bd, dir, "cjl9y D", "--type", "bug")
+		bdDuplicate(t, bd, dir, a.ID, "--of", c.ID)
+		// Second, DIFFERENT canonical must be rejected.
+		out := bdDuplicateFail(t, bd, dir, a.ID, "--of", d.ID)
+		if !strings.Contains(strings.ToLower(out), "already a duplicate") {
+			t.Errorf("expected an 'already a duplicate' rejection for A --of D, got: %s", out)
+		}
+		// A must still carry exactly ONE duplicates edge (to C, not D).
+		s := openStore(t, beadsDir, "du")
+		deps, err := s.GetDependenciesWithMetadata(t.Context(), a.ID)
+		if err != nil {
+			t.Fatalf("GetDependenciesWithMetadata: %v", err)
+		}
+		var dupN int
+		var target string
+		for _, dep := range deps {
+			if dep.DependencyType == "duplicates" {
+				dupN++
+				target = dep.ID
+			}
+		}
+		if dupN != 1 {
+			t.Fatalf("expected exactly 1 duplicates edge on A after a rejected re-duplicate, got %d (multiple-live-canonicals bug)", dupN)
+		}
+		if target != c.ID {
+			t.Errorf("expected the surviving duplicates edge to point at C=%s, got %s", c.ID, target)
+		}
+	})
+
+	// ===== beads-cjl9y: SAME-canonical re-duplicate stays an idempotent no-op =====
+	// A --of C then A --of C again is a no-op (rc0), and A keeps exactly one
+	// duplicates edge — LinkAndClose already dedups an identical edge; the guard
+	// must preserve that (report "no change", not a second write or a rejection).
+	t.Run("same_canonical_re_duplicate_idempotent_cjl9y", func(t *testing.T) {
+		a := bdCreate(t, bd, dir, "cjl9y idem A", "--type", "bug")
+		c := bdCreate(t, bd, dir, "cjl9y idem C", "--type", "bug")
+		bdDuplicate(t, bd, dir, a.ID, "--of", c.ID)
+		// Same canonical again — must succeed (rc0) as a no-op.
+		out := bdDuplicate(t, bd, dir, a.ID, "--of", c.ID)
+		if !strings.Contains(strings.ToLower(out), "no change") {
+			t.Errorf("expected a 'no change' idempotent notice for a same-canonical re-duplicate, got: %s", out)
+		}
+		s := openStore(t, beadsDir, "du")
+		deps, err := s.GetDependenciesWithMetadata(t.Context(), a.ID)
+		if err != nil {
+			t.Fatalf("GetDependenciesWithMetadata: %v", err)
+		}
+		var dupN int
+		for _, dep := range deps {
+			if dep.DependencyType == "duplicates" {
+				dupN++
+			}
+		}
+		if dupN != 1 {
+			t.Errorf("expected exactly 1 duplicates edge after an idempotent same-canonical re-duplicate, got %d", dupN)
+		}
+	})
 }
 
 // TestEmbeddedDuplicateConcurrent exercises duplicate operations concurrently.

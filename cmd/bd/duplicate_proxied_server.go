@@ -41,6 +41,8 @@ func runDuplicateProxiedServer(ctx context.Context, duplicateArg, canonicalArg s
 		successFmt: "%s Marked %s as duplicate of %s (closed)\n",
 		jsonFrom:   "duplicate",
 		jsonTo:     "canonical",
+		noChangeFmt:      "%s %s is already a duplicate of %s (no change)\n",
+		alreadyLinkedErr: "%s is already a duplicate of %s — remove the existing duplicates link or reopen %s first (a second canonical would leave %s a duplicate of multiple live issues)",
 	})
 }
 
@@ -57,6 +59,8 @@ func runSupersedeProxiedServer(ctx context.Context, oldArg, newArg string) error
 		successFmt: "%s Marked %s as superseded by %s (closed)\n",
 		jsonFrom:   "superseded",
 		jsonTo:     "replacement",
+		noChangeFmt:      "%s %s is already superseded by %s (no change)\n",
+		alreadyLinkedErr: "%s is already superseded by %s — remove the existing supersedes link or reopen %s first (a second replacement would leave %s with multiple live successors)",
 	})
 }
 
@@ -69,6 +73,13 @@ type linkAndCloseProxiedInput struct {
 	successFmt     string // plain-text success (icon, fromID, toID)
 	jsonFrom       string // JSON key for the closed id ("duplicate"/"superseded")
 	jsonTo         string // JSON key for the target id ("canonical"/"replacement")
+	// noChangeFmt is the idempotent no-op notice (icon, fromID, toID) for a
+	// same-target re-link (beads-pmaud/beads-cjl9y source-already-linked guard).
+	noChangeFmt string
+	// alreadyLinkedErr is the rejection when fromID already has a live outgoing
+	// edge of this type to a DIFFERENT target (fromID, existing target, fromID,
+	// fromID) — the multiple-live-{successors,canonicals} guard.
+	alreadyLinkedErr string
 }
 
 func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) error {
@@ -134,35 +145,38 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 				return HandleErrorRespectJSON("%s is already superseded by %s — marking %s as superseded by %s would create a supersede cycle (neither has a live successor)", toID, fromID, fromID, toID)
 			}
 		}
+	}
 
-		// beads-pmaud (proxied twin): reject re-superseding fromID when it ALREADY
-		// has a live successor by a DIFFERENT target. AddDependency below would
-		// otherwise add a SECOND outgoing supersedes edge, leaving fromID with
-		// multiple live successors ("superseded by [C D]") — violating the single-
-		// canonical-replacement invariant. Same-target → idempotent no-op (rc0,
-		// reflect the stored target); different-target → reject. Mirrors the direct
-		// duplicate.go guard so the hub-connected path is not a bypass.
-		fromDeps, derr := uw.DependencyUseCase().ListWithIssueMetadata(ctx, fromID, domain.DepListFilter{})
-		if derr != nil {
-			return HandleErrorRespectJSON("checking %s: %v", fromID, derr)
+	// beads-pmaud (supersede) + beads-cjl9y (duplicate) proxied twin: reject
+	// re-linking fromID when it ALREADY has a live outgoing edge of this type to a
+	// DIFFERENT target. AddDependency below would otherwise add a SECOND outgoing
+	// edge, leaving fromID with multiple live successors/canonicals ("[C D]") —
+	// violating the single-canonical-{replacement,duplicate} invariant the
+	// reopen/tracer logic assumes. Runs for BOTH DepSupersedes and DepDuplicates
+	// (cjl9y widened this from the supersede-only pmaud guard so the duplicate path
+	// is not a bypass — dfzre lesson). Same-target → idempotent no-op (rc0, reflect
+	// the stored target); different-target → reject. Mirrors the direct
+	// duplicate.go/runSupersede guards so the hub-connected path is not a bypass.
+	fromDeps, derr := uw.DependencyUseCase().ListWithIssueMetadata(ctx, fromID, domain.DepListFilter{})
+	if derr != nil {
+		return HandleErrorRespectJSON("checking %s: %v", fromID, derr)
+	}
+	for _, d := range fromDeps {
+		if d.DependencyType != in.depType {
+			continue
 		}
-		for _, d := range fromDeps {
-			if d.DependencyType != types.DepSupersedes {
-				continue
+		if d.ID == toID {
+			if isJSONOutput() {
+				return outputJSON(map[string]interface{}{
+					in.jsonFrom: fromID,
+					in.jsonTo:   toID,
+					"status":    "closed",
+				})
 			}
-			if d.ID == toID {
-				if isJSONOutput() {
-					return outputJSON(map[string]interface{}{
-						in.jsonFrom: fromID,
-						in.jsonTo:   toID,
-						"status":    "closed",
-					})
-				}
-				fmt.Printf("%s %s is already superseded by %s (no change)\n", ui.RenderInfoIcon(), fromID, toID)
-				return nil
-			}
-			return HandleErrorRespectJSON("%s is already superseded by %s — remove the existing supersedes link or reopen %s first (a second replacement would leave %s with multiple live successors)", fromID, d.ID, fromID, fromID)
+			fmt.Printf(in.noChangeFmt, ui.RenderInfoIcon(), fromID, toID)
+			return nil
 		}
+		return HandleErrorRespectJSON(in.alreadyLinkedErr, fromID, d.ID, fromID, fromID)
 	}
 
 	actor := getActor()
