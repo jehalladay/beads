@@ -47,7 +47,12 @@ func runDeleteProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	}
 	if len(in.ids) == 0 {
 		_ = cmd.Usage()
-		FatalError("no issue IDs provided")
+		// beads-0igug: honor the --json error contract on the no-IDs leg, matching
+		// the direct path (delete.go → HandleErrorRespectJSON) and every other error
+		// leg in this function. Plain FatalError left stdout empty under --json, so a
+		// `bd delete --json` consumer with no IDs got unparseable stderr text — a
+		// mode-asymmetric contract violation (fg6/65cgh/j43d class).
+		FatalErrorRespectJSON("no issue IDs provided")
 	}
 
 	if uowProvider == nil {
