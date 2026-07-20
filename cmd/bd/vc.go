@@ -25,6 +25,31 @@ Note: 'bd history', 'bd diff', and 'bd branch' also work for quick access.
 This subcommand provides additional operations like merge and commit.`,
 }
 
+// requireDirectVC fails loud when running against a proxied server.
+//
+// beads-6iwwf (aocj proxied-routing class, VCS/data-plane leg): vc is NOT in
+// noDbCommands and every subcommand (merge/commit/status) calls store.Merge /
+// store.Commit / store.CommitMergeResolution / store.ResolveConflicts /
+// store.GetCurrentCommit / store.CurrentBranch / store.Status directly. In
+// proxied-server mode main.go PersistentPreRun returns before newDoltStore,
+// leaving the global `store` nil — so those calls nil-panicked (sibling of the
+// beads-jr2h4 branch leg and beads-i2v77 merge-slot leg). There is no
+// proxied/UOW version-control path, and the store factory refuses to open a
+// direct store in proxied config, so — like `bd branch` / `bd merge-slot` /
+// `compact --analyze` — vc requires direct/embedded Dolt access: fail loud with
+// a clear, --json-contract-correct message instead of panicking.
+func requireDirectVC() error {
+	if usesProxiedServer() {
+		return HandleErrorRespectJSON("version-control operations require direct/embedded Dolt access and are not available in proxied-server mode")
+	}
+	// Defensive lazy-init for the direct path (mirrors branch.go/merge_slot.go):
+	// guarantee the store is active before the version-control calls below.
+	if err := ensureStoreActive(); err != nil {
+		return HandleErrorWithHintRespectJSON(err.Error(), diagHint())
+	}
+	return nil
+}
+
 var vcMergeStrategy string
 
 var vcMergeCmd = &cobra.Command{
@@ -54,6 +79,10 @@ Examples:
 				c.CloseEventAndAdd(evt)
 			}
 		}()
+
+		if err := requireDirectVC(); err != nil {
+			return err
+		}
 
 		ctx := rootCtx
 		branchName := args[0]
@@ -180,6 +209,10 @@ Examples:
 			}
 		}()
 
+		if err := requireDirectVC(); err != nil {
+			return err
+		}
+
 		ctx := rootCtx
 
 		if vcCommitStdin {
@@ -246,6 +279,10 @@ Examples:
 				c.CloseEventAndAdd(evt)
 			}
 		}()
+
+		if err := requireDirectVC(); err != nil {
+			return err
+		}
 
 		ctx := rootCtx
 
