@@ -198,6 +198,26 @@ func runSupersede(cmd *cobra.Command, args []string) error {
 		return HandleErrorRespectJSON("replacement issue not found: %s", newID)
 	}
 
+	// beads-02v2k: reject a supersede MUTUAL cycle (A superseded-by B, then B
+	// superseded-by A) — that closes both issues each naming the other as its
+	// live successor, so a "superseded by" tracer loops forever with no live
+	// replacement. Tell: the replacement (newID) already has an outgoing
+	// "supersedes" edge back to oldID. This is a NARROW reciprocal-edge check at
+	// the supersede seam only — it deliberately does NOT touch cycleCheckTypesFor
+	// (the DepSupersedes exclusion is eng_2/dfzre's deliberate contract, so a
+	// legitimate acyclic version chain v1→v2→v3 stays legal: v3 has no back-edge
+	// to v2). The forward general-cycle case via `dep add --type supersedes` is a
+	// separate gap tracked as its own bead against the contract owner.
+	newDeps, derr := store.GetDependenciesWithMetadata(ctx, newID)
+	if derr != nil {
+		return HandleErrorRespectJSON("checking replacement %s: %v", newID, derr)
+	}
+	for _, d := range newDeps {
+		if d.DependencyType == types.DepSupersedes && d.ID == oldID {
+			return HandleErrorRespectJSON("%s is already superseded by %s — marking %s as superseded by %s would create a supersede cycle (neither has a live successor)", newID, oldID, oldID, newID)
+		}
+	}
+
 	// Add a "supersedes" dependency edge (old → new) AND close the superseded
 	// issue atomically (beads-njnw): a mid-sequence failure must not leave the
 	// edge added while the issue stays open.

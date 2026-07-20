@@ -133,6 +133,43 @@ func TestEmbeddedSupersede(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "No replacement", "--type", "task")
 		bdSupersedeFail(t, bd, dir, issue.ID, "--with", "ss-nonexistent999")
 	})
+
+	// ===== beads-02v2k: reject a supersede MUTUAL CYCLE =====
+	// A superseded-by B, then B superseded-by A closes both issues each naming
+	// the other, so no live successor exists and a "superseded by" tracer loops
+	// forever. The narrow reciprocal-edge guard (approach B — supersede seam
+	// only, cycleCheckTypesFor untouched) must reject the second edge: the
+	// replacement A already has an outgoing "supersedes" edge back to B.
+	t.Run("error_mutual_cycle_02v2k", func(t *testing.T) {
+		a := bdCreate(t, bd, dir, "cycle A", "--type", "task")
+		b := bdCreate(t, bd, dir, "cycle B", "--type", "task")
+		// A superseded-by B — legal.
+		bdSupersede(t, bd, dir, a.ID, "--with", b.ID)
+		// B superseded-by A — would close the A<->B loop; must be rejected.
+		out := bdSupersedeFail(t, bd, dir, b.ID, "--with", a.ID)
+		if !strings.Contains(strings.ToLower(out), "cycle") {
+			t.Errorf("expected a cycle rejection for B --with A, got: %s", out)
+		}
+	})
+
+	// ===== beads-02v2k regression: a legal version CHAIN still works =====
+	// v1 -> v2 -> v3 (each newer supersedes the prior) is an ACYCLIC chain and
+	// is DELIBERATELY legal — the reciprocal-edge guard must be blind to it
+	// (v3 has no back-edge to v2). Guards against regressing 02v2k into the
+	// refuted wqrfi-style chain block that would reverse the dfzre exclusion.
+	t.Run("legal_version_chain_still_works_02v2k", func(t *testing.T) {
+		v1 := bdCreate(t, bd, dir, "chain v1", "--type", "task")
+		v2 := bdCreate(t, bd, dir, "chain v2", "--type", "task")
+		v3 := bdCreate(t, bd, dir, "chain v3", "--type", "task")
+		// v1 superseded-by v2.
+		bdSupersede(t, bd, dir, v1.ID, "--with", v2.ID)
+		// v2 superseded-by v3 — v2 already has an incoming supersedes edge (from
+		// v1) but the chain is acyclic, so this MUST still succeed.
+		out := bdSupersede(t, bd, dir, v2.ID, "--with", v3.ID)
+		if !strings.Contains(out, "superseded") {
+			t.Errorf("legal version chain v2 --with v3 was rejected: %s", out)
+		}
+	})
 }
 
 // TestEmbeddedSupersedeConcurrent exercises supersede operations concurrently.

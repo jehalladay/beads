@@ -117,6 +117,25 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 		}
 	}
 
+	// beads-02v2k (proxied twin): reject a supersede MUTUAL cycle (A superseded-by
+	// B, then B superseded-by A) — both close naming the other, no live successor,
+	// tracer loops forever. Mirrors the direct duplicate.go supersede guard so the
+	// hub-connected path is not a bypass (the dfzre lesson: fix the class at BOTH
+	// direct + proxied). Narrow reciprocal-edge check only — does NOT touch
+	// cycleCheckTypesFor; an acyclic version chain v1→v2→v3 stays legal (v3 has no
+	// back-edge to v2). Tell: the replacement (toID) already supersedes fromID.
+	if in.depType == types.DepSupersedes {
+		toDeps, derr := uw.DependencyUseCase().ListWithIssueMetadata(ctx, toID, domain.DepListFilter{})
+		if derr != nil {
+			return HandleErrorRespectJSON("checking replacement %s: %v", toID, derr)
+		}
+		for _, d := range toDeps {
+			if d.DependencyType == types.DepSupersedes && d.ID == fromID {
+				return HandleErrorRespectJSON("%s is already superseded by %s — marking %s as superseded by %s would create a supersede cycle (neither has a live successor)", toID, fromID, fromID, toID)
+			}
+		}
+	}
+
 	actor := getActor()
 
 	dep := &types.Dependency{
