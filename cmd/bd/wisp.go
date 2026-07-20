@@ -166,8 +166,19 @@ func runWispCreateCore(cmd *cobra.Command, args []string) error {
 
 	ctx := rootCtx
 
-	if store == nil {
-		return HandleErrorWithHint("no database connection", diagHint())
+	// beads-mgjco (aocj fail-loud class): in proxied-server mode main.go's
+	// PersistentPreRun returns early (main.go:1155) leaving the global store
+	// nil, so wisp create's store.SearchIssues/GetIssue + the wisp-instantiation
+	// transaction would nil-panic — and the bare store==nil check misdiagnoses
+	// it as a local "no database connection". wisp create materializes an
+	// ephemeral molecule via a raw storage.Transaction the proxied UOW does not
+	// yield, so fail loud with an accurate message (mirrors merge-slot/restore).
+	// (wisp list/gc reads are separately UOW-routable interface-ext work.)
+	if usesProxiedServer() {
+		return HandleErrorRespectJSON("wisp create is not supported in proxied-server mode (connect directly with an embedded/dolt store)")
+	}
+	if err := ensureStoreActive(); err != nil {
+		return HandleErrorWithHintRespectJSON(err.Error(), diagHint())
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")

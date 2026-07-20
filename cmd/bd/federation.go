@@ -147,6 +147,26 @@ func getFederatedStore() (storage.DoltStorage, error) {
 	return store, nil
 }
 
+// requireDirectFederation fails loud when federation is run in proxied-server
+// mode (beads-mgjco, aocj fail-loud class). main.go's PersistentPreRun returns
+// early in proxied mode (main.go:1155) leaving the global store nil, so the
+// federation handlers' direct store.AddFederationPeer/AddRemote/RemoveRemote/
+// ListRemotes calls (and getFederatedStore().Sync) either nil-panic or
+// misdiagnose the failure as a local "no store available". Federation's
+// headline is credentialed peer management + Sync, which live only on the
+// concrete DoltStore (credentials.go uses a raw *sql.Tx and credential
+// encryption; there is no proxied/UOW federation path), so refuse the whole
+// family with an accurate message (mirrors requireDirectMergeSlot / restore).
+func requireDirectFederation(op string) error {
+	if usesProxiedServer() {
+		return HandleErrorRespectJSON("federation %s is not supported in proxied-server mode (connect directly with an embedded/dolt store)", op)
+	}
+	if err := ensureStoreActive(); err != nil {
+		return HandleErrorWithHintRespectJSON(err.Error(), diagHint())
+	}
+	return nil
+}
+
 func runFederationSync(cmd *cobra.Command, args []string) error {
 	evt := metrics.NewCommandEvent("federation-sync")
 	defer func() {
@@ -156,6 +176,10 @@ func runFederationSync(cmd *cobra.Command, args []string) error {
 	}()
 
 	ctx := rootCtx
+
+	if err := requireDirectFederation("sync"); err != nil {
+		return err
+	}
 
 	ds, err := getFederatedStore()
 	if err != nil {
@@ -251,6 +275,10 @@ func runFederationStatus(cmd *cobra.Command, args []string) error {
 	}()
 
 	ctx := rootCtx
+
+	if err := requireDirectFederation("status"); err != nil {
+		return err
+	}
 
 	ds, err := getFederatedStore()
 	if err != nil {
@@ -399,6 +427,10 @@ func runFederationAddPeer(cmd *cobra.Command, args []string) error {
 
 	ctx := rootCtx
 
+	if err := requireDirectFederation("add-peer"); err != nil {
+		return err
+	}
+
 	name := args[0]
 	url := args[1]
 
@@ -467,6 +499,10 @@ func runFederationRemovePeer(cmd *cobra.Command, args []string) error {
 
 	ctx := rootCtx
 
+	if err := requireDirectFederation("remove-peer"); err != nil {
+		return err
+	}
+
 	name := args[0]
 
 	if err := store.RemoveRemote(ctx, name); err != nil {
@@ -492,6 +528,10 @@ func runFederationListPeers(cmd *cobra.Command, args []string) error {
 	}()
 
 	ctx := rootCtx
+
+	if err := requireDirectFederation("list-peers"); err != nil {
+		return err
+	}
 
 	remotes, err := store.ListRemotes(ctx)
 	if err != nil {

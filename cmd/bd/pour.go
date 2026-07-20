@@ -95,8 +95,18 @@ func runPour(cmd *cobra.Command, args []string) error {
 
 	ctx := rootCtx
 
-	if store == nil {
-		return HandleErrorRespectJSON("no database connection")
+	// beads-mgjco (aocj fail-loud class): in proxied-server mode main.go's
+	// PersistentPreRun returns early (main.go:1155) leaving the global store
+	// nil, so pour's store.GetIssue/Pour would nil-panic — and the bare
+	// store==nil check misdiagnoses it as a local "no database connection".
+	// pour instantiates a persistent molecule via a raw storage.Transaction the
+	// proxied UOW does not yield, so fail loud with an accurate message (mirrors
+	// merge-slot/restore). Guard BEFORE the nil check.
+	if usesProxiedServer() {
+		return HandleErrorRespectJSON("pour is not supported in proxied-server mode (connect directly with an embedded/dolt store)")
+	}
+	if err := ensureStoreActive(); err != nil {
+		return HandleErrorWithHintRespectJSON(err.Error(), diagHint())
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")

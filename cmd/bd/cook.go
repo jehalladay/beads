@@ -369,8 +369,20 @@ func runCook(cmd *cobra.Command, args []string) error {
 
 	if flags.persist {
 		CheckReadonly("cook --persist")
-		if store == nil {
-			return HandleErrorRespectJSON("no database connection")
+		// beads-mgjco (aocj fail-loud class): in proxied-server mode main.go's
+		// PersistentPreRun returns early (main.go:1155) leaving the global store
+		// nil, so persistCookFormula's store.GetIssue/transact would nil-panic
+		// (and the bare store==nil check below misdiagnoses it as a local "no
+		// database connection"). The atomic mol-create runs through transact()
+		// which needs a raw storage.Transaction the proxied UOW does not yield,
+		// so fail loud with an accurate message (mirrors merge-slot/restore).
+		// Non-persist cook (dry-run/ephemeral resolve) touches no store and stays
+		// available proxied — this guard is scoped to --persist only.
+		if usesProxiedServer() {
+			return HandleErrorRespectJSON("cook --persist is not supported in proxied-server mode (connect directly with an embedded/dolt store)")
+		}
+		if err := ensureStoreActive(); err != nil {
+			return HandleErrorWithHintRespectJSON(err.Error(), diagHint())
 		}
 	}
 
