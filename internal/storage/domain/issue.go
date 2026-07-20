@@ -923,15 +923,36 @@ func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams,
 		}
 	}
 
+	// beads-dc0rt: the create-time label path persists via labelRepo.Insert
+	// directly (a third path distinct from the direct-mode PersistLabels guard
+	// beads-f3y1 and the AddLabel guard beads-pqzx), so it must run the same
+	// comma/newline delimiter check — otherwise a proxied `bd create --label`
+	// (or markdown/jsonl import) stores a delimiter label that the markdown
+	// "### Labels" round-trip re-splits into MULTIPLE labels (identity
+	// corruption). validateLabelValue also trims; spaces stay legal (beads-ehw7).
 	for _, label := range params.Labels {
-		if err := u.labelRepo.Insert(ctx, issue.ID, label, actor, LabelOpts{UseWispsTable: useWisp}); err != nil {
-			return result, fmt.Errorf("create: add label %s: %w", label, err)
+		clean, err := validateLabelValue(label)
+		if err != nil {
+			return result, fmt.Errorf("create: add label: %w", err)
+		}
+		if clean == "" {
+			continue
+		}
+		if err := u.labelRepo.Insert(ctx, issue.ID, clean, actor, LabelOpts{UseWispsTable: useWisp}); err != nil {
+			return result, fmt.Errorf("create: add label %s: %w", clean, err)
 		}
 		result.PostCreateWrites = true
 	}
 	for _, label := range result.InheritedLabels {
-		if err := u.labelRepo.Insert(ctx, issue.ID, label, actor, LabelOpts{UseWispsTable: useWisp}); err != nil {
-			return result, fmt.Errorf("create: add inherited label %s: %w", label, err)
+		clean, err := validateLabelValue(label)
+		if err != nil {
+			return result, fmt.Errorf("create: add inherited label: %w", err)
+		}
+		if clean == "" {
+			continue
+		}
+		if err := u.labelRepo.Insert(ctx, issue.ID, clean, actor, LabelOpts{UseWispsTable: useWisp}); err != nil {
+			return result, fmt.Errorf("create: add inherited label %s: %w", clean, err)
 		}
 		result.PostCreateWrites = true
 	}
