@@ -673,10 +673,11 @@ Examples:
 				if dryRun {
 					if !jsonOutput {
 						fmt.Printf("%s %s: would resolve - %s\n",
-							ui.RenderPass("✓"), r.gate.ID, r.reason)
+							ui.RenderPass("✓"), r.gate.ID, displayTitle(r.reason))
 					}
 				} else {
-					// Close the gate
+					// Close the gate with the RAW reason (stored round-trip fidelity;
+					// never sanitize the persisted value — beads-j8li display-only rule).
 					closeErr := closeGate(ctx, r.gate.ID, r.reason)
 					if closeErr != nil {
 						fmt.Fprintf(os.Stderr, "%s %s: error closing - %v\n",
@@ -684,7 +685,7 @@ Examples:
 						errorCount++
 					} else if !jsonOutput {
 						fmt.Printf("%s %s: resolved - %s\n",
-							ui.RenderPass("✓"), r.gate.ID, r.reason)
+							ui.RenderPass("✓"), r.gate.ID, displayTitle(r.reason))
 					}
 				}
 			} else if r.escalated {
@@ -692,14 +693,15 @@ Examples:
 				if dryRun {
 					if !jsonOutput {
 						fmt.Printf("%s %s: would escalate - %s\n",
-							ui.RenderWarn("⚠"), r.gate.ID, r.reason)
+							ui.RenderWarn("⚠"), r.gate.ID, displayTitle(r.reason))
 					}
 				} else {
 					if !jsonOutput {
 						fmt.Printf("%s %s: ESCALATE - %s\n",
-							ui.RenderWarn("⚠"), r.gate.ID, r.reason)
+							ui.RenderWarn("⚠"), r.gate.ID, displayTitle(r.reason))
 					}
-					// Actually escalate if flag is set
+					// Actually escalate with the RAW reason (stored/forwarded value
+					// must stay unsanitized; the terminal print above is display-only).
 					if escalateFlag {
 						escalateGate(r.gate, r.reason)
 					}
@@ -707,7 +709,7 @@ Examples:
 			} else if !jsonOutput {
 				// Still pending
 				fmt.Printf("%s %s: pending - %s\n",
-					ui.RenderAccent("○"), r.gate.ID, r.reason)
+					ui.RenderAccent("○"), r.gate.ID, displayTitle(r.reason))
 			}
 		}
 
