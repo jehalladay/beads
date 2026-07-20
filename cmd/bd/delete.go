@@ -135,6 +135,36 @@ Force: Delete and orphan dependents
 		re := regexp.MustCompile(idPattern)
 		replacementText := `$1[deleted:` + issueID + `]$3`
 		if !force {
+			if jsonOutput {
+				// The DIRECT preview leg previously ignored --json and printed the
+				// human DELETE PREVIEW unconditionally, leaking unparseable
+				// plaintext (rc=0) to a --json consumer (beads-fgwko). Emit a JSON
+				// envelope instead, computed from the SAME preview variables the
+				// human path uses, so the reported counts match what the direct
+				// force path will actually do (dependencies_removed /
+				// references_updated — the direct force-path output keys). We do
+				// NOT reuse the proxied twin's DeleteIssues-derived schema: the
+				// domain DeleteIssues use-case is stricter (it errors on dependents
+				// unless --cascade), whereas the direct path simply removes the
+				// dependency edges — so its counts, not DeleteIssues', are the
+				// truthful preview here.
+				referencesToUpdate := 0
+				for _, connIssue := range connectedIssues {
+					if re.MatchString(connIssue.Description) ||
+						(connIssue.Notes != "" && re.MatchString(connIssue.Notes)) ||
+						(connIssue.Design != "" && re.MatchString(connIssue.Design)) ||
+						(connIssue.AcceptanceCriteria != "" && re.MatchString(connIssue.AcceptanceCriteria)) {
+						referencesToUpdate++
+					}
+				}
+				return outputJSON(map[string]any{
+					"would_delete":         issueID,
+					"dependencies_removed": len(depRecords) + len(dependents),
+					"references_updated":   referencesToUpdate,
+					"connected":            sortedKeys(connectedIssues),
+					"dry_run":              true,
+				})
+			}
 			fmt.Printf("\n%s\n", ui.RenderFail("⚠️  DELETE PREVIEW"))
 			fmt.Printf("\nIssue to delete:\n")
 			fmt.Printf("  %s: %s\n", issueID, displayTitle(issue.Title))
