@@ -127,9 +127,11 @@ func formatIssueMetadata(issue *types.Issue) string {
 		lines = append(lines, strings.Join(timeParts, " · "))
 	}
 
-	// Line 3: Close reason (if closed)
+	// Line 3: Close reason (if closed). CloseReason is JSONL-importable and only
+	// length/empty-validated (ValidateCloseReason), so sanitize at the display
+	// site to strip OSC/CSI escapes (beads-1xsbc); stored value is untouched.
 	if issue.Status == types.StatusClosed && issue.CloseReason != "" {
-		lines = append(lines, ui.RenderMuted(fmt.Sprintf("Close reason: %s", issue.CloseReason)))
+		lines = append(lines, ui.RenderMuted(fmt.Sprintf("Close reason: %s", ui.SanitizeForTerminal(issue.CloseReason))))
 	}
 
 	// Line 4: External ref (if exists). ExternalRef is set verbatim from an
@@ -139,7 +141,9 @@ func formatIssueMetadata(issue *types.Issue) string {
 		lines = append(lines, fmt.Sprintf("External: %s", ui.SanitizeForTerminal(*issue.ExternalRef)))
 	}
 	if issue.SpecID != "" {
-		lines = append(lines, fmt.Sprintf("Spec: %s", issue.SpecID))
+		// SpecID is JSONL-importable and only length-validated (<=1024), so
+		// sanitize at the display site (beads-1xsbc); stored value untouched.
+		lines = append(lines, fmt.Sprintf("Spec: %s", ui.SanitizeForTerminal(issue.SpecID)))
 	}
 
 	// Line 5: Wisp type (if ephemeral with classification)
