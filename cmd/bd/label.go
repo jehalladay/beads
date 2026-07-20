@@ -244,7 +244,11 @@ var labelAddCmd = &cobra.Command{
 	Long: "Add labels to issues. The trailing positional label form (bd label add <id> <label>)\n" +
 		"is preserved; the repeatable --label flag adds N labels in ONE process/transaction\n" +
 		"(bd label add <id> --label a --label b --label c), which keeps batch labeling to a\n" +
-		"single commit instead of one exec per label.",
+		"single commit instead of one exec per label. (This 'one transaction' refers to the N\n" +
+		"labels, not the N issue IDs: with multiple IDs the batch is best-effort — resolvable\n" +
+		"IDs are labeled and any unresolvable ID is reported, then rc=1. Re-labeling is\n" +
+		"idempotent, so a partial batch is safe to re-run. See 'bd update --help' for the full\n" +
+		"idempotent-vs-atomic batch contract.)",
 	Args:          cobra.MinimumNArgs(1),
 	SilenceUsage:  true,
 	SilenceErrors: true,

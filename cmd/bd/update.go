@@ -24,7 +24,15 @@ var updateCmd = &cobra.Command{
 	Long: `Update one or more issues.
 
 If no issue ID is provided, updates the last touched issue (from most recent
-create, update, show, or close operation).`,
+create, update, show, or close operation).
+
+Batch behavior with multiple IDs: for idempotent updates (e.g. --priority,
+--add-label) the batch is best-effort — resolvable IDs are updated and any
+unresolvable ID is reported, then the command exits non-zero (rc=1). Re-running
+an idempotent update after a partial batch is harmless. This differs from
+'bd close'/'bd delete', which pre-resolve every ID and mutate nothing if any ID
+is unresolvable (atomic). --append-notes is non-idempotent (retry would double-
+append), so that update pre-resolves all IDs and is atomic like close.`,
 	Args:          cobra.MinimumNArgs(0),
 	SilenceUsage:  true,
 	SilenceErrors: true,
