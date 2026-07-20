@@ -36,6 +36,24 @@ from Dolt version history, which can only be displayed, not applied.`,
 		issueID := args[0]
 		ctx := rootCtx
 
+		// beads-m0hme (aocj proxied-routing class, restore leg): every store
+		// call below (GetIssue, GetCompactionSnapshot, RestoreFromSnapshot,
+		// History) dereferences the global `store`, which is nil in
+		// proxiedServerMode (main.go PersistentPreRun returns before
+		// newDoltStore) → nil-panic, structurally identical to the beads-jr2h4
+		// branch / beads-i2v77 merge-slot / beads-2om1 count repros. Unlike the
+		// aocj compact leg (which ext'd SnapshotIssueForCompaction/CompactOverwrite
+		// onto the proxied IssueUseCase), restore's core ops
+		// GetCompactionSnapshot/RestoreFromSnapshot are NOT on the UseCase
+		// interface: their backing issueops helpers (GetLatestSnapshotInTx/
+		// RestoreFromSnapshotInTx) require a concrete *sql.Tx for a destructive
+		// content-overwrite, the proxied UOW yields UseCases not a raw tx, and the
+		// store factory refuses to open a direct store in proxied config ("proxy
+		// server store should be uow provider"). So restore fundamentally needs
+		// direct Dolt access — fail loud with a clean, --json-contract-correct
+		// message instead of a nil-store panic (mirrors bd branch / compact --apply).
+		requireDirectRestore()
+
 		// Get the issue
 		issue, err := store.GetIssue(ctx, issueID)
 		if err != nil {
@@ -150,6 +168,28 @@ from Dolt version history, which can only be displayed, not applied.`,
 			displayRestoredIssue(best.Issue, "Dolt commit "+hashDisplay)
 		}
 	},
+}
+
+// requireDirectRestore fails loud when `bd restore` runs against a proxied
+// server. See the beads-m0hme rationale at the guard call site: restore's
+// snapshot ops are not on the proxied UOW and cannot be, so a nil-store panic is
+// converted to a clean, --json-contract-correct refusal. restoreRequiresDirect
+// is the pure, unit-testable predicate; requireDirectRestore is the fatal
+// wrapper (restore's Run uses FatalError*/os.Exit rather than RunE, matching the
+// rest of this command's error paths).
+func restoreRequiresDirect() bool {
+	return usesProxiedServer()
+}
+
+func requireDirectRestore() {
+	if restoreRequiresDirect() {
+		FatalErrorRespectJSON("restore requires direct/embedded Dolt access and is not available in proxied-server mode")
+	}
+	// Defensive lazy-init for the direct path (mirrors branch.go / merge_slot.go):
+	// guarantee the store is active before the snapshot/history calls below.
+	if err := ensureStoreActive(); err != nil {
+		FatalErrorWithHintRespectJSON(err.Error(), diagHint())
+	}
 }
 
 // snapshotView returns a copy of the current issue with its text content
