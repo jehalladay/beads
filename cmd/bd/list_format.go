@@ -164,7 +164,7 @@ func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string, 
 	if labelsSkipped {
 		buf.WriteString("  Labels: (suppressed by --skip-labels)\n")
 	} else if len(labels) > 0 {
-		buf.WriteString(fmt.Sprintf("  Labels: %v\n", labels))
+		buf.WriteString(fmt.Sprintf("  Labels: %v\n", displayLabels(labels)))
 	}
 	if hasCustomMetadata(issue) {
 		if n := countMetadataKeys(issue); n > 0 {
@@ -283,7 +283,7 @@ func getClosedBlockerIDs(ctx context.Context, s storage.DoltStorage, allDeps map
 func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []string, blockedBy, blocks []string, parent string) {
 	labelsStr := ""
 	if len(labels) > 0 {
-		labelsStr = fmt.Sprintf(" %v", labels)
+		labelsStr = fmt.Sprintf(" %v", displayLabels(labels))
 	}
 	assigneeStr := ""
 	if issue.Assignee != "" {
