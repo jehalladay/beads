@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
@@ -11,6 +12,20 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
+
+// normalizeReopenReason treats a whitespace-only --reason as "not provided"
+// (returns ""), so it falls through to the no-reason path instead of storing a
+// blank reopen comment + blank Reopened event payload and printing an empty
+// "Reopened X: " suffix. A genuine reason is returned VERBATIM (no trim) to
+// preserve its formatting, matching the beads-in93a close-reason semantics
+// (and the defer/comment/note siblings). --reason is optional on reopen, so a
+// whitespace-only value collapses to no-reason rather than erroring.
+func normalizeReopenReason(reason string) string {
+	if strings.TrimSpace(reason) == "" {
+		return ""
+	}
+	return reason
+}
 
 var reopenCmd = &cobra.Command{
 	Use:     "reopen [id...]",
@@ -37,6 +52,7 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 		}
 
 		reason, _ := cmd.Flags().GetString("reason")
+		reason = normalizeReopenReason(reason)
 		forceFlag, _ := cmd.Flags().GetBool("force")
 		ctx := rootCtx
 
