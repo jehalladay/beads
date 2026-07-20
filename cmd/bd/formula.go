@@ -551,7 +551,11 @@ func runFormulaConvert(cmd *cobra.Command, args []string) error {
 	if strings.HasSuffix(name, formula.FormulaExtJSON) {
 		jsonPath = name
 	} else if strings.HasSuffix(name, formula.FormulaExtTOML) {
-		return HandleError("%s is already a TOML file", name)
+		// beads-kqpih: honor the --json error contract on this leg too — e0o3d
+		// fixed the sibling parse/convert/write/not-found legs in this same
+		// runFormulaConvert but left this one on a bare HandleError, so
+		// `bd formula convert foo.toml --json` leaked plaintext + empty stdout.
+		return HandleErrorRespectJSON("%s is already a TOML file", name)
 	} else {
 		jsonPath = findFormulaJSON(name)
 		if jsonPath == "" {

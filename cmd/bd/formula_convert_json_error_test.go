@@ -53,3 +53,40 @@ func TestFormulaConvertJSON_ErrorPathEmitsStdoutObject(t *testing.T) {
 		t.Errorf("expected a non-empty \"error\" field in failing `formula convert --json` stdout, got: %s", out)
 	}
 }
+
+// TestFormulaConvertAlreadyTOMLJSON_kqpih is the completeness teeth for
+// beads-kqpih: e0o3d converted the parse/convert/write/not-found legs of
+// runFormulaConvert to the --json error contract but left the
+// "<name> is already a TOML file" leg (reached when the arg ends in .toml) on a
+// bare HandleError, so `bd formula convert foo.toml --json` leaked plaintext to
+// stderr with EMPTY stdout. After the fix it must emit a JSON error on stdout.
+func TestFormulaConvertAlreadyTOMLJSON_kqpih(t *testing.T) {
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd)
+
+	cmd := exec.Command(bd, "formula", "convert", "already.formula.toml", "--json")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err == nil {
+		t.Fatalf("`formula convert already.formula.toml --json` unexpectedly succeeded\nstdout:\n%s", stdout.String())
+	}
+
+	out := strings.TrimSpace(stdout.String())
+	if out == "" {
+		t.Fatalf("stdout is EMPTY on `formula convert already.formula.toml --json` — the 'already a TOML file' error must be a JSON object on stdout (beads-kqpih)\nstderr:\n%s", stderr.String())
+	}
+	var obj map[string]interface{}
+	if jerr := json.Unmarshal([]byte(out), &obj); jerr != nil {
+		t.Fatalf("stdout is not a JSON object on `formula convert already.formula.toml --json`: %v\nstdout:\n%s", jerr, out)
+	}
+	msg, ok := obj["error"].(string)
+	if !ok {
+		if data, dok := obj["data"].(map[string]interface{}); dok {
+			msg, ok = data["error"].(string)
+		}
+	}
+	if !ok || !strings.Contains(msg, "already a TOML file") {
+		t.Errorf("expected an \"error\" field mentioning 'already a TOML file', got: %s", out)
+	}
+}
