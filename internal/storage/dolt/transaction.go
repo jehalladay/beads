@@ -676,15 +676,20 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
-	limitSQL := ""
-	if filter.Limit > 0 {
-		limitSQL = fmt.Sprintf(" LIMIT %d", filter.Limit)
-	}
+	// Ordering + pagination: mirror the live search path (issueops.searchTableInTx
+	// -> sqlbuild.OrderBy + applyOffsetLimit) so this in-tx read-your-writes path
+	// honors filter.SortBy/SortDesc and filter.Offset, not just filter.Limit
+	// (beads-vq0bu). The old hardcoded "ORDER BY priority ASC, created_at DESC" +
+	// LIMIT-only silently dropped a same-tx --sort/--offset, diverging from
+	// bd list/search. sqlbuild.OrderBy returns "" for Go-side sort keys ("id"),
+	// which are applied in Go below; Offset+Limit are also applied in Go so a
+	// go-side sort and SQL sort paginate identically.
+	orderSQL := sqlbuild.OrderBy(filter.SortBy, filter.SortDesc, "")
 
-	//nolint:gosec // G201: table is hardcoded, whereSQL is parameterized
+	//nolint:gosec // G201: table is hardcoded, whereSQL + orderSQL are not user data
 	rows, err := t.txFor(table).QueryContext(ctx, fmt.Sprintf(`
-		SELECT id FROM %s %s ORDER BY priority ASC, created_at DESC %s
-	`, table, whereSQL, limitSQL), args...)
+		SELECT id FROM %s %s %s
+	`, table, whereSQL, orderSQL), args...)
 	if err != nil {
 		return nil, wrapQueryError("search issues in tx", err)
 	}
@@ -711,6 +716,28 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 			return nil, fmt.Errorf("search issues in tx: get issue %s: %w", id, err)
 		}
 		issues = append(issues, issue)
+	}
+
+	// Go-side sort for keys SQL can't order (sqlbuild.IsGoSideSort, e.g. "id"):
+	// OrderBy emitted no ORDER BY for these, so the rows came back in an
+	// unspecified order — sort them the same way sqlbuild.Less does for the live
+	// path's post-merge sort.
+	if sqlbuild.IsGoSideSort(filter.SortBy) {
+		sort.SliceStable(issues, func(i, j int) bool {
+			return sqlbuild.Less(issues[i], issues[j], filter.SortBy, filter.SortDesc)
+		})
+	}
+
+	// Apply Offset then Limit over the ordered slice, matching
+	// issueops.applyOffsetLimit so pagination is consistent with bd list/search.
+	if filter.Offset > 0 {
+		if filter.Offset >= len(issues) {
+			return nil, nil
+		}
+		issues = issues[filter.Offset:]
+	}
+	if filter.Limit > 0 && len(issues) > filter.Limit {
+		issues = issues[:filter.Limit]
 	}
 	return issues, nil
 }
