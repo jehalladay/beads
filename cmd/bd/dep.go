@@ -1339,7 +1339,7 @@ Examples:
 				rootBlockedOverride = &blocked
 			}
 		}
-		renderTreeWithVerdict(tree, maxDepth, direction, rootBlockedOverride)
+		renderTreeWithVerdict(tree, maxDepth, direction, rootBlockedOverride, showAllPaths)
 		fmt.Println()
 		return nil
 	},
@@ -1459,11 +1459,97 @@ type treeRenderer struct {
 	direction string
 	// Whether the root node has open children (i.e., is blocked)
 	rootBlocked bool
+	// beads-peiw3: when true, render every path to a diamond/DAG node fully
+	// expanded (no "(shown above)" collapse) — matching --show-all-paths, which
+	// the JSON and mermaid outputs already honor.
+	showAllPaths bool
 }
 
 // renderTree renders the tree with proper box-drawing connectors
-func renderTree(tree []*types.TreeNode, maxDepth int, direction string) {
-	renderTreeWithVerdict(tree, maxDepth, direction, nil)
+func renderTree(tree []*types.TreeNode, maxDepth int, direction string, showAllPaths bool) {
+	renderTreeWithVerdict(tree, maxDepth, direction, nil, showAllPaths)
+}
+
+// depInstNode is a per-INSTANCE reconstruction of the dependency tree used by
+// the --show-all-paths text renderer (beads-peiw3). The builder emits a flat
+// preorder slice; in show-all-paths mode a shared diamond node D appears once
+// per path, each with its own subtree, but every instance carries the same ID.
+// The default renderer keys children by ParentID (dep.go renderTreeWithVerdict),
+// which is lossy for a diamond-with-tail: two D-instances collide under one
+// children["D"] bucket, so simply skipping the r.seen dedup would render BOTH
+// of D's subtrees under EACH D instance. Reconstructing by preorder + depth
+// (not by ID) gives each instance its own children, so every path renders its
+// true subtree exactly once.
+type depInstNode struct {
+	node     *types.TreeNode
+	children []*depInstNode
+}
+
+// buildDepInstanceTree reconstructs the per-instance tree from a preorder,
+// depth-annotated flat slice (as GetDependencyTreeInTx emits for a single
+// down/up direction). Each node at depth d is a child of the most recent node
+// at depth d-1 (a standard DFS-preorder depth stack), so ID collisions between
+// diamond re-visits do not merge distinct instances. Returns nil if the slice
+// is not clean preorder rooted at depth 0 (e.g. the bidirectional `both` merge,
+// which prepends up-nodes ahead of the depth-0 root) so the caller can fall
+// back to the legacy ID-keyed renderer.
+func buildDepInstanceTree(tree []*types.TreeNode) *depInstNode {
+	if len(tree) == 0 || tree[0].Depth != 0 {
+		return nil
+	}
+	root := &depInstNode{node: tree[0]}
+	stack := []*depInstNode{root} // stack[d] = current node at depth d
+	for _, n := range tree[1:] {
+		d := n.Depth
+		// Preorder invariant: a child's depth is exactly one deeper than some
+		// node already on the stack. A second depth-0 node or a level skip means
+		// the slice is not a single clean preorder tree → bail to legacy.
+		if d <= 0 || d > len(stack) {
+			return nil
+		}
+		in := &depInstNode{node: n}
+		stack[d-1].children = append(stack[d-1].children, in)
+		stack = append(stack[:d], in) // stack now len d+1, stack[d] = in
+	}
+	return root
+}
+
+// renderDepInstNode renders a per-instance node (beads-peiw3 --show-all-paths).
+// It mirrors renderNode's connector/formatting logic exactly but sources
+// children from the instance tree and NEVER dedups (each path is distinct).
+func (r *treeRenderer) renderDepInstNode(in *depInstNode, depth int, isLast bool) {
+	if in == nil {
+		return
+	}
+
+	var prefix strings.Builder
+	for i := 0; i < depth; i++ {
+		if r.activeConnectors[i] {
+			prefix.WriteString("│   ")
+		} else {
+			prefix.WriteString("    ")
+		}
+	}
+	if depth > 0 {
+		if isLast {
+			prefix.WriteString("└── ")
+		} else {
+			prefix.WriteString("├── ")
+		}
+	}
+
+	line := formatTreeNode(in.node, depth == 0 && r.rootBlocked)
+	if in.node.Truncated || (depth == r.maxDepth && len(in.children) > 0) {
+		line += ui.RenderWarn(" …")
+	}
+	fmt.Printf("%s%s\n", prefix.String(), line)
+
+	for i, child := range in.children {
+		if depth > 0 {
+			r.activeConnectors[depth] = (i < len(in.children)-1)
+		}
+		r.renderDepInstNode(child, depth+1, i == len(in.children)-1)
+	}
 }
 
 // renderTreeWithVerdict renders the dependency tree. rootBlockedOverride, when
@@ -1473,7 +1559,7 @@ func renderTree(tree []*types.TreeNode, maxDepth int, direction string) {
 // children-derived verdict wrongly showed a genuinely-BLOCKED root as [READY].
 // The caller passes ground truth (store.IsBlocked) for the down/default
 // direction, where IsBlocked's dependency-blocker semantics apply.
-func renderTreeWithVerdict(tree []*types.TreeNode, maxDepth int, direction string, rootBlockedOverride *bool) {
+func renderTreeWithVerdict(tree []*types.TreeNode, maxDepth int, direction string, rootBlockedOverride *bool, showAllPaths bool) {
 	if len(tree) == 0 {
 		return
 	}
@@ -1483,6 +1569,7 @@ func renderTreeWithVerdict(tree []*types.TreeNode, maxDepth int, direction strin
 		activeConnectors: make([]bool, maxDepth+1),
 		maxDepth:         maxDepth,
 		direction:        direction,
+		showAllPaths:     showAllPaths,
 	}
 
 	// Build a map of parent -> children for proper sibling tracking
@@ -1522,6 +1609,21 @@ func renderTreeWithVerdict(tree []*types.TreeNode, maxDepth int, direction strin
 	// the down/default direction (store.IsBlocked reflects dependency blockers).
 	if rootBlockedOverride != nil {
 		r.rootBlocked = *rootBlockedOverride
+	}
+
+	// beads-peiw3: in --show-all-paths mode, render every path to a diamond node
+	// fully expanded. The default ID-keyed `children` map is lossy for DAGs
+	// (colliding diamond instances share one bucket), so reconstruct the tree by
+	// preorder+depth instead — each instance keeps its own subtree, none deduped.
+	// buildDepInstanceTree returns nil for a non-preorder slice (the `both`
+	// bidirectional merge, which is not clean preorder), in which case we fall
+	// through to the legacy renderer — that path renders each shared node once
+	// anyway, so no path is dropped there.
+	if r.showAllPaths {
+		if inst := buildDepInstanceTree(tree); inst != nil {
+			r.renderDepInstNode(inst, 0, true)
+			return
+		}
 	}
 
 	// Render recursively from root

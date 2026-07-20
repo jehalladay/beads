@@ -688,7 +688,7 @@ func runDepTreeProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 		fmt.Printf("\n%s Dependency tree for %s:\n\n", ui.RenderAccent("🌲"), fullID)
 	}
 
-	renderTree(tree, maxDepth, direction)
+	renderTree(tree, maxDepth, direction, showAllPaths)
 	fmt.Println()
 }
 

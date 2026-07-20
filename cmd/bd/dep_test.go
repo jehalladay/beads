@@ -1000,7 +1000,7 @@ func TestRenderTreeOutput(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	renderTree(tree, 50, "down")
+	renderTree(tree, 50, "down", false)
 
 	w.Close()
 	os.Stdout = old
@@ -1055,7 +1055,7 @@ func TestRenderTreeOutputShowsDependencyTypeLabelsInMixedGraph(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	renderTree(tree, 3, "both")
+	renderTree(tree, 3, "both", false)
 
 	w.Close()
 	os.Stdout = old
@@ -1068,6 +1068,109 @@ func TestRenderTreeOutputShowsDependencyTypeLabelsInMixedGraph(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected mixed graph output to contain %q, got:\n%s", want, output)
 		}
+	}
+}
+
+// TestRenderTreeShowAllPathsExpandsDiamondTail is the renderer-level teeth for
+// beads-peiw3: the --show-all-paths TEXT render must fully expand EVERY path to
+// a shared diamond node, including the shared node's own subtree — not collapse
+// the second path to a bare "(shown above)" that drops the subtree. The builder
+// already emits both fully-expanded instances (beads-lhq7s); this asserts the
+// text renderer honors them (JSON/mermaid already do).
+//
+// Graph (diamond-with-tail): A blocks B, A blocks C, B blocks D, C blocks D,
+// D blocks E. The builder in show-all-paths mode emits D+E under BOTH the B and
+// C paths, as a preorder-depth flat slice:
+//   A(0) B(1) D(2) E(3) C(1) D(2) E(3)
+func TestRenderTreeShowAllPathsExpandsDiamondTail(t *testing.T) {
+	mk := func(id string, depth int, parent string, edge types.DependencyType) *types.TreeNode {
+		return &types.TreeNode{
+			Issue:          types.Issue{ID: id, Title: id, Status: types.StatusOpen, Priority: 2},
+			Depth:          depth,
+			ParentID:       parent,
+			EdgeFromParent: edge,
+		}
+	}
+	// Preorder-depth flat slice with both diamond paths fully expanded.
+	tree := []*types.TreeNode{
+		mk("A", 0, "", ""),
+		mk("B", 1, "A", types.DepBlocks),
+		mk("D", 2, "B", types.DepBlocks),
+		mk("E", 3, "D", types.DepBlocks),
+		mk("C", 1, "A", types.DepBlocks),
+		mk("D", 2, "C", types.DepBlocks),
+		mk("E", 3, "D", types.DepBlocks),
+	}
+
+	render := func(showAll bool) string {
+		old := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+		renderTree(tree, 50, "down", showAll)
+		w.Close()
+		os.Stdout = old
+		var buf bytes.Buffer
+		io.Copy(&buf, r)
+		return buf.String()
+	}
+
+	// Default mode: the second D path collapses to "(shown above)" and E under
+	// it is dropped — this is the pre-fix behavior the flag must override.
+	def := render(false)
+	if !strings.Contains(def, "shown above") {
+		t.Fatalf("expected default (non-show-all-paths) render to collapse the diamond with 'shown above', got:\n%s", def)
+	}
+
+	// --show-all-paths: BOTH D instances fully expanded, so "D" appears twice
+	// with a real subtree each, "E" appears twice, and there is NO "shown above"
+	// collapse. This is the beads-peiw3 fix.
+	all := render(true)
+	if strings.Contains(all, "shown above") {
+		t.Errorf("--show-all-paths must NOT collapse any path to 'shown above', got:\n%s", all)
+	}
+	if n := strings.Count(all, "E:"); n != 2 {
+		t.Errorf("--show-all-paths: expected E fully rendered under BOTH diamond paths (2×), got %d:\n%s", n, all)
+	}
+	// D must render its child E on BOTH paths (not as a childless leaf). Count
+	// the connector lines to E — one per path.
+	if n := strings.Count(all, "── E:"); n != 2 {
+		t.Errorf("--show-all-paths: expected E as a child connector on both D instances (2×), got %d:\n%s", n, all)
+	}
+	// Sanity: D also appears twice (once per path), never collapsed.
+	if n := strings.Count(all, "D:"); n != 2 {
+		t.Errorf("--show-all-paths: expected D rendered on both paths (2×), got %d:\n%s", n, all)
+	}
+}
+
+// TestBuildDepInstanceTreeBailsOnNonPreorder guards the fallback: a slice that
+// is not clean preorder rooted at depth 0 (e.g. the bidirectional `both` merge,
+// which prepends up-nodes ahead of the depth-0 root) must return nil so the
+// caller falls back to the legacy ID-keyed renderer rather than mis-parenting.
+func TestBuildDepInstanceTreeBailsOnNonPreorder(t *testing.T) {
+	// A depth-1 node BEFORE any depth-0 root (the `both`-merge shape).
+	notPreorder := []*types.TreeNode{
+		{Issue: types.Issue{ID: "UP"}, Depth: 1, ParentID: "ROOT"},
+		{Issue: types.Issue{ID: "ROOT"}, Depth: 0},
+	}
+	if got := buildDepInstanceTree(notPreorder); got != nil {
+		t.Errorf("expected nil (bail to legacy) for a non-preorder slice, got %+v", got)
+	}
+	// A level skip (0 → 2) is also not clean preorder.
+	levelSkip := []*types.TreeNode{
+		{Issue: types.Issue{ID: "ROOT"}, Depth: 0},
+		{Issue: types.Issue{ID: "X"}, Depth: 2, ParentID: "MISSING"},
+	}
+	if got := buildDepInstanceTree(levelSkip); got != nil {
+		t.Errorf("expected nil (bail to legacy) for a level-skip slice, got %+v", got)
+	}
+	// A valid preorder slice reconstructs (root with one child).
+	valid := []*types.TreeNode{
+		{Issue: types.Issue{ID: "ROOT"}, Depth: 0},
+		{Issue: types.Issue{ID: "K"}, Depth: 1, ParentID: "ROOT"},
+	}
+	got := buildDepInstanceTree(valid)
+	if got == nil || got.node.ID != "ROOT" || len(got.children) != 1 || got.children[0].node.ID != "K" {
+		t.Errorf("expected ROOT→K reconstruction, got %+v", got)
 	}
 }
 
