@@ -173,6 +173,13 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 		whereClauses = append(whereClauses, `LOWER(description) LIKE ? ESCAPE '\\'`)
 		args = append(args, LikeContains(filter.DescriptionContains))
 	}
+	// beads-j95lq: case-insensitive notes substring, parity with bd list
+	// (filter.go NotesContains → LOWER(notes) LIKE ?). Same issues-table column.
+	if filter.NotesContains != "" {
+		// beads-b9ova: escape LIKE metachars + ESCAPE '\\' (shared likeContains).
+		whereClauses = append(whereClauses, `LOWER(notes) LIKE ? ESCAPE '\\'`)
+		args = append(args, LikeContains(filter.NotesContains))
+	}
 	// beads-d1as8: case-insensitive title substring, parity with bd list
 	// (filter.go TitleContains → LOWER(title) LIKE ?). Same issues-table column.
 	if filter.TitleContains != "" {

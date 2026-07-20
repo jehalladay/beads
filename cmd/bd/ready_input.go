@@ -199,6 +199,12 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 	if dc, _ := cmd.Flags().GetString("desc-contains"); dc != "" {
 		in.filter.DescriptionContains = dc
 	}
+	// beads-j95lq: --notes-contains on the PROXIED ready path too (parity with
+	// bd list). Shared input path, so setting it here covers runReadyProxiedServer;
+	// the direct ready.go RunE sets it separately (same split as --desc-contains).
+	if nc, _ := cmd.Flags().GetString("notes-contains"); nc != "" {
+		in.filter.NotesContains = nc
+	}
 	// beads-d1as8: --title-contains on the PROXIED ready path too (parity with
 	// bd list). Shared input path, so setting it here covers runReadyProxiedServer;
 	// the direct ready.go RunE sets it separately (same split as --priority).

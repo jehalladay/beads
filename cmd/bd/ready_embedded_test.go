@@ -462,6 +462,68 @@ func TestEmbeddedReadyDescContains(t *testing.T) {
 	})
 }
 
+// TestEmbeddedReadyNotesContains is the teeth for beads-j95lq: bd ready must
+// support --notes-contains (case-insensitive substring on notes) with the same
+// semantics as bd list. Previously ready had no such flag and the WorkFilter/
+// sqlbuild builder ignored notes entirely.
+func TestEmbeddedReadyNotesContains(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "nc")
+
+	// Titles/descriptions deliberately do NOT contain "kafka"; only the notes
+	// do, so a match proves notes-substring filtering (not title/description).
+	bdCreate(t, bd, dir, "Alpha task", "--type", "task", "-d", "generic desc", "--notes", "Investigate the KAFKA consumer lag")
+	bdCreate(t, bd, dir, "Beta task", "--type", "task", "-d", "generic desc", "--notes", "Tune kafka partition rebalancing")
+	bdCreate(t, bd, dir, "Gamma task", "--type", "task", "-d", "generic desc", "--notes", "Refresh the sprocket dashboard")
+
+	readyTitles := func(t *testing.T, args ...string) []string {
+		t.Helper()
+		full := append([]string{"ready", "--json", "--limit", "0"}, args...)
+		cmd := exec.Command(bd, full...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("bd ready %v failed: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
+		}
+		var ready []types.IssueWithCounts
+		if jerr := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &ready); jerr != nil {
+			t.Fatalf("parse ready JSON (%v): %v\n%s", args, jerr, stdout.String())
+		}
+		titles := make([]string, 0, len(ready))
+		for _, r := range ready {
+			titles = append(titles, r.Title)
+		}
+		return titles
+	}
+
+	t.Run("case_insensitive_notes_substring_matches_both", func(t *testing.T) {
+		got := readyTitles(t, "--notes-contains", "kafka")
+		if len(got) != 2 {
+			t.Fatalf("--notes-contains kafka: got %d titles, want 2: %v", len(got), got)
+		}
+	})
+
+	t.Run("nonmatching_substring_returns_empty", func(t *testing.T) {
+		got := readyTitles(t, "--notes-contains", "nonesuch")
+		if len(got) != 0 {
+			t.Errorf("--notes-contains nonesuch: expected no matches, got %v", got)
+		}
+	})
+
+	t.Run("distinct_substring_matches_one", func(t *testing.T) {
+		got := readyTitles(t, "--notes-contains", "sprocket")
+		if len(got) != 1 || got[0] != "Gamma task" {
+			t.Errorf("--notes-contains sprocket: got %v, want [Gamma task]", got)
+		}
+	})
+}
+
 // TestEmbeddedReadyTitleContains is the teeth for beads-d1as8: bd ready must
 // support --title-contains (case-insensitive substring on title) with the same
 // semantics as bd list. Previously ready had no such flag and the WorkFilter/

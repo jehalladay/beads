@@ -216,6 +216,11 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		if dc, _ := cmd.Flags().GetString("desc-contains"); dc != "" {
 			filter.DescriptionContains = dc
 		}
+		// beads-j95lq: case-insensitive notes substring, parity with bd list.
+		// The proxied path parses the same in gatherReadyInput.
+		if nc, _ := cmd.Flags().GetString("notes-contains"); nc != "" {
+			filter.NotesContains = nc
+		}
 		// beads-d1as8: case-insensitive title substring, parity with bd list.
 		// The proxied path parses the same in gatherReadyInput.
 		if tc, _ := cmd.Flags().GetString("title-contains"); tc != "" {
@@ -875,6 +880,7 @@ func init() {
 	readyCmd.Flags().String("priority-min", "", "Filter by minimum priority (inclusive, 0-4 or P0-P4)")
 	readyCmd.Flags().String("priority-max", "", "Filter by maximum priority (inclusive, 0-4 or P0-P4)")
 	readyCmd.Flags().String("desc-contains", "", "Filter by description substring (case-insensitive)")
+	readyCmd.Flags().String("notes-contains", "", "Filter by notes substring (case-insensitive)")
 	// beads-10y4y: created/updated date-range filters (feature-parity with bd
 	// list). Relative-time forms (+6h/tomorrow/yesterday) via parseListTimeFlag.
 	readyCmd.Flags().String("created-after", "", "Filter by created after date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
