@@ -134,6 +134,35 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 				return HandleErrorRespectJSON("%s is already superseded by %s — marking %s as superseded by %s would create a supersede cycle (neither has a live successor)", toID, fromID, fromID, toID)
 			}
 		}
+
+		// beads-pmaud (proxied twin): reject re-superseding fromID when it ALREADY
+		// has a live successor by a DIFFERENT target. AddDependency below would
+		// otherwise add a SECOND outgoing supersedes edge, leaving fromID with
+		// multiple live successors ("superseded by [C D]") — violating the single-
+		// canonical-replacement invariant. Same-target → idempotent no-op (rc0,
+		// reflect the stored target); different-target → reject. Mirrors the direct
+		// duplicate.go guard so the hub-connected path is not a bypass.
+		fromDeps, derr := uw.DependencyUseCase().ListWithIssueMetadata(ctx, fromID, domain.DepListFilter{})
+		if derr != nil {
+			return HandleErrorRespectJSON("checking %s: %v", fromID, derr)
+		}
+		for _, d := range fromDeps {
+			if d.DependencyType != types.DepSupersedes {
+				continue
+			}
+			if d.ID == toID {
+				if isJSONOutput() {
+					return outputJSON(map[string]interface{}{
+						in.jsonFrom: fromID,
+						in.jsonTo:   toID,
+						"status":    "closed",
+					})
+				}
+				fmt.Printf("%s %s is already superseded by %s (no change)\n", ui.RenderInfoIcon(), fromID, toID)
+				return nil
+			}
+			return HandleErrorRespectJSON("%s is already superseded by %s — remove the existing supersedes link or reopen %s first (a second replacement would leave %s with multiple live successors)", fromID, d.ID, fromID, fromID)
+		}
 	}
 
 	actor := getActor()

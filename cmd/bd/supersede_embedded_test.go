@@ -170,6 +170,72 @@ func TestEmbeddedSupersede(t *testing.T) {
 			t.Errorf("legal version chain v2 --with v3 was rejected: %s", out)
 		}
 	})
+
+	// ===== beads-pmaud: re-superseding by a DIFFERENT target is rejected =====
+	// A --with C then A --with D (A already superseded+closed by C) must NOT
+	// silently add a SECOND outgoing supersedes edge (leaving A "superseded by
+	// [C D]" = two live successors). It must fail; A must keep exactly one
+	// supersedes edge (to C, the first replacement).
+	t.Run("error_different_target_re_supersede_pmaud", func(t *testing.T) {
+		a := bdCreate(t, bd, dir, "pmaud A", "--type", "task")
+		c := bdCreate(t, bd, dir, "pmaud C", "--type", "task")
+		d := bdCreate(t, bd, dir, "pmaud D", "--type", "task")
+		bdSupersede(t, bd, dir, a.ID, "--with", c.ID)
+		// Second, DIFFERENT replacement must be rejected.
+		out := bdSupersedeFail(t, bd, dir, a.ID, "--with", d.ID)
+		if !strings.Contains(strings.ToLower(out), "already superseded") {
+			t.Errorf("expected an 'already superseded' rejection for A --with D, got: %s", out)
+		}
+		// A must still carry exactly ONE supersedes edge (to C, not D).
+		s := openStore(t, beadsDir, "ss")
+		deps, err := s.GetDependenciesWithMetadata(t.Context(), a.ID)
+		if err != nil {
+			t.Fatalf("GetDependenciesWithMetadata: %v", err)
+		}
+		var superN int
+		var target string
+		for _, dep := range deps {
+			if dep.DependencyType == "supersedes" {
+				superN++
+				target = dep.ID
+			}
+		}
+		if superN != 1 {
+			t.Fatalf("expected exactly 1 supersedes edge on A after a rejected re-supersede, got %d (multiple-live-successors bug)", superN)
+		}
+		if target != c.ID {
+			t.Errorf("expected the surviving supersedes edge to point at C=%s, got %s", c.ID, target)
+		}
+	})
+
+	// ===== beads-pmaud: SAME-target re-supersede stays an idempotent no-op =====
+	// A --with C then A --with C again is a no-op (rc0), and A keeps exactly one
+	// supersedes edge — LinkAndClose already dedups an identical edge; the guard
+	// must preserve that (report "no change", not a second write or a rejection).
+	t.Run("same_target_re_supersede_idempotent_pmaud", func(t *testing.T) {
+		a := bdCreate(t, bd, dir, "pmaud idem A", "--type", "task")
+		c := bdCreate(t, bd, dir, "pmaud idem C", "--type", "task")
+		bdSupersede(t, bd, dir, a.ID, "--with", c.ID)
+		// Same target again — must succeed (rc0) as a no-op.
+		out := bdSupersede(t, bd, dir, a.ID, "--with", c.ID)
+		if !strings.Contains(strings.ToLower(out), "no change") {
+			t.Errorf("expected a 'no change' idempotent notice for a same-target re-supersede, got: %s", out)
+		}
+		s := openStore(t, beadsDir, "ss")
+		deps, err := s.GetDependenciesWithMetadata(t.Context(), a.ID)
+		if err != nil {
+			t.Fatalf("GetDependenciesWithMetadata: %v", err)
+		}
+		var superN int
+		for _, dep := range deps {
+			if dep.DependencyType == "supersedes" {
+				superN++
+			}
+		}
+		if superN != 1 {
+			t.Errorf("expected exactly 1 supersedes edge after an idempotent same-target re-supersede, got %d", superN)
+		}
+	})
 }
 
 // TestEmbeddedSupersedeConcurrent exercises supersede operations concurrently.

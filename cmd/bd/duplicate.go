@@ -218,6 +218,43 @@ func runSupersede(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// beads-pmaud: reject re-superseding an issue that ALREADY has a live
+	// successor by a DIFFERENT target. LinkAndClose is idempotent for an
+	// identical (oldID -supersedes-> newID) edge, so a same-target re-supersede
+	// correctly dedups to one edge — but a DIFFERENT newID would UNCONDITIONALLY
+	// add a SECOND outgoing supersedes edge, leaving oldID with two live
+	// successors ("superseded by [C D]"). That violates the single-canonical-
+	// replacement invariant the supersede/reopen tracers assume (reopen.go
+	// supersededByTargets + its guard are written for ONE target; the plural in
+	// the reopen error is the visible tell). 02v2k above covers only the mutual
+	// reciprocal cycle; this is the uncovered multiple-live-successors sibling.
+	// Same-target → idempotent no-op notice (mirror close.go's beads-dr3 /
+	// gate add-waiter pattern: rc0, reflect the STORED target); different-target
+	// → reject and point the operator at the existing link.
+	oldDeps, derr := store.GetDependenciesWithMetadata(ctx, oldID)
+	if derr != nil {
+		return HandleErrorRespectJSON("checking %s: %v", oldID, derr)
+	}
+	for _, d := range oldDeps {
+		if d.DependencyType != types.DepSupersedes {
+			continue
+		}
+		if d.ID == newID {
+			// Idempotent: already superseded by exactly this target. No second
+			// write, no false "✓ Marked ..." transition glyph.
+			if isJSONOutput() {
+				return outputJSON(map[string]interface{}{
+					"superseded":  oldID,
+					"replacement": newID,
+					"status":      "closed",
+				})
+			}
+			fmt.Printf("%s %s is already superseded by %s (no change)\n", ui.RenderInfoIcon(), oldID, newID)
+			return nil
+		}
+		return HandleErrorRespectJSON("%s is already superseded by %s — remove the existing supersedes link or reopen %s first (a second replacement would leave %s with multiple live successors)", oldID, d.ID, oldID, oldID)
+	}
+
 	// Add a "supersedes" dependency edge (old → new) AND close the superseded
 	// issue atomically (beads-njnw): a mid-sequence failure must not leave the
 	// edge added while the issue stays open.
