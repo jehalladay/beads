@@ -67,6 +67,25 @@ Examples:
 			return HandleErrorRespectJSON("%s", err)
 		}
 
+		// beads-huu7: detect a no-op (label already present) BEFORE the
+		// idempotent AddLabel so the human view reports honestly instead of a
+		// false "✓ Added". AddLabel is idempotent (AddLabelInTx no-ops when the
+		// label is already present), so a present-label tag writes nothing — but
+		// the CLI printed "✓ Added" regardless, which a CI/agent gate misreads as
+		// proof the label was newly applied. Mirrors the label-add no-op fix
+		// (beads-qi8t) + label-remove (beads-yaux). rc stays 0 (not an error). A
+		// GetLabels pre-read failure degrades to the prior behavior (report
+		// "added") so a hiccup can't block tagging.
+		alreadyPresent := false
+		if cur, gerr := issueStore.GetLabels(ctx, result.ResolvedID); gerr == nil {
+			for _, l := range cur {
+				if l == label {
+					alreadyPresent = true
+					break
+				}
+			}
+		}
+
 		if err := issueStore.AddLabel(ctx, result.ResolvedID, label, actor); err != nil {
 			return HandleErrorRespectJSON("adding label to %s: %v", id, err)
 		}
@@ -90,6 +109,12 @@ Examples:
 				// and the sibling mutation verbs, not a bare DICT.
 				return outputJSON([]*types.Issue{updatedIssue})
 			}
+			return nil
+		}
+		if alreadyPresent {
+			// Honest no-op: the label was already on the issue, so AddLabel wrote
+			// nothing. No success glyph (beads-huu7).
+			fmt.Printf("%s label %q already present on %s (no change)\n", ui.RenderInfoIcon(), label, formatFeedbackID(result.ResolvedID, title))
 			return nil
 		}
 		fmt.Printf("%s Added label %q to %s\n", ui.RenderPass("✓"), label, formatFeedbackID(result.ResolvedID, title))
