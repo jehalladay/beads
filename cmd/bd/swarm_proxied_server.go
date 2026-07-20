@@ -356,15 +356,24 @@ func runSwarmCreateProxied(ctx context.Context, inputRef, coordinator string, fo
 			"analysis":    analysis,
 		})
 	}
-	fmt.Printf("\n%s Created swarm molecule: %s\n", ui.RenderPass("✓"), ui.RenderID(swarmMol.ID))
-	fmt.Printf("   Epic: %s (%s)\n", epicID, epicTitle)
+	printSwarmCreateProxiedSummary(swarmMol.ID, epicID, epicTitle, coordinator, analysis)
+	return nil
+}
+
+// printSwarmCreateProxiedSummary renders the human confirmation for a proxied
+// 'bd swarm create'. epicTitle derives from a stored issue title (untrusted
+// import origin) so it is routed through displayTitle to strip terminal-control
+// escapes (beads-ry48z, 7n9y sink class). Pure/display-only: the --json path
+// (handled by the caller) stays raw for round-trip fidelity.
+func printSwarmCreateProxiedSummary(swarmID, epicID, epicTitle, coordinator string, analysis *SwarmAnalysis) {
+	fmt.Printf("\n%s Created swarm molecule: %s\n", ui.RenderPass("✓"), ui.RenderID(swarmID))
+	fmt.Printf("   Epic: %s (%s)\n", epicID, displayTitle(epicTitle))
 	if coordinator != "" {
 		fmt.Printf("   Coordinator: %s\n", coordinator)
 	}
 	fmt.Printf("   Total issues: %d\n", analysis.TotalIssues)
 	fmt.Printf("   Max parallelism: %d\n", analysis.MaxParallelism)
 	fmt.Printf("   Waves: %d\n", len(analysis.ReadyFronts))
-	return nil
 }
 
 // runSwarmListProxied mirrors swarmListCmd's RunE via the UOW.
