@@ -54,6 +54,17 @@ Example:
 	RunE:          runMolSquash,
 }
 
+// squashSummaryProvided reports whether an agent-supplied --summary should be
+// used as the digest content. A whitespace-only value is treated as NOT
+// provided (beads-au0rt), so it collapses to the auto-generated generateDigest()
+// output rather than overwriting the permanent digest's Description with blank
+// whitespace. A genuine summary is used verbatim (its formatting preserved),
+// matching the collapse-to-empty semantics of the stored-blank-reason class
+// (beads-in93a close / beads-5rix3 reopen).
+func squashSummaryProvided(summary string) bool {
+	return strings.TrimSpace(summary) != ""
+}
+
 // SquashResult holds the result of a squash operation
 type SquashResult struct {
 	MoleculeID    string   `json:"molecule_id"`
@@ -244,9 +255,16 @@ func squashMolecule(ctx context.Context, s storage.DoltStorage, root *types.Issu
 		childIDs[i] = c.ID
 	}
 
-	// Use agent-provided summary if available, otherwise generate basic digest
+	// Use agent-provided summary if available, otherwise generate basic digest.
+	// A whitespace-only --summary is treated as NOT provided (beads-au0rt): the
+	// plain `summary != ""` guard would otherwise overwrite the permanent digest's
+	// Description with blank whitespace, silently discarding the rich
+	// generateDigest() content. --summary is optional ("bypasses auto-generation"),
+	// so a blank value collapses to the auto-generated digest rather than storing
+	// blank content — the mol-squash sibling of the stored-blank-reason class
+	// (beads-in93a close / beads-5rix3 reopen). A genuine summary is used VERBATIM.
 	var digestContent string
-	if summary != "" {
+	if squashSummaryProvided(summary) {
 		digestContent = summary
 	} else {
 		digestContent = generateDigest(root, children)
