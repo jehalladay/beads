@@ -29,6 +29,30 @@ type readyInput struct {
 	jsonOut      bool
 }
 
+// dateRangeAxis names an after/before date-range pair for reversed-range
+// validation (beads-tjysi).
+type dateRangeAxis struct {
+	name   string
+	after  *time.Time
+	before *time.Time
+}
+
+// reversedDateRangeMessage returns an error message for the first axis whose
+// after > before (an always-false WHERE that would silently return empty), or
+// "" if all axes are ordered or unset. Equal bounds (after==before) are valid.
+// Callers wrap the message in their path-appropriate error sink (the direct
+// path returns HandleErrorRespectJSON; the proxied path calls
+// FatalErrorRespectJSON) — beads-tjysi, parity with bd list wnm6g/BUG-37.
+func reversedDateRangeMessage(axes ...dateRangeAxis) string {
+	for _, a := range axes {
+		if a.after != nil && a.before != nil && a.after.After(*a.before) {
+			return fmt.Sprintf("--%s-after (%s) cannot be later than --%s-before (%s)",
+				a.name, a.after.Format("2006-01-02"), a.name, a.before.Format("2006-01-02"))
+		}
+	}
+	return ""
+}
+
 func gatherReadyInput(cmd *cobra.Command) readyInput {
 	in := readyInput{}
 
@@ -193,6 +217,12 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 		}
 		in.filter.PriorityMax = &p
 	}
+	// beads-tjysi: reject a reversed priority range on the PROXIED ready path too
+	// (parity with the direct ready.go guard + bd list wnm6g). FatalErrorRespectJSON
+	// matches the neighbors here (gatherReadyInput returns readyInput, not error).
+	if in.filter.PriorityMin != nil && in.filter.PriorityMax != nil && *in.filter.PriorityMin > *in.filter.PriorityMax {
+		FatalErrorRespectJSON("--priority-min (%d) cannot be greater than --priority-max (%d)", *in.filter.PriorityMin, *in.filter.PriorityMax)
+	}
 	// beads-6na9a: --desc-contains on the PROXIED ready path too (parity with
 	// bd list). Shared input path, so setting it here covers runReadyProxiedServer;
 	// the direct ready.go RunE sets it separately (same split as --priority).
@@ -239,6 +269,15 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 			}
 			*tf.dst = &t
 		}
+	}
+	// beads-tjysi: reject reversed date ranges on the PROXIED ready path too
+	// (parity with the direct ready.go guard + bd list wnm6g/BUG-37).
+	if msg := reversedDateRangeMessage(
+		dateRangeAxis{"created", in.filter.CreatedAfter, in.filter.CreatedBefore},
+		dateRangeAxis{"updated", in.filter.UpdatedAfter, in.filter.UpdatedBefore},
+		dateRangeAxis{"due", in.filter.DueAfter, in.filter.DueBefore},
+	); msg != "" {
+		FatalErrorRespectJSON("%s", msg)
 	}
 	// beads-zmtp6: --overdue on the PROXIED ready path too (parity with bd list).
 	in.filter.Overdue, _ = cmd.Flags().GetBool("overdue")

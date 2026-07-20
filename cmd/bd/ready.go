@@ -211,6 +211,13 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			}
 			filter.PriorityMax = &p
 		}
+		// beads-tjysi: reject a reversed priority range (min > max), parity with
+		// bd list (wnm6g/BUG-36). "priority >= min AND priority <= max" with
+		// min > max is always false, silently returning empty; reject it instead.
+		// Equal bounds (min==max) stay valid.
+		if filter.PriorityMin != nil && filter.PriorityMax != nil && *filter.PriorityMin > *filter.PriorityMax {
+			return HandleErrorRespectJSON("--priority-min (%d) cannot be greater than --priority-max (%d)", *filter.PriorityMin, *filter.PriorityMax)
+		}
 		// beads-6na9a: case-insensitive description substring, parity with bd list.
 		// The proxied path parses the same in gatherReadyInput.
 		if dc, _ := cmd.Flags().GetString("desc-contains"); dc != "" {
@@ -255,6 +262,17 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		}
 		if filter.DueBefore, err = parseListTimeFlag(cmd, "due-before"); err != nil {
 			return err
+		}
+		// beads-tjysi: reject reversed date ranges (after > before) on every
+		// axis, parity with bd list (wnm6g/BUG-37). "col >= after AND col <=
+		// before" with after > before is always false → silent empty. Equal
+		// bounds (after==before) stay valid.
+		if msg := reversedDateRangeMessage(
+			dateRangeAxis{"created", filter.CreatedAfter, filter.CreatedBefore},
+			dateRangeAxis{"updated", filter.UpdatedAfter, filter.UpdatedBefore},
+			dateRangeAxis{"due", filter.DueAfter, filter.DueBefore},
+		); msg != "" {
+			return HandleErrorRespectJSON("%s", msg)
 		}
 		filter.Overdue, _ = cmd.Flags().GetBool("overdue")
 		if assignee != "" && !unassigned {
