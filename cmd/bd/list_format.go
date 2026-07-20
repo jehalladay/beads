@@ -57,9 +57,38 @@ func renderStatusIcon(status types.Status) string {
 // formatPrettyIssue formats a single issue for pretty output
 // Uses semantic colors: status icon colored, priority P0/P1 colored, rest neutral
 func formatPrettyIssue(issue *types.Issue) string {
+	return formatPrettyIssueBlocked(issue, nil)
+}
+
+// formatPrettyIssueBlocked is formatPrettyIssue plus GH#2858 blocked-signalling
+// (beads-54lww): when the issue has active open blockers, an OPEN issue's icon
+// is overridden to ● blocked and a "(blocked by: X)" annotation is appended —
+// matching the compact/agent seams (formatIssueCompact / formatAgentIssue). The
+// pretty/tree renderer is the DEFAULT bd list view, so before this it
+// under-signalled blocked state relative to --flat, bd ready, and bd blocked.
+//
+// blockedBy must be the ACTIVE blocker set (closed/inactive blockers already
+// filtered out — as GetBlockingInfoForIssues / DependencyUseCase.GetBlockingInfo
+// return); an empty/nil blockedBy renders exactly as before, so callers with no
+// dependency data (plain displayPrettyList, ready.go's unblocked set) are
+// unaffected. The icon override is open-only to mirror formatIssueCompact
+// (started/deferred issues keep their own icon); the annotation surfaces the
+// relationship regardless of status.
+func formatPrettyIssueBlocked(issue *types.Issue, blockedBy []string) string {
 	// Use shared helpers from ui package
 	statusIcon := ui.RenderStatusIcon(string(issue.Status))
 	priorityTag := renderPriorityTag(issue.Priority)
+
+	// GH#2858: an open issue with active blockers is shown as blocked.
+	if len(blockedBy) > 0 && issue.Status == types.StatusOpen {
+		statusIcon = ui.RenderStatusIcon(string(types.StatusBlocked))
+	}
+
+	// "(blocked by: X)" annotation, same rendering as formatIssueCompact.
+	depInfo := formatDependencyInfo(blockedBy, nil, "")
+	if depInfo != "" {
+		depInfo = " " + depInfo
+	}
 
 	// Type badge - only show for notable types
 	typeBadge := ""
@@ -79,10 +108,10 @@ func formatPrettyIssue(issue *types.Issue) string {
 			ui.RenderMuted(issue.ID),
 			ui.RenderMuted(fmt.Sprintf("● P%d", issue.Priority)),
 			ui.RenderMuted(string(issue.IssueType)),
-			ui.RenderMuted(" "+displayTitle(issue.Title)))
+			ui.RenderMuted(" "+displayTitle(issue.Title)+depInfo))
 	}
 
-	return fmt.Sprintf("%s %s %s %s%s", statusIcon, issue.ID, priorityTag, typeBadge, displayTitle(issue.Title))
+	return fmt.Sprintf("%s %s %s %s%s%s", statusIcon, issue.ID, priorityTag, typeBadge, displayTitle(issue.Title), depInfo)
 }
 
 // formatPrettyIssueWithContext formats an issue with optional parent epic annotation

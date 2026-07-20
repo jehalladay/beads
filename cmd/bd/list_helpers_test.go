@@ -41,6 +41,15 @@ func (s *watchListDependencyStoreStub) GetDependencyRecordsForIssues(_ context.C
 	return out, nil
 }
 
+// GetBlockingInfoForIssues satisfies the watchListDependencyStore interface
+// (beads-54lww). The existing watch tests assert dep-loading is scoped to the
+// displayed IDs, not blocked-signalling, so returning empty maps preserves
+// their behavior (nil/empty blockedBy renders exactly as before).
+func (s *watchListDependencyStoreStub) GetBlockingInfoForIssues(_ context.Context, _ []string) (
+	map[string][]string, map[string][]string, map[string]string, error) {
+	return map[string][]string{}, map[string][]string{}, map[string]string{}, nil
+}
+
 func TestListParseTimeFlag(t *testing.T) {
 	cases := []string{
 		"2025-12-26",

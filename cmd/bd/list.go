@@ -158,6 +158,10 @@ func findAllDescendants(ctx context.Context, store storage.DoltStorage, dbPath s
 // database, not files — file watchers never fire.
 type watchListDependencyStore interface {
 	GetDependencyRecordsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Dependency, error)
+	// beads-54lww: the watched pretty view surfaces ● blocked + "(blocked by:
+	// X)" like the non-watch path, so it needs the active-blocker set too.
+	GetBlockingInfoForIssues(ctx context.Context, issueIDs []string) (
+		blockedBy map[string][]string, blocks map[string][]string, parent map[string]string, err error)
 }
 
 // dependencyRecordsForIssuesStore is the subset of storage used to load the
@@ -195,6 +199,35 @@ func displayedIssueDeps(ctx context.Context, store dependencyRecordsForIssuesSto
 	return deps
 }
 
+// blockingInfoForIssuesStore is the subset of storage used to load ACTIVE
+// blocker info for a display set. Satisfied by every Dolt store; kept narrow so
+// the display helpers stay testable.
+type blockingInfoForIssuesStore interface {
+	GetBlockingInfoForIssues(ctx context.Context, issueIDs []string) (
+		blockedBy map[string][]string, blocks map[string][]string, parent map[string]string, err error)
+}
+
+// displayedIssueBlockedBy loads the ACTIVE open-blocker set for ONLY the
+// displayed issues (beads-54lww). It mirrors what the compact/agent seams use
+// (GetBlockingInfoForIssues → blockedByMap) so the DEFAULT pretty/tree view can
+// apply the same GH#2858 ● blocked icon + "(blocked by: X)" annotation and stop
+// under-signalling blocked state. Returns nil on error or empty input; a nil
+// map renders exactly as before, so this is a strictly additive signal.
+func displayedIssueBlockedBy(ctx context.Context, store blockingInfoForIssuesStore, issues []*types.Issue) map[string][]string {
+	if store == nil || len(issues) == 0 {
+		return nil
+	}
+	ids := make([]string, len(issues))
+	for i, issue := range issues {
+		ids[i] = issue.ID
+	}
+	blockedBy, _, _, err := store.GetBlockingInfoForIssues(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	return blockedBy
+}
+
 func loadWatchedIssues(ctx context.Context, store storage.DoltStorage, filter types.IssueFilter, ready bool, parentID string, sortBy string, reverse bool) ([]*types.Issue, error) {
 	if ready {
 		issues, err := store.GetReadyWork(ctx, readyWorkFilterFromIssueFilter(withFetchOneExtra(filter)))
@@ -226,7 +259,8 @@ func loadWatchedIssues(ctx context.Context, store storage.DoltStorage, filter ty
 
 func displayWatchedIssueList(ctx context.Context, store watchListDependencyStore, issues []*types.Issue, truncated bool) {
 	allDeps := displayedIssueDeps(ctx, store, issues)
-	displayPrettyListWithDepsTruncated(issues, true, allDeps, truncated)
+	blockedBy := displayedIssueBlockedBy(ctx, store, issues)
+	displayPrettyListWithBlocked(issues, true, allDeps, truncated, "", blockedBy)
 }
 
 func watchIssues(ctx context.Context, store storage.DoltStorage, filter types.IssueFilter, ready bool, parentID string, sortBy string, reverse bool, effectiveLimit int) {
@@ -662,11 +696,15 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 			}
 
 			allDeps := displayedIssueDeps(ctx, activeStore, treeIssues)
+			// beads-54lww: thread the active-blocker set so open issues with
+			// active blockers render ● blocked + "(blocked by: X)" in the default
+			// tree view, matching --flat/compact.
+			blockedBy := displayedIssueBlockedBy(ctx, activeStore, treeIssues)
 			// beads-bubp: the parent is prepended to treeIssues as tree-render
 			// context (getHierarchicalChildren), not as a child result, so exclude
 			// it from the footer count — otherwise the human "Total: N issues" is
 			// +1 vs --json (which returns children only).
-			displayPrettyListWithDepsContextRoot(treeIssues, false, allDeps, false, in.parentID)
+			displayPrettyListWithBlocked(treeIssues, false, allDeps, false, in.parentID, blockedBy)
 			printSkipLabelsFooter(in.skipLabels)
 			// beads-3dr5: the --parent tree view intentionally renders the FULL
 			// subtree (truncating mid-hierarchy would orphan children), so --limit
@@ -680,7 +718,11 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 		}
 
 		allDeps := displayedIssueDeps(ctx, activeStore, issues)
-		displayPrettyListWithDepsTruncated(issues, false, allDeps, truncated)
+		// beads-54lww: thread the active-blocker set so the default pretty/tree
+		// view shows ● blocked + "(blocked by: X)" for open issues with active
+		// blockers, matching --flat/compact and bd ready's exclusion of them.
+		blockedBy := displayedIssueBlockedBy(ctx, activeStore, issues)
+		displayPrettyListWithBlocked(issues, false, allDeps, truncated, "", blockedBy)
 		printTruncationHint(truncated, in.effectiveLimit)
 		printSkipLabelsFooter(in.skipLabels)
 		return nil

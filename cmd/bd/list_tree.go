@@ -121,6 +121,14 @@ func compareIssuesByPriority(a, b *types.Issue) int {
 // printPrettyTree recursively prints the issue tree
 // Children are sorted by priority (P0 first) for intuitive reading
 func printPrettyTree(childrenMap map[string][]*types.Issue, parentID string, prefix string) {
+	printPrettyTreeBlocked(childrenMap, parentID, prefix, nil)
+}
+
+// printPrettyTreeBlocked is printPrettyTree plus a per-issue active-blocker map
+// (beads-54lww): each rendered node is passed its blockedBy set so open issues
+// with active blockers show the ● blocked icon + "(blocked by: X)" annotation.
+// A nil/empty blockedBy renders exactly as printPrettyTree did.
+func printPrettyTreeBlocked(childrenMap map[string][]*types.Issue, parentID string, prefix string, blockedBy map[string][]string) {
 	children := childrenMap[parentID]
 
 	// Sort children by priority using same comparison as roots for consistency
@@ -132,13 +140,13 @@ func printPrettyTree(childrenMap map[string][]*types.Issue, parentID string, pre
 		if isLast {
 			connector = "└── "
 		}
-		fmt.Printf("%s%s%s\n", prefix, connector, formatPrettyIssue(child))
+		fmt.Printf("%s%s%s\n", prefix, connector, formatPrettyIssueBlocked(child, blockedBy[child.ID]))
 
 		extension := "│   "
 		if isLast {
 			extension = "    "
 		}
-		printPrettyTree(childrenMap, child.ID, prefix+extension)
+		printPrettyTreeBlocked(childrenMap, child.ID, prefix+extension, blockedBy)
 	}
 }
 
@@ -178,6 +186,18 @@ func displayPrettyListWithDepsTruncated(issues []*types.Issue, showHeader bool, 
 // the footer count (and its open/in-progress tally) makes human == json.
 // Callers with no context root pass "" and are unaffected.
 func displayPrettyListWithDepsContextRoot(issues []*types.Issue, showHeader bool, allDeps map[string][]*types.Dependency, truncated bool, contextRootID string) {
+	displayPrettyListWithBlocked(issues, showHeader, allDeps, truncated, contextRootID, nil)
+}
+
+// displayPrettyListWithBlocked is displayPrettyListWithDepsContextRoot plus a
+// per-issue active-blocker map (beads-54lww). blockedBy maps an issue ID to its
+// ACTIVE open blockers (as GetBlockingInfoForIssues /
+// DependencyUseCase.GetBlockingInfo return); it drives the ● blocked icon
+// override + "(blocked by: X)" annotation in the DEFAULT pretty/tree view so it
+// no longer under-signals blocked state vs --flat/compact/bd ready. A nil
+// blockedBy reproduces the prior behavior exactly, so callers without blocker
+// data are unaffected.
+func displayPrettyListWithBlocked(issues []*types.Issue, showHeader bool, allDeps map[string][]*types.Dependency, truncated bool, contextRootID string, blockedBy map[string][]string) {
 	if showHeader {
 		// Clear screen and show header
 		fmt.Print("\033[2J\033[H")
@@ -195,8 +215,8 @@ func displayPrettyListWithDepsContextRoot(issues []*types.Issue, showHeader bool
 	roots, childrenMap := buildIssueTreeWithDeps(issues, allDeps)
 
 	for _, issue := range roots {
-		fmt.Println(formatPrettyIssue(issue))
-		printPrettyTree(childrenMap, issue.ID, "")
+		fmt.Println(formatPrettyIssueBlocked(issue, blockedBy[issue.ID]))
+		printPrettyTreeBlocked(childrenMap, issue.ID, "", blockedBy)
 	}
 
 	// Summary

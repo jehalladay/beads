@@ -126,12 +126,16 @@ func runListProxiedHierarchicalParent(ctx context.Context, uw uow.UnitOfWork, in
 	if err != nil {
 		return err
 	}
+	// beads-54lww: thread the active-blocker set (proxied twin) so open issues
+	// with active blockers render ● blocked + "(blocked by: X)" in the default
+	// tree view on the hub/proxied path too.
+	blockedBy := loadBlockedByForIssues(ctx, uw, treeIssues)
 
 	// beads-bubp: gatherProxiedHierarchical prepends the parent as the tree root
 	// for hierarchy context (not as a child result), so exclude it from the
 	// footer count — otherwise the human "Total: N issues" is +1 vs --json
 	// (children only). Proxied twin of the direct list.go --parent fix.
-	displayPrettyListWithDepsContextRoot(treeIssues, false, depsByIssueID, false, in.parentID)
+	displayPrettyListWithBlocked(treeIssues, false, depsByIssueID, false, in.parentID, blockedBy)
 	printSkipLabelsFooter(in.skipLabels)
 	return nil
 }
@@ -242,7 +246,9 @@ func runListProxiedWatch(_ *cobra.Command, ctx context.Context, in listInput) er
 	if err != nil {
 		return fmt.Errorf("initial query: %w", err)
 	}
-	displayPrettyListWithDepsTruncated(issues, true, deps, hasMore)
+	// beads-54lww: surface ● blocked + "(blocked by: X)" in the watched tree
+	// view too, matching the non-watch pretty path.
+	displayPrettyListWithBlocked(issues, true, deps, hasMore, "", loadBlockedByForIssues(ctx, uw, issues))
 	printTruncationHint(hasMore, in.effectiveLimit)
 	lastSnapshot := issueSnapshot(issues)
 
@@ -269,7 +275,7 @@ func runListProxiedWatch(_ *cobra.Command, ctx context.Context, in listInput) er
 			snap := issueSnapshot(issues)
 			if snap != lastSnapshot {
 				lastSnapshot = snap
-				displayPrettyListWithDepsTruncated(issues, true, deps, hasMore)
+				displayPrettyListWithBlocked(issues, true, deps, hasMore, "", loadBlockedByForIssues(ctx, uw, issues))
 				printTruncationHint(hasMore, in.effectiveLimit)
 				fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
 			}
@@ -331,6 +337,27 @@ func loadDepsForIssues(ctx context.Context, uw uow.UnitOfWork, issues []*types.I
 	return uw.DependencyUseCase().GetForIssueIDs(ctx, ids)
 }
 
+// loadBlockedByForIssues returns the ACTIVE open-blocker set for the display
+// issues (beads-54lww, proxied twin of displayedIssueBlockedBy). It mirrors the
+// proxied compact seam (DependencyUseCase().GetBlockingInfo → BlockedBy) so the
+// default pretty/tree view applies the same GH#2858 ● blocked icon +
+// "(blocked by: X)" annotation on the hub/proxied path. Returns nil on error or
+// empty input; a nil map renders exactly as before.
+func loadBlockedByForIssues(ctx context.Context, uw uow.UnitOfWork, issues []*types.Issue) map[string][]string {
+	if len(issues) == 0 {
+		return nil
+	}
+	ids := make([]string, len(issues))
+	for i, issue := range issues {
+		ids[i] = issue.ID
+	}
+	info, err := uw.DependencyUseCase().GetBlockingInfo(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	return info.BlockedBy
+}
+
 func renderProxiedListText(ctx context.Context, uw uow.UnitOfWork, issues []*types.Issue, in listInput, truncated bool) error {
 	if in.formatStr != "" {
 		depsByIssueID, err := loadDepsForIssues(ctx, uw, issues)
@@ -349,7 +376,10 @@ func renderProxiedListText(ctx context.Context, uw uow.UnitOfWork, issues []*typ
 		if err != nil {
 			return err
 		}
-		displayPrettyListWithDepsTruncated(issues, false, depsByIssueID, truncated)
+		// beads-54lww: default pretty/tree view shows ● blocked + "(blocked by:
+		// X)" for open issues with active blockers, matching --flat/compact.
+		blockedBy := loadBlockedByForIssues(ctx, uw, issues)
+		displayPrettyListWithBlocked(issues, false, depsByIssueID, truncated, "", blockedBy)
 		printTruncationHint(truncated, in.effectiveLimit)
 		printSkipLabelsFooter(in.skipLabels)
 		return nil
