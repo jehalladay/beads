@@ -106,6 +106,28 @@ func runDuplicate(cmd *cobra.Command, args []string) error {
 		return HandleErrorRespectJSON("canonical issue not found: %s", canonicalID)
 	}
 
+	// beads-wqrfi: reject marking an issue as a duplicate of a canonical that is
+	// ITSELF a closed duplicate — this prevents both a dup-of-a-dup CHAIN (LEAF →
+	// MID → ROOT, where MID is closed-as-dup, leaving LEAF pointed at a dead
+	// canonical instead of the live ROOT) and a mutual CYCLE (A dup-of B, then B
+	// dup-of A, leaving both closed and naming each other so tracing loops
+	// forever). The prior guards were only self-ref + existence. The tell that a
+	// canonical is itself a duplicate: it is closed AND has an outgoing
+	// "duplicates" edge. A normally-closed non-duplicate issue is still a valid
+	// canonical (unchanged). Symmetric with dep add's blocks-cycle guard, which
+	// is type-scoped to blocking deps and so misses the duplicates edge.
+	if canonical.Status == types.StatusClosed {
+		canonicalDeps, derr := store.GetDependenciesWithMetadata(ctx, canonicalID)
+		if derr != nil {
+			return HandleErrorRespectJSON("checking canonical %s: %v", canonicalID, derr)
+		}
+		for _, d := range canonicalDeps {
+			if d.DependencyType == types.DepDuplicates {
+				return HandleErrorRespectJSON("canonical %s is itself a closed duplicate (of %s) — mark %s as a duplicate of the live canonical instead, not a duplicate-of-a-duplicate", canonicalID, d.ID, duplicateID)
+			}
+		}
+	}
+
 	// Add a "duplicates" dependency edge (duplicate → canonical) AND close the
 	// duplicate atomically (beads-njnw): a mid-sequence failure must not leave
 	// the edge added while the issue stays open.

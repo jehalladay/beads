@@ -100,6 +100,23 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 		return HandleErrorRespectJSON("%s", in.selfErr)
 	}
 
+	// beads-wqrfi (proxied twin): reject marking a duplicate of a canonical that
+	// is ITSELF a closed duplicate — prevents the dup-of-a-dup chain and the
+	// mutual duplicates cycle. Gated to DepDuplicates (matches the direct
+	// duplicate.go guard; supersede is a distinct case the bead did not cover).
+	// Tell: canonical is closed AND has an outgoing "duplicates" edge.
+	if in.depType == types.DepDuplicates && toIssue.Status == types.StatusClosed {
+		canonicalDeps, derr := uw.DependencyUseCase().ListWithIssueMetadata(ctx, toID, domain.DepListFilter{})
+		if derr != nil {
+			return HandleErrorRespectJSON("checking canonical %s: %v", toID, derr)
+		}
+		for _, d := range canonicalDeps {
+			if d.DependencyType == types.DepDuplicates {
+				return HandleErrorRespectJSON("canonical %s is itself a closed duplicate (of %s) — mark %s as a duplicate of the live canonical instead, not a duplicate-of-a-duplicate", toID, d.ID, fromID)
+			}
+		}
+	}
+
 	actor := getActor()
 
 	dep := &types.Dependency{
