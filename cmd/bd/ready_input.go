@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -203,6 +204,28 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 	// the direct ready.go RunE sets it separately (same split as --priority).
 	if tc, _ := cmd.Flags().GetString("title-contains"); tc != "" {
 		in.filter.TitleContains = tc
+	}
+	// beads-10y4y: created/updated date-range filters on the PROXIED ready path
+	// too (parity with bd list). Shared input path, so parsing here covers
+	// runReadyProxiedServer; the direct ready.go RunE parses separately (same
+	// split as --priority). parseTimeFlag is the same relative-time parser
+	// parseListTimeFlag wraps; FatalErrorRespectJSON matches the neighbors.
+	for _, tf := range []struct {
+		name string
+		dst  **time.Time
+	}{
+		{"created-after", &in.filter.CreatedAfter},
+		{"created-before", &in.filter.CreatedBefore},
+		{"updated-after", &in.filter.UpdatedAfter},
+		{"updated-before", &in.filter.UpdatedBefore},
+	} {
+		if s, _ := cmd.Flags().GetString(tf.name); s != "" {
+			t, err := parseTimeFlag(s)
+			if err != nil {
+				FatalErrorRespectJSON("parsing --%s: %v", tf.name, err)
+			}
+			*tf.dst = &t
+		}
 	}
 	if assignee != "" && !unassigned {
 		in.filter.Assignee = &assignee

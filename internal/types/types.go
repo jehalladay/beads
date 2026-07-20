@@ -1471,15 +1471,21 @@ type WorkFilter struct {
 	PriorityMax         *int   // beads-cseh3: maximum priority (inclusive); parity with IssueFilter/bd list
 	DescriptionContains string // beads-6na9a: case-insensitive substring match on description; parity with IssueFilter/bd list
 	TitleContains       string // beads-d1as8: case-insensitive substring match on title; parity with IssueFilter/bd list
-	Assignee            *string
-	Unassigned          bool     // Filter for issues with no assignee
-	Labels              []string // AND semantics: issue must have ALL these labels
-	LabelsAny           []string // OR semantics: issue must have AT LEAST ONE of these labels
-	ExcludeLabels       []string // Exclusion: issue must NOT have ANY of these labels
-	LabelPattern        string   // Glob pattern for label matching (e.g., "tech-*")
-	LabelRegex          string   // Regex pattern for label matching (e.g., "tech-(debt|legacy)")
-	Limit               int
-	SortPolicy          SortPolicy
+	// beads-10y4y: created/updated date-range filtering; parity with IssueFilter/bd list.
+	// The sqlbuild ready builder applies these via a {col, op, *time.Time} loop.
+	CreatedAfter  *time.Time
+	CreatedBefore *time.Time
+	UpdatedAfter  *time.Time
+	UpdatedBefore *time.Time
+	Assignee      *string
+	Unassigned    bool     // Filter for issues with no assignee
+	Labels        []string // AND semantics: issue must have ALL these labels
+	LabelsAny     []string // OR semantics: issue must have AT LEAST ONE of these labels
+	ExcludeLabels []string // Exclusion: issue must NOT have ANY of these labels
+	LabelPattern  string   // Glob pattern for label matching (e.g., "tech-*")
+	LabelRegex    string   // Regex pattern for label matching (e.g., "tech-(debt|legacy)")
+	Limit         int
+	SortPolicy    SortPolicy
 
 	// Parent filtering: filter to descendants of a bead/epic (recursive)
 	ParentID *string // Show all descendants of this issue

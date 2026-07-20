@@ -587,6 +587,85 @@ func TestEmbeddedReadyTitleContainsEscapesLikeMetachars(t *testing.T) {
 	})
 }
 
+// TestEmbeddedReadyDateRange is the teeth for beads-10y4y: bd ready must support
+// --created-after/--created-before/--updated-after/--updated-before date-range
+// filters with the same relative-time-aware semantics as bd list. Previously
+// ready had none of these flags and WorkFilter/the sqlbuild builder ignored
+// created_at/updated_at entirely.
+func TestEmbeddedReadyDateRange(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "dr")
+
+	// One freshly-created, unblocked issue (created_at/updated_at = ~now).
+	bdCreate(t, bd, dir, "date range subject", "--type", "task")
+
+	readyCount := func(t *testing.T, args ...string) int {
+		t.Helper()
+		full := append([]string{"ready", "--json", "--limit", "0"}, args...)
+		cmd := exec.Command(bd, full...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("bd ready %v failed: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
+		}
+		var ready []types.IssueWithCounts
+		if jerr := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &ready); jerr != nil {
+			t.Fatalf("parse ready JSON (%v): %v\n%s", args, jerr, stdout.String())
+		}
+		return len(ready)
+	}
+
+	t.Run("created_after_yesterday_includes_fresh_issue", func(t *testing.T) {
+		if n := readyCount(t, "--created-after", "yesterday"); n != 1 {
+			t.Errorf("--created-after yesterday: got %d, want 1", n)
+		}
+	})
+	t.Run("created_after_tomorrow_excludes_fresh_issue", func(t *testing.T) {
+		if n := readyCount(t, "--created-after", "tomorrow"); n != 0 {
+			t.Errorf("--created-after tomorrow: got %d, want 0", n)
+		}
+	})
+	t.Run("created_before_tomorrow_includes_fresh_issue", func(t *testing.T) {
+		if n := readyCount(t, "--created-before", "tomorrow"); n != 1 {
+			t.Errorf("--created-before tomorrow: got %d, want 1", n)
+		}
+	})
+	t.Run("created_before_yesterday_excludes_fresh_issue", func(t *testing.T) {
+		if n := readyCount(t, "--created-before", "yesterday"); n != 0 {
+			t.Errorf("--created-before yesterday: got %d, want 0", n)
+		}
+	})
+	t.Run("updated_after_yesterday_includes_fresh_issue", func(t *testing.T) {
+		if n := readyCount(t, "--updated-after", "yesterday"); n != 1 {
+			t.Errorf("--updated-after yesterday: got %d, want 1", n)
+		}
+	})
+	t.Run("updated_before_yesterday_excludes_fresh_issue", func(t *testing.T) {
+		if n := readyCount(t, "--updated-before", "yesterday"); n != 0 {
+			t.Errorf("--updated-before yesterday: got %d, want 0", n)
+		}
+	})
+
+	t.Run("invalid_date_rejected", func(t *testing.T) {
+		cmd := exec.Command(bd, "ready", "--created-after", "not-a-date")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("bd ready --created-after not-a-date should have failed, got: %s", out)
+		}
+		if !strings.Contains(string(out), "created-after") {
+			t.Errorf("expected a --created-after parse error, got: %s", out)
+		}
+	})
+}
+
 func TestEmbeddedReadyConcurrent(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")

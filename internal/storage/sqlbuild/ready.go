@@ -180,6 +180,25 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 		whereClauses = append(whereClauses, `LOWER(title) LIKE ? ESCAPE '\\'`)
 		args = append(args, LikeContains(filter.TitleContains))
 	}
+	// beads-10y4y: created/updated date-range filters (parity with bd list,
+	// whose filter.go applies the same {col, op, *time.Time} loop over these
+	// columns). Both the direct ready.go RunE and gatherReadyInput (proxied)
+	// populate these via the shared parseListTimeFlag helper; here is the single
+	// WHERE site both paths flow through. RFC3339 args match filter.go exactly.
+	for _, tc := range []struct {
+		col, op string
+		v       *time.Time
+	}{
+		{"created_at", ">", filter.CreatedAfter},
+		{"created_at", "<", filter.CreatedBefore},
+		{"updated_at", ">", filter.UpdatedAfter},
+		{"updated_at", "<", filter.UpdatedBefore},
+	} {
+		if tc.v != nil {
+			whereClauses = append(whereClauses, fmt.Sprintf("%s %s ?", tc.col, tc.op))
+			args = append(args, tc.v.Format(time.RFC3339))
+		}
+	}
 	if filter.Type != "" {
 		whereClauses = append(whereClauses, "issue_type = ?")
 		args = append(args, filter.Type)

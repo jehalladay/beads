@@ -221,6 +221,23 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		if tc, _ := cmd.Flags().GetString("title-contains"); tc != "" {
 			filter.TitleContains = tc
 		}
+		// beads-10y4y: created/updated date-range filters (parity with bd list).
+		// parseListTimeFlag is relative-time aware (+6h/tomorrow/yesterday) and
+		// returns a *time.Time (nil when the flag is empty). The proxied path
+		// parses the same in gatherReadyInput.
+		var err error
+		if filter.CreatedAfter, err = parseListTimeFlag(cmd, "created-after"); err != nil {
+			return err
+		}
+		if filter.CreatedBefore, err = parseListTimeFlag(cmd, "created-before"); err != nil {
+			return err
+		}
+		if filter.UpdatedAfter, err = parseListTimeFlag(cmd, "updated-after"); err != nil {
+			return err
+		}
+		if filter.UpdatedBefore, err = parseListTimeFlag(cmd, "updated-before"); err != nil {
+			return err
+		}
 		if assignee != "" && !unassigned {
 			filter.Assignee = &assignee
 		}
@@ -858,6 +875,12 @@ func init() {
 	readyCmd.Flags().String("priority-min", "", "Filter by minimum priority (inclusive, 0-4 or P0-P4)")
 	readyCmd.Flags().String("priority-max", "", "Filter by maximum priority (inclusive, 0-4 or P0-P4)")
 	readyCmd.Flags().String("desc-contains", "", "Filter by description substring (case-insensitive)")
+	// beads-10y4y: created/updated date-range filters (feature-parity with bd
+	// list). Relative-time forms (+6h/tomorrow/yesterday) via parseListTimeFlag.
+	readyCmd.Flags().String("created-after", "", "Filter by created after date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
+	readyCmd.Flags().String("created-before", "", "Filter by created before date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
+	readyCmd.Flags().String("updated-after", "", "Filter by updated after date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
+	readyCmd.Flags().String("updated-before", "", "Filter by updated before date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
 	readyCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
 	readyCmd.Flags().BoolP("unassigned", "u", false, "Show only unassigned issues")
 	readyCmd.Flags().StringP("sort", "s", "priority", "Sort policy: priority (default), hybrid, oldest")
