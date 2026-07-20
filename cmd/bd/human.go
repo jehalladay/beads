@@ -331,6 +331,12 @@ Examples:
 		}()
 
 		reason, _ := cmd.Flags().GetString("reason")
+		// beads-tg1js: --reason is optional with no default, so a whitespace-only
+		// value collapses to no-reason (mirrors reopen/5rix3 + in93a) — else the
+		// "if reason != \"\"" guard below stores "Dismissed:    " as the close
+		// reason. A genuine reason is kept VERBATIM (beln6). Normalized here so
+		// both the direct and proxied (runHumanDismissProxiedServer) paths agree.
+		reason = normalizeOptionalReason(reason)
 
 		CheckReadonly("human dismiss")
 
