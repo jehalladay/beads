@@ -873,7 +873,12 @@ var rootCmd = &cobra.Command{
 				loadServerModeFromConfig()
 			}
 			if _, err := getDoltAutoCommitMode(); err != nil {
-				return HandleError("%v", err)
+				// beads-63wku: honor the --json error contract — jsonOutput is
+				// resolved earlier in this PersistentPreRunE (the --format/--json/
+				// config block), so a bare HandleError left stdout empty + plaintext
+				// on stderr. Same closure + class as ci4m8's store-setup legs and the
+				// sibling site below; RespectJSON emits a JSON error on stdout.
+				return HandleErrorRespectJSON("%v", err)
 			}
 		}
 
@@ -982,7 +987,9 @@ var rootCmd = &cobra.Command{
 		prepareSelectedCommandContext(beadsDir, true)
 		refreshBoundCommandConfig(cmd)
 		if _, err := getDoltAutoCommitMode(); err != nil {
-			return HandleError("%v", err)
+			// beads-63wku: --json error contract (see the sibling site above +
+			// ci4m8); jsonOutput is already resolved here.
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		// Set actor for audit trail
@@ -1100,7 +1107,11 @@ var rootCmd = &cobra.Command{
 		// the prod hub (hq-7olqo), and mirrors the guard bd init already applies.
 		// Embedded/local-host paths and metadata-backed workspaces are unaffected.
 		if serverHost, refuse := refuseMetadatalessRemoteServer(cfg == nil, doltCfg.ServerMode); refuse {
-			return HandleError(
+			// beads-63wku: honor the --json error contract (jsonOutput resolved
+			// earlier in this closure); a bare HandleError left stdout empty under
+			// --json for this metadataless-remote refusal. Same class as ci4m8's
+			// store-setup legs + the no-db guard (wg8i).
+			return HandleErrorRespectJSON(
 				"no beads configuration found in %s, but a non-local Dolt server (%s) is configured via environment.\n"+
 					"  Refusing to silently read/write the shared server under the default database name.\n"+
 					"  Run 'bd init' in this directory to create a workspace, or unset BEADS_DOLT_SERVER_HOST for an isolated embedded database.",
