@@ -153,9 +153,18 @@ func runMolBond(cmd *cobra.Command, args []string) error {
 	idA := issueA.ID
 	idB := issueB.ID
 
-	// Determine operand types
-	aIsProto := issueA.IsTemplate || cookedA
-	bIsProto := issueB.IsTemplate || cookedB
+	// Determine operand types. Use the SAME proto predicate as the help text,
+	// the --dry-run preview, and isProto() — the template LABEL (isProto) OR a
+	// formula-cooked operand (cookedX) — NOT the is_template COLUMN. The
+	// is_template column is written only by formula-cooked protos
+	// (cook.go/molecules.go), NOT by the documented `bd create --label template`,
+	// so keying dispatch off issueX.IsTemplate misrouted every canonically
+	// label-defined proto to the bondMolMol default: proto+proto silently
+	// produced a compound_molecule (mutating operand A) instead of a compound
+	// proto, and proto+mol / mol+proto never spawned the proto — while the
+	// dry-run preview promised the correct proto result. beads-v8ck8.
+	aIsProto := isProto(issueA) || cookedA
+	bIsProto := isProto(issueB) || cookedB
 
 	// Dispatch based on operand types
 	// All operations use the main store; wisp flag determines ephemeral vs persistent
