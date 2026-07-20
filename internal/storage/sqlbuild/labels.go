@@ -36,13 +36,17 @@ func (p LabelSearchPlan) MergeInto(where []string, args []any) ([]string, []any)
 func BuildLabelDrivenSearch(filter types.IssueFilter, tables FilterTables) LabelSearchPlan {
 	labels := CompactNonEmptyStrings(filter.Labels)
 	labelsAny := CompactNonEmptyStrings(filter.LabelsAny)
-	if len(labels) == 0 && len(labelsAny) == 0 {
+	pattern := strings.TrimSpace(filter.LabelPattern)
+	regex := strings.TrimSpace(filter.LabelRegex)
+	if len(labels) == 0 && len(labelsAny) == 0 && pattern == "" && regex == "" {
 		return LabelSearchPlan{FromSQL: tables.Main, Filter: filter}
 	}
 
 	filterForClauses := filter
 	filterForClauses.Labels = nil
 	filterForClauses.LabelsAny = nil
+	filterForClauses.LabelPattern = ""
+	filterForClauses.LabelRegex = ""
 
 	var joins, where []string
 	var args []any
@@ -72,6 +76,27 @@ func BuildLabelDrivenSearch(filter types.IssueFilter, tables FilterTables) Label
 		where = append(where, fmt.Sprintf("LOWER(%s.label) IN (%s)", alias, strings.Join(placeholders, ", ")))
 	}
 
+	// --label-pattern: glob match (e.g. "tech-*"). Translate the glob to a SQL
+	// LIKE pattern and match case-insensitively, consistent with the exact/any
+	// label JOINs above. Without this the flag flowed into the filter but no
+	// query consumed it, so it was silently ignored and returned everything
+	// (beads-v5i7).
+	if pattern != "" {
+		alias := "label_filter_pattern"
+		joins = append(joins, fmt.Sprintf("JOIN %s %s ON %s.issue_id = %s.id", tables.Labels, alias, alias, tables.Main))
+		where = append(where, fmt.Sprintf("LOWER(%s.label) LIKE LOWER(?)", alias))
+		args = append(args, globToLike(pattern))
+	}
+
+	// --label-regex: regex match (e.g. "tech-(debt|legacy)") via SQL REGEXP.
+	// Also previously silently ignored (beads-v5i7).
+	if regex != "" {
+		alias := "label_filter_regex"
+		joins = append(joins, fmt.Sprintf("JOIN %s %s ON %s.issue_id = %s.id", tables.Labels, alias, alias, tables.Main))
+		where = append(where, fmt.Sprintf("%s.label REGEXP ?", alias))
+		args = append(args, regex)
+	}
+
 	return LabelSearchPlan{
 		FromSQL:  tables.Main + " " + strings.Join(joins, " "),
 		Where:    where,
@@ -79,4 +104,27 @@ func BuildLabelDrivenSearch(filter types.IssueFilter, tables FilterTables) Label
 		Distinct: true,
 		Filter:   filterForClauses,
 	}
+}
+
+// globToLike converts a shell-style glob (as accepted by --label-pattern) into
+// a SQL LIKE pattern: '*' -> '%' (any run) and '?' -> '_' (any single char).
+// Literal SQL LIKE wildcards ('%', '_') and the escape char ('\') in the input
+// are backslash-escaped so they match literally (the JOIN uses the default
+// LIKE ESCAPE '\'). beads-v5i7.
+func globToLike(glob string) string {
+	var b strings.Builder
+	for _, r := range glob {
+		switch r {
+		case '*':
+			b.WriteByte('%')
+		case '?':
+			b.WriteByte('_')
+		case '%', '_', '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
