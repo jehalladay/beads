@@ -432,6 +432,12 @@ func parseSearchParams(cmd *cobra.Command, cfg listFilterConfig) (searchParams, 
 		}
 		filter.PriorityMax = &priorityMax
 	}
+	// beads-8a631: reject reversed ranges (an always-false WHERE that silently
+	// returns empty), parity with bd list (wnm6g) and bd ready (tjysi). Equal
+	// bounds stay valid.
+	if msg := reversedRangeMessage(filter); msg != "" {
+		return searchParams{}, HandleErrorRespectJSON("%s", msg)
+	}
 
 	metadataFieldFlags, _ := cmd.Flags().GetStringArray("metadata-field")
 	if len(metadataFieldFlags) > 0 {

@@ -318,6 +318,12 @@ Examples:
 			}
 			filter.PriorityMax = &p
 		}
+		// beads-8a631: reject reversed ranges (an always-false WHERE that silently
+		// returns 0), parity with bd list (wnm6g) and bd ready (tjysi). Equal
+		// bounds stay valid.
+		if msg := reversedRangeMessage(filter); msg != "" {
+			return HandleErrorRespectJSON("%s", msg)
+		}
 
 		if includeInfra, _ := cmd.Flags().GetBool("include-infra"); includeInfra {
 			cfg, err := cb.loadFilterConfig(ctx)
