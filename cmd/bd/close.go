@@ -167,7 +167,15 @@ the flags appear in the command line.`,
 			// Check gate satisfaction for machine-checkable gates (GH#1467)
 			if !force {
 				if err := checkGateSatisfaction(issue); err != nil {
-					reportCloseItemError("cannot close %s: %s", id, err)
+					// beads-pbt8m: for a gh:pr / gh:run gate this error embeds
+					// UNTRUSTED external SCM data — the PR title (checkGHPR) or
+					// workflow name (checkGHRun) from `gh ... view --json` — which
+					// can carry OSC/CSI escapes (OSC 0 window-title, OSC 52
+					// clipboard) → terminal injection on `bd close`. Sanitize for
+					// display (7n9y sink class; ce741 fixed `bd gate check` but
+					// missed this close-time auto-gate-check path). Display-only:
+					// the raw reason is not stored/forwarded here.
+					reportCloseItemError("cannot close %s: %s", id, ui.SanitizeForTerminal(err.Error()))
 					continue
 				}
 			}

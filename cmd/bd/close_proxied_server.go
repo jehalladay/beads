@@ -229,7 +229,11 @@ func closeProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string, 
 
 	if !in.force {
 		if err := checkGateSatisfaction(current); err != nil {
-			fmt.Fprintf(os.Stderr, "cannot close %s: %s\n", id, err)
+			// beads-pbt8m: sanitize the gate-satisfaction error for display —
+			// for a gh:pr / gh:run gate it embeds an UNTRUSTED PR title /
+			// workflow name that can carry OSC/CSI terminal-injection escapes
+			// (7n9y sink; proxied twin of the close.go:170 fix). Display-only.
+			fmt.Fprintf(os.Stderr, "cannot close %s: %s\n", id, ui.SanitizeForTerminal(err.Error()))
 			return closeProxiedOutcome{}, false
 		}
 	}
