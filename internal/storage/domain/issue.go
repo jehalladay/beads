@@ -856,8 +856,19 @@ func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams,
 	// inconsistent closed_at) that the direct path rejects. Normalize closed_at
 	// for closed issues first — the direct path does this before validating, so
 	// a legitimate `--status closed` create must not trip the closed_at
-	// invariant. (Metadata-schema validation is tracked separately as
-	// beads-lsbu; this bead covers the Issue.Validate invariants.)
+	// invariant.
+	//
+	// beads-u4rks: also enforce the metadata SCHEMA validation the direct path
+	// applies via PrepareIssueForInsert → ValidateMetadataIfConfigured. beads-lsbu
+	// added this to the domain UPDATE path but was scoped to update, so the
+	// domain/proxied CREATE path still persisted schema-invalid metadata that the
+	// direct path rejects (the beads-boundary-validation-shared-write-path class).
+	// No-op unless a metadata schema is configured (metadata_validation=warn|error).
+	if len(issue.Metadata) > 0 {
+		if err := storage.ValidateMetadataIfConfigured(issue.Metadata); err != nil {
+			return CreateIssueResult{}, fmt.Errorf("create: %w", err)
+		}
+	}
 	if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
 		maxTime := issue.CreatedAt
 		if issue.UpdatedAt.After(maxTime) {
