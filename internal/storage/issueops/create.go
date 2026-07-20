@@ -643,6 +643,15 @@ func PersistLabels(ctx context.Context, tx *sql.Tx, issue *types.Issue, actor, e
 		if label == "" {
 			continue
 		}
+		// Reject interior delimiter chars (beads-f3y1): the markdown "### Labels"
+		// round-trip splits on ',' and newlines (parseLabels), so a create-time
+		// label containing ','/'\n'/'\r' re-imports as MULTIPLE labels. This
+		// mirrors the AddLabelInTx guard (beads-pqzx) on the create/import path,
+		// which persists here via PersistLabels rather than AddLabel. Spaces stay
+		// legal (beads-ehw7: parseLabels never splits on spaces).
+		if strings.ContainsAny(label, ",\n\r") {
+			return result, fmt.Errorf("label %q must not contain a comma or newline (these are reserved as label delimiters)", label)
+		}
 		if _, ok := seen[label]; ok {
 			continue
 		}
