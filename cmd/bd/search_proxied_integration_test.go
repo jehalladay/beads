@@ -76,6 +76,33 @@ func TestProxiedServerSearch(t *testing.T) {
 			t.Fatalf("bd search (no match) hit 'storage is nil':\n%s\n%s", stdout, stderr)
 		}
 	})
+
+	// beads-1bpgh: the proxied JSON path must signal --limit truncation on
+	// stderr (proxied twin of beads-uopti's direct-path fix), keeping the bare
+	// array on stdout. Three "truncme" matches, --limit 2 → 2-element array +
+	// a "Showing 2 of 3" stderr warning.
+	t.Run("json_truncation_warns_on_stderr", func(t *testing.T) {
+		bdProxiedCreate(t, bd, p.dir, "truncme alpha", "--type", "task")
+		bdProxiedCreate(t, bd, p.dir, "truncme beta", "--type", "task")
+		bdProxiedCreate(t, bd, p.dir, "truncme gamma", "--type", "task")
+
+		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "search", "truncme", "--json", "--limit", "2")
+		if err != nil {
+			t.Fatalf("bd search --json --limit 2 failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+		}
+		var results []struct {
+			ID string `json:"id"`
+		}
+		if uerr := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &results); uerr != nil {
+			t.Fatalf("beads-1bpgh: stdout must stay a valid JSON array, got %v:\n%s", uerr, stdout)
+		}
+		if len(results) != 2 {
+			t.Fatalf("expected 2 elements under --limit 2, got %d:\n%s", len(results), stdout)
+		}
+		if !strings.Contains(stderr, "Showing 2 of 3") {
+			t.Fatalf("beads-1bpgh: expected 'Showing 2 of 3' truncation warning on stderr, got:\n%s", stderr)
+		}
+	})
 }
 
 func containsString(ss []string, want string) bool {

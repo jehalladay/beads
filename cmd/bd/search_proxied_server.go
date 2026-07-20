@@ -62,7 +62,26 @@ func runSearchProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 			fmt.Fprintf(os.Stderr, "Warning: failed to get comment counts: %v\n", err)
 			commentCounts = make(map[string]int)
 		}
-		return outputJSON(buildSearchIssuesWithCounts(issues, labelsMap, depCounts, commentCounts))
+		// beads-1bpgh: proxied twin of beads-uopti — surface --limit truncation
+		// on the JSON path too (previously the JSON branch returned the truncated
+		// slice with NO signal on either stream, the totalMatches re-query below
+		// being text-path-only). Keep the bare-array payload (matching bd
+		// ready/list --json and the direct search path) and warn to stderr.
+		total := len(issues)
+		if params.filter.Limit > 0 && len(issues) == params.filter.Limit {
+			countFilter := params.filter
+			countFilter.Limit = 0
+			if allPage, cErr := uw.IssueUseCase().SearchIssues(ctx, query, countFilter); cErr == nil && len(allPage.Items) > len(issues) {
+				total = len(allPage.Items)
+			}
+		}
+		if jerr := outputJSON(buildSearchIssuesWithCounts(issues, labelsMap, depCounts, commentCounts)); jerr != nil {
+			return jerr
+		}
+		if total > len(issues) {
+			fmt.Fprintf(os.Stderr, "Showing %d of %d matches. Use --limit 0 for all, or --limit N to raise the cap.\n", len(issues), total)
+		}
+		return nil
 	}
 
 	labelsMap, _ := uw.LabelUseCase().GetLabelsForIssues(ctx, searchIssueIDs(issues))
