@@ -648,7 +648,10 @@ func proxiedRenderIssue(ctx context.Context, uw uow.UnitOfWork, issue *types.Iss
 		labels, _ = uw.LabelUseCase().GetLabels(ctx, issue.ID)
 	}
 	if len(labels) > 0 {
-		fmt.Printf("\n%s %s\n", ui.RenderBold("LABELS:"), strings.Join(labels, ", "))
+		// displayLabels sanitizes terminal-control escapes for display only
+		// (beads-35asp, twin of the direct show.go sink); stored labels
+		// + JSON paths are unchanged.
+		fmt.Printf("\n%s %s\n", ui.RenderBold("LABELS:"), strings.Join(displayLabels(labels), ", "))
 	}
 
 	if metaStr := formatIssueCustomMetadata(issue); metaStr != "" {

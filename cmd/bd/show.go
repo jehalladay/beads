@@ -289,7 +289,10 @@ var showCmd = &cobra.Command{
 			// Show labels
 			labels, _ := issueStore.GetLabels(ctx, issue.ID) // Best effort: show issue even if label fetch fails
 			if len(labels) > 0 {
-				fmt.Printf("\n%s %s\n", ui.RenderBold("LABELS:"), strings.Join(labels, ", "))
+				// displayLabels sanitizes terminal-control escapes for display only
+				// (beads-35asp, the xsmon/smrvu label-sink twin at the single-issue
+				// show sink); stored labels + JSON paths are unchanged.
+				fmt.Printf("\n%s %s\n", ui.RenderBold("LABELS:"), strings.Join(displayLabels(labels), ", "))
 			}
 
 			// Show custom metadata (GH#1406)
