@@ -510,6 +510,18 @@ Use --reason to provide context for why the gate was resolved.`,
 	},
 }
 
+// formatGateCheckReason sanitizes a gate-check reason for terminal display
+// (beads-ce741, 7n9y sink class). For gh:pr / gh:run gates the reason embeds
+// UNTRUSTED external SCM data — the GitHub PR title (checkGHPR, `gh pr view
+// --json state,title`) or workflow name (checkGHRunStatus, `gh run view --json
+// ...,name`) — so an attacker-controlled PR title carrying OSC/CSI escapes
+// would inject terminal-control sequences (OSC 0 window-title, OSC 52 clipboard)
+// into the maintainer's terminal on `bd gate check`. Display-only: the raw
+// reason still flows to closeGate/escalateGate for stored/relayed fidelity.
+func formatGateCheckReason(reason string) string {
+	return ui.SanitizeForTerminal(reason)
+}
+
 // gateCheckCmd evaluates gates and closes those that are resolved
 var gateCheckCmd = &cobra.Command{
 	Use:   "check",
@@ -673,7 +685,7 @@ Examples:
 				if dryRun {
 					if !jsonOutput {
 						fmt.Printf("%s %s: would resolve - %s\n",
-							ui.RenderPass("✓"), r.gate.ID, r.reason)
+							ui.RenderPass("✓"), r.gate.ID, formatGateCheckReason(r.reason))
 					}
 				} else {
 					// Close the gate
@@ -684,7 +696,7 @@ Examples:
 						errorCount++
 					} else if !jsonOutput {
 						fmt.Printf("%s %s: resolved - %s\n",
-							ui.RenderPass("✓"), r.gate.ID, r.reason)
+							ui.RenderPass("✓"), r.gate.ID, formatGateCheckReason(r.reason))
 					}
 				}
 			} else if r.escalated {
@@ -692,12 +704,12 @@ Examples:
 				if dryRun {
 					if !jsonOutput {
 						fmt.Printf("%s %s: would escalate - %s\n",
-							ui.RenderWarn("⚠"), r.gate.ID, r.reason)
+							ui.RenderWarn("⚠"), r.gate.ID, formatGateCheckReason(r.reason))
 					}
 				} else {
 					if !jsonOutput {
 						fmt.Printf("%s %s: ESCALATE - %s\n",
-							ui.RenderWarn("⚠"), r.gate.ID, r.reason)
+							ui.RenderWarn("⚠"), r.gate.ID, formatGateCheckReason(r.reason))
 					}
 					// Actually escalate if flag is set
 					if escalateFlag {
@@ -707,7 +719,7 @@ Examples:
 			} else if !jsonOutput {
 				// Still pending
 				fmt.Printf("%s %s: pending - %s\n",
-					ui.RenderAccent("○"), r.gate.ID, r.reason)
+					ui.RenderAccent("○"), r.gate.ID, formatGateCheckReason(r.reason))
 			}
 		}
 
