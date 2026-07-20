@@ -1126,7 +1126,14 @@ var doltRemoteAddCmd = &cobra.Command{
 
 		if name == "origin" {
 			if err := config.SetYamlConfig("sync.remote", url); err != nil {
-				FatalError("failed to persist sync.remote to config.yaml: %v", err)
+				// beads-h64j9: this command is --json-aware — the primary "adding
+				// remote" leg (above) uses FatalErrorRespectJSON and the success path
+				// honors jsonOutput, so this secondary origin-only persist-failure leg
+				// must too. Plain FatalError writes its JSON to STDERR (jsonStderrError)
+				// under --json, breaking the stdout-parsing contract the rest of the
+				// command keeps (the beads-0bxgs sweep routed add/list/remove primary
+				// legs but missed this one).
+				FatalErrorRespectJSON("failed to persist sync.remote to config.yaml: %v", err)
 			}
 			if isGitRepo() {
 				commitBeadsConfig("bd: update sync.remote")
