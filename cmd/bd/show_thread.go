@@ -120,10 +120,13 @@ func showMessageThread(ctx context.Context, messageID string, jsonOutput bool) e
 		// beads-s3qhv: sanitize the subject for terminal display (7n9y sink slice).
 		fmt.Printf("%s  %s: %s\n", indent, ui.RenderMuted("Subject"), displayTitle(msg.Title))
 		if msg.Description != "" {
-			// Indent the body
+			// beads-1e98x: sanitize the body for terminal display (i8dsb/7n9y
+			// sink slice) — a message body is settable by other actors / imported
+			// verbatim, so a raw OSC/CSI escape would otherwise reach the terminal.
+			// Sanitize per line (post-split) to preserve the indent-per-line layout.
 			bodyLines := strings.Split(msg.Description, "\n")
 			for _, line := range bodyLines {
-				fmt.Printf("%s  %s\n", indent, line)
+				fmt.Printf("%s  %s\n", indent, ui.SanitizeForTerminal(line))
 			}
 		}
 		fmt.Println()

@@ -436,8 +436,10 @@ func printProxiedThread(threadMessages []*types.Issue, repliesTo map[string]stri
 		}
 		fmt.Printf("%s  %s: %s\n", indent, ui.RenderMuted("Subject"), displayTitle(msg.Title))
 		if msg.Description != "" {
+			// beads-1e98x: sanitize the body for terminal display (proxied twin of
+			// the show_thread.go sink) — per line to preserve the indent layout.
 			for _, line := range strings.Split(msg.Description, "\n") {
-				fmt.Printf("%s  %s\n", indent, line)
+				fmt.Printf("%s  %s\n", indent, ui.SanitizeForTerminal(line))
 			}
 		}
 		fmt.Println()
