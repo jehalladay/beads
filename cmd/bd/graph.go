@@ -16,18 +16,18 @@ import (
 
 // GraphNode represents a node in the rendered graph
 type GraphNode struct {
-	Issue     *types.Issue
-	Layer     int      // Horizontal layer (topological order)
-	Position  int      // Vertical position within layer
-	DependsOn []string // IDs this node depends on (blocks dependencies only)
+	Issue     *types.Issue `json:"issue"`
+	Layer     int          `json:"layer"`      // Horizontal layer (topological order)
+	Position  int          `json:"position"`   // Vertical position within layer
+	DependsOn []string     `json:"depends_on"` // IDs this node depends on (blocks dependencies only)
 }
 
 // GraphLayout holds the computed graph layout
 type GraphLayout struct {
-	Nodes    map[string]*GraphNode
-	Layers   [][]string // Layer index -> node IDs in that layer
-	MaxLayer int
-	RootID   string
+	Nodes    map[string]*GraphNode `json:"nodes"`
+	Layers   [][]string            `json:"layers"` // Layer index -> node IDs in that layer
+	MaxLayer int                   `json:"max_layer"`
+	RootID   string                `json:"root_id"`
 }
 
 var (
