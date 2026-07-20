@@ -1535,3 +1535,85 @@ func TestCLI_WispGCExcludeType(t *testing.T) {
 		t.Errorf("Bug wisp %s should be excluded from GC via --exclude-type bug, but appeared in cleaned_ids", bugID)
 	}
 }
+
+// TestCLI_WispGCJSONShapeStable proves `bd mol wisp gc --json` emits the SAME
+// WispGCResult shape (cleaned_ids + cleaned_count keys) across all three
+// outcomes — nothing-found, dry-run, and REAL delete (beads-5wuy9). The
+// real-delete leg previously delegated rendering to deleteBatch, which emits a
+// different {deleted,deleted_count,...} shape, so the --json contract varied by
+// outcome. A consumer parsing cleaned_ids/cleaned_count broke on real deletes.
+func TestCLI_WispGCJSONShapeStable(t *testing.T) {
+	// requireStableShape asserts the WispGCResult keys are present and the
+	// deleteBatch shape keys are absent.
+	requireStableShape := func(t *testing.T, leg, out string) map[string]interface{} {
+		t.Helper()
+		start := strings.Index(out, "{")
+		if start < 0 {
+			t.Fatalf("%s: no JSON object in wisp gc output:\n%s", leg, out)
+		}
+		var res map[string]interface{}
+		if err := json.Unmarshal([]byte(out[start:]), &res); err != nil {
+			t.Fatalf("%s: cannot parse wisp gc JSON: %v\n%s", leg, err, out)
+		}
+		if _, ok := res["cleaned_ids"]; !ok {
+			t.Fatalf("%s: wisp gc --json missing stable key cleaned_ids (shape varied by outcome — beads-5wuy9):\n%s", leg, out)
+		}
+		if _, ok := res["cleaned_count"]; !ok {
+			t.Fatalf("%s: wisp gc --json missing stable key cleaned_count:\n%s", leg, out)
+		}
+		if _, ok := res["deleted"]; ok {
+			t.Fatalf("%s: wisp gc --json leaked the deleteBatch {deleted:...} shape instead of WispGCResult (beads-5wuy9):\n%s", leg, out)
+		}
+		return res
+	}
+
+	// (1) nothing-found leg: no wisps at all.
+	t.Run("nothing_found", func(t *testing.T) {
+		dir := setupCLITestDB(t)
+		out := runBDInProcess(t, dir, "mol", "wisp", "gc", "--age", "0s", "--json")
+		res := requireStableShape(t, "nothing-found", out)
+		if cnt, _ := res["cleaned_count"].(float64); cnt != 0 {
+			t.Fatalf("nothing-found: cleaned_count=%v, want 0", res["cleaned_count"])
+		}
+	})
+
+	// (2) dry-run leg and (3) real-delete leg must share the shape.
+	t.Run("dry_run_and_real_delete", func(t *testing.T) {
+		dir := setupCLITestDB(t)
+		out := runBDInProcess(t, dir, "create", "Wisp to gc", "--ephemeral", "--type", "task", "-p", "2", "--json")
+		var created map[string]interface{}
+		if err := json.Unmarshal([]byte(out), &created); err != nil {
+			t.Fatalf("parse create: %v\n%s", err, out)
+		}
+		wispID, _ := created["id"].(string)
+		if wispID == "" {
+			t.Fatalf("empty wisp id from create:\n%s", out)
+		}
+
+		dryOut := runBDInProcess(t, dir, "mol", "wisp", "gc", "--age", "0s", "--dry-run", "--json")
+		dryRes := requireStableShape(t, "dry-run", dryOut)
+		if dr, _ := dryRes["dry_run"].(bool); !dr {
+			t.Fatalf("dry-run: dry_run=%v, want true", dryRes["dry_run"])
+		}
+
+		// Real delete — must emit the SAME WispGCResult shape. The explicit
+		// --dry-run=false guards against cobra bool-flag state bleeding from the
+		// prior --dry-run invocation on the shared rootCmd across runBDInProcess
+		// calls (never happens in a real bd process; each run is fresh).
+		realOut := runBDInProcess(t, dir, "mol", "wisp", "gc", "--age", "0s", "--dry-run=false", "--json")
+		realRes := requireStableShape(t, "real-delete", realOut)
+		if cnt, _ := realRes["cleaned_count"].(float64); cnt != 1 {
+			t.Fatalf("real-delete: cleaned_count=%v, want 1 (the deleted wisp)", realRes["cleaned_count"])
+		}
+		cleaned, _ := realRes["cleaned_ids"].([]interface{})
+		found := false
+		for _, v := range cleaned {
+			if s, _ := v.(string); s == wispID {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("real-delete: cleaned_ids %v does not include the deleted wisp %s", cleaned, wispID)
+		}
+	})
+}

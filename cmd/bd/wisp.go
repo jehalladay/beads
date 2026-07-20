@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -749,10 +750,50 @@ func runWispGC(cmd *cobra.Command, args []string) error {
 	for i, issue := range abandoned {
 		ids[i] = issue.ID
 	}
-	if err := deleteBatch(nil, ids, true, false, true, jsonOutput, false, "wisp gc"); err != nil {
+	if jsonOutput {
+		// Stable --json shape (beads-5wuy9): the real-delete leg must emit the
+		// SAME WispGCResult as the nothing-found and dry-run legs, not the
+		// deleteBatch {deleted:[...]} shape (a --json shape that varied by
+		// outcome). deleteBatch is a shared primitive (also `bd delete`), so we
+		// don't change its rendering — instead we run it for the delete
+		// side-effect only with its own output suppressed (jsonOutput=false so it
+		// takes the human render path, redirected to devnull), then emit the
+		// canonical WispGCResult ourselves.
+		if err := runWithSuppressedStdout(func() error {
+			return deleteBatch(nil, ids, true, false, true, false, false, "wisp gc")
+		}); err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
+		return outputJSON(WispGCResult{
+			CleanedIDs:   ids,
+			CleanedCount: len(ids),
+			DryRun:       false,
+		})
+	}
+	if err := deleteBatch(nil, ids, true, false, true, false, false, "wisp gc"); err != nil {
 		return HandleErrorRespectJSON("%v", err)
 	}
 	return nil
+}
+
+// runWithSuppressedStdout runs fn with os.Stdout redirected to os.DevNull,
+// restoring it afterward. Used to run a shared primitive (deleteBatch) purely
+// for its side-effect while a caller emits its own stable output — without
+// modifying the shared primitive's rendering. Single-threaded CLI use only.
+func runWithSuppressedStdout(fn func() error) error {
+	devnull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		// Fall back to running fn with normal stdout rather than failing the
+		// delete; a stray human line is preferable to skipping the deletion.
+		return fn()
+	}
+	saved := os.Stdout
+	os.Stdout = devnull
+	defer func() {
+		os.Stdout = saved
+		_ = devnull.Close()
+	}()
+	return fn()
 }
 
 func runWispPurgeClosed(ctx context.Context, dryRun bool, force bool, excludeTypes []types.IssueType) error {
