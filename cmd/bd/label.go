@@ -532,7 +532,13 @@ var labelListCmd = &cobra.Command{
 		}
 		fmt.Printf("\n%s Labels for %s:\n", ui.RenderAccent("🏷"), issueID)
 		for _, label := range labels {
-			fmt.Printf("  - %s\n", label)
+			// A label can originate from an untrusted external source
+			// (SCM/JSONL/markdown import stores the raw value; validateLabelValue
+			// only rejects comma/newline/length, so ESC/OSC/CSI bytes pass). Route
+			// it through ui.SanitizeForTerminal at the display site (delivery-site
+			// rule; the stored value is untouched) so an imported label cannot
+			// inject terminal control sequences (beads-xsmon).
+			fmt.Printf("  - %s\n", ui.SanitizeForTerminal(label))
 		}
 		fmt.Println()
 		return nil
@@ -595,15 +601,24 @@ var labelListAllCmd = &cobra.Command{
 			return outputJSON(result)
 		}
 		fmt.Printf("\n%s All labels (%d unique):\n", ui.RenderAccent("🏷"), len(labels))
+		// Sanitize each label for terminal display (delivery-site rule; stored
+		// value untouched). A label can carry OSC/CSI/C0 escapes from an
+		// untrusted import (validateLabelValue only rejects comma/newline/length),
+		// and list-all AGGREGATES labels across every issue — one poisoned import
+		// would inject into every operator's terminal (beads-xsmon). Compute the
+		// alignment width from the sanitized value so padding stays correct.
+		displayLabels := make([]string, len(labels))
 		maxLen := 0
-		for _, label := range labels {
-			if len(label) > maxLen {
-				maxLen = len(label)
+		for i, label := range labels {
+			displayLabels[i] = ui.SanitizeForTerminal(label)
+			if len(displayLabels[i]) > maxLen {
+				maxLen = len(displayLabels[i])
 			}
 		}
-		for _, label := range labels {
-			padding := strings.Repeat(" ", maxLen-len(label))
-			fmt.Printf("  %s%s  (%d issues)\n", label, padding, labelCounts[label])
+		for i, label := range labels {
+			disp := displayLabels[i]
+			padding := strings.Repeat(" ", maxLen-len(disp))
+			fmt.Printf("  %s%s  (%d issues)\n", disp, padding, labelCounts[label])
 		}
 		fmt.Println()
 		return nil
