@@ -228,6 +228,9 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 		{"created-before", &in.filter.CreatedBefore},
 		{"updated-after", &in.filter.UpdatedAfter},
 		{"updated-before", &in.filter.UpdatedBefore},
+		// beads-zmtp6: due_at range on the PROXIED ready path too (parity with bd list).
+		{"due-after", &in.filter.DueAfter},
+		{"due-before", &in.filter.DueBefore},
 	} {
 		if s, _ := cmd.Flags().GetString(tf.name); s != "" {
 			t, err := parseTimeFlag(s)
@@ -237,6 +240,8 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 			*tf.dst = &t
 		}
 	}
+	// beads-zmtp6: --overdue on the PROXIED ready path too (parity with bd list).
+	in.filter.Overdue, _ = cmd.Flags().GetBool("overdue")
 	if assignee != "" && !unassigned {
 		in.filter.Assignee = &assignee
 	}

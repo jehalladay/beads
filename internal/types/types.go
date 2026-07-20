@@ -1478,6 +1478,12 @@ type WorkFilter struct {
 	CreatedBefore *time.Time
 	UpdatedAfter  *time.Time
 	UpdatedBefore *time.Time
+	// beads-zmtp6: deadline filtering; parity with IssueFilter/bd list. Overdue
+	// matches due_at IS NOT NULL AND due_at < now AND status != closed; the
+	// DueAfter/DueBefore range folds into the sqlbuild {col, op, *time.Time} loop.
+	DueAfter      *time.Time
+	DueBefore     *time.Time
+	Overdue       bool
 	Assignee      *string
 	Unassigned    bool     // Filter for issues with no assignee
 	Labels        []string // AND semantics: issue must have ALL these labels

@@ -801,6 +801,83 @@ func TestEmbeddedReadyDateRange(t *testing.T) {
 	})
 }
 
+// TestEmbeddedReadyDeadline is the teeth for beads-zmtp6: bd ready must support
+// --overdue and --due-after/--due-before deadline filters with the same
+// semantics as bd list. Previously ready had none of these flags and
+// WorkFilter/the sqlbuild builder ignored due_at entirely, so a user could not
+// ask "what ready work is overdue / due before X".
+func TestEmbeddedReadyDeadline(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "dl")
+
+	// Three open, unblocked issues: one past-due, one future-due, one no-due.
+	bdCreate(t, bd, dir, "Past due task", "--type", "task", "--due", "-2d")
+	bdCreate(t, bd, dir, "Future due task", "--type", "task", "--due", "+2d")
+	bdCreate(t, bd, dir, "No due task", "--type", "task")
+
+	readyTitles := func(t *testing.T, args ...string) []string {
+		t.Helper()
+		full := append([]string{"ready", "--json", "--limit", "0"}, args...)
+		cmd := exec.Command(bd, full...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("bd ready %v failed: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
+		}
+		var ready []types.IssueWithCounts
+		if jerr := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &ready); jerr != nil {
+			t.Fatalf("parse ready JSON (%v): %v\n%s", args, jerr, stdout.String())
+		}
+		titles := make([]string, len(ready))
+		for i, r := range ready {
+			titles[i] = r.Title
+		}
+		return titles
+	}
+
+	t.Run("overdue_matches_only_past_due", func(t *testing.T) {
+		got := readyTitles(t, "--overdue")
+		if len(got) != 1 || got[0] != "Past due task" {
+			t.Errorf("--overdue: got %v, want [Past due task]", got)
+		}
+	})
+	t.Run("no_filter_returns_all_three", func(t *testing.T) {
+		if got := readyTitles(t); len(got) != 3 {
+			t.Errorf("no deadline filter: got %d issues, want 3 (%v)", len(got), got)
+		}
+	})
+	t.Run("due_before_tomorrow_matches_only_past_due", func(t *testing.T) {
+		got := readyTitles(t, "--due-before", "tomorrow")
+		if len(got) != 1 || got[0] != "Past due task" {
+			t.Errorf("--due-before tomorrow: got %v, want [Past due task]", got)
+		}
+	})
+	t.Run("due_after_tomorrow_matches_only_future_due", func(t *testing.T) {
+		got := readyTitles(t, "--due-after", "tomorrow")
+		if len(got) != 1 || got[0] != "Future due task" {
+			t.Errorf("--due-after tomorrow: got %v, want [Future due task]", got)
+		}
+	})
+	t.Run("invalid_due_after_rejected", func(t *testing.T) {
+		cmd := exec.Command(bd, "ready", "--due-after", "not-a-date")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("bd ready --due-after not-a-date should have failed, got: %s", out)
+		}
+		if !strings.Contains(string(out), "due-after") {
+			t.Errorf("expected a --due-after parse error, got: %s", out)
+		}
+	})
+}
+
 func TestEmbeddedReadyConcurrent(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")

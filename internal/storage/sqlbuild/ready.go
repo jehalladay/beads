@@ -205,11 +205,20 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 		{"created_at", "<", filter.CreatedBefore},
 		{"updated_at", ">", filter.UpdatedAfter},
 		{"updated_at", "<", filter.UpdatedBefore},
+		// beads-zmtp6: due_at range, parity with bd list (filter.go same loop).
+		{"due_at", ">", filter.DueAfter},
+		{"due_at", "<", filter.DueBefore},
 	} {
 		if tc.v != nil {
 			whereClauses = append(whereClauses, fmt.Sprintf("%s %s ?", tc.col, tc.op))
 			args = append(args, tc.v.Format(time.RFC3339))
 		}
+	}
+	// beads-zmtp6: --overdue, parity with bd list (filter.go:289). due_at set,
+	// past, and not closed. RFC3339 arg + StatusClosed match filter.go exactly.
+	if filter.Overdue {
+		whereClauses = append(whereClauses, "due_at IS NOT NULL AND due_at < ? AND status != ?")
+		args = append(args, time.Now().UTC().Format(time.RFC3339), string(types.StatusClosed))
 	}
 	if filter.Type != "" {
 		whereClauses = append(whereClauses, "issue_type = ?")

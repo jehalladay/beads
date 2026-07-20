@@ -247,6 +247,16 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		if filter.UpdatedBefore, err = parseListTimeFlag(cmd, "updated-before"); err != nil {
 			return err
 		}
+		// beads-zmtp6: deadline filters (parity with bd list). --due-after/-before
+		// are the same relative-time-aware date range; --overdue is a bool. The
+		// proxied path parses the same in gatherReadyInput.
+		if filter.DueAfter, err = parseListTimeFlag(cmd, "due-after"); err != nil {
+			return err
+		}
+		if filter.DueBefore, err = parseListTimeFlag(cmd, "due-before"); err != nil {
+			return err
+		}
+		filter.Overdue, _ = cmd.Flags().GetBool("overdue")
 		if assignee != "" && !unassigned {
 			filter.Assignee = &assignee
 		}
@@ -891,6 +901,10 @@ func init() {
 	readyCmd.Flags().String("created-before", "", "Filter by created before date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
 	readyCmd.Flags().String("updated-after", "", "Filter by updated after date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
 	readyCmd.Flags().String("updated-before", "", "Filter by updated before date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
+	// beads-zmtp6: deadline filters (parity with bd list).
+	readyCmd.Flags().String("due-after", "", "Filter by due after date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
+	readyCmd.Flags().String("due-before", "", "Filter by due before date (YYYY-MM-DD, RFC3339, or relative: +6h, tomorrow, yesterday)")
+	readyCmd.Flags().Bool("overdue", false, "Show only issues past their due date (due_at < now)")
 	readyCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
 	readyCmd.Flags().BoolP("unassigned", "u", false, "Show only unassigned issues")
 	readyCmd.Flags().StringP("sort", "s", "priority", "Sort policy: priority (default), hybrid, oldest")
