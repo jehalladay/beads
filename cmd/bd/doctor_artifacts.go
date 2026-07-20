@@ -14,7 +14,7 @@ import (
 func runArtifactsCheck(path string, clean bool, yes bool) error {
 	report, err := doctor.ScanForArtifacts(path)
 	if err != nil {
-		return HandleError("scanning artifacts: %v", err)
+		return HandleErrorRespectJSON("scanning artifacts: %v", err)
 	}
 
 	if report.TotalCount == 0 {
@@ -31,11 +31,11 @@ func runArtifactsCheck(path string, clean bool, yes bool) error {
 		// GH#2438: When --clean is also set, perform cleanup before outputting JSON.
 		if clean && report.SafeDeleteCount > 0 {
 			if err := fix.ClassicArtifacts(path); err != nil {
-				return HandleError("during cleanup: %v", err)
+				return HandleErrorRespectJSON("during cleanup: %v", err)
 			}
 			report, err = doctor.ScanForArtifacts(path)
 			if err != nil {
-				return HandleError("re-scanning artifacts: %v", err)
+				return HandleErrorRespectJSON("re-scanning artifacts: %v", err)
 			}
 		}
 
@@ -124,7 +124,7 @@ func runArtifactsCheck(path string, clean bool, yes bool) error {
 	}
 
 	if err := fix.ClassicArtifacts(path); err != nil {
-		return HandleError("during cleanup: %v", err)
+		return HandleErrorRespectJSON("during cleanup: %v", err)
 	}
 	return nil
 }

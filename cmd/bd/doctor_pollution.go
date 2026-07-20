@@ -15,14 +15,14 @@ import (
 //nolint:unparam // path reserved for future use
 func runPollutionCheck(_ string, clean bool, yes bool) error {
 	if err := ensureDirectMode("pollution check requires direct mode"); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	ctx := rootCtx
 
 	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
-		return HandleError("fetching issues: %v", err)
+		return HandleErrorRespectJSON("fetching issues: %v", err)
 	}
 
 	polluted := detectTestPollution(allIssues)
@@ -94,7 +94,7 @@ func runPollutionCheck(_ string, clean bool, yes bool) error {
 
 	backupPath := ".beads/pollution-backup.jsonl"
 	if err := backupPollutedIssues(polluted, backupPath); err != nil {
-		return HandleError("backing up issues: %v", err)
+		return HandleErrorRespectJSON("backing up issues: %v", err)
 	}
 	fmt.Printf("Backed up %d issues to %s\n", len(polluted), backupPath)
 
