@@ -597,7 +597,7 @@ reachability, server version, and database.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		beadsDir := selectedDoltBeadsDir()
 		if beadsDir == "" {
-			FatalErrorWithHint(activeWorkspaceNotFoundError(), diagHint())
+			FatalErrorWithHintRespectJSON(activeWorkspaceNotFoundError(), diagHint())
 		}
 		if !usesSQLServer() {
 			showEmbeddedDoltStatus(beadsDir)
@@ -634,8 +634,7 @@ reachability, server version, and database.`,
 
 		state, err := doltserver.IsRunning(serverDir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("%v", err)
 		}
 		renderLocalDoltStatus(state, serverDir)
 	},
@@ -1306,13 +1305,12 @@ func selectedDoltBeadsDir() string {
 func showDoltConfig(testConnection bool) {
 	beadsDir := selectedDoltBeadsDir()
 	if beadsDir == "" {
-		FatalErrorWithHint(activeWorkspaceNotFoundError(), diagHint())
+		FatalErrorWithHintRespectJSON(activeWorkspaceNotFoundError(), diagHint())
 	}
 
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		os.Exit(1)
+		FatalErrorRespectJSON("loading config: %v", err)
 	}
 	if cfg == nil {
 		cfg = configfile.DefaultConfig()
@@ -1411,13 +1409,12 @@ func showDoltConfig(testConnection bool) {
 func setDoltConfig(key, value string, updateConfig bool) {
 	beadsDir := selectedDoltBeadsDir()
 	if beadsDir == "" {
-		FatalErrorWithHint(activeWorkspaceNotFoundError(), diagHint())
+		FatalErrorWithHintRespectJSON(activeWorkspaceNotFoundError(), diagHint())
 	}
 
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		os.Exit(1)
+		FatalErrorRespectJSON("loading config: %v", err)
 	}
 	if cfg == nil {
 		cfg = configfile.DefaultConfig()
@@ -1582,13 +1579,12 @@ func setDoltConfig(key, value string, updateConfig bool) {
 func testDoltConnection() {
 	beadsDir := selectedDoltBeadsDir()
 	if beadsDir == "" {
-		FatalErrorWithHint(activeWorkspaceNotFoundError(), diagHint())
+		FatalErrorWithHintRespectJSON(activeWorkspaceNotFoundError(), diagHint())
 	}
 
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		os.Exit(1)
+		FatalErrorRespectJSON("loading config: %v", err)
 	}
 	if cfg == nil {
 		cfg = configfile.DefaultConfig()
