@@ -33,6 +33,28 @@ Examples:
 
 		ctx := rootCtx
 
+		// beads-jr2h4 (aocj proxied-routing class, VCS-cmd leg): in
+		// proxied-server mode main.go PersistentPreRun returns before
+		// newDoltStore, leaving the global `store` nil — so store.ListBranches
+		// / store.Branch below nil-panicked. Branch VCS ops (list/create Dolt
+		// branches) manipulate the LOCAL Dolt working set; they are
+		// storage.DoltStorage version-control methods with NO proxied-UOW
+		// equivalent, and the store factory deliberately refuses to open a
+		// direct store in proxied config ("proxy server store should be uow
+		// provider"). So — like `compact --analyze` / `config set` — this
+		// operation requires direct/embedded Dolt access: fail loud with a
+		// clear, purpose-built message instead of panicking.
+		if usesProxiedServer() {
+			return HandleErrorRespectJSON("branch operations require direct/embedded Dolt access and are not available in proxied-server mode")
+		}
+
+		// Defensive lazy-init for the direct path (aocj-class guard, mirrors
+		// comments.go/cleanup.go): guarantee the store is active before the
+		// version-control calls below.
+		if err := ensureStoreActive(); err != nil {
+			return HandleErrorWithHintRespectJSON(err.Error(), diagHint())
+		}
+
 		if len(args) == 0 {
 			branches, err := store.ListBranches(ctx)
 			if err != nil {
