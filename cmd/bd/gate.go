@@ -225,6 +225,16 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 
 		for _, w := range issue.Waiters {
 			if w == waiter {
+				// beads-w17gk: honor --json on the idempotent no-op success
+				// leg, matching this command's error legs (beads-jial) and the
+				// sibling 'gate resolve' already-resolved no-op (beads-q2iw4).
+				if jsonOutput {
+					return outputJSON(map[string]interface{}{
+						"gate":   gateID,
+						"waiter": waiter,
+						"added":  false,
+					})
+				}
 				fmt.Printf("Waiter already registered on gate %s\n", gateID)
 				return nil
 			}
@@ -240,6 +250,17 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 		}
 
 		commandDidWrite.Store(true)
+
+		// beads-w17gk: emit a JSON object on the first-add success leg under
+		// --json (the error legs already do via beads-jial) so a --json
+		// consumer parsing stdout never hits bare plaintext.
+		if jsonOutput {
+			return outputJSON(map[string]interface{}{
+				"gate":   gateID,
+				"waiter": waiter,
+				"added":  true,
+			})
+		}
 
 		fmt.Printf("%s Added waiter to gate %s: %s\n", ui.RenderPass("✓"), gateID, waiter)
 		return nil

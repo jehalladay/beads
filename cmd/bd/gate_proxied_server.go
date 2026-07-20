@@ -328,9 +328,27 @@ func runGateAddWaiterProxied(ctx context.Context, gateID, waiter string) error {
 		return HandleErrorRespectJSON("%v", err)
 	}
 
+	// beads-w17gk: mirror the direct-path add-waiter --json success contract
+	// so the proxied (hub-connected) leg stays in lockstep — a --json consumer
+	// must get a JSON object on stdout, never bare plaintext.
 	if alreadyRegistered {
+		if jsonOutput {
+			return outputJSON(map[string]interface{}{
+				"gate":   gateID,
+				"waiter": waiter,
+				"added":  false,
+			})
+		}
 		fmt.Printf("Waiter already registered on gate %s\n", gateID)
 		return nil
+	}
+
+	if jsonOutput {
+		return outputJSON(map[string]interface{}{
+			"gate":   gateID,
+			"waiter": waiter,
+			"added":  true,
+		})
 	}
 
 	fmt.Printf("%s Added waiter to gate %s: %s\n", ui.RenderPass("✓"), gateID, waiter)

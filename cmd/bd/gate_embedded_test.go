@@ -677,6 +677,37 @@ func TestEmbeddedGateCreate(t *testing.T) {
 			t.Errorf("beads-jial: expected an 'error' key in the --json error doc, got: %v", obj)
 		}
 	})
+
+	// beads-w17gk: gate add-waiter's two SUCCESS legs (first-add + duplicate
+	// idempotent no-op) must also honor --json. Before the fix both emitted a
+	// bare fmt.Printf plaintext line on stdout regardless of --json — so a
+	// consumer that json.loads(stdout) got "✓ Added waiter to gate ...", which
+	// is unparseable, even though the ERROR legs (beads-jial) already emit JSON.
+	// RED trigger: run the happy path under --json and assert stdout is a JSON
+	// object carrying "added".
+	t.Run("gate_add_waiter_json_success_contract", func(t *testing.T) {
+		gate := createGate(t, bd, dir, "AddWaiter JSON success gate")
+
+		// First add → {"gate":..., "waiter":..., "added":true}
+		out := bdGate(t, bd, dir, "add-waiter", gate.ID, "json-agent", "--json")
+		obj := parseOneJSONDoc(t, out, "gate add-waiter --json (first add)")
+		if obj["added"] != true {
+			t.Errorf("beads-w17gk: expected added:true on first add, got: %v", obj)
+		}
+		if obj["gate"] != gate.ID {
+			t.Errorf("beads-w17gk: expected gate=%s in add-waiter --json, got: %v", gate.ID, obj["gate"])
+		}
+		if obj["waiter"] != "json-agent" {
+			t.Errorf("beads-w17gk: expected waiter=json-agent in add-waiter --json, got: %v", obj["waiter"])
+		}
+
+		// Duplicate (idempotent no-op) → {"added":false}, NOT plaintext.
+		out2 := bdGate(t, bd, dir, "add-waiter", gate.ID, "json-agent", "--json")
+		obj2 := parseOneJSONDoc(t, out2, "gate add-waiter --json (duplicate no-op)")
+		if obj2["added"] != false {
+			t.Errorf("beads-w17gk: expected added:false on duplicate no-op, got: %v", obj2)
+		}
+	})
 }
 
 // TestEmbeddedGateConcurrent exercises gate operations concurrently.
