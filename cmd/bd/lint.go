@@ -240,23 +240,11 @@ Examples:
 		}
 
 		if len(results) > 0 {
-			fmt.Printf("Template warnings (%d issues, %d warnings):\n\n", len(results), totalWarnings)
-			for _, r := range results {
-				fmt.Printf("%s [%s]: %s\n", r.ID, r.Type, r.Title)
-				for _, m := range r.Missing {
-					fmt.Printf("  ⚠ Missing: %s\n", m)
-				}
-				fmt.Println()
-			}
+			renderLintTemplateWarnings(results, totalWarnings)
 		}
 
 		if len(inconsistencies) > 0 {
-			fmt.Printf("Structural inconsistencies (%d):\n\n", len(inconsistencies))
-			for _, inc := range inconsistencies {
-				fmt.Printf("%s [epic]: %s\n", inc.ID, inc.Title)
-				fmt.Printf("  ✗ closed epic with %d open child issue(s): %v\n", len(inc.OpenChildren), inc.OpenChildren)
-				fmt.Println()
-			}
+			renderLintInconsistencies(inconsistencies)
 		}
 
 		// Warnings/inconsistencies (above) are still printed for the ids that
@@ -267,6 +255,36 @@ Examples:
 		}
 		return SilentExit()
 	},
+}
+
+// renderLintTemplateWarnings prints the text-mode template-warning block.
+// beads-v2npj: the issue Title is store-read and can carry OSC/CSI escapes from
+// an untrusted import (JSONL/markdown/SCM), so it is routed through displayTitle
+// (ui.SanitizeForTerminal) before terminal display — the same 7n9y sink-class
+// fix as show/create/epic. Display-only: the --json path (LintResult.Title)
+// stays raw for round-trip fidelity.
+func renderLintTemplateWarnings(results []LintResult, totalWarnings int) {
+	fmt.Printf("Template warnings (%d issues, %d warnings):\n\n", len(results), totalWarnings)
+	for _, r := range results {
+		fmt.Printf("%s [%s]: %s\n", r.ID, r.Type, displayTitle(r.Title))
+		for _, m := range r.Missing {
+			fmt.Printf("  ⚠ Missing: %s\n", m)
+		}
+		fmt.Println()
+	}
+}
+
+// renderLintInconsistencies prints the text-mode structural-inconsistency block.
+// beads-v2npj: sanitize the store-read Title for terminal display (see
+// renderLintTemplateWarnings); the --json path (InconsistencyResult.Title) stays
+// raw.
+func renderLintInconsistencies(inconsistencies []InconsistencyResult) {
+	fmt.Printf("Structural inconsistencies (%d):\n\n", len(inconsistencies))
+	for _, inc := range inconsistencies {
+		fmt.Printf("%s [epic]: %s\n", inc.ID, displayTitle(inc.Title))
+		fmt.Printf("  ✗ closed epic with %d open child issue(s): %v\n", len(inc.OpenChildren), inc.OpenChildren)
+		fmt.Println()
+	}
 }
 
 // openChildIDsOfEpic returns the IDs of an epic's open (non-closed) parent-child
