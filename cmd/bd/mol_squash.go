@@ -107,8 +107,14 @@ func runMolSquash(cmd *cobra.Command, args []string) error {
 
 	if len(wispChildren) == 0 {
 		if jsonOutput {
+			// beads-lf0l3: SquashedIDs is []string with no omitempty, so the bare
+			// SquashResult{} literal emits "squashed_ids":null while the success
+			// path (:261 SquashedIDs: childIDs) emits an array. Init to [] so the
+			// no-wisp-children leg matches the array contract (guib/tamf/history
+			// null-slice class). Reachable for a molecule with no ephemeral children.
 			return outputJSON(SquashResult{
 				MoleculeID:    moleculeID,
+				SquashedIDs:   []string{},
 				SquashedCount: 0,
 			})
 		}
