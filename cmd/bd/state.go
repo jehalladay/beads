@@ -142,6 +142,13 @@ The --reason flag provides context for the event bead (recommended).`,
 		}
 
 		reason, _ := cmd.Flags().GetString("reason")
+		// beads-57f51: a whitespace-only --reason must collapse to no-reason so it
+		// does not leave a dangling "\n\nReason:   " label on the recorded event.
+		// The reason is optional with no default; drop whitespace-only, keep a
+		// genuine reason VERBATIM (beads-beln6). in93a stored-blank-reason class.
+		if strings.TrimSpace(reason) == "" {
+			reason = ""
+		}
 
 		// In proxied-server mode the global `store` is nil (main.go
 		// PersistentPreRun returns before newDoltStore), so the multi-write

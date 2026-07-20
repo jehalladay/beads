@@ -283,6 +283,14 @@ Examples:
 		reason, _ := cmd.Flags().GetString("reason")
 		awaitID, _ := cmd.Flags().GetString("await-id")
 		timeoutStr, _ := cmd.Flags().GetString("timeout")
+		// beads-57f51: a whitespace-only --reason must collapse to no-reason so it
+		// does not leave a dangling "\n\nReason:   " label in the gate description
+		// (and no dangling "Reason:  " print). Optional, no default → drop
+		// whitespace-only; keep a genuine reason VERBATIM (beads-beln6). Same
+		// in93a stored-blank-reason shape as gate resolve + set-state below.
+		if strings.TrimSpace(reason) == "" {
+			reason = ""
+		}
 
 		ctx := rootCtx
 
@@ -475,6 +483,15 @@ Use --reason to provide context for why the gate was resolved.`,
 
 		gateID := args[0]
 		reason, _ := cmd.Flags().GetString("reason")
+		// beads-57f51: a whitespace-only --reason must collapse to no-reason, not
+		// be stored as a blank close_reason on the gate (and not leak into the
+		// --json doc or print a dangling "Reason:  " line). gate resolve's reason
+		// is OPTIONAL with no default, so mirror reopen/beads-5rix3 semantics:
+		// drop a whitespace-only value; keep a genuine reason VERBATIM (beads-beln6).
+		// Part of the in93a stored-blank-reason class (close/mol squash/reopen/todo).
+		if strings.TrimSpace(reason) == "" {
+			reason = ""
+		}
 
 		ctx := rootCtx
 
