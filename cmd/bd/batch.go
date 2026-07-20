@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -172,12 +171,13 @@ normal 'bd' subcommands for interactive/read operations.`,
 		// Runs read-only against the committed store BEFORE the write tx opens,
 		// so a violation aborts the whole batch with no partial write.
 		if err := guardBatchCloses(ctx, store, ops, force); err != nil {
-			if jsonOutput {
-				if jerr := outputJSONError(err, "batch_error"); jerr != nil {
-					return errors.Join(err, jerr)
-				}
-			}
-			return err
+			// beads-vgb94: route the per-op error through the stdout contract
+			// (matching the setup legs' HandleErrorRespectJSON, beads-2yhq).
+			// outputJSONError wrote the JSON to os.Stderr and left stdout EMPTY,
+			// and `return err`/errors.Join let the raw error reach cobra's
+			// SilenceErrors:false handler → a plaintext double-print. Under
+			// --json a consumer got JSON-on-stderr + empty-stdout (unparseable).
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		results := make([]batchOpResult, 0, len(ops))
@@ -192,12 +192,9 @@ normal 'bd' subcommands for interactive/read operations.`,
 			return nil
 		})
 		if err != nil {
-			if jsonOutput {
-				if jerr := outputJSONError(err, "batch_error"); jerr != nil {
-					return errors.Join(err, jerr)
-				}
-			}
-			return err
+			// beads-vgb94: route the transaction error through the stdout
+			// contract (see the guardBatchCloses leg above).
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		commandDidWrite.Store(true)
