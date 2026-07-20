@@ -25,6 +25,24 @@ func TestBuildListFilter_ReadyFlagForcesOpen(t *testing.T) {
 	}
 }
 
+// beads-9sdix (BUG-30): `--ready` combined with an explicit `--status`/`--state`
+// used to silently discard the status (the if-else let --ready win → open issues
+// returned for `--status closed --ready`). Reject the combination explicitly.
+func TestBuildListFilter_ReadyWithStatusRejected(t *testing.T) {
+	if _, err := buildListFilter(listInput{readyFlag: true, status: "closed"}, baseCfg()); err == nil {
+		t.Fatal("expected error combining --ready with an explicit --status")
+	}
+	// --status all is the "no status filter" sentinel, so --ready + --status all
+	// is not a real conflict and must still succeed (ready pins open).
+	f, err := buildListFilter(listInput{readyFlag: true, status: "all"}, baseCfg())
+	if err != nil {
+		t.Fatalf("--ready + --status all should not error, got %v", err)
+	}
+	if f.Status == nil || *f.Status != types.StatusOpen {
+		t.Fatalf("--ready + --status all should still pin Status=open, got %v", f.Status)
+	}
+}
+
 func TestBuildListFilter_SingleStatus(t *testing.T) {
 	f, err := buildListFilter(listInput{status: "in_progress"}, baseCfg())
 	if err != nil {

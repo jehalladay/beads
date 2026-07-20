@@ -125,6 +125,15 @@ func buildListFilter(in listInput, cfg listFilterConfig) (types.IssueFilter, err
 	}
 
 	if in.readyFlag {
+		// beads-9sdix (BUG-30): --ready pins status=open. Combining it with an
+		// explicit --status/--state silently DISCARDED the --status value (the
+		// if-else let --ready win), so `bd list --status closed --ready` returned
+		// OPEN issues with no warning. Reject the combination explicitly instead
+		// of returning wrong results silently (mirrors the beads-7f3g precedent
+		// that rejects a derived-status multi-combination rather than 0-ing out).
+		if in.status != "" && in.status != "all" {
+			return filter, fmt.Errorf("--ready cannot be combined with --status/--state (--ready already restricts to open work); drop one")
+		}
 		s := types.StatusOpen
 		filter.Status = &s
 	} else if in.status != "" && in.status != "all" {
