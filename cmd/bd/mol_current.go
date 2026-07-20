@@ -193,7 +193,11 @@ func getMoleculeProgress(ctx context.Context, s storage.DoltStorage, moleculeID 
 	}
 
 	// Build step status list (exclude root)
-	var steps []*StepStatus
+	// beads-2llrj: init non-nil so a root-only molecule (the root is skipped
+	// below, leaving zero steps) emits "steps":[] not null under --json.
+	// MoleculeProgress.Steps has no omitempty, so a nil slice marshals to null —
+	// the guib/tamf/mol-squash null-slice-array contract.
+	steps := []*StepStatus{}
 	for _, issue := range subgraph.Issues {
 		if issue.ID == subgraph.Root.ID {
 			continue // Skip root
