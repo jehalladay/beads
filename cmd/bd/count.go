@@ -187,7 +187,17 @@ Examples:
 		// list's default-exclude here. Skipped for --by-status (grouping is meant
 		// to show every status bucket, closed included) and when the caller passed
 		// an explicit status or `--status all`.
-		if status == "" && groupBy != "status" {
+		//
+		// beads-khn67: ALSO skip the default-exclude when a --closed-after/
+		// --closed-before filter is present. Those filters only match closed
+		// issues (closed_at is NULL until an issue closes), so applying the
+		// default closed/pinned EXCLUSION on top made them return 0 unless the
+		// caller also passed --status all — the closed-date filters were dead by
+		// default. A --closed-* filter implicitly scopes to closed work, so honor
+		// it rather than exclude everything it could match.
+		// Read the raw flags (filter.ClosedAfter/Before are parsed later, below).
+		hasClosedDateFilter := cmd.Flags().Changed("closed-after") || cmd.Flags().Changed("closed-before")
+		if status == "" && groupBy != "status" && !hasClosedDateFilter {
 			excludeStatuses := []types.Status{types.StatusClosed, types.StatusPinned}
 			for _, cs := range filterCfg.customStatuses {
 				if cs.Category == types.CategoryDone || cs.Category == types.CategoryFrozen {

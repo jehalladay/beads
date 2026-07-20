@@ -127,7 +127,10 @@ func TestEmbeddedCount(t *testing.T) {
 	// ===== Assignee filter =====
 
 	t.Run("filter_by_assignee", func(t *testing.T) {
-		m := bdCountJSON(t, bd, dir, "--assignee", "alice")
+		// beads-khn67: use --status all so this asserts the ASSIGNEE filter
+		// independent of the beads-9iia default closed/pinned exclusion (which
+		// otherwise hides the closed alice issue, making the count scope-dependent).
+		m := bdCountJSON(t, bd, dir, "--assignee", "alice", "--status", "all")
 		count := int(m["count"].(float64))
 		if count < 3 {
 			t.Errorf("expected at least 3 issues assigned to alice, got %d", count)
@@ -199,8 +202,10 @@ func TestEmbeddedCount(t *testing.T) {
 	// ===== Date range filters =====
 
 	t.Run("filter_by_created_after", func(t *testing.T) {
-		// All issues were just created, so created-after yesterday should match all
-		m := bdCountJSON(t, bd, dir, "--created-after", "2000-01-01")
+		// All issues were just created, so created-after yesterday should match all.
+		// beads-khn67: --status all so the created-date filter is tested independent
+		// of the beads-9iia default closed/pinned exclusion (which hides the closed issue).
+		m := bdCountJSON(t, bd, dir, "--created-after", "2000-01-01", "--status", "all")
 		count := int(m["count"].(float64))
 		if count < 8 {
 			t.Errorf("expected at least 8 issues created after 2000-01-01, got %d", count)
@@ -217,7 +222,9 @@ func TestEmbeddedCount(t *testing.T) {
 	})
 
 	t.Run("filter_by_updated_after", func(t *testing.T) {
-		m := bdCountJSON(t, bd, dir, "--updated-after", "2000-01-01")
+		// beads-khn67: --status all so the updated-date filter is tested independent
+		// of the beads-9iia default closed/pinned exclusion.
+		m := bdCountJSON(t, bd, dir, "--updated-after", "2000-01-01", "--status", "all")
 		count := int(m["count"].(float64))
 		if count < 8 {
 			t.Errorf("expected at least 8 issues updated after 2000-01-01, got %d", count)
@@ -225,10 +232,14 @@ func TestEmbeddedCount(t *testing.T) {
 	})
 
 	t.Run("filter_by_closed_after", func(t *testing.T) {
+		// beads-khn67 regression: --closed-after must NOT need --status all. A
+		// --closed-* filter only matches closed issues (closed_at is NULL until
+		// close), so the beads-9iia default closed/pinned exclusion must be
+		// skipped when a --closed-* flag is present — otherwise this returns 0.
 		m := bdCountJSON(t, bd, dir, "--closed-after", "2000-01-01")
 		count := int(m["count"].(float64))
 		if count < 1 {
-			t.Errorf("expected at least 1 closed issue after 2000-01-01, got %d", count)
+			t.Errorf("expected at least 1 closed issue after 2000-01-01, got %d (beads-khn67: default-exclude must not hide closed issues from --closed-after)", count)
 		}
 	})
 
