@@ -111,6 +111,31 @@ func init() {
 	rootCmd.AddCommand(mergeSlotCmd)
 }
 
+// requireDirectMergeSlot fails loud when running against a proxied server.
+//
+// beads-i2v77 (aocj proxied-routing class, highest-value refinery-mutex leg):
+// merge-slot is NOT in noDbCommands and every handler calls store.MergeSlot* /
+// storage.MergeSlotID(rootCtx, store) directly. In proxied-server mode main.go
+// PersistentPreRun returns before newDoltStore, leaving the global `store` nil
+// — so those calls nil-panicked (structurally identical to the beads-jr2h4
+// branch leg / beads-2om1 count repro). There is no proxied/UOW MergeSlot
+// implementation, and the store factory deliberately refuses to open a direct
+// store in proxied config ("proxy server store should be uow provider"), so a
+// direct fallback is impossible. Like `bd branch` / `compact --analyze` /
+// `config set`, the merge-slot ops require direct/embedded Dolt access: fail
+// loud with a clear, --json-contract-correct message instead of panicking.
+func requireDirectMergeSlot() error {
+	if usesProxiedServer() {
+		return HandleErrorRespectJSON("merge-slot operations require direct/embedded Dolt access and are not available in proxied-server mode")
+	}
+	// Defensive lazy-init for the direct path (mirrors branch.go/comments.go):
+	// guarantee the store is active before the version-control-ish calls below.
+	if err := ensureStoreActive(); err != nil {
+		return HandleErrorWithHintRespectJSON(err.Error(), diagHint())
+	}
+	return nil
+}
+
 func runMergeSlotCreate(cmd *cobra.Command, args []string) error {
 	CheckReadonly("merge-slot create")
 
@@ -120,6 +145,10 @@ func runMergeSlotCreate(cmd *cobra.Command, args []string) error {
 			c.CloseEventAndAdd(evt)
 		}
 	}()
+
+	if err := requireDirectMergeSlot(); err != nil {
+		return err
+	}
 
 	issue, err := store.MergeSlotCreate(rootCtx, actor)
 	if err != nil {
@@ -147,6 +176,10 @@ func runMergeSlotCheck(cmd *cobra.Command, args []string) error {
 			c.CloseEventAndAdd(evt)
 		}
 	}()
+
+	if err := requireDirectMergeSlot(); err != nil {
+		return err
+	}
 
 	status, err := store.MergeSlotCheck(rootCtx)
 	if err != nil {
@@ -214,6 +247,10 @@ func runMergeSlotAcquire(cmd *cobra.Command, args []string) error {
 			c.CloseEventAndAdd(evt)
 		}
 	}()
+
+	if err := requireDirectMergeSlot(); err != nil {
+		return err
+	}
 
 	holder := mergeSlotHolder
 	if holder == "" {
@@ -290,6 +327,10 @@ func runMergeSlotRelease(cmd *cobra.Command, args []string) error {
 			c.CloseEventAndAdd(evt)
 		}
 	}()
+
+	if err := requireDirectMergeSlot(); err != nil {
+		return err
+	}
 
 	// Resolve the holder the same way acquire does (mergeSlotHolder overrides,
 	// else BEADS_ACTOR). Passing the raw --holder flag meant the normal
