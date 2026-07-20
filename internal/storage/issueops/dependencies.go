@@ -469,6 +469,25 @@ func cycleCheckTypesFor(t types.DependencyType) []string {
 		return []string{string(types.DepBlocks), string(types.DepConditionalBlocks)}
 	case types.DepParentChild:
 		return []string{string(types.DepParentChild)}
+	case types.DepSupersedes:
+		// beads-8ix02: a `supersedes` edge (old→new) must stay acyclic. A
+		// forward version chain v1→v2→v3 is legitimate and MUST stay allowed;
+		// the reachability walk permits it (v1 cannot reach v3's new edge back,
+		// reachable=0) while rejecting a genuine cycle — `bd supersede A --with
+		// B` then `B --with A`, or the longer A→B→C→A. Earlier this family was
+		// deliberately excluded here (returned nil) to protect version chains,
+		// but reachability already protects chains, so the exclusion was
+		// over-broad and left `bd dep add --type supersedes` able to close a
+		// supersede cycle (the supersede-seam reciprocal guard in
+		// cmd/bd/duplicate.go, beads-02v2k, does not cover dep-add). Walking the
+		// supersedes graph here at the shared seam covers ALL entry points —
+		// `bd supersede`, its proxied twin, AND `bd dep add --type supersedes` —
+		// and catches longer cycles the narrow reciprocal guard misses, exactly
+		// as the beads-dfzre duplicates guard does. Distinct from duplicates:
+		// duplicates ALSO needs an acyclic-CHAIN reject (checkDuplicateChainInTx),
+		// because a dup-of-a-dup is invalid; a supersede chain is valid, so
+		// supersedes needs only this cycle check.
+		return []string{string(types.DepSupersedes)}
 	default:
 		return nil
 	}
