@@ -378,12 +378,27 @@ func CheckDependencyCycleInTx(ctx context.Context, tx DBTX, dep *types.Dependenc
 	if dep.IssueID == dep.DependsOnID {
 		return fmt.Errorf("cannot add self-dependency: %s cannot depend on itself", dep.IssueID)
 	}
+	if len(depTables) == 0 {
+		depTables = cycleDetectionTables()
+	}
+	// beads-dfzre: `duplicates` edges are outside the reachability families
+	// below (cycleCheckTypesFor returns nil for them), so a duplicate whose
+	// canonical is ITSELF already a duplicate — a dup-of-a-dup chain, or the
+	// closing edge of a mutual A<->B cycle — was accepted, corrupting the
+	// canonical graph (a tracer follows the edge into a closed duplicate, or
+	// loops forever). beads-wqrfi guarded this at the CMD layer only
+	// (runDuplicate + runLinkAndCloseProxied), which left `bd dep add --type
+	// duplicates` as a bypass. Reject it here, at the shared check both the
+	// direct (AddDependencyInTx) and proxied (CheckCycleForType) paths call, so
+	// ALL entry points — `bd duplicate`, its proxied twin, AND
+	// `bd dep add --type duplicates` — are covered at once (seam-level > the
+	// cmd-level wqrfi guard precisely because it also catches dep-add).
+	if err := checkDuplicateChainInTx(ctx, tx, dep, depTables); err != nil {
+		return err
+	}
 	depTypes := cycleCheckTypesFor(dep.Type)
 	if len(depTypes) == 0 {
 		return nil
-	}
-	if len(depTables) == 0 {
-		depTables = cycleDetectionTables()
 	}
 	var reachable int
 	query := cycleReachabilityQuery(depTables, depTypes)
@@ -394,6 +409,54 @@ func CheckDependencyCycleInTx(ctx context.Context, tx DBTX, dep *types.Dependenc
 		return fmt.Errorf("adding dependency would create a cycle")
 	}
 	return nil
+}
+
+// checkDuplicateChainInTx rejects a `duplicates` edge whose canonical target is
+// itself already the source of a `duplicates` edge (beads-dfzre; beads-wqrfi
+// fixed the same class at the cmd layer but left `bd dep add --type duplicates`
+// unguarded). Marking A a duplicate of a canonical that is ITSELF a duplicate is
+// never valid:
+//   - dup-of-a-dup CHAIN: `bd duplicate LEAF --of MID` where MID was already
+//     closed via `bd duplicate MID --of ROOT` leaves LEAF pointing at a closed
+//     duplicate instead of the live ROOT — no collapse, no redirect.
+//   - mutual CYCLE: `bd duplicate A --of B` then `bd duplicate B --of A` — on
+//     the second edge, canonical A is already a duplicate-source (A->B), so
+//     both issues end up closed each naming the other; a tracer loops forever
+//     and `bd duplicates` surfaces nothing.
+//
+// The reachability walk cannot catch the acyclic chain case (no cycle closes),
+// so this is a distinct guard. It fires only for `duplicates` edges — a
+// `supersedes` version chain (old -> newer -> newest) is legitimate and stays
+// allowed — and only when the canonical has an OUTGOING duplicates edge, so
+// marking an issue a duplicate of a perfectly ordinary closed-as-fixed issue is
+// unaffected. The error names the real root so the caller can re-point.
+func checkDuplicateChainInTx(ctx context.Context, tx DBTX, dep *types.Dependency, depTables []string) error {
+	if dep.Type != types.DepDuplicates {
+		return nil
+	}
+	// Does the canonical (DependsOnID) itself point at something via a
+	// `duplicates` edge? If so it is already a duplicate — not a live canonical.
+	var unions []string
+	for _, t := range depTables {
+		unions = append(unions, fmt.Sprintf("SELECT %s AS target FROM %s WHERE issue_id = ? AND type = '%s'",
+			DepTargetExpr, t, string(types.DepDuplicates)))
+	}
+	//nolint:gosec // G201: depTables are fixed constants (cycleDetectionTables); DepTargetExpr is a constant.
+	query := fmt.Sprintf("SELECT target FROM (%s) d WHERE target IS NOT NULL LIMIT 1", strings.Join(unions, " UNION "))
+	args := make([]any, len(depTables))
+	for i := range depTables {
+		args[i] = dep.DependsOnID
+	}
+	var root string
+	err := tx.QueryRowContext(ctx, query, args...).Scan(&root)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to check duplicate chain: %w", err)
+	}
+	return fmt.Errorf("canonical %s is itself a duplicate of %s; mark %s a duplicate of %s instead",
+		dep.DependsOnID, root, dep.IssueID, root)
 }
 
 // cycleCheckTypesFor returns the edge-type family whose graph must stay acyclic

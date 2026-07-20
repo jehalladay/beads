@@ -134,6 +134,55 @@ func TestEmbeddedDuplicate(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "No canon", "--type", "task")
 		bdDuplicateFail(t, bd, dir, issue.ID, "--of", "du-nonexistent999")
 	})
+
+	// beads-dfzre: the `bd dep add --type duplicates` entry point must reject a
+	// duplicate-of-a-duplicate chain and a mutual cycle, exactly like `bd
+	// duplicate` does (guarded by beads-wqrfi). wqrfi's guard lived at the CMD
+	// layer (runDuplicate) so `bd dep add --type duplicates` bypassed it; the
+	// guard now lives at the shared storage seam (CheckDependencyCycleInTx) that
+	// AddDependencyInTx also calls, closing that bypass. NOTE: `bd dep add` does
+	// NOT close the source, so a closed-status precondition (wqrfi's cmd guard)
+	// would MISS a dep-add chain — the seam guard keys on the canonical having an
+	// outgoing `duplicates` edge, which is the true corruption signal.
+
+	// dep-add chain: dep add MID ROOT --type duplicates, then dep add LEAF MID
+	// --type duplicates (canonical MID is itself a duplicate) must fail.
+	t.Run("dep_add_duplicates_chain_rejected", func(t *testing.T) {
+		root := bdCreate(t, bd, dir, "depadd chain ROOT", "--type", "bug")
+		mid := bdCreate(t, bd, dir, "depadd chain MID", "--type", "bug")
+		leaf := bdCreate(t, bd, dir, "depadd chain LEAF", "--type", "bug")
+		bdDep(t, bd, dir, "add", mid.ID, root.ID, "--type", "duplicates") // MID -> ROOT
+		out := bdDepFail(t, bd, dir, "add", leaf.ID, mid.ID, "--type", "duplicates")
+		if !strings.Contains(out, "duplicate") {
+			t.Errorf("expected dep-add duplicates chain rejection, got: %s", out)
+		}
+		if !strings.Contains(out, root.ID) {
+			t.Errorf("expected dep-add chain rejection to name the live root %s, got: %s", root.ID, out)
+		}
+	})
+
+	// dep-add mutual cycle: dep add A B --type duplicates, then dep add B A
+	// --type duplicates must fail (canonical A already has an outgoing dup edge).
+	t.Run("dep_add_duplicates_mutual_cycle_rejected", func(t *testing.T) {
+		a := bdCreate(t, bd, dir, "depadd cycle A", "--type", "bug")
+		b := bdCreate(t, bd, dir, "depadd cycle B", "--type", "bug")
+		bdDep(t, bd, dir, "add", a.ID, b.ID, "--type", "duplicates") // A -> B
+		out := bdDepFail(t, bd, dir, "add", b.ID, a.ID, "--type", "duplicates")
+		if !strings.Contains(out, "itself a duplicate") {
+			t.Errorf("expected dep-add mutual-cycle rejection, got: %s", out)
+		}
+	})
+
+	// A `dep add --type duplicates` onto a plain canonical (NOT itself a
+	// duplicate) must still succeed — the guard is surgical.
+	t.Run("dep_add_duplicates_to_plain_canonical_ok", func(t *testing.T) {
+		canonical := bdCreate(t, bd, dir, "plain canonical", "--type", "bug")
+		dupe := bdCreate(t, bd, dir, "dup of plain", "--type", "bug")
+		out := bdDep(t, bd, dir, "add", dupe.ID, canonical.ID, "--type", "duplicates")
+		if !strings.Contains(out, "duplicates") {
+			t.Errorf("expected dep-add duplicates onto a plain canonical to succeed, got: %s", out)
+		}
+	})
 }
 
 // TestEmbeddedDuplicateConcurrent exercises duplicate operations concurrently.

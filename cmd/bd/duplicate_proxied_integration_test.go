@@ -103,4 +103,50 @@ func TestProxiedServerDuplicate(t *testing.T) {
 			t.Errorf("expected superseded %s to be closed after bd supersede, show output:\n%s", old.ID, showOut)
 		}
 	})
+
+	// beads-dfzre (proxied twin): the canonical-liveness/cycle guard lives in the
+	// shared storage seam (CheckDependencyCycleInTx), which the proxied dep
+	// use-case reuses via CheckCycleForType — so the proxied `bd dep add --type
+	// duplicates` path must reject a dup-of-a-dup chain and a mutual cycle too
+	// (the wqrfi cmd-layer guard only covered `bd duplicate`).
+	t.Run("dep_add_duplicates_chain_rejected", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "dpc")
+		root := bdProxiedCreate(t, bd, p.dir, "proxied chain ROOT", "--type", "bug")
+		mid := bdProxiedCreate(t, bd, p.dir, "proxied chain MID", "--type", "bug")
+		leaf := bdProxiedCreate(t, bd, p.dir, "proxied chain LEAF", "--type", "bug")
+
+		// Seed MID -> ROOT via the proxied dep-add path.
+		if _, err := bdProxiedRun(t, bd, p.dir, "dep", "add", mid.ID, root.ID, "--type", "duplicates"); err != nil {
+			t.Fatalf("seed dep add MID ROOT --type duplicates failed: %v", err)
+		}
+		out, err := bdProxiedRun(t, bd, p.dir, "dep", "add", leaf.ID, mid.ID, "--type", "duplicates")
+		s := string(out)
+		if strings.Contains(s, "storage is nil") || strings.Contains(s, "panic:") {
+			t.Fatalf("proxied dep-add chain hit nil-store/panic:\n%s", s)
+		}
+		if err == nil {
+			t.Fatalf("expected proxied dep add LEAF MID --type duplicates (chain) to be rejected; got success:\n%s", s)
+		}
+		if !strings.Contains(s, root.ID) {
+			t.Errorf("expected proxied dep-add chain rejection to name the live root %s:\n%s", root.ID, s)
+		}
+	})
+
+	t.Run("dep_add_duplicates_mutual_cycle_rejected", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "dmc")
+		a := bdProxiedCreate(t, bd, p.dir, "proxied cycle A", "--type", "bug")
+		b := bdProxiedCreate(t, bd, p.dir, "proxied cycle B", "--type", "bug")
+
+		if _, err := bdProxiedRun(t, bd, p.dir, "dep", "add", a.ID, b.ID, "--type", "duplicates"); err != nil {
+			t.Fatalf("seed dep add A B --type duplicates failed: %v", err)
+		}
+		out, err := bdProxiedRun(t, bd, p.dir, "dep", "add", b.ID, a.ID, "--type", "duplicates")
+		s := string(out)
+		if err == nil {
+			t.Fatalf("expected proxied dep-add mutual duplicate cycle to be rejected; got success:\n%s", s)
+		}
+		if !strings.Contains(s, "itself a duplicate") {
+			t.Errorf("expected proxied mutual-cycle rejection, got:\n%s", s)
+		}
+	})
 }
