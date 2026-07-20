@@ -84,13 +84,9 @@ func runHistoryProxiedServer(ctx context.Context, issueID string) error {
 		fmt.Printf("  Committer: %s\n", entry.Committer)
 
 		if entry.Issue != nil {
-			statusIcon := ui.GetStatusIcon(string(entry.Issue.Status))
-			fmt.Printf("  %s %s: %s [P%d - %s]\n",
-				statusIcon,
-				entry.Issue.ID,
-				entry.Issue.Title,
-				entry.Issue.Priority,
-				entry.Issue.Status)
+			// beads-f956y: route through the shared sanitizing helper (in
+			// history.go) so the proxied twin can't drift from the direct view.
+			fmt.Println(formatHistoryIssueLine(entry))
 		}
 
 		if i < len(history)-1 {

@@ -13,6 +13,23 @@ var (
 	historyLimit int
 )
 
+// formatHistoryIssueLine renders the one-line issue summary shown under each
+// history entry, sanitizing the user-controlled title for terminal safety
+// (beads-f956y, the i8dsb/7n9y display-sanitize class). The direct
+// (history.go) and proxied (history_proxied_server.go) history views printed
+// byte-identical lines with entry.Issue.Title RAW — the one title view the
+// sanitize sweep missed — so both now route through this single helper.
+// Caller guarantees entry.Issue != nil.
+func formatHistoryIssueLine(entry *storage.HistoryEntry) string {
+	statusIcon := ui.GetStatusIcon(string(entry.Issue.Status))
+	return fmt.Sprintf("  %s %s: %s [P%d - %s]",
+		statusIcon,
+		entry.Issue.ID,
+		ui.SanitizeForTerminal(entry.Issue.Title),
+		entry.Issue.Priority,
+		entry.Issue.Status)
+}
+
 var historyCmd = &cobra.Command{
 	Use:     "history <id>",
 	GroupID: "views",
@@ -129,13 +146,7 @@ Examples:
 			fmt.Printf("  Committer: %s\n", entry.Committer)
 
 			if entry.Issue != nil {
-				statusIcon := ui.GetStatusIcon(string(entry.Issue.Status))
-				fmt.Printf("  %s %s: %s [P%d - %s]\n",
-					statusIcon,
-					entry.Issue.ID,
-					entry.Issue.Title,
-					entry.Issue.Priority,
-					entry.Issue.Status)
+				fmt.Println(formatHistoryIssueLine(entry))
 			}
 
 			if i < len(history)-1 {
