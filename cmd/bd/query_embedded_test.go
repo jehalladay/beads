@@ -365,3 +365,102 @@ func TestEmbeddedQueryJSONTruncationWarnsOnStderr(t *testing.T) {
 		t.Fatalf("beads-it9n7: expected truncation warning on (non-terminal) stderr, got:\n%s", stderr.String())
 	}
 }
+
+// TestEmbeddedQuerySortIDLimitWindow covers beads-o6lhl: `bd query --sort id
+// --limit K` on the NON-PREDICATE path must return the K lowest-id rows (the
+// true id-sorted top-K), not the K highest-PRIORITY rows re-sorted by id.
+//
+// Root: bare `--sort id` is deliberately NOT pushed into SQL ORDER BY
+// (beads-l4ja), but the non-predicate path still pushed the SQL LIMIT — so SQL
+// truncated in DEFAULT PRIORITY order, then the client id-sort ran over the
+// already-truncated slice, dropping the true id-first rows. The fix mirrors the
+// bd list guard (list_input.go: sqlLimit=0 for sortBy=="id"): don't push the
+// limit for --sort id, fetch all, id-sort, then truncate in Go.
+//
+// Fixture makes the truncation ORDER matter: the alphabetically-smallest id is
+// assigned the WORST priority (P3) and every other issue P0. Under the bug the
+// SQL LIMIT window selects the K P0 rows in priority order — EXCLUDING the P3
+// smallest-id row — so the smallest id is absent from the top-K; under the fix
+// it sorts first and is present. RED-verify by reverting the query.go guards.
+func TestEmbeddedQuerySortIDLimitWindow(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "qs")
+
+	const n = 8
+	for i := 0; i < n; i++ {
+		bdCreate(t, bd, dir, fmt.Sprintf("qs sort-id item %d", i), "--type", "task", "--priority", "0")
+	}
+
+	// Discover the TRUE full id order (no --limit → no truncation, the branch
+	// beads-o6lhl leaves untouched and which the bead's repro confirms correct).
+	full := bdQueryJSON(t, bd, dir, "priority>=0", "--sort", "id")
+	if len(full) != n {
+		t.Fatalf("expected %d issues in full id-sorted set, got %d", n, len(full))
+	}
+	fullIDs := make([]string, len(full))
+	for i, r := range full {
+		id, _ := r["id"].(string)
+		if id == "" {
+			t.Fatalf("issue %d has no id: %v", i, r)
+		}
+		fullIDs[i] = id
+	}
+
+	// Make the SMALLEST id the worst priority so the buggy priority-order SQL
+	// window would drop it from the top-K.
+	bdUpdate(t, bd, dir, fullIDs[0], "--priority", "3")
+
+	// The full id order is priority-independent, so it is unchanged after the
+	// priority bump — re-fetch to be robust regardless.
+	full = bdQueryJSON(t, bd, dir, "priority>=0", "--sort", "id")
+	if len(full) != n {
+		t.Fatalf("expected %d issues after priority update, got %d", n, len(full))
+	}
+	fullIDs = fullIDs[:0]
+	for _, r := range full {
+		id, _ := r["id"].(string)
+		fullIDs = append(fullIDs, id)
+	}
+
+	const k = 5
+	wantTopK := fullIDs[:k]
+
+	// JSON leg.
+	got := bdQueryJSON(t, bd, dir, "priority>=0", "--sort", "id", "--limit", fmt.Sprintf("%d", k))
+	if len(got) != k {
+		t.Fatalf("JSON --sort id --limit %d: expected %d rows, got %d", k, k, len(got))
+	}
+	gotIDs := make([]string, len(got))
+	for i, r := range got {
+		gotIDs[i], _ = r["id"].(string)
+	}
+	for i := range wantTopK {
+		if gotIDs[i] != wantTopK[i] {
+			t.Fatalf("beads-o6lhl JSON: --sort id --limit %d returned the WRONG top-N window.\n got: %v\nwant: %v (first %d of full id order %v)\nthe truncate-then-sort bug drops the true id-first rows",
+				k, gotIDs, wantTopK, k, fullIDs)
+		}
+	}
+	// The worst-priority smallest id must be present (it sorts first by id).
+	if gotIDs[0] != fullIDs[0] {
+		t.Fatalf("beads-o6lhl JSON: smallest id %s (worst priority) missing from top of --sort id window; got head %s — bug selected priority-order rows before id-sort",
+			fullIDs[0], gotIDs[0])
+	}
+
+	// Text leg: the smallest id (worst priority) must appear in the --limit K
+	// window; under the bug it was truncated out in priority order.
+	text := bdQuery(t, bd, dir, "priority>=0", "--sort", "id", "--limit", fmt.Sprintf("%d", k))
+	if !strings.Contains(text, fullIDs[0]) {
+		t.Fatalf("beads-o6lhl text: --sort id --limit %d output missing smallest id %s (worst priority) — truncate-then-sort bug:\n%s",
+			k, fullIDs[0], text)
+	}
+	// And a higher-id row that falls OUTSIDE the top-K must be absent.
+	if strings.Contains(text, fullIDs[n-1]) {
+		t.Fatalf("beads-o6lhl text: --sort id --limit %d unexpectedly included the largest id %s (should be outside top-%d):\n%s",
+			k, fullIDs[n-1], k, text)
+	}
+}

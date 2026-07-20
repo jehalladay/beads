@@ -167,7 +167,15 @@ Examples:
 			return HandleErrorRespectJSON("evaluating query: %v", err)
 		}
 
-		if limit > 0 && !result.RequiresPredicate {
+		// beads-o6lhl: exempt --sort id from the SQL LIMIT push, mirroring the
+		// list-path guard (list_input.go: `if sortBy=="id" { sqlLimit=0 }`).
+		// Bare "id" is NOT pushed into SQL ORDER BY (L182 below, intentional per
+		// beads-l4ja), so pushing the LIMIT would truncate in DEFAULT PRIORITY
+		// order BEFORE the client-side id sort ran — returning the wrong top-N
+		// window (the priority-first rows re-sorted by id, not the true id-first
+		// rows). Leaving Limit unset fetches the full set; sortIssues by id then
+		// truncates to `limit` in Go below (as the predicate path already does).
+		if limit > 0 && !result.RequiresPredicate && sortBy != "id" {
 			result.Filter.Limit = limit
 		}
 
@@ -223,7 +231,12 @@ Examples:
 					iwc = iwc[:limit]
 				}
 			} else {
-				if limit > 0 {
+				// beads-o6lhl: same id-exemption as the predicate-limit guard
+				// above — for --sort id, do NOT push the SQL limit (bare id has
+				// no SQL ORDER BY, so a limit here truncates in priority order
+				// before the client id-sort). Fetch all, id-sort, then truncate
+				// in Go below (len>limit still signals truncation correctly).
+				if limit > 0 && sortBy != "id" {
 					searchFilter.Limit = limit + 1
 				}
 				iwc, err = store.SearchIssuesWithCounts(ctx, "", searchFilter)
@@ -263,7 +276,10 @@ Examples:
 				issues = issues[:limit]
 			}
 		} else {
-			if limit > 0 {
+			// beads-o6lhl: text leg of the same id-exemption (see JSON leg
+			// above) — --sort id must fetch all, id-sort, then truncate in Go,
+			// not push the SQL limit in the un-ordered priority default.
+			if limit > 0 && sortBy != "id" {
 				searchFilter.Limit = limit + 1
 			}
 			issues, err = store.SearchIssues(ctx, "", searchFilter)
