@@ -4,9 +4,28 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
+
+// formatFlagConflict renders a map of conflicting flag→value pairs as a single
+// deterministic (flag-sorted) line, for the structured JSON error emitted under
+// --json when multiple description flags carry different values (beads-ew48y).
+// Sorting keeps the message stable regardless of Go map iteration order.
+func formatFlagConflict(values map[string]string) string {
+	flags := make([]string, 0, len(values))
+	for f := range values {
+		flags = append(flags, f)
+	}
+	sort.Strings(flags)
+	parts := make([]string, 0, len(flags))
+	for _, f := range flags {
+		parts = append(parts, fmt.Sprintf("%s=%q", f, values[f]))
+	}
+	return strings.Join(parts, ", ")
+}
 
 // registerCommonIssueFlags registers flags common to create and update commands.
 func registerCommonIssueFlags(cmd *cobra.Command) {
@@ -102,6 +121,14 @@ func getDescriptionFlag(cmd *cobra.Command) (string, bool, error) {
 				if firstVal == "" {
 					firstVal = v
 				} else if v != firstVal {
+					// beads-ew48y: under --json the multi-line stderr diagnostic
+					// leaves stdout EMPTY, breaking parsers (same class as
+					// beads-7zh1h in this helper). Flatten the conflicting
+					// flag→value pairs into one structured JSON error on stdout;
+					// keep the human multi-line stderr form otherwise.
+					if jsonOutput {
+						return "", false, HandleErrorRespectJSON("cannot specify multiple description flags with different values: %s", formatFlagConflict(values))
+					}
 					fmt.Fprintf(os.Stderr, "Error: cannot specify multiple description flags with different values\n")
 					for flag, val := range values {
 						fmt.Fprintf(os.Stderr, "  %s: %q\n", flag, val)
@@ -131,6 +158,12 @@ func getDescriptionFlag(cmd *cobra.Command) (string, bool, error) {
 			firstVal = body
 			firstFlag = "--body"
 		} else if body != firstVal {
+			// beads-ew48y: emit a structured JSON error on stdout under --json
+			// so a parser does not get empty stdout (multi-line stderr form kept
+			// for humans).
+			if jsonOutput {
+				return "", false, HandleErrorRespectJSON("cannot specify both %s=%q and --body=%q with different values", firstFlag, firstVal, body)
+			}
 			fmt.Fprintf(os.Stderr, "Error: cannot specify both %s and --body with different values\n", firstFlag)
 			fmt.Fprintf(os.Stderr, "  %s: %q\n", firstFlag, firstVal)
 			fmt.Fprintf(os.Stderr, "  --body:        %q\n", body)
@@ -143,6 +176,12 @@ func getDescriptionFlag(cmd *cobra.Command) (string, bool, error) {
 			firstVal = message
 			firstFlag = "--message"
 		} else if message != firstVal {
+			// beads-ew48y: emit a structured JSON error on stdout under --json
+			// so a parser does not get empty stdout (multi-line stderr form kept
+			// for humans).
+			if jsonOutput {
+				return "", false, HandleErrorRespectJSON("cannot specify both %s=%q and --message=%q with different values", firstFlag, firstVal, message)
+			}
 			fmt.Fprintf(os.Stderr, "Error: cannot specify both %s and --message with different values\n", firstFlag)
 			fmt.Fprintf(os.Stderr, "  %s: %q\n", firstFlag, firstVal)
 			fmt.Fprintf(os.Stderr, "  --message:     %q\n", message)
