@@ -199,7 +199,7 @@ func buildListFilter(in listInput, cfg listFilterConfig) (types.IssueFilter, err
 	if in.issueType != "" {
 		t := types.IssueType(in.issueType)
 		if !t.IsValidWithCustom(cfg.customTypes) {
-			validTypes := "bug, feature, task, epic, chore, decision"
+			validTypes := types.ValidWorkTypesString() // beads-71j1: full 9-type list, not a stale hardcoded 6
 			if len(cfg.customTypes) > 0 {
 				validTypes += ", " + joinStrings(cfg.customTypes, ", ")
 			}

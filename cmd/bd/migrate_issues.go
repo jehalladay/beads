@@ -283,7 +283,7 @@ func validateMigrateIssuesFilters(ctx context.Context, s storage.DoltStorage, p 
 	if p.issueType != "" && p.issueType != "all" {
 		it := issueTypeFilterValue(p.issueType)
 		if !it.IsValidWithCustom(cfg.customTypes) {
-			validTypes := "bug, feature, task, epic, chore, decision"
+			validTypes := types.ValidWorkTypesString() // beads-71j1: full 9-type list, not a stale hardcoded 6
 			if len(cfg.customTypes) > 0 {
 				validTypes += ", " + strings.Join(cfg.customTypes, ", ")
 			}
