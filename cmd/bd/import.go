@@ -381,11 +381,19 @@ func filterDuplicatesByTitle(ctx context.Context, st storage.DoltStorage, issues
 	var kept []*types.Issue
 	skipped := 0
 	for _, issue := range issues {
-		if titleSet[strings.ToLower(issue.Title)] {
+		key := strings.ToLower(issue.Title)
+		if titleSet[key] {
 			skipped++
 			continue
 		}
 		kept = append(kept, issue)
+		// beads-0bvog: also fold the kept row's title into the set so a LATER
+		// row in the SAME import batch with an identical (new) title is skipped
+		// too. Without this, titleSet only reflected pre-existing issues, so two
+		// import lines sharing a new title both survived --dedup — contradicting
+		// the "Skip issues with duplicate titles" contract. First-wins within
+		// the batch (case-insensitive, matching the existing-issue compare).
+		titleSet[key] = true
 	}
 	return kept, skipped
 }
