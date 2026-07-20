@@ -384,15 +384,25 @@ func closeProxiedClaimNextSeparate(ctx context.Context, jsonOut bool) *types.Iss
 	}
 
 	nextIssue := page.Items[0]
+	// beads-yt2hi: ClaimIssue returns a ClaimResult (no mutated issue), so
+	// page.Items[0] is a PRE-claim snapshot (status:open, no assignee/started_at).
+	// Returning it makes the --json "claimed" field misreport the persisted state.
 	if _, err := uw.IssueUseCase().ClaimIssue(ctx, nextIssue.ID, actor); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not claim next issue %s: %v\n", nextIssue.ID, err)
 		return nil
+	}
+	// Re-fetch the mutated row WITHIN the same UOW (read-your-own-write, before
+	// Commit) so the returned issue reflects in_progress+assignee+started_at;
+	// fall back to the snapshot only if the re-read fails (claim still succeeds).
+	claimedIssue := nextIssue
+	if claimed, gerr := uw.IssueUseCase().GetIssue(ctx, nextIssue.ID); gerr == nil && claimed != nil {
+		claimedIssue = claimed
 	}
 	if err := uw.Commit(ctx, "bd: claim "+nextIssue.ID); err != nil && !isDoltNothingToCommit(err) {
 		fmt.Fprintf(os.Stderr, "Warning: could not commit claim of next issue %s: %v\n", nextIssue.ID, err)
 		return nil
 	}
-	return nextIssue
+	return claimedIssue
 }
 
 func closeProxiedContinue(ctx context.Context, uw uow.UnitOfWork, closedID string, autoClaim bool) *ContinueResult {

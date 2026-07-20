@@ -969,3 +969,55 @@ func TestProxiedServerCloseClaimNextConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestProxiedServerCloseClaimNextStaleSnapshot_yt2hi is the PROXIED leg of
+// beads-yt2hi. closeProxiedClaimNextSeparate returned page.Items[0] — a
+// PRE-claim snapshot — after discarding the ClaimResult from ClaimIssue, so the
+// --json "claimed" object reported status:open/assignee:""/started_at:nil while
+// the persisted row was in_progress+assigned+started. The fix re-fetches the
+// mutated row within the same UOW before Commit. (cli-layer-fix-misses-proxied:
+// the direct leg lives in close_claim_next_stale_snapshot_test.go.)
+func TestProxiedServerCloseClaimNextStaleSnapshot_yt2hi(t *testing.T) {
+	requireProxiedServerEnv(t)
+	bd := buildEmbeddedBD(t)
+	p := bdProxiedInit(t, bd, "ypx")
+
+	toClose := bdProxiedCreate(t, bd, p.dir, "yt2hi proxied close A", "--priority", "1")
+	_ = bdProxiedCreate(t, bd, p.dir, "yt2hi proxied claim target B", "--priority", "2")
+
+	cmd := exec.Command(bd, "close", toClose.ID, "--claim-next", "--json")
+	cmd.Dir = p.dir
+	cmd.Env = bdProxiedEnv(p.dir)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("proxied `bd close --claim-next --json` failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+
+	s := strings.TrimSpace(stdout.String())
+	start := strings.Index(s, "{")
+	if start < 0 {
+		t.Fatalf("proxied close --claim-next --json must emit a JSON object, got:\n%s", s)
+	}
+	var env struct {
+		Claimed *types.Issue `json:"claimed"`
+	}
+	if jerr := json.Unmarshal([]byte(s[start:]), &env); jerr != nil {
+		t.Fatalf("proxied close --claim-next --json is not a JSON object: %v\n%s", jerr, s)
+	}
+	if env.Claimed == nil {
+		t.Fatalf("expected a claimed object (a P2 candidate was available), got null: %s", s)
+	}
+	// The claimed object must reflect the PERSISTED post-claim state, not the
+	// pre-claim snapshot.
+	if env.Claimed.Status != types.StatusInProgress {
+		t.Errorf("claimed.status = %q, want in_progress (stale pre-claim snapshot leaked?): %s", env.Claimed.Status, s)
+	}
+	if env.Claimed.Assignee == "" {
+		t.Errorf("claimed.assignee empty; want the resolved actor (stale pre-claim snapshot leaked?): %s", s)
+	}
+	if env.Claimed.StartedAt == nil {
+		t.Errorf("claimed.started_at nil; want a timestamp from the claim transition: %s", s)
+	}
+}
