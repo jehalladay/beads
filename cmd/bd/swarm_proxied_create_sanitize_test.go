@@ -12,7 +12,7 @@ import (
 // ui.SanitizeForTerminal. epicTitle derives from a stored issue title
 // (epic.Title), which can originate from an untrusted import (JSONL/markdown/SCM)
 // carrying OSC/CSI escapes (OSC 0 window-title / OSC 52 clipboard). The fix
-// extracts the print block into printSwarmCreateProxiedSummary and routes
+// extracts the print block into printSwarmCreateSummary and routes
 // epicTitle through displayTitle; display-only (the --json path is unchanged).
 func TestPrintSwarmCreateProxiedSummary_SanitizesTitle_ry48z(t *testing.T) {
 	const osc = "\x1b]0;pwned\x07"
@@ -27,7 +27,7 @@ func TestPrintSwarmCreateProxiedSummary_SanitizesTitle_ry48z(t *testing.T) {
 		},
 	}
 	out := captureStdout(t, func() error {
-		printSwarmCreateProxiedSummary("bd-swarm", "bd-epic", "Epic"+csi+osc+"Title", "coord", analysis)
+		printSwarmCreateSummary("bd-swarm", "bd-epic", "Epic"+csi+osc+"Title", "coord", analysis)
 		return nil
 	})
 	assertNoRawEscapes(t, out, "swarm create proxied summary")

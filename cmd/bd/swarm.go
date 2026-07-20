@@ -1075,14 +1075,11 @@ Examples:
 				"analysis":    analysis,
 			})
 		}
-		fmt.Printf("\n%s Created swarm molecule: %s\n", ui.RenderPass("✓"), ui.RenderID(swarmMol.ID))
-		fmt.Printf("   Epic: %s (%s)\n", epicID, epicTitle)
-		if coordinator != "" {
-			fmt.Printf("   Coordinator: %s\n", coordinator)
-		}
-		fmt.Printf("   Total issues: %d\n", analysis.TotalIssues)
-		fmt.Printf("   Max parallelism: %d\n", analysis.MaxParallelism)
-		fmt.Printf("   Waves: %d\n", len(analysis.ReadyFronts))
+		// beads-rbmia: route through the shared summary helper so epicTitle
+		// (a stored, untrusted-import-origin title) is sanitized via displayTitle
+		// — the direct twin of the ry48z proxied-path fix. Display-only; the
+		// --json branch above stays raw for round-trip fidelity.
+		printSwarmCreateSummary(swarmMol.ID, epicID, epicTitle, coordinator, analysis)
 		return nil
 	},
 }
