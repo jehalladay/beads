@@ -286,13 +286,34 @@ func GetBlockedIssuesInTx(ctx context.Context, tx DBTX, filter types.WorkFilter)
 				targetIDs = append(targetIDs, rec.dependsOnID)
 			}
 		}
-		activeTargets, err := loadStatusByIDInTx(ctx, tx, targetIDs)
+		// beads-mxe4b: load status AND close_reason so the attribution pass can
+		// apply the same reason-aware conditional-blocks rule as the is_blocked
+		// recompute (beads-a3hm). The naive status-only check below dropped a
+		// success-closed conditional-blocks blocker from blockerMap, so the
+		// dependent (correctly is_blocked=1, shown by `bd list --status blocked`)
+		// was silently missing from `bd blocked` — a display-layer violation of
+		// the a3hm invariant that the marking layer honors.
+		activeTargets, err := loadStatusAndReasonByIDInTx(ctx, tx, targetIDs)
 		if err != nil {
 			return nil, fmt.Errorf("blocker target status: %w", err)
 		}
 		for _, rec := range blockingDeps {
-			status, ok := activeTargets[rec.dependsOnID]
-			if !ok || status == types.StatusClosed || status == types.StatusPinned {
+			ts, ok := activeTargets[rec.dependsOnID]
+			if !ok {
+				continue
+			}
+			// A conditional-blocks edge stays an active blocker while the target
+			// is open AND while it is closed with a non-failure (success) reason
+			// — mirror isActiveConditionalOrHardBlocker (the Go mirror of
+			// activeBlockerSQL). 'blocks'/'waits-for' edges block only while the
+			// target is open (unchanged): the predicate returns false for
+			// waits-for, so keep the open-check as the base and only widen the
+			// conditional-blocks case.
+			active := ts.status != types.StatusClosed && ts.status != types.StatusPinned
+			if rec.depType == string(types.DepConditionalBlocks) {
+				active = isActiveConditionalOrHardBlocker(types.DepConditionalBlocks, ts)
+			}
+			if !active {
 				continue
 			}
 			blockerMap[rec.issueID] = append(blockerMap[rec.issueID], rec.dependsOnID)
