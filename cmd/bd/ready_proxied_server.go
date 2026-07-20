@@ -110,7 +110,7 @@ func runBlockedProxiedServer(cmd *cobra.Command, ctx context.Context) {
 	for _, issue := range blocked {
 		fmt.Printf("[%s] %s: %s\n",
 			ui.RenderPriority(issue.Priority),
-			ui.RenderID(issue.ID), issue.Title)
+			ui.RenderID(issue.ID), displayTitle(issue.Title))
 		blockedBy := issue.BlockedBy
 		if blockedBy == nil {
 			blockedBy = []string{}
@@ -318,7 +318,7 @@ func runReadyProxiedExplain(ctx context.Context, uw uow.UnitOfWork, _ readyInput
 			fmt.Printf("  %s [%s] %s\n",
 				ui.RenderID(item.ID),
 				ui.RenderPriority(item.Priority),
-				item.Title)
+				displayTitle(item.Title))
 			fmt.Printf("    Reason: %s\n", item.Reason)
 			if len(item.ResolvedBlockers) > 0 {
 				fmt.Printf("    Resolved blockers: %s\n", strings.Join(item.ResolvedBlockers, ", "))
@@ -337,10 +337,10 @@ func runReadyProxiedExplain(ctx context.Context, uw uow.UnitOfWork, _ readyInput
 			fmt.Printf("  %s [%s] %s\n",
 				ui.RenderID(item.ID),
 				ui.RenderPriority(item.Priority),
-				item.Title)
+				displayTitle(item.Title))
 			for _, blocker := range item.BlockedBy {
 				fmt.Printf("    ← blocked by %s: %s [%s]\n",
-					ui.RenderID(blocker.ID), blocker.Title, blocker.Status)
+					ui.RenderID(blocker.ID), displayTitle(blocker.Title), blocker.Status)
 			}
 			fmt.Println()
 		}
@@ -429,7 +429,7 @@ func runReadyProxiedMolecule(ctx context.Context, uw uow.UnitOfWork, in readyInp
 			ui.RenderPriority(step.Issue.Priority),
 			ui.RenderType(string(step.Issue.IssueType)),
 			ui.RenderID(step.Issue.ID),
-			step.Issue.Title,
+			displayTitle(step.Issue.Title),
 			groupAnnotation)
 		if len(step.ParallelInfo.CanParallel) > 0 {
 			readyParallel := []string{}
