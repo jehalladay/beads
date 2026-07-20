@@ -68,9 +68,23 @@ func runCloseProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 
 	outcomes := make([]closeProxiedOutcome, 0, len(args))
 	closedIssues := []*types.Issue{}
+	// beads-2j2og: buffer per-item guard/error messages under --json so they can
+	// flush as JSON stderr objects alongside a partial-success stdout array
+	// (mirrors the direct path's reportCloseItemError, cmd/bd/close.go). Non-JSON
+	// keeps immediate plain stderr. On a wholly-failed batch the terminal
+	// FatalErrorRespectJSON is the sole error (stderr stays clean), so the buffer
+	// is intentionally NOT flushed there.
+	var deferredItemErrors []string
+	reportCloseItemError := func(format string, a ...interface{}) {
+		if in.jsonOut {
+			deferredItemErrors = append(deferredItemErrors, fmt.Sprintf(format, a...))
+			return
+		}
+		fmt.Fprintf(os.Stderr, format+"\n", a...)
+	}
 	for i, id := range args {
 		reason := reasonForCloseIndex(reasons, i)
-		outcome, ok := closeProxiedOne(ctx, uw, id, reason, in)
+		outcome, ok := closeProxiedOne(ctx, uw, id, reason, in, reportCloseItemError)
 		if !ok {
 			continue
 		}
@@ -151,6 +165,13 @@ func runCloseProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 		default:
 			_ = outputJSON(closedIssues)
 		}
+		// beads-2j2og: partial success — stdout carries the closed[] array, so
+		// any deferred per-item failures flush to stderr as JSON objects now
+		// rather than being dropped (mirrors close.go's beads-n96g/en28 flush).
+		// reportItemError (errors.go) JSON-wraps each message under --json.
+		for _, msg := range deferredItemErrors {
+			reportItemError("%s", msg)
+		}
 	}
 
 	// Record last-touched so `bd show --current` fallback works after a proxied
@@ -201,15 +222,22 @@ func gatherCloseProxiedInput(cmd *cobra.Command) closeProxiedInput {
 	return in
 }
 
-func closeProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string, in closeProxiedInput) (closeProxiedOutcome, bool) {
+// closeProxiedOne closes a single issue via the UOW. Per-item guard/error
+// messages are routed through report (beads-2j2og), which buffers them under
+// --json (flushed as JSON stderr objects by the caller on partial success) and
+// prints immediate plain stderr otherwise — mirroring the direct path's
+// reportCloseItemError (cmd/bd/close.go). Previously these legs wrote bare
+// plaintext to os.Stderr regardless of --json, so a proxied-mode consumer got
+// un-parseable per-item failures.
+func closeProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string, in closeProxiedInput, report func(format string, a ...interface{})) (closeProxiedOutcome, bool) {
 	current, isWisp := proxiedResolveIssueOrWisp(ctx, uw, id)
 	if current == nil {
-		fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+		report("Issue %s not found", id)
 		return closeProxiedOutcome{}, false
 	}
 
 	if err := validateIssueClosable(id, current, in.force); err != nil {
-		fmt.Fprintf(os.Stderr, "%s\n", err)
+		report("%s", err)
 		return closeProxiedOutcome{}, false
 	}
 
@@ -222,7 +250,7 @@ func closeProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string, 
 			openChildren, err = uw.IssueUseCase().CountOpenChildren(ctx, id)
 		}
 		if err == nil && openChildren > 0 {
-			fmt.Fprintf(os.Stderr, "cannot close epic %s: %d open child issue(s); close children first or use --force to override\n", id, openChildren)
+			report("cannot close epic %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
 			return closeProxiedOutcome{}, false
 		}
 	}
@@ -233,7 +261,7 @@ func closeProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string, 
 			// for a gh:pr / gh:run gate it embeds an UNTRUSTED PR title /
 			// workflow name that can carry OSC/CSI terminal-injection escapes
 			// (7n9y sink; proxied twin of the close.go:170 fix). Display-only.
-			fmt.Fprintf(os.Stderr, "cannot close %s: %s\n", id, ui.SanitizeForTerminal(err.Error()))
+			report("cannot close %s: %s", id, ui.SanitizeForTerminal(err.Error()))
 			return closeProxiedOutcome{}, false
 		}
 	}
@@ -248,11 +276,11 @@ func closeProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string, 
 			blocked, blockers, err = uw.DependencyUseCase().IsBlocked(ctx, id)
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error checking blockers for %s: %v\n", id, err)
+			report("Error checking blockers for %s: %v", id, err)
 			return closeProxiedOutcome{}, false
 		}
 		if blocked && len(blockers) > 0 {
-			fmt.Fprintf(os.Stderr, "cannot close %s: blocked by open issues %v (use --force to override)\n", id, blockers)
+			report("cannot close %s: blocked by open issues %v (use --force to override)", id, blockers)
 			return closeProxiedOutcome{}, false
 		}
 	}
@@ -268,7 +296,7 @@ func closeProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string, 
 		res, err = uw.IssueUseCase().CloseIssue(ctx, id, params, actor)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
+		report("Error closing %s: %v", id, err)
 		return closeProxiedOutcome{}, false
 	}
 

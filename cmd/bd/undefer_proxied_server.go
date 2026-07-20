@@ -28,8 +28,22 @@ func runUndeferProxiedServer(ctx context.Context, args []string) error {
 	// idempotent advisory no-op (outcome==undeferNoop), not an error.
 	var hasError bool
 
+	// beads-2j2og: buffer per-item guard/no-op/error messages under --json so
+	// they flush as JSON stderr objects (partial success) rather than the bare
+	// plaintext the leaf legs previously wrote regardless of --json — mirrors the
+	// direct path's reportUndeferItemError (cmd/bd/undefer.go). Non-JSON keeps
+	// immediate plain stderr.
+	var deferredItemErrors []string
+	reportUndeferItemError := func(format string, a ...interface{}) {
+		if jsonOutput {
+			deferredItemErrors = append(deferredItemErrors, fmt.Sprintf(format, a...))
+			return
+		}
+		fmt.Fprintf(os.Stderr, format+"\n", a...)
+	}
+
 	for _, id := range args {
-		issue, fullID, outcome := undeferProxiedOne(ctx, id)
+		issue, fullID, outcome := undeferProxiedOne(ctx, id, reportUndeferItemError)
 		switch outcome {
 		case undeferOK:
 			undeferredCount++
@@ -47,6 +61,12 @@ func runUndeferProxiedServer(ctx context.Context, args []string) error {
 	}
 
 	if jsonOutput && len(undeferredIssues) > 0 {
+		// beads-2j2og: partial success — stdout carries the undeferred array, so
+		// any deferred per-item failures flush to stderr as JSON objects now
+		// rather than being dropped (mirrors undefer.go's beads-bqs9/en28 flush).
+		for _, msg := range deferredItemErrors {
+			reportItemError("%s", msg)
+		}
 		if err := outputJSON(undeferredIssues); err != nil {
 			return err
 		}
@@ -67,6 +87,17 @@ func runUndeferProxiedServer(ctx context.Context, args []string) error {
 		}
 		return SilentExit()
 	}
+
+	// beads-2j2og: no-op-only --json path (every id was already not-deferred, so
+	// hasError stayed false and nothing was undeferred): stdout is empty, so
+	// flush the deferred advisory messages to stderr as JSON objects rather than
+	// dropping them — mirrors undefer.go's beads-en28 tail. Non-JSON already
+	// printed them immediately.
+	if jsonOutput && len(undeferredIssues) == 0 {
+		for _, msg := range deferredItemErrors {
+			reportItemError("%s", msg)
+		}
+	}
 	return nil
 }
 
@@ -82,12 +113,13 @@ const (
 )
 
 // undeferProxiedOne undefers a single issue via the UOW, returning the updated
-// issue + resolved id and an outcome. Per-item messages are printed to stderr
-// and the batch continues (matching the direct path).
-func undeferProxiedOne(ctx context.Context, id string) (*types.Issue, string, undeferProxiedOutcome) {
+// issue + resolved id and an outcome. Per-item messages route through report
+// (beads-2j2og), which buffers them under --json for JSON-stderr flush by the
+// caller — mirroring the direct path's reportUndeferItemError (cmd/bd/undefer.go).
+func undeferProxiedOne(ctx context.Context, id string, report func(format string, a ...interface{})) (*types.Issue, string, undeferProxiedOutcome) {
 	uw, err := uowProvider.NewUOW(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening unit of work for %s: %v\n", id, err)
+		report("Error opening unit of work for %s: %v", id, err)
 		return nil, "", undeferErr
 	}
 	defer uw.Close(ctx)
@@ -95,14 +127,14 @@ func undeferProxiedOne(ctx context.Context, id string) (*types.Issue, string, un
 	issueUC := uw.IssueUseCase()
 	issue, err := issueUC.GetIssue(ctx, id)
 	if err != nil || issue == nil {
-		fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+		report("Error resolving %s: %v", id, err)
 		return nil, "", undeferErr
 	}
 	fullID := issue.ID
 	if issue.Status != types.StatusDeferred {
 		// beads-36iz0: not-deferred is an idempotent advisory no-op, not an
 		// error — mirrors reopen's already-open path (beads-hxc2). rc stays 0.
-		fmt.Fprintf(os.Stderr, "%s is not deferred (status: %s)\n", fullID, string(issue.Status))
+		report("%s is not deferred (status: %s)", fullID, string(issue.Status))
 		return nil, "", undeferNoop
 	}
 
@@ -112,12 +144,12 @@ func undeferProxiedOne(ctx context.Context, id string) (*types.Issue, string, un
 	}}
 	updated, err := issueUC.ApplyUpdate(ctx, fullID, spec, actor)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error undeferring %s: %v\n", fullID, err)
+		report("Error undeferring %s: %v", fullID, err)
 		return nil, "", undeferErr
 	}
 
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: undefer %s", fullID)); err != nil && !isDoltNothingToCommit(err) {
-		fmt.Fprintf(os.Stderr, "Error committing undefer %s: %v\n", fullID, err)
+		report("Error committing undefer %s: %v", fullID, err)
 		return nil, "", undeferErr
 	}
 	return updated, fullID, undeferOK
