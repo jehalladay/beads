@@ -136,6 +136,13 @@ func runGateCreateProxied(ctx context.Context, blocksID, gateType, reason, await
 		timeout = parsed
 	}
 
+	// beads-ds9tr (proxied twin): enforce the gate-type invariants before create,
+	// matching the direct path — reject an unknown type or a timer without a
+	// timeout so gate check can't be handed an unresolvable gate.
+	if verr := validateGateCreate(gateType, timeoutStr); verr != nil {
+		return HandleErrorRespectJSON("%v", verr)
+	}
+
 	title := fmt.Sprintf("Gate: %s", gateType)
 	if awaitID != "" {
 		title = fmt.Sprintf("Gate: %s %s", gateType, awaitID)

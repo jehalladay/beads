@@ -308,6 +308,15 @@ Examples:
 			timeout = parsed
 		}
 
+		// beads-ds9tr: validate the gate-type INVARIANTS before create, not just
+		// the timeout format. Otherwise create accepts an unresolvable gate (a
+		// timer with no timeout, or an unknown type gate check silently skips),
+		// stranding the blocked issue out of bd ready forever with manual close
+		// the only escape.
+		if verr := validateGateCreate(gateType, timeoutStr); verr != nil {
+			return HandleErrorRespectJSON("%v", verr)
+		}
+
 		title := fmt.Sprintf("Gate: %s", gateType)
 		if awaitID != "" {
 			title = fmt.Sprintf("Gate: %s %s", gateType, awaitID)
@@ -1038,4 +1047,26 @@ func init() {
 	gateCmd.AddCommand(gateAddWaiterCmd)
 
 	rootCmd.AddCommand(gateCmd)
+}
+
+// validateGateCreate enforces the gate-type invariants at create time so
+// `bd gate create` cannot mint a gate that `bd gate check` can never resolve
+// (beads-ds9tr). It validates the documented type set (human|timer|gh:run|gh:pr)
+// and that a timer gate carries a --timeout, mirroring the create-time timeout
+// FORMAT check that already exists. Without this, an unknown --type is silently
+// skipped by gate check (default: continue) and a timer without --timeout errors
+// on every check ("no timeout set") — either way the blocked issue is stranded
+// out of bd ready forever, with manual close the only escape.
+func validateGateCreate(gateType, timeoutStr string) error {
+	switch gateType {
+	case "human", "gh:run", "gh:pr":
+		// resolvable types; no timeout required
+	case "timer":
+		if timeoutStr == "" {
+			return fmt.Errorf("gate type \"timer\" requires --timeout (an infinite timer can never resolve and would block the issue forever)")
+		}
+	default:
+		return fmt.Errorf("invalid gate type %q (must be one of: human, timer, gh:run, gh:pr)", gateType)
+	}
+	return nil
 }
