@@ -53,6 +53,27 @@ Examples:
 		if !gcDryRun {
 			CheckReadonly("gc")
 		}
+
+		// beads-0lunb: gc is not in noDbCommands, but in proxied-server mode
+		// main.go's PersistentPreRun returns before newDoltStore, leaving the
+		// global `store` nil — so every store.SearchIssues/DeleteIssue/Log and the
+		// UnwrapStore(store).(GarbageCollector).DoltGC call below would nil-panic
+		// (the aocj proxied-routing class, same shape as branch/merge-slot).
+		// Disposition is fail-loud for the WHOLE command (eng_4's routing call,
+		// endorsed): gc is documented as lifecycle GC "for standalone Beads
+		// databases", its headline value (DoltGC space-reclaim) is an inherently
+		// local Dolt maintenance op with no proxied/UOW equivalent (like flatten's
+		// GC leg), and its decay phase is a bulk destructive DeleteIssue — routing
+		// that at a hub-connected crew would be a footgun, not a feature. So mirror
+		// bd branch / merge-slot: refuse cleanly in proxied mode, and defensively
+		// lazy-init the store on the direct path.
+		if usesProxiedServer() {
+			return HandleErrorRespectJSON("gc requires direct/embedded Dolt access and is not available in proxied-server mode")
+		}
+		if err := ensureStoreActive(); err != nil {
+			return HandleErrorWithHintRespectJSON(err.Error(), diagHint())
+		}
+
 		ctx := rootCtx
 		start := time.Now()
 
