@@ -199,7 +199,12 @@ func runMolDistill(cmd *cobra.Command, args []string) error {
 		FormulaName: formulaName,
 		FormulaPath: outputPath,
 		Steps:       countSteps(f.Steps),
-		Variables:   getVarNames(replacements),
+		// beads-m503p: report the vars actually DECLARED in the formula (post
+		// orphan-pruning), not the raw --var replacements — otherwise --json
+		// would advertise a var subgraphToFormula just dropped for having no
+		// emitted placeholder. formulaVarNames keeps the 036h non-nil-slice
+		// contract (variables:[] not null when empty).
+		Variables: formulaVarNames(f.Vars),
 	}
 
 	if jsonOutput {
@@ -261,6 +266,18 @@ func getVarNames(replacements map[string]string) []string {
 	// and is emitted via outputJSON; downstream only ranges/lens it.
 	names := []string{}
 	for _, varName := range replacements {
+		names = append(names, varName)
+	}
+	return names
+}
+
+// formulaVarNames extracts the variable names actually DECLARED in a formula's
+// Vars (beads-m503p) — the post-orphan-pruning set, so `bd mol distill --json`
+// reports the vars the emitted formula truly carries, not the raw --var inputs.
+// Returns a non-nil empty slice (036h contract: variables:[] not null).
+func formulaVarNames(vars map[string]*formula.VarDef) []string {
+	names := []string{}
+	for varName := range vars {
 		names = append(names, varName)
 	}
 	return names
@@ -338,9 +355,37 @@ func subgraphToFormula(subgraph *TemplateSubgraph, name string, replacements map
 		steps = append(steps, step)
 	}
 
-	// Build variable definitions
+	formulaDescription := applyReplacements(subgraph.Root.Description)
+
+	// Build variable definitions — declare a var ONLY if its {{placeholder}}
+	// actually landed in an emitted field (a step Title/Description or the
+	// formula Description). beads-m503p: the validation scope
+	// (collectSubgraphText, which INCLUDES the root epic Title) diverges from
+	// the emit scope (the root becomes the formula itself, so its Title is
+	// carried into NO emitted field). A --var value living only in the root
+	// title matched at validation but its substitution landed nowhere, yielding
+	// a declared-required var referenced by zero placeholders — orphaned and
+	// unusable (pour keys required vars off {{...}} occurrences in the emitted
+	// text, not the VarDefs flag, so it silently ignored the orphan too). Only
+	// emitting vars whose placeholder is actually present keeps the declared
+	// vars and the pour-side {{}} scan consistent and drops the orphan.
+	var emitted strings.Builder
+	for _, step := range steps {
+		emitted.WriteString(step.Title)
+		emitted.WriteByte(' ')
+		emitted.WriteString(step.Description)
+		emitted.WriteByte(' ')
+	}
+	emitted.WriteString(formulaDescription)
+	emittedText := emitted.String()
+
 	vars := make(map[string]*formula.VarDef)
 	for _, varName := range replacements {
+		if !strings.Contains(emittedText, "{{"+varName+"}}") {
+			// Orphaned: value matched only in a non-emitted field (e.g. the
+			// root Title). Don't declare a required var nothing references.
+			continue
+		}
 		vars[varName] = &formula.VarDef{
 			Description: fmt.Sprintf("Value for %s", varName),
 			Required:    true,
@@ -349,7 +394,7 @@ func subgraphToFormula(subgraph *TemplateSubgraph, name string, replacements map
 
 	return &formula.Formula{
 		Formula:     name,
-		Description: applyReplacements(subgraph.Root.Description),
+		Description: formulaDescription,
 		Version:     1,
 		Type:        formula.TypeWorkflow,
 		Vars:        vars,
