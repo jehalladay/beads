@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -120,6 +121,19 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 					result.Close()
 					continue
 				}
+				// Superseded-issue guard (beads-8sjb3, DISCOVERY.md BUG-22):
+				// `bd duplicate old --with new` adds a `supersedes` edge (old→new)
+				// and closes old. Reopening old leaves that edge, producing the
+				// contradictory "open but superseded by new" state — and since
+				// `supersedes` is non-blocking, old reappears in `bd ready` as
+				// actionable work. Refuse unless --force, mirroring the
+				// closed-epic-parent guard above; the hint points at un-supersede.
+				if supersedes := supersededByTargets(ctx, issueStore, fullID); len(supersedes) > 0 {
+					reportReopenItemError("cannot reopen %s: it is superseded by %v; remove the supersedes link (bd dep remove %s <target> --type supersedes) or use --force to override", fullID, supersedes, fullID)
+					hasError = true
+					result.Close()
+					continue
+				}
 			}
 
 			if err := issueStore.ReopenIssue(ctx, fullID, reason, actor); err != nil {
@@ -205,7 +219,27 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 
 func init() {
 	reopenCmd.Flags().StringP("reason", "r", "", "Reason for reopening")
-	reopenCmd.Flags().Bool("force", false, "Override the closed-epic-parent guard (reopening a child whose parent epic is closed); recreates a closed-epic-with-open-child state")
+	reopenCmd.Flags().Bool("force", false, "Override the reopen guards: the closed-epic-parent guard (recreates a closed-epic-with-open-child state) and the superseded-issue guard (reopens an issue that is superseded by another)")
 	reopenCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(reopenCmd)
+}
+
+// supersededByTargets returns the IDs of issues that supersede issueID (i.e.
+// issueID has an outgoing `supersedes` dep, created by `bd duplicate <old>
+// --with <new>`). Used by the reopen guard (beads-8sjb3) to refuse reopening a
+// superseded issue into the contradictory "open but superseded" state. Mirrors
+// closedEpicParents (close.go): GetDependenciesWithMetadata returns issueID's
+// OUTGOING deps, each carrying the target Issue + DependencyType.
+func supersededByTargets(ctx context.Context, s storage.DoltStorage, issueID string) []string {
+	deps, err := s.GetDependenciesWithMetadata(ctx, issueID)
+	if err != nil {
+		return nil
+	}
+	var targets []string
+	for _, dep := range deps {
+		if dep.DependencyType == types.DepSupersedes {
+			targets = append(targets, dep.ID)
+		}
+	}
+	return targets
 }
