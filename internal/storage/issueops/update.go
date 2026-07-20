@@ -405,6 +405,12 @@ func updateIssueInTx(ctx context.Context, tx DBTX, id string, updates map[string
 			if err != nil {
 				return nil, fmt.Errorf("invalid metadata: %w", err)
 			}
+			// beads-nc639: reject control chars that would make the stored Dolt
+			// JSON column unreadable (bricks list/show/export repo-wide), matching
+			// the create/import path's PrepareIssueForInsert guard.
+			if err := storage.ValidateMetadataReadable(json.RawMessage(metadataStr)); err != nil {
+				return nil, fmt.Errorf("invalid metadata: %w", err)
+			}
 			args = append(args, metadataStr)
 		} else {
 			args = append(args, value)

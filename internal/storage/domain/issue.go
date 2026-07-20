@@ -573,6 +573,11 @@ func (u *issueUseCaseImpl) update(ctx context.Context, id string, updates map[st
 		if err != nil {
 			return fmt.Errorf("update: invalid metadata: %w", err)
 		}
+		// beads-nc639: reject readback-breaking control chars, matching the
+		// create/import + direct-update guards (shared-write-path parity).
+		if err := storage.ValidateMetadataReadable(json.RawMessage(metaStr)); err != nil {
+			return fmt.Errorf("update: %w", err)
+		}
 		if err := storage.ValidateMetadataIfConfigured(json.RawMessage(metaStr)); err != nil {
 			return fmt.Errorf("update: %w", err)
 		}
@@ -865,6 +870,14 @@ func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams,
 	// direct path rejects (the beads-boundary-validation-shared-write-path class).
 	// No-op unless a metadata schema is configured (metadata_validation=warn|error).
 	if len(issue.Metadata) > 0 {
+		// beads-nc639: reject control chars that would make the stored Dolt JSON
+		// column unreadable (bricks list/show/export repo-wide). The direct path
+		// applies this via PrepareIssueForInsert → ValidateMetadataReadable; the
+		// proxied/domain create reaches this use-case instead, so mirror it here
+		// (the shared-write-path parity class, like ValidateMetadataIfConfigured).
+		if err := storage.ValidateMetadataReadable(issue.Metadata); err != nil {
+			return CreateIssueResult{}, fmt.Errorf("create: %w", err)
+		}
 		if err := storage.ValidateMetadataIfConfigured(issue.Metadata); err != nil {
 			return CreateIssueResult{}, fmt.Errorf("create: %w", err)
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -203,6 +204,74 @@ func ValidateMetadataSchema(metadata json.RawMessage, schema MetadataSchemaConfi
 	}
 
 	return errs
+}
+
+// ValidateMetadataReadable rejects a metadata blob whose decoded JSON contains
+// raw control characters (U+0000–U+001F or U+007F) in any string key or value.
+//
+// The metadata column is a Dolt JSON type. A control byte reaches it when an
+// untrusted source (a `bd import` JSONL line, or `bd create/update --metadata`)
+// carries the char as a \uXXXX escape: json.Unmarshal decodes it to a real
+// control byte, which Dolt stores but then RE-EMITS raw on readback — and a raw
+// control char inside a JSON string is invalid JSON, so beads' own re-parse of
+// the column fails with "rows: error processing column N: invalid character".
+// A single such row bricks EVERY subsequent bd list/show/export repo-wide
+// (data-availability defect / import-DoS, beads-nc639). Reject at write instead
+// of silently persisting an unreadable row.
+//
+// An empty/absent blob is fine. A blob that isn't valid JSON at all is left to
+// the caller's other validators (metadataIsJSONObject etc.) — this checks only
+// the readback-safety of an otherwise-decodable blob.
+func ValidateMetadataReadable(metadata json.RawMessage) error {
+	if len(metadata) == 0 {
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(metadata, &v); err != nil {
+		// Not decodable JSON — not this validator's concern.
+		return nil
+	}
+	if bad, ok := findControlCharString(v); ok {
+		return fmt.Errorf("metadata contains a control character (0x%02x) that would make the stored JSON unreadable; strip control characters before storing", bad)
+	}
+	return nil
+}
+
+// findControlCharString walks a decoded JSON value and returns the first
+// control character found in any string key or value.
+func findControlCharString(v any) (rune, bool) {
+	switch val := v.(type) {
+	case string:
+		for _, r := range val {
+			if r < 0x20 || r == 0x7f {
+				return r, true
+			}
+		}
+	case map[string]any:
+		// Deterministic order so the reported char is stable across runs.
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			for _, r := range k {
+				if r < 0x20 || r == 0x7f {
+					return r, true
+				}
+			}
+			if bad, ok := findControlCharString(val[k]); ok {
+				return bad, true
+			}
+		}
+	case []any:
+		for _, item := range val {
+			if bad, ok := findControlCharString(item); ok {
+				return bad, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // validMetadataKeyRe validates metadata key names for use in JSON path expressions.

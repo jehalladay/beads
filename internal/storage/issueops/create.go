@@ -416,6 +416,13 @@ func issueLabel(issue *types.Issue) string {
 
 // PrepareIssueForInsert normalizes timestamps, validates, and computes the content hash.
 func PrepareIssueForInsert(issue *types.Issue, customStatuses, customTypes []string) error {
+	// Reject control characters in metadata before storing — a raw control byte
+	// in the Dolt JSON column re-emits unreadable JSON on readback and bricks
+	// every subsequent list/show/export repo-wide (beads-nc639). Unconditional,
+	// independent of the schema-mode gate below.
+	if err := storage.ValidateMetadataReadable(issue.Metadata); err != nil {
+		return fmt.Errorf("metadata validation failed for issue %s: %w", issueLabel(issue), err)
+	}
 	if err := ValidateMetadataIfConfigured(issue.Metadata); err != nil {
 		return fmt.Errorf("metadata validation failed for issue %s: %w", issueLabel(issue), err)
 	}
