@@ -27,6 +27,7 @@ func runReopenProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 		FatalErrorRespectJSON("no issue ID provided")
 	}
 	reason, _ := cmd.Flags().GetString("reason")
+	reason = normalizeReopenReason(reason)
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	// --force overrides the closed-epic-parent guard on the proxied path exactly
 	// as it does on the direct path (beads-6fns).
