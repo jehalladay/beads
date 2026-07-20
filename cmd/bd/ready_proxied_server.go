@@ -189,7 +189,7 @@ func runReadyProxiedList(ctx context.Context, uw uow.UnitOfWork, in readyInput) 
 			fmt.Printf("%d. [%s] [%s] %s: %s\n", i+1,
 				ui.RenderPriority(issue.Priority),
 				ui.RenderType(string(issue.IssueType)),
-				ui.RenderID(issue.ID), issue.Title)
+				ui.RenderID(issue.ID), displayTitle(issue.Title))
 			if issue.EstimatedMinutes != nil {
 				fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
 			}

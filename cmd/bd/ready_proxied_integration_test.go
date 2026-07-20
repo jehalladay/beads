@@ -71,6 +71,39 @@ func TestProxiedServerReady(t *testing.T) {
 	requireProxiedServerEnv(t)
 	bd := buildEmbeddedBD(t)
 
+	// beads-l71h3 (7n9y proxied twin): the proxied-server plain-verbose ready
+	// list printed issue.Title RAW via fmt.Printf, bypassing displayTitle — the
+	// proxied twin of the direct ready.go:445 sink (already displayTitle'd). A
+	// title can carry OSC/CSI terminal-control escapes from an untrusted source
+	// (import does no control-char validation), so this view injected control
+	// sequences onto its line. The fix routes the title through displayTitle
+	// (SanitizeForTerminal), matching the direct path. Display-only — the stored
+	// title stays raw. The escape is planted directly into storage via SQL
+	// (create/normalize may strip it; the sink must sanitize a raw-stored title),
+	// mirroring the include_deferred defer_until plant above.
+	t.Run("plain_verbose_title_sanitized_l71h3", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "rtsan")
+		const osc = "\x1b]0;pwned\x07"
+		issue := bdProxiedCreate(t, bd, p.dir, "clean seed", "--label", "rtsan-only")
+		db := openProxiedDB(t, p)
+		if _, err := db.ExecContext(context.Background(),
+			"UPDATE issues SET title = ? WHERE id = ?", "Danger"+osc+"Title", issue.ID); err != nil {
+			t.Fatalf("plant raw-escape title: %v", err)
+		}
+		// --plain forces the usePlain verbose loop (ready_proxied_server.go:189)
+		// that this fix touches; the default (pretty) path uses displayReadyList,
+		// which already sanitizes. Same as the direct assignee sink test that
+		// drives `bd ready --plain`.
+		stdout, _ := bdProxiedReadyCapture(t, bd, p, "--plain", "--label", "rtsan-only")
+		assertNoRawEscapes(t, stdout, "proxied plain-verbose ready title")
+		if !strings.Contains(stdout, "DangerTitle") {
+			t.Errorf("expected sanitized title 'DangerTitle' in output, got: %q", stdout)
+		}
+		if !strings.Contains(stdout, issue.ID) {
+			t.Errorf("expected issue id %s in ready output: %q", issue.ID, stdout)
+		}
+	})
+
 	t.Run("json_round_trips_issue_with_counts", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "rdj1")
 		issue := bdProxiedCreate(t, bd, p.dir, "Zero deps", "--label", "rdj1-only")
