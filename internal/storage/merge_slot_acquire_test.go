@@ -266,4 +266,42 @@ func TestMergeSlotReleaseImpl(t *testing.T) {
 			t.Error("slot should be released regardless of holder when holder arg is empty")
 		}
 	})
+
+	// beads-zhhlh: a legit holder's SECOND (idempotent) release must succeed,
+	// not fail with "slot held by , not <holder>". The first release clears
+	// meta.Holder to "" and sets status Open; if the ownership guard ran before
+	// the idempotent check, the second release would see meta.Holder("") !=
+	// holder and reject. The idempotent check must precede the ownership guard.
+	// (Regression exposed by beads-vmwzn making release resolve holder=actor.)
+	t.Run("legit holder second release is idempotent (zhhlh)", func(t *testing.T) {
+		f := newTxSlotStore()
+		putSlot(f, types.StatusInProgress, "alice")
+		// First release by the legit holder: succeeds, clears the holder.
+		if err := MergeSlotReleaseImpl(ctx, f, "alice", "actor"); err != nil {
+			t.Fatalf("first release by holder: %v", err)
+		}
+		if got := readSlotMeta(f).Holder; got != "" {
+			t.Fatalf("holder should be cleared after first release, got %q", got)
+		}
+		// Second release by the SAME legit holder must succeed idempotently.
+		if err := MergeSlotReleaseImpl(ctx, f, "alice", "actor"); err != nil {
+			t.Fatalf("second (idempotent) release by legit holder must succeed, got %v", err)
+		}
+		if f.issues["bd-merge-slot"].Status != types.StatusOpen {
+			t.Error("slot should remain open after idempotent second release")
+		}
+	})
+
+	// beads-zhhlh guardrail: the reorder must NOT weaken vmwzn's ownership
+	// guard — a wrong actor releasing a slot that is still HELD by someone else
+	// must still be rejected (status != Open, so the idempotent check does not
+	// short-circuit and the ownership guard fires).
+	t.Run("wrong holder on held slot still rejected after reorder (zhhlh)", func(t *testing.T) {
+		f := newTxSlotStore()
+		putSlot(f, types.StatusInProgress, "alice")
+		if err := MergeSlotReleaseImpl(ctx, f, "bob", "actor"); err == nil ||
+			!strings.Contains(err.Error(), "held by alice, not bob") {
+			t.Fatalf("wrong-holder release of a held slot must be rejected, got %v", err)
+		}
+	})
 }

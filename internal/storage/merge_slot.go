@@ -191,13 +191,20 @@ func MergeSlotReleaseImpl(ctx context.Context, s Storage, holder, actor string) 
 
 			meta := parseSlotMeta(slot)
 
-			if holder != "" && meta.Holder != holder {
-				return fmt.Errorf("slot held by %s, not %s", meta.Holder, holder)
-			}
-
+			// Idempotent-release check MUST precede the ownership guard
+			// (beads-zhhlh): an already-released slot has status Open and a
+			// cleared meta.Holder (""), so checking ownership first would make
+			// a legit holder's 2nd release fail with "slot held by , not
+			// <actor>". A released slot is unowned, so there is no ownership to
+			// enforce — succeed idempotently. Ownership (beads-vmwzn) is still
+			// enforced below for an ACTIVE slot (status != Open, holder set).
 			if slot.Status == types.StatusOpen {
 				// Already released; idempotent.
 				return nil
+			}
+
+			if holder != "" && meta.Holder != holder {
+				return fmt.Errorf("slot held by %s, not %s", meta.Holder, holder)
 			}
 
 			// Clear the holder. Also prune the released holder from the
