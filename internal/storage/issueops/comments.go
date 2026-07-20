@@ -135,7 +135,13 @@ func ImportIssueCommentInTx(ctx context.Context, tx DBTX, issueID, author, text 
 		return nil, fmt.Errorf("issue %s not found", issueID)
 	}
 
-	createdAt = createdAt.UTC()
+	// beads-yreoa: the created_at column is DATETIME (second precision), so the
+	// stored value is second-truncated. Truncate the in-memory value to match
+	// BEFORE the INSERT and the return, so the add-emit created_at equals every
+	// subsequent read (read-after-write parity). Without this, the returned
+	// *types.Comment carries the caller's nanosecond time.Now(), which no later
+	// read can reproduce.
+	createdAt = createdAt.UTC().Truncate(time.Second)
 	id := uuid.Must(uuid.NewV7()).String()
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (id, issue_id, author, text, created_at)
