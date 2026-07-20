@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -281,10 +282,7 @@ func runWispCreateCore(cmd *cobra.Command, args []string) error {
 		if rootOnly && len(issuesToShow) > 0 {
 			issuesToShow = issuesToShow[:1]
 		}
-		for _, issue := range issuesToShow {
-			newTitle := substituteVariables(issue.Title, vars)
-			fmt.Printf("  - %s (from %s)\n", newTitle, issue.ID)
-		}
+		printWispCreateDryRunPreview(os.Stdout, issuesToShow, vars)
 		return nil
 	}
 
@@ -315,6 +313,21 @@ func runWispCreateCore(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  bd mol squash %s         # Condense to digest (promotes to persistent)\n", result.NewEpicID)
 	fmt.Printf("  bd mol burn %s           # Discard without creating digest\n", result.NewEpicID)
 	return nil
+}
+
+// printWispCreateDryRunPreview renders the per-issue preview lines for
+// `bd wisp create --dry-run`. Each title is variable-substituted then routed
+// through displayTitle (ui.SanitizeForTerminal): the proto issue.Title can
+// come from an untrusted import (bd import does no control-char validation)
+// and substituteVariables is a plain regex replacement that preserves control
+// chars, so an OSC/CSI escape would otherwise leak into the terminal here
+// (beads-w8zm4, 7n9y twin). Display-only — the spawned wisp's stored title is
+// untouched.
+func printWispCreateDryRunPreview(w io.Writer, issues []*types.Issue, vars map[string]string) {
+	for _, issue := range issues {
+		newTitle := substituteVariables(issue.Title, vars)
+		fmt.Fprintf(w, "  - %s (from %s)\n", displayTitle(newTitle), issue.ID)
+	}
 }
 
 // isProtoIssue checks if an issue is a proto (has the template label)
