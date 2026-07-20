@@ -120,7 +120,13 @@ Examples:
 			fmt.Printf("%s %s\n",
 				ui.RenderMuted(entry.CommitHash[:8]),
 				ui.RenderMuted(entry.CommitDate.Format("2006-01-02 15:04:05")))
-			fmt.Printf("  Author: %s\n", entry.Committer)
+			// Label the value "Committer:" not "Author:" — entry.Committer is the
+			// Dolt sql-server committer, which in a shared-bare-repo town is a
+			// shared/poisoned identity (town-wide "attribute by author, never
+			// committer" hazard). The --json path honestly names this field
+			// "committer"; the human line must agree so it stops misattributing
+			// every historical revision to the shared committer (beads-lf39).
+			fmt.Printf("  Committer: %s\n", entry.Committer)
 
 			if entry.Issue != nil {
 				statusIcon := ui.GetStatusIcon(string(entry.Issue.Status))
