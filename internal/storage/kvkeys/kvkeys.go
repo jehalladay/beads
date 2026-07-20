@@ -39,6 +39,7 @@ const (
 var ReservedJSONKeys = map[string]struct{}{
 	"schema_version": {}, // always injected by wrapWithSchemaVersion
 	"data":           {}, // the payload wrapper injected under BD_JSON_ENVELOPE=1
+	"error":          {}, // the failure-envelope key emitted by the --json error contract (jsonStdoutError); a user "error" key makes a SUCCESSFUL flat list byte-identical to a failure envelope, inverting the documented `if "error" in resp` failure check (beads-vwo6q, twin of z0fe)
 }
 
 // IsReservedJSONKey reports whether key collides with a reserved --json

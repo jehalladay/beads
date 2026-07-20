@@ -23,12 +23,14 @@ func TestMemoryConfigKeyPrefix(t *testing.T) {
 // user memory/kv key equal to one would be silently clobbered on a flat --json
 // read. This is the single source of truth the write-guards + config warn share.
 func TestIsReservedJSONKey(t *testing.T) {
-	for _, k := range []string{"schema_version", "data"} {
+	// "error" is the failure-envelope key: a user "error" key makes a SUCCESSFUL
+	// flat --json list byte-identical to a failure envelope (beads-vwo6q).
+	for _, k := range []string{"schema_version", "data", "error"} {
 		if !IsReservedJSONKey(k) {
 			t.Errorf("IsReservedJSONKey(%q) = false, want true (reserved --json envelope key)", k)
 		}
 	}
-	for _, k := range []string{"", "schema", "version", "data_", "mydata", "feature_flag", "SCHEMA_VERSION"} {
+	for _, k := range []string{"", "schema", "version", "data_", "mydata", "feature_flag", "SCHEMA_VERSION", "errors", "error_", "myerror", "ERROR"} {
 		if IsReservedJSONKey(k) {
 			t.Errorf("IsReservedJSONKey(%q) = true, want false (not a reserved key)", k)
 		}

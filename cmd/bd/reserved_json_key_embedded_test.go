@@ -26,7 +26,10 @@ func TestReservedJSONKeyRejectedAtWrite(t *testing.T) {
 	bd := buildEmbeddedBD(t)
 	dir, _, _ := bdInit(t, bd, "--prefix", "rk")
 
-	reserved := []string{"schema_version", "data"}
+	// "error" (beads-vwo6q) is the failure-envelope key: accepting a user "error"
+	// key makes a SUCCESSFUL `bd kv list --json` byte-identical to a failure
+	// envelope, inverting the documented `if "error" in resp` failure check.
+	reserved := []string{"schema_version", "data", "error"}
 
 	// (a) bd kv set <reserved> → error + rc!=0.
 	for _, key := range reserved {
