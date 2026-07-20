@@ -277,12 +277,12 @@ func runLinearSync(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			if held, ok := err.(*linear.SyncLockHeldError); ok {
 				if held.Info != nil {
-					return HandleError("another bd linear sync is already running (PID %d, started %s)",
+					return HandleErrorRespectJSON("another bd linear sync is already running (PID %d, started %s)",
 						held.Info.PID, held.Info.Started.Format("15:04:05"))
 				}
-				return HandleError("another bd linear sync is already running")
+				return HandleErrorRespectJSON("another bd linear sync is already running")
 			}
-			return HandleError("acquiring sync lock: %v", err)
+			return HandleErrorRespectJSON("acquiring sync lock: %v", err)
 		}
 		defer func() {
 			if err := syncLock.Release(); err != nil {
