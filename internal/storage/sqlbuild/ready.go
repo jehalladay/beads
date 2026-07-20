@@ -265,6 +265,20 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 			args = append(args, label)
 		}
 	}
+	// LabelsAny (OR-set): the issue must carry AT LEAST ONE of these labels. The
+	// flag (`bd ready --label-any`) plumbs into WorkFilter.LabelsAny and the wisp
+	// sub-path honors it (readyWorkWispIssueFilter), but BuildReadyWorkWhere — the
+	// MAIN ready-issues query — never consumed it, so `--label-any` silently
+	// returned every ready issue (only wisps were narrowed). Case-insensitive to
+	// match the filter.Labels clause above (beads-mz2p; v5i7/hqp8 parity class).
+	if labelsAny := CompactNonEmptyStrings(filter.LabelsAny); len(labelsAny) > 0 {
+		placeholders := make([]string, len(labelsAny))
+		for i, label := range labelsAny {
+			placeholders[i] = "LOWER(?)"
+			args = append(args, label)
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) IN (%s))", tables.Labels, strings.Join(placeholders, ", ")))
+	}
 	// Identity/registration labels (gt:agent/role/rig) are excluded from ready
 	// work by default (beads-wqs), merged with any caller-supplied ExcludeLabels.
 	// An explicit `filter.Labels` request for an identity label wins over the
