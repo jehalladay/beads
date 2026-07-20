@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/spf13/pflag"
 )
 
 // Fast CLI tests converted from scripttest suite
@@ -1616,4 +1618,69 @@ func TestCLI_WispGCJSONShapeStable(t *testing.T) {
 			t.Fatalf("real-delete: cleaned_ids %v does not include the deleted wisp %s", cleaned, wispID)
 		}
 	})
+}
+
+// TestCLI_TemplateFilterMatchesLabelProto is the end-to-end teeth for
+// beads-82fas: a canonically label-defined proto (`bd create --label template`,
+// is_template=NULL) must be returned by `bd query "template=true"` (the
+// positive filter path, IsTemplate=true) and EXCLUDED from the default
+// `bd list` (which sets IsTemplate=false), matching what `bd show` now renders.
+// Before the fix the filter/query keyed off the is_template column alone, so
+// query template=true returned [] and the default list leaked the proto.
+func TestCLI_TemplateFilterMatchesLabelProto(t *testing.T) {
+	dir := setupCLITestDB(t)
+
+	// Label-defined proto (is_template column stays NULL) and a plain issue.
+	// --ephemeral=false is explicit: cobra bool-flag state bleeds across
+	// runBDInProcess calls on the shared rootCmd (a prior --ephemeral create in
+	// another test in this binary would otherwise make these wisps, which the
+	// default list excludes). Never happens in a real bd process.
+	out := runBDInProcess(t, dir, "create", "Label proto", "--label", "template", "-t", "epic", "-p", "2", "--ephemeral=false", "--json")
+	var proto map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &proto); err != nil {
+		t.Fatalf("parse create: %v\n%s", err, out)
+	}
+	protoID, _ := proto["id"].(string)
+	if protoID == "" {
+		t.Fatalf("empty proto id:\n%s", out)
+	}
+	// Clear the create --label StringSlice: cobra accumulates it across
+	// runBDInProcess calls on the shared rootCmd, so the prior --label template
+	// would leak onto this "plain" create and silently make it a proto too
+	// (never happens in a real bd process; each run is fresh).
+	if f := createCmd.Flags().Lookup("label"); f != nil {
+		if sv, ok := f.Value.(pflag.SliceValue); ok {
+			_ = sv.Replace([]string{})
+		}
+		f.Changed = false
+	}
+	plainOut := runBDInProcess(t, dir, "create", "Plain issue", "-t", "task", "-p", "2", "--ephemeral=false", "--json")
+	var plain map[string]interface{}
+	if err := json.Unmarshal([]byte(plainOut), &plain); err != nil {
+		t.Fatalf("parse create plain: %v\n%s", err, plainOut)
+	}
+	plainID, _ := plain["id"].(string)
+
+	// containsID reports whether the --json list/query output surfaces id.
+	containsID := func(out, id string) bool { return strings.Contains(out, "\""+id+"\"") }
+
+	// Positive filter path (IsTemplate=true): must return the label proto.
+	queryOut := runBDInProcess(t, dir, "query", "template=true", "--json")
+	if !containsID(queryOut, protoID) {
+		t.Errorf("query template=true should return the label-defined proto %s (beads-82fas):\n%s", protoID, queryOut)
+	}
+	if containsID(queryOut, plainID) {
+		t.Errorf("query template=true must not return the plain issue %s:\n%s", plainID, queryOut)
+	}
+
+	// Negative filter path (default list sets IsTemplate=false): must EXCLUDE
+	// the label proto (was leaked before the false-branch label leg) and keep
+	// the plain issue.
+	listOut := runBDInProcess(t, dir, "list", "--json")
+	if containsID(listOut, protoID) {
+		t.Errorf("default bd list must exclude the label-defined proto %s (beads-82fas false-branch):\n%s", protoID, listOut)
+	}
+	if !containsID(listOut, plainID) {
+		t.Errorf("default bd list should include the plain issue %s:\n%s", plainID, listOut)
+	}
 }

@@ -242,10 +242,20 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 		}
 	}
 	if filter.IsTemplate != nil {
+		// Template-ness is the is_template COLUMN OR the template LABEL: the
+		// column is written only by formula-cooked protos (cook.go/molecules.go),
+		// while a canonical `bd create --label template` proto has
+		// is_template=NULL. Keying off the column alone dropped every
+		// label-defined proto from `list --template` and `query template=true`,
+		// even though bd show now renders it as a template. Match the label via
+		// the labels-table EXISTS subquery (same join `filter.Labels` uses), so
+		// the two representations agree. Same column-vs-label root as beads-v8ck8
+		// (mol bond dispatch) and beads-pcttr (show/export display); beads-82fas.
+		labelProto := fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) = 'template')", tables.Labels)
 		if *filter.IsTemplate {
-			whereClauses = append(whereClauses, "is_template = 1")
+			whereClauses = append(whereClauses, fmt.Sprintf("(is_template = 1 OR %s)", labelProto))
 		} else {
-			whereClauses = append(whereClauses, "(is_template = 0 OR is_template IS NULL)")
+			whereClauses = append(whereClauses, fmt.Sprintf("((is_template = 0 OR is_template IS NULL) AND NOT %s)", labelProto))
 		}
 	}
 

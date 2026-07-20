@@ -505,6 +505,39 @@ func TestScalarPredicates(t *testing.T) {
 	}
 }
 
+// TestTemplatePredicateColumnOrLabel proves `query template=true` matches a
+// proto identified by the template LABEL (is_template=NULL, label=template), not
+// only one carrying the is_template COLUMN (formula-cooked). The in-memory
+// predicate keyed off i.IsTemplate alone, dropping label-defined protos even
+// though bd show renders them as templates (beads-82fas; same root as
+// beads-v8ck8/pcttr).
+func TestTemplatePredicateColumnOrLabel(t *testing.T) {
+	labelProto := &types.Issue{ID: "bd-lp", Labels: []string{"template"}} // is_template=false
+	columnProto := &types.Issue{ID: "bd-cp", IsTemplate: true}
+	plain := &types.Issue{ID: "bd-plain", Labels: []string{"backend"}}
+
+	tests := []struct {
+		name  string
+		query string
+		issue *types.Issue
+		want  bool
+	}{
+		{"label proto matches template=true", "template=true", labelProto, true},
+		{"column proto still matches template=true", "template=true", columnProto, true},
+		{"plain issue misses template=true", "template=true", plain, false},
+		{"label proto excluded by template=false", "template=false", labelProto, false},
+		{"plain issue matches template=false", "template=false", plain, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pred := buildPred(t, tt.query)
+			if got := pred(tt.issue); got != tt.want {
+				t.Errorf("pred(%q) on %s = %v, want %v", tt.query, tt.issue.ID, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestNonePredicateBranches covers the isNone branches of assignee/label/desc
 // predicates against an issue that has no assignee/labels/description.
 func TestNonePredicateBranches(t *testing.T) {

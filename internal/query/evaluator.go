@@ -888,7 +888,12 @@ func (e *Evaluator) buildComparisonPredicate(comp *ComparisonNode) (func(*types.
 	case "ephemeral":
 		return e.buildBoolPredicate(comp, func(i *types.Issue) bool { return i.Ephemeral })
 	case "template":
-		return e.buildBoolPredicate(comp, func(i *types.Issue) bool { return i.IsTemplate })
+		// Template-ness is the is_template COLUMN OR the template LABEL: the
+		// column is written only by formula-cooked protos, while a canonical
+		// `bd create --label template` proto has is_template=NULL. Mirror the
+		// SQL filter's label leg (sqlbuild) and bd show's display so all
+		// surfaces agree. Same root as beads-v8ck8/pcttr; beads-82fas.
+		return e.buildBoolPredicate(comp, isTemplateIssue)
 	case "has_metadata_key":
 		return e.buildHasMetadataKeyPredicate(comp)
 	case "mol_type":
@@ -1023,6 +1028,24 @@ func (e *Evaluator) buildOwnerPredicate(comp *ComparisonNode) (func(*types.Issue
 	default:
 		return nil, fmt.Errorf("owner does not support %s operator", comp.Op.String())
 	}
+}
+
+// isTemplateIssue reports whether an issue is a proto — via the is_template
+// COLUMN or the template LABEL. The column is written only by formula-cooked
+// protos (cook.go/molecules.go); a canonical `bd create --label template` proto
+// has is_template=NULL, so a column-only check misses it. Mirrors the SQL
+// filter's label leg (sqlbuild/filter.go IsTemplate clause) and bd show's
+// display so `query template=true` agrees with them. beads-82fas.
+func isTemplateIssue(i *types.Issue) bool {
+	if i.IsTemplate {
+		return true
+	}
+	for _, l := range i.Labels {
+		if strings.EqualFold(l, "template") {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Evaluator) buildLabelPredicate(comp *ComparisonNode) (func(*types.Issue) bool, error) {
