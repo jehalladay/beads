@@ -1090,14 +1090,28 @@ var depRemoveCmd = &cobra.Command{
 			return HandleErrorRespectJSON("checking dependency %s -> %s: %v", fullFromID, fullToID, lookupErr)
 		}
 		edgeExists := false
+		var edgeType types.DependencyType
 		for _, rec := range records {
 			if rec != nil && rec.DependsOnID == fullToID {
 				edgeExists = true
+				edgeType = rec.Type
 				break
 			}
 		}
 		if !edgeExists {
 			return HandleErrorRespectJSON("no dependency to remove: %s does not depend on %s", fullFromID, fullToID)
+		}
+
+		// beads-xlplm: a relates-to link is BIDIRECTIONAL (bd relate writes both
+		// id1->id2 and id2->id1 atomically; bd unrelate removes both). A
+		// single-edge `dep remove` would delete only one direction, orphaning
+		// the reciprocal (asymmetric — the remove-side sibling of ri535). Refuse
+		// and redirect to the invariant's owner rather than let dep-remove
+		// silently break it. (dep-remove stays the directional-types primitive;
+		// unrelate owns bidirectional relates-to — no duplicated bidirectional
+		// logic to drift, the PM ruling behind this.)
+		if edgeType == types.DepRelatesTo {
+			return HandleErrorRespectJSON("cannot remove a relates-to link with 'dep remove' (it is bidirectional); use 'bd dep unrelate %s %s'", fullFromID, fullToID)
 		}
 
 		if err := fromStore.RemoveDependency(ctx, fullFromID, fullToID, actor); err != nil {

@@ -353,14 +353,23 @@ func runDepRemoveProxiedServer(_ *cobra.Command, ctx context.Context, args []str
 		FatalErrorRespectJSON("checking dependency %s -> %s: %v", fromID, toID, lookupErr)
 	}
 	edgeExists := false
+	var edgeType types.DependencyType
 	for _, rec := range depRecords[fromID] {
 		if rec != nil && rec.DependsOnID == toID {
 			edgeExists = true
+			edgeType = rec.Type
 			break
 		}
 	}
 	if !edgeExists {
 		FatalErrorRespectJSON("no dependency to remove: %s does not depend on %s", fromID, toID)
+	}
+
+	// beads-xlplm: refuse a relates-to link (bidirectional — use bd unrelate),
+	// mirroring the direct path. A single-edge remove would orphan the
+	// reciprocal (remove-side sibling of ri535).
+	if edgeType == types.DepRelatesTo {
+		FatalErrorRespectJSON("cannot remove a relates-to link with 'dep remove' (it is bidirectional); use 'bd dep unrelate %s %s'", fromID, toID)
 	}
 
 	if err := uw.DependencyUseCase().RemoveDependency(ctx, fromID, toID, actor); err != nil {
