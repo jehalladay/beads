@@ -139,12 +139,20 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 		// Scoped to parentID=="" (a user-supplied --id, not a parent-minted
 		// child id). Refuse unless --force; use `bd update` to modify.
 		if !in.force && in.parentID == "" {
+			// beads-65cgh: these existence-check error legs must honor the
+			// --json contract (JSON error object on stdout), matching the
+			// adjacent 'already exists' leg (FatalErrorWithHintRespectJSON) and
+			// the closed-epic leg below (FatalErrorRespectJSON). Plain
+			// FatalError writes the JSON error to stderr and leaves stdout empty
+			// under --json, breaking a `bd create ... --json` consumer if a UOW
+			// open or the existence-check DB lookup fails mid-create (same
+			// FatalError->RespectJSON class as beads-v5yu).
 			if uowProvider == nil {
-				FatalError("proxied-server UOW provider not initialized")
+				FatalErrorRespectJSON("proxied-server UOW provider not initialized")
 			}
 			checkUW, err := uowProvider.NewUOW(ctx)
 			if err != nil {
-				FatalError("open unit of work: %v", err)
+				FatalErrorRespectJSON("open unit of work: %v", err)
 			}
 			_, gerr := checkUW.IssueUseCase().GetIssue(ctx, in.explicitID)
 			checkUW.Close(ctx)
@@ -158,7 +166,7 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 				// issueRepo.Get); storage.ErrNotFound is checked too for
 				// defensiveness against a future store swap. Any OTHER error is
 				// a real lookup failure that must not be swallowed into a create.
-				FatalError("failed to check whether %s already exists: %v", in.explicitID, gerr)
+				FatalErrorRespectJSON("failed to check whether %s already exists: %v", in.explicitID, gerr)
 			}
 		}
 	}
@@ -169,12 +177,15 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 	// wide open on both create paths. New issues are created open, so any
 	// closed-epic parent is a violation. Overridable with --force.
 	if !in.force && in.parentID != "" {
+		// beads-65cgh: honor the --json contract on these existence-check error
+		// legs too (see the parentID=="" block above); the closed-epic leg
+		// below already uses FatalErrorRespectJSON.
 		if uowProvider == nil {
-			FatalError("proxied-server UOW provider not initialized")
+			FatalErrorRespectJSON("proxied-server UOW provider not initialized")
 		}
 		checkUW, err := uowProvider.NewUOW(ctx)
 		if err != nil {
-			FatalError("open unit of work: %v", err)
+			FatalErrorRespectJSON("open unit of work: %v", err)
 		}
 		parent, gerr := checkUW.IssueUseCase().GetIssue(ctx, in.parentID)
 		checkUW.Close(ctx)
