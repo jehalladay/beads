@@ -2,9 +2,6 @@ package dolt
 
 import (
 	"context"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -64,81 +61,16 @@ func TestPullWithAutoResolve_BranchTrackingFallback(t *testing.T) {
 	}
 }
 
-func TestPullWithAutoResolve_BranchTrackingFallbackSuccess(t *testing.T) {
-	remoteDir := filepath.Join(t.TempDir(), "remote")
-	if err := os.MkdirAll(remoteDir, 0o755); err != nil {
-		t.Fatalf("mkdir remote: %v", err)
-	}
-	runDoltCmdForBranchTracking(t, remoteDir, "init")
-	runDoltSQLForBranchTracking(t, remoteDir, `
-		CREATE TABLE branch_tracking_marker (id INT PRIMARY KEY, value TEXT);
-		INSERT INTO branch_tracking_marker VALUES (1, 'from remote');
-		CALL DOLT_ADD('.');
-		CALL DOLT_COMMIT('-Am', 'init: branch tracking marker');
-	`)
-
-	store, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	ctx, cancel := testContext(t)
-	defer cancel()
-
-	remoteURL := "file://" + remoteDir
-	if _, err := store.db.ExecContext(ctx, "CALL DOLT_REMOTE('add', 'origin', ?)", remoteURL); err != nil {
-		t.Fatalf("add remote via DOLT_REMOTE: %v", err)
-	}
-	store.remote = "origin"
-	store.branch = "main"
-
-	tx, txErr := store.db.BeginTx(ctx, nil)
-	if txErr != nil {
-		t.Fatalf("begin tx for raw pull check: %v", txErr)
-	}
-	_, rawPullErr := tx.ExecContext(ctx, "CALL DOLT_PULL(?, ?)", "origin", "main")
-	_ = tx.Rollback()
-	if rawPullErr == nil {
-		t.Skip("DOLT_PULL succeeded without tracking config; fallback path is not needed for this Dolt version")
-	}
-	if !isBranchTrackingError(rawPullErr) {
-		t.Skipf("DOLT_PULL failed with an unexpected non-tracking error: %v", rawPullErr)
-	}
-
-	if err := store.pullWithAutoResolve(ctx, "origin", "CALL DOLT_PULL(?, ?)", "origin", "main"); err != nil {
-		t.Fatalf("pullWithAutoResolve fallback failed: %v", err)
-	}
-
-	var got string
-	if err := store.db.QueryRowContext(ctx, "SELECT value FROM branch_tracking_marker WHERE id = 1").Scan(&got); err != nil {
-		t.Fatalf("query pulled marker: %v", err)
-	}
-	if got != "from remote" {
-		t.Fatalf("pulled marker value = %q, want %q", got, "from remote")
-	}
-}
-
-func runDoltCmdForBranchTracking(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	// These tests shell out to the real `dolt` CLI to build a remote fixture.
-	// On hosts without dolt on PATH (e.g. the beads refinery host, where dolt
-	// lives only on the /fsx cluster nodes) skip rather than fail (beads-bal).
-	if _, err := exec.LookPath("dolt"); err != nil {
-		t.Skip("dolt CLI not in PATH; skipping branch-tracking fallback test")
-	}
-	cmd := exec.Command("dolt", args...)
-	cmd.Dir = dir
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("dolt %v failed in %s: %v\n%s", args, dir, err, output)
-	}
-}
-
-func runDoltSQLForBranchTracking(t *testing.T, dir, query string) {
-	t.Helper()
-	if _, err := exec.LookPath("dolt"); err != nil {
-		t.Skip("dolt CLI not in PATH; skipping branch-tracking fallback test")
-	}
-	cmd := exec.Command("dolt", "sql", "-q", query)
-	cmd.Dir = dir
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("dolt sql failed in %s: %v\nQuery: %.200s...\n%s", dir, err, query, output)
-	}
-}
+// The end-to-end success path — DOLT_PULL fails with the GH#3144 tracking
+// error, and pullWithAutoResolve recovers via DOLT_FETCH + DOLT_MERGE — is
+// covered by TestPullWithAutoResolve_BranchTrackingSuccess in the
+// //go:build integration file (pull_branch_tracking_integration_test.go).
+// That test stands up a real remotesapi Dolt server the local store can fetch
+// from. The earlier default-build TestPullWithAutoResolve_BranchTrackingFallbackSuccess
+// tried to reproduce it against the shared test server using a host file://
+// remote, but the shared server (a Docker container in the default gate)
+// cannot reach the host temp dir, so DOLT_FETCH always failed with
+// `branch "main" not found on remote` and the test skipped 100% of the time —
+// env-dependent dead coverage (beads-ellm) that still paid the shared-container
+// + test-semaphore setup cost on every gate run. It is removed here; the
+// integration twin is the authoritative success-path test.
