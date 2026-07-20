@@ -232,6 +232,23 @@ func runGateResolveProxied(ctx context.Context, gateID, reason string) error {
 		return HandleErrorRespectJSON("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
 	}
 
+	// Already-resolved guard (beads-q2iw4), proxied twin of gateResolveCmd's
+	// (cmd/bd/gate.go): resolving an already-closed gate is a no-op — the UOW
+	// CloseIssue discards the 2nd close, so a fresh "✓ Gate resolved" + new reason
+	// contradicts the stored state. Emit the idempotent no-op notice reflecting
+	// the ORIGINAL stored reason. No commit is fired (nothing changed).
+	if gateAlreadyResolved(issue) {
+		if jsonOutput {
+			return outputJSON(map[string]interface{}{
+				"id":       gateID,
+				"resolved": true,
+				"reason":   issue.CloseReason,
+			})
+		}
+		fmt.Printf("%s Gate %s was already resolved (no change)\n", ui.RenderInfoIcon(), gateID)
+		return nil
+	}
+
 	if _, err := uw.IssueUseCase().CloseIssue(ctx, gateID, domain.CloseIssueParams{Reason: reason}, actor); err != nil {
 		return HandleErrorRespectJSON("closing gate: %v", err)
 	}

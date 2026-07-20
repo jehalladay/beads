@@ -442,6 +442,16 @@ This is similar to 'bd show' but validates that the issue is a gate.`,
 	},
 }
 
+// gateAlreadyResolved reports whether a gate issue is already resolved (closed),
+// so `bd gate resolve` can emit an idempotent no-op notice instead of a false
+// "✓ Gate resolved" that contradicts the stored state (beads-q2iw4). Shared by
+// the direct (gateResolveCmd) and proxied (runGateResolveProxied) entry points
+// so both stay in lockstep — the store's CloseIssue is a no-op on an
+// already-closed issue, so a fresh success claim (with the NEW reason) is a lie.
+func gateAlreadyResolved(issue *types.Issue) bool {
+	return issue != nil && issue.Status == types.StatusClosed
+}
+
 // gateResolveCmd manually closes a gate
 var gateResolveCmd = &cobra.Command{
 	Use:   "resolve <gate-id>",
@@ -482,6 +492,26 @@ Use --reason to provide context for why the gate was resolved.`,
 
 		if issue.IssueType != "gate" {
 			return HandleErrorRespectJSON("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
+		}
+
+		// Already-resolved guard (beads-q2iw4): resolving a gate that is already
+		// closed is a no-op — store.CloseIssue silently discards the 2nd close, so
+		// printing a fresh "✓ Gate resolved" + the NEW reason (or emitting
+		// {"resolved":true,"reason":<new>}) makes the OUTPUT CONTRADICT the STORED
+		// STATE. Report it as an informational no-op that reflects the ORIGINAL
+		// stored reason instead — mirrors bd close's guard (close.go:145,
+		// beads-dr3: "JSON reflects state, not a claimed transition") and gate's
+		// own add-waiter idempotent notice. rc stays 0 (idempotent resolve is fine).
+		if gateAlreadyResolved(issue) {
+			if jsonOutput {
+				return outputJSON(map[string]interface{}{
+					"id":       gateID,
+					"resolved": true,
+					"reason":   issue.CloseReason,
+				})
+			}
+			fmt.Printf("%s Gate %s was already resolved (no change)\n", ui.RenderInfoIcon(), gateID)
+			return nil
 		}
 
 		if err := store.CloseIssue(ctx, gateID, reason, actor, ""); err != nil {
