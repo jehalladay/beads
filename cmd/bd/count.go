@@ -19,11 +19,14 @@ var countCmd = &cobra.Command{
 	Short:   "Count issues matching filters",
 	Long: `Count issues matching the specified filters.
 
-By default, returns the total count of issues matching the filters.
-Use --by-* flags to group counts by different attributes.
+By default, counts OPEN issues only (excluding closed/pinned), matching
+'bd list's open-scope default. Use --status all for the true total, or
+--status <state> for a specific state. Use --by-* flags to group counts by
+different attributes.
 
 Examples:
-  bd count                          # Count all issues
+  bd count                          # Count OPEN issues (default excludes closed/pinned)
+  bd count --status all             # Count ALL issues (including closed)
   bd count --status open            # Count open issues
   bd count --by-status              # Group count by status
   bd count --by-priority            # Group count by priority
