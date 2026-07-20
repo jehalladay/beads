@@ -388,7 +388,18 @@ func parseListTimeFlag(cmd *cobra.Command, name string) (*time.Time, error) {
 	if s == "" {
 		return nil, nil
 	}
-	t, err := parseTimeFlag(s)
+	// beads-ci44e: an upper-bound flag (--X-before) parses a bare date to
+	// END-of-day so the bound includes the whole day on real-timestamp columns;
+	// lower bounds keep start-of-day. The flag name suffix carries the direction.
+	var (
+		t   time.Time
+		err error
+	)
+	if strings.HasSuffix(name, "-before") {
+		t, err = parseUpperBoundTimeFlag(s)
+	} else {
+		t, err = parseTimeFlag(s)
+	}
 	if err != nil {
 		return nil, HandleErrorRespectJSON("parsing --%s: %v", name, err)
 	}

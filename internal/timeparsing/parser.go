@@ -237,3 +237,37 @@ func ParseRelativeTime(s string, now time.Time) (time.Time, error) {
 
 	return time.Time{}, fmt.Errorf("cannot parse time expression: %q (examples: +6h, tomorrow, 2025-01-15)", s)
 }
+
+// IsDateOnly reports whether s is a bare YYYY-MM-DD date (no time component).
+// Such a string parses to midnight start-of-day, which is the correct LOWER
+// bound but the WRONG upper bound for real-timestamp columns (see
+// ParseUpperBoundTime / beads-ci44e).
+func IsDateOnly(s string) bool {
+	return dateOnlyRe.MatchString(s)
+}
+
+// ParseUpperBoundTime parses s like ParseRelativeTime, but when s is a bare
+// date (YYYY-MM-DD) it snaps the result to the END of that day
+// (23:59:59.999999999) so a `--X-before D` upper bound INCLUDES everything that
+// happened during day D. A date-only string parses to MIDNIGHT start-of-day, so
+// used verbatim as an upper bound it excludes every real intra-day timestamp on
+// day D — the beads-ci44e bug: `--created-before 2026-07-20` dropped a row
+// created 2026-07-20T06:15Z, and an equal-bounds `--created-after D
+// --created-before D` was always empty on real-timestamp columns
+// (created_at/updated_at/closed_at). This matches how a human reads "before
+// July 20" and how the relative form `--created-before today` already behaves.
+// Explicit timestamps (RFC3339, date+time, relative +6h) are used as-is — only
+// the bare-date case is snapped, so a caller asking for a precise instant still
+// gets it.
+func ParseUpperBoundTime(s string, now time.Time) (time.Time, error) {
+	t, err := ParseRelativeTime(s, now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if IsDateOnly(s) {
+		// End of the same calendar day, preserving the parse location.
+		y, m, d := t.Date()
+		t = time.Date(y, m, d, 23, 59, 59, int(time.Second-time.Nanosecond), t.Location())
+	}
+	return t, nil
+}

@@ -383,7 +383,8 @@ func parseSearchParams(cmd *cobra.Command, cfg listFilterConfig) (searchParams, 
 		filter.CreatedAfter = &t
 	}
 	if createdBefore != "" {
-		t, err := parseTimeFlag(createdBefore)
+		// beads-ci44e: bare-date upper bound -> end-of-day (include the whole day).
+		t, err := parseUpperBoundTimeFlag(createdBefore)
 		if err != nil {
 			return searchParams{}, HandleErrorRespectJSON("parsing --created-before: %v", err)
 		}
@@ -397,7 +398,8 @@ func parseSearchParams(cmd *cobra.Command, cfg listFilterConfig) (searchParams, 
 		filter.UpdatedAfter = &t
 	}
 	if updatedBefore != "" {
-		t, err := parseTimeFlag(updatedBefore)
+		// beads-ci44e: bare-date upper bound -> end-of-day.
+		t, err := parseUpperBoundTimeFlag(updatedBefore)
 		if err != nil {
 			return searchParams{}, HandleErrorRespectJSON("parsing --updated-before: %v", err)
 		}
@@ -411,7 +413,8 @@ func parseSearchParams(cmd *cobra.Command, cfg listFilterConfig) (searchParams, 
 		filter.ClosedAfter = &t
 	}
 	if closedBefore != "" {
-		t, err := parseTimeFlag(closedBefore)
+		// beads-ci44e: bare-date upper bound -> end-of-day.
+		t, err := parseUpperBoundTimeFlag(closedBefore)
 		if err != nil {
 			return searchParams{}, HandleErrorRespectJSON("parsing --closed-before: %v", err)
 		}

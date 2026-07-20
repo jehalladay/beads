@@ -260,7 +260,8 @@ Examples:
 			filter.CreatedAfter = &t
 		}
 		if createdBefore != "" {
-			t, err := parseTimeFlag(createdBefore)
+			// beads-ci44e: bare-date upper bound -> end-of-day (include the whole day).
+			t, err := parseUpperBoundTimeFlag(createdBefore)
 			if err != nil {
 				return HandleErrorRespectJSON("parsing --created-before: %v", err)
 			}
@@ -274,7 +275,8 @@ Examples:
 			filter.UpdatedAfter = &t
 		}
 		if updatedBefore != "" {
-			t, err := parseTimeFlag(updatedBefore)
+			// beads-ci44e: bare-date upper bound -> end-of-day.
+			t, err := parseUpperBoundTimeFlag(updatedBefore)
 			if err != nil {
 				return HandleErrorRespectJSON("parsing --updated-before: %v", err)
 			}
@@ -288,7 +290,8 @@ Examples:
 			filter.ClosedAfter = &t
 		}
 		if closedBefore != "" {
-			t, err := parseTimeFlag(closedBefore)
+			// beads-ci44e: bare-date upper bound -> end-of-day.
+			t, err := parseUpperBoundTimeFlag(closedBefore)
 			if err != nil {
 				return HandleErrorRespectJSON("parsing --closed-before: %v", err)
 			}

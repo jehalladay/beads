@@ -16,8 +16,22 @@ import (
 // parseTimeFlag parses time strings using the layered time parsing architecture.
 // Supports compact durations (+6h, -1d), natural language (tomorrow, next monday),
 // and absolute formats (2006-01-02, RFC3339).
+//
+// It is the LOWER-bound / point parser: a bare date (YYYY-MM-DD) becomes MIDNIGHT
+// start-of-day. Use parseUpperBoundTimeFlag for a `--X-before` upper bound so a
+// bare date includes the whole day (beads-ci44e).
 func parseTimeFlag(s string) (time.Time, error) {
 	return timeparsing.ParseRelativeTime(s, time.Now())
+}
+
+// parseUpperBoundTimeFlag parses a `--X-before` upper-bound flag value. A bare
+// date (YYYY-MM-DD) is snapped to END-of-day so the bound includes everything
+// that happened DURING that day on real-timestamp columns
+// (created_at/updated_at/closed_at); explicit timestamps are used as-is
+// (beads-ci44e). Callers must use this ONLY for upper bounds; lower bounds keep
+// parseTimeFlag's start-of-day semantics.
+func parseUpperBoundTimeFlag(s string) (time.Time, error) {
+	return timeparsing.ParseUpperBoundTime(s, time.Now())
 }
 
 // pinIndicator returns a pushpin emoji prefix for pinned issues

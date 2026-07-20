@@ -93,3 +93,57 @@ func TestParseRelativeTime_InvalidDateOnlyRejected(t *testing.T) {
 		t.Errorf("ParseRelativeTime(2025-01-15) = %v, want 2025-01-15", got)
 	}
 }
+
+// TestParseUpperBoundTime_DateOnlySnapsToEndOfDay pins beads-ci44e: a bare date
+// (YYYY-MM-DD) used as a `--X-before` upper bound must snap to END-of-day so the
+// bound includes everything that happened DURING that day on real-timestamp
+// columns (created_at/updated_at/closed_at). ParseRelativeTime alone parses a
+// bare date to MIDNIGHT start-of-day, which as an upper bound excludes every
+// intra-day timestamp — the exact bug (a row created 2026-07-20T06:15Z was
+// dropped by --created-before 2026-07-20, and an equal-bounds point query was
+// always empty). Explicit timestamps must be used verbatim (NOT snapped).
+func TestParseUpperBoundTime_DateOnlySnapsToEndOfDay(t *testing.T) {
+	now := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+
+	// Bare date -> end of that calendar day.
+	got, err := ParseUpperBoundTime("2026-07-20", now)
+	if err != nil {
+		t.Fatalf("ParseUpperBoundTime(2026-07-20) error: %v", err)
+	}
+	y, m, d := got.Date()
+	if y != 2026 || m != time.July || d != 20 {
+		t.Errorf("date = %04d-%02d-%02d, want 2026-07-20", y, m, d)
+	}
+	if got.Hour() != 23 || got.Minute() != 59 || got.Second() != 59 {
+		t.Errorf("upper bound = %v, want end-of-day 23:59:59 (beads-ci44e)", got)
+	}
+	// An intra-day timestamp on the same day must sit at/under the upper bound
+	// (the original bug: it sat ABOVE the midnight bound and was excluded).
+	intraDay := time.Date(2026, 7, 20, 6, 15, 27, 0, got.Location())
+	if intraDay.After(got) {
+		t.Errorf("intra-day %v is After upper bound %v — same-day row would be dropped (beads-ci44e)", intraDay, got)
+	}
+	// And a start-of-day lower bound for the same date must sit at/under it, so
+	// an equal-bounds point query (--after D --before D) is non-empty.
+	startOfDay := time.Date(2026, 7, 20, 0, 0, 0, 0, got.Location())
+	if startOfDay.After(got) {
+		t.Errorf("start-of-day %v After upper bound %v — equal-bounds point query would be empty (beads-ci44e)", startOfDay, got)
+	}
+
+	// Explicit RFC3339 timestamp is used AS-IS (not snapped to end-of-day).
+	exact, err := ParseUpperBoundTime("2026-07-20T06:15:00Z", now)
+	if err != nil {
+		t.Fatalf("ParseUpperBoundTime(RFC3339) error: %v", err)
+	}
+	if exact.Hour() != 6 || exact.Minute() != 15 {
+		t.Errorf("explicit timestamp = %v, want 06:15 preserved (only bare dates snap)", exact)
+	}
+
+	// IsDateOnly discriminates the two forms the snap keys on.
+	if !IsDateOnly("2026-07-20") {
+		t.Error("IsDateOnly(2026-07-20) = false, want true")
+	}
+	if IsDateOnly("2026-07-20T06:15:00Z") {
+		t.Error("IsDateOnly(RFC3339) = true, want false")
+	}
+}

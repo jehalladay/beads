@@ -263,7 +263,18 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 		{"due-before", &in.filter.DueBefore},
 	} {
 		if s, _ := cmd.Flags().GetString(tf.name); s != "" {
-			t, err := parseTimeFlag(s)
+			// beads-ci44e: an upper-bound flag (--X-before) snaps a bare date to
+			// END-of-day (parity with the direct ready + bd list paths); lower
+			// bounds keep start-of-day.
+			var (
+				t   time.Time
+				err error
+			)
+			if strings.HasSuffix(tf.name, "-before") {
+				t, err = parseUpperBoundTimeFlag(s)
+			} else {
+				t, err = parseTimeFlag(s)
+			}
 			if err != nil {
 				FatalErrorRespectJSON("parsing --%s: %v", tf.name, err)
 			}
