@@ -1464,20 +1464,21 @@ func (s SortPolicy) IsValid() bool {
 
 // WorkFilter is used to filter ready work queries
 type WorkFilter struct {
-	Status        Status
-	Type          string // Filter by issue type (task, bug, feature, epic, merge-request, etc.)
-	Priority      *int
-	PriorityMin   *int // beads-cseh3: minimum priority (inclusive); parity with IssueFilter/bd list
-	PriorityMax   *int // beads-cseh3: maximum priority (inclusive); parity with IssueFilter/bd list
-	Assignee      *string
-	Unassigned    bool     // Filter for issues with no assignee
-	Labels        []string // AND semantics: issue must have ALL these labels
-	LabelsAny     []string // OR semantics: issue must have AT LEAST ONE of these labels
-	ExcludeLabels []string // Exclusion: issue must NOT have ANY of these labels
-	LabelPattern  string   // Glob pattern for label matching (e.g., "tech-*")
-	LabelRegex    string   // Regex pattern for label matching (e.g., "tech-(debt|legacy)")
-	Limit         int
-	SortPolicy    SortPolicy
+	Status              Status
+	Type                string // Filter by issue type (task, bug, feature, epic, merge-request, etc.)
+	Priority            *int
+	PriorityMin         *int   // beads-cseh3: minimum priority (inclusive); parity with IssueFilter/bd list
+	PriorityMax         *int   // beads-cseh3: maximum priority (inclusive); parity with IssueFilter/bd list
+	DescriptionContains string // beads-6na9a: case-insensitive substring match on description; parity with IssueFilter/bd list
+	Assignee            *string
+	Unassigned          bool     // Filter for issues with no assignee
+	Labels              []string // AND semantics: issue must have ALL these labels
+	LabelsAny           []string // OR semantics: issue must have AT LEAST ONE of these labels
+	ExcludeLabels       []string // Exclusion: issue must NOT have ANY of these labels
+	LabelPattern        string   // Glob pattern for label matching (e.g., "tech-*")
+	LabelRegex          string   // Regex pattern for label matching (e.g., "tech-(debt|legacy)")
+	Limit               int
+	SortPolicy          SortPolicy
 
 	// Parent filtering: filter to descendants of a bead/epic (recursive)
 	ParentID *string // Show all descendants of this issue

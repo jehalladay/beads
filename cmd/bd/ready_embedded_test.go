@@ -400,6 +400,68 @@ func TestEmbeddedReadyPriorityRange(t *testing.T) {
 	})
 }
 
+// TestEmbeddedReadyDescContains is the teeth for beads-6na9a: bd ready must
+// support --desc-contains (case-insensitive substring on description) with the
+// same semantics as bd list. Uses distinct titles + shared description
+// substring to prove it matches on description, not title.
+func TestEmbeddedReadyDescContains(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "dc")
+
+	// Titles deliberately do NOT contain "kafka"; only the descriptions do,
+	// so a match proves description-substring filtering (not title).
+	bdCreate(t, bd, dir, "Alpha task", "--type", "task", "-d", "Investigate the KAFKA consumer lag")
+	bdCreate(t, bd, dir, "Beta task", "--type", "task", "-d", "Tune kafka partition rebalancing")
+	bdCreate(t, bd, dir, "Gamma task", "--type", "task", "-d", "Refresh the sprocket dashboard")
+
+	readyTitles := func(t *testing.T, args ...string) []string {
+		t.Helper()
+		full := append([]string{"ready", "--json", "--limit", "0"}, args...)
+		cmd := exec.Command(bd, full...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("bd ready %v failed: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
+		}
+		var ready []types.IssueWithCounts
+		if jerr := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &ready); jerr != nil {
+			t.Fatalf("parse ready JSON (%v): %v\n%s", args, jerr, stdout.String())
+		}
+		titles := make([]string, 0, len(ready))
+		for _, r := range ready {
+			titles = append(titles, r.Title)
+		}
+		return titles
+	}
+
+	t.Run("case_insensitive_description_substring_matches_both", func(t *testing.T) {
+		got := readyTitles(t, "--desc-contains", "kafka")
+		if len(got) != 2 {
+			t.Fatalf("--desc-contains kafka: got %d titles, want 2: %v", len(got), got)
+		}
+	})
+
+	t.Run("nonmatching_substring_returns_empty", func(t *testing.T) {
+		got := readyTitles(t, "--desc-contains", "nonesuch")
+		if len(got) != 0 {
+			t.Errorf("--desc-contains nonesuch: expected no matches, got %v", got)
+		}
+	})
+
+	t.Run("distinct_substring_matches_one", func(t *testing.T) {
+		got := readyTitles(t, "--desc-contains", "sprocket")
+		if len(got) != 1 || got[0] != "Gamma task" {
+			t.Errorf("--desc-contains sprocket: got %v, want [Gamma task]", got)
+		}
+	})
+}
+
 func TestEmbeddedReadyConcurrent(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")

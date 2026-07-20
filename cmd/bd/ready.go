@@ -211,6 +211,11 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			}
 			filter.PriorityMax = &p
 		}
+		// beads-6na9a: case-insensitive description substring, parity with bd list.
+		// The proxied path parses the same in gatherReadyInput.
+		if dc, _ := cmd.Flags().GetString("desc-contains"); dc != "" {
+			filter.DescriptionContains = dc
+		}
 		if assignee != "" && !unassigned {
 			filter.Assignee = &assignee
 		}
@@ -847,6 +852,7 @@ func init() {
 	// P0-P4 and REJECT out-of-range/non-numeric values (mirrors count.go).
 	readyCmd.Flags().String("priority-min", "", "Filter by minimum priority (inclusive, 0-4 or P0-P4)")
 	readyCmd.Flags().String("priority-max", "", "Filter by maximum priority (inclusive, 0-4 or P0-P4)")
+	readyCmd.Flags().String("desc-contains", "", "Filter by description substring (case-insensitive)")
 	readyCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
 	readyCmd.Flags().BoolP("unassigned", "u", false, "Show only unassigned issues")
 	readyCmd.Flags().StringP("sort", "s", "priority", "Sort policy: priority (default), hybrid, oldest")

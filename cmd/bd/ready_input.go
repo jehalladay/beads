@@ -192,6 +192,12 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 		}
 		in.filter.PriorityMax = &p
 	}
+	// beads-6na9a: --desc-contains on the PROXIED ready path too (parity with
+	// bd list). Shared input path, so setting it here covers runReadyProxiedServer;
+	// the direct ready.go RunE sets it separately (same split as --priority).
+	if dc, _ := cmd.Flags().GetString("desc-contains"); dc != "" {
+		in.filter.DescriptionContains = dc
+	}
 	if assignee != "" && !unassigned {
 		in.filter.Assignee = &assignee
 	}
