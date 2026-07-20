@@ -54,10 +54,15 @@ func issueRowValuesStarted(id, title string) []driver.Value {
 // issues select + label hydration for a fresh open issue with the given
 // started_at behavior.
 func expectClaimLookup(mock sqlmock.Sqlmock, id string, started bool) {
-	// IsActiveWispInTx probe: not a wisp.
+	// IsActiveWispInTx probe: not a wisp. A genuine miss is sql.ErrNoRows
+	// (NOT an arbitrary error): beads-byr7 made IsActiveWispInTx distinguish
+	// a clean miss (ErrNoRows → false, no further probe) from a transient
+	// error (→ disambiguate against the issues table), so the probe must
+	// return ErrNoRows here to model "not a wisp" without triggering the
+	// disambiguation path.
 	mock.ExpectQuery(`SELECT 1 FROM wisps WHERE id = \? LIMIT 1`).
 		WithArgs(id).
-		WillReturnError(errors.New("not a wisp"))
+		WillReturnError(sql.ErrNoRows)
 	// GetIssueInTx: select from issues table.
 	vals := issueRowValues(id, "t")
 	if started {

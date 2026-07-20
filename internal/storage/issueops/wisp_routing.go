@@ -16,10 +16,75 @@ import (
 // For hot-path callers that partition a batch of IDs by wisp status,
 // prefer WispIDSetInTx + partitionByWispSet to amortize the per-ID
 // query cost into a single scoped query over the batch.
+//
+// beads-byr7: a bare `err == nil` on the wisps probe used to swallow ALL
+// errors as "not a wisp", so a TRANSIENT (non-ErrNoRows) probe error on a
+// row that IS a wisp misrouted every write-routing caller to the `issues`
+// table (UPDATE issues WHERE id=<wisp> → 0 rows = silent lost update, event
+// to the wrong table). GetIssueInTx masked it because it checks BOTH tables.
+// The bool signature is preserved (32 write-routing callers depend on it);
+// the fix is contained here: on a transient wisp-probe error, disambiguate
+// against the `issues` table (the same both-table logic GetIssueInTx uses)
+// so the returned bool is correct — found in issues → false (it's an issue),
+// clean-negative in issues → true (fail toward wisp; the wisp probe is the
+// one that errored, and a spurious wisp route is a harmless 0-row update if
+// the row is genuinely gone). Only a DOUBLE probe failure falls back to the
+// old false (no worse than the prior behavior).
 func IsActiveWispInTx(ctx context.Context, tx DBTX, id string) bool {
+	isWisp, err := isActiveWispInTxE(ctx, tx, id)
+	if err == nil {
+		return isWisp
+	}
+	// Wisp probe hit a transient error — disambiguate via the issues table
+	// rather than silently assuming "not a wisp".
+	inIssues, issuesErr := idExistsInTableInTx(ctx, tx, "issues", id)
+	if issuesErr != nil {
+		// Both probes failed: cannot determine table. Preserve the historical
+		// bool (false) — no worse than the pre-byr7 behavior.
+		return false
+	}
+	// If the row is a permanent issue, it is not a wisp. Otherwise the wisp
+	// probe was the failing one, so route as a wisp.
+	return !inIssues
+}
+
+// isActiveWispInTxE is IsActiveWispInTx with an explicit error, modelling the
+// three cases the sibling probes already distinguish: a matching row → true;
+// no row / missing wisps table → false; any other (transient) error → the
+// error propagated so the caller can disambiguate instead of guessing false.
+func isActiveWispInTxE(ctx context.Context, tx DBTX, id string) (bool, error) {
 	var exists int
 	err := tx.QueryRowContext(ctx, "SELECT 1 FROM wisps WHERE id = ? LIMIT 1", id).Scan(&exists)
-	return err == nil
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case isTableNotExistError(err):
+		return false, nil
+	default:
+		return false, err
+	}
+}
+
+// idExistsInTableInTx reports whether id has a row in the named table, treating
+// a missing table as "absent" (mirrors the ErrNoRows/table-not-exist handling
+// of the sibling probes). Any other error propagates.
+//
+//nolint:gosec // G201: table is a hardcoded literal supplied by callers in this file.
+func idExistsInTableInTx(ctx context.Context, tx DBTX, table, id string) (bool, error) {
+	var exists int
+	err := tx.QueryRowContext(ctx, fmt.Sprintf("SELECT 1 FROM %s WHERE id = ? LIMIT 1", table), id).Scan(&exists)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case isTableNotExistError(err):
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 func wispsTableEmptyOrMissingInTx(ctx context.Context, tx DBTX) (bool, error) {
