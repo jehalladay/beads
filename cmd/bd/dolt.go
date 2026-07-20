@@ -471,6 +471,20 @@ The remote must already exist (see 'bd dolt remote add').`,
 	},
 }
 
+// doltCommitMessageProvided reports whether an explicit `bd dolt commit
+// -m/--message` value should be used as the Dolt commit message. A
+// whitespace-only value is treated as NOT provided (beads-by9ph), so it falls
+// through to the auto-generated "bd: dolt commit (auto-commit) by <actor>"
+// default rather than overwriting it with blank whitespace. A plain `msg == ""`
+// check lets `bd dolt commit -m "   "` through (it is `!= ""`), discarding the
+// actor provenance default. Matches the sibling auto-commit path
+// (dolt_autocommit.go: strings.TrimSpace(msg) == "") and the override-a-default
+// whitespace class (mol squash --summary beads-au0rt, todo done --reason
+// beads-07sko).
+func doltCommitMessageProvided(msg string) bool {
+	return strings.TrimSpace(msg) != ""
+}
+
 var doltCommitCmd = &cobra.Command{
 	Use:   "commit",
 	Short: "Create a Dolt commit from pending changes",
@@ -492,7 +506,7 @@ For more options (--stdin, custom messages), see: bd vc commit`,
 			os.Exit(1)
 		}
 		msg, _ := cmd.Flags().GetString("message")
-		if msg == "" {
+		if !doltCommitMessageProvided(msg) {
 			msg = fmt.Sprintf("bd: dolt commit (auto-commit) by %s", getActor())
 		}
 		if err := st.Commit(ctx, msg); err != nil {
