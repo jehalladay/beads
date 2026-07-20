@@ -1012,26 +1012,37 @@ Examples:
 			return depListExit(failedCount)
 		}
 
-		for _, iss := range allIssues {
-			var idStr string
-			switch iss.Status {
-			case types.StatusOpen:
-				idStr = ui.StatusOpenStyle.Render(iss.ID)
-			case types.StatusInProgress:
-				idStr = ui.StatusInProgressStyle.Render(iss.ID)
-			case types.StatusBlocked:
-				idStr = ui.StatusBlockedStyle.Render(iss.ID)
-			case types.StatusClosed:
-				idStr = ui.StatusClosedStyle.Render(iss.ID)
-			default:
-				idStr = iss.ID
-			}
-			fmt.Printf("  %s: %s [P%d] (%s) via %s\n",
-				idStr, iss.Title, iss.Priority, iss.Status, iss.DependencyType)
-		}
-		fmt.Println()
+		printDirectDepList(allIssues)
 		return depListExit(failedCount)
 	},
+}
+
+// printDirectDepList renders the `bd dep list` result lines. beads-90vqq
+// (7n9y slice): each iss.Title is routed through displayTitle
+// (ui.SanitizeForTerminal) so an untrusted imported title (JSONL/markdown/SCM)
+// carrying OSC/CSI escapes cannot inject terminal control sequences onto the
+// list line. Direct twin of dep_proxied_server.go's printProxiedDepList
+// (beads-2ktwm). Display-only — the stored title and the JSON path are
+// unchanged. Extracted into a helper so the sanitize contract is testable.
+func printDirectDepList(allIssues []*types.IssueWithDependencyMetadata) {
+	for _, iss := range allIssues {
+		var idStr string
+		switch iss.Status {
+		case types.StatusOpen:
+			idStr = ui.StatusOpenStyle.Render(iss.ID)
+		case types.StatusInProgress:
+			idStr = ui.StatusInProgressStyle.Render(iss.ID)
+		case types.StatusBlocked:
+			idStr = ui.StatusBlockedStyle.Render(iss.ID)
+		case types.StatusClosed:
+			idStr = ui.StatusClosedStyle.Render(iss.ID)
+		default:
+			idStr = iss.ID
+		}
+		fmt.Printf("  %s: %s [P%d] (%s) via %s\n",
+			idStr, displayTitle(iss.Title), iss.Priority, iss.Status, iss.DependencyType)
+	}
+	fmt.Println()
 }
 
 var depRemoveCmd = &cobra.Command{
@@ -1578,15 +1589,19 @@ func (r *treeRenderer) renderNode(node *types.TreeNode, children map[string][]*t
 func formatTreeNode(node *types.TreeNode, isBlocked bool) string {
 	// Handle external dependencies specially
 	if IsExternalRef(node.ID) {
-		// External deps use their title directly which includes the status indicator
+		// External deps use their title directly which includes the status
+		// indicator. beads-90vqq (7n9y slice): sanitize the title through
+		// displayTitle so an untrusted imported title can't inject terminal
+		// control sequences here.
+		extTitle := displayTitle(node.Title)
 		var idStr string
 		switch node.Status {
 		case types.StatusClosed:
-			idStr = ui.StatusClosedStyle.Render(node.Title)
+			idStr = ui.StatusClosedStyle.Render(extTitle)
 		case types.StatusBlocked:
-			idStr = ui.StatusBlockedStyle.Render(node.Title)
+			idStr = ui.StatusBlockedStyle.Render(extTitle)
 		default:
-			idStr = node.Title
+			idStr = extTitle
 		}
 		return fmt.Sprintf("%s (external)", idStr)
 	}
@@ -1606,9 +1621,12 @@ func formatTreeNode(node *types.TreeNode, isBlocked bool) string {
 		idStr = node.ID
 	}
 
-	// Build the line
+	// Build the line. beads-90vqq (7n9y slice): route node.Title through
+	// displayTitle (ui.SanitizeForTerminal) so an untrusted imported title
+	// (JSONL/markdown/SCM) with OSC/CSI escapes can't inject terminal control
+	// sequences into the `bd dep tree` render.
 	line := fmt.Sprintf("%s: %s [P%d] (%s)",
-		idStr, node.Title, node.Priority, node.Status)
+		idStr, displayTitle(node.Title), node.Priority, node.Status)
 
 	// Show edge type for non-root nodes (GH#3565)
 	if node.Depth > 0 && node.EdgeFromParent != "" {
