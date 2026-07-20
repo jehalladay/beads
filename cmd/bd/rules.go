@@ -684,6 +684,14 @@ func runRulesAudit(cmd *cobra.Command, args []string) error {
 
 	rulesPath, _ := cmd.Flags().GetString("path")
 	threshold, _ := cmd.Flags().GetFloat64("threshold")
+	// beads-iwup: --threshold is a Jaccard similarity ratio (consumed via
+	// score >= threshold in FindMergeCandidates) — identical semantics to
+	// find-duplicates --threshold, which validates the 0.0-1.0 range via the
+	// shared validateThreshold. Reject an out-of-range value here too rather
+	// than silently produce all-or-nothing merge candidates.
+	if err := validateThreshold(threshold); err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
 
 	result, err := RunAudit(rulesPath, threshold)
 	if err != nil {
