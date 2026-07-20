@@ -38,6 +38,18 @@ create, update, show, or close operation).`,
 			}
 		}()
 
+		// beads-a0nmp (BUG-29): --claim sets status=in_progress, but an explicit
+		// --status/--state is then applied on top and SILENTLY overwrites the
+		// claim (claim runs first, then the regular field updates clobber the
+		// status) with no warning. Reject the contradictory combination instead
+		// of returning a silently-wrong state — same precedent as beads-7f3g /
+		// beads-9sdix. Placed before the usesProxiedServer() dispatch so the one
+		// guard covers both the direct and proxied update paths. --claim alone
+		// (the normal claim) is unaffected.
+		if cmd.Flags().Changed("claim") && cmd.Flags().Changed("status") {
+			return HandleErrorRespectJSON("--claim cannot be combined with --status (--claim already sets status=in_progress); drop one")
+		}
+
 		if usesProxiedServer() {
 			runUpdateProxiedServer(cmd, rootCtx, args)
 			return nil

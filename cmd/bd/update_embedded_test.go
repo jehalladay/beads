@@ -241,6 +241,47 @@ func TestEmbeddedUpdateAllFailedJSONSingleObject(t *testing.T) {
 	}
 }
 
+// TestEmbeddedUpdateClaimStatusConflict proves beads-a0nmp (BUG-29): `bd update
+// <id> --claim --status <s>` used to run the claim (status=in_progress) and
+// then SILENTLY overwrite it with the explicit --status via the regular field
+// updates, leaving contradictory flag intent unreported. The combination must
+// be rejected with a clear error instead of returning a silently-wrong state
+// (same precedent as beads-7f3g / beads-9sdix). --claim alone must still claim
+// normally and reach status=in_progress (no false-positive from the guard).
+func TestEmbeddedUpdateClaimStatusConflict(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt update tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "uc")
+	issue := bdCreate(t, bd, dir, "claim/status conflict target")
+
+	// --claim + explicit --status must be rejected (exit non-zero + clear msg).
+	out := bdUpdateFail(t, bd, dir, issue.ID, "--claim", "--status", "open")
+	if !strings.Contains(out, "--claim cannot be combined with --status") {
+		t.Fatalf("expected claim/status conflict error, got:\n%s", out)
+	}
+
+	// --claim alone still claims and reaches in_progress (guard is not over-broad).
+	bdUpdate(t, bd, dir, issue.ID, "--claim")
+	cmd := exec.Command(bd, "show", issue.ID, "--json")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd show failed: %v\nstderr:\n%s", err, stderr.String())
+	}
+	var shown []map[string]any
+	if jerr := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &shown); jerr != nil {
+		t.Fatalf("show --json not parseable: %v\n%s", jerr, stdout.String())
+	}
+	if len(shown) == 0 || shown[0]["status"] != "in_progress" {
+		t.Fatalf("--claim alone should set in_progress, got: %v", shown)
+	}
+}
+
 // TestEmbeddedUpdateNoFieldsJSONContract proves beads-b0lq: `bd update <id>
 // --json` with a VALID id but NO mutating field flags is a no-op SUCCESS
 // (exit 0), and under --json its stdout must be a parseable JSON object — not
