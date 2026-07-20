@@ -3,8 +3,11 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -69,6 +72,70 @@ func TestEmbeddedSearchHeaderReportsTrueMatchCount(t *testing.T) {
 		}
 		if !strings.Contains(out, "Showing 2 of 3") {
 			t.Fatalf("beads-4wn0 (--long): expected 'Showing 2 of 3' hint, got:\n%s", out)
+		}
+	})
+}
+
+// TestEmbeddedSearchJSONReportsTruncation is the teeth for beads-uopti: the
+// `bd search --json` path must signal --limit truncation, not silently return a
+// short slice. Before the fix the JSON branch returned the truncated array with
+// NO signal on either stream (the totalMatches re-query was text-path-only), so
+// a consumer got e.g. 2 of 3 believing they were complete. The fix keeps the
+// bare-array stdout payload (matching bd ready/list --json) and warns to stderr
+// exactly like they do.
+func TestEmbeddedSearchJSONReportsTruncation(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "sjt")
+
+	for i := 1; i <= 3; i++ {
+		bdCreate(t, bd, dir, fmt.Sprintf("jsontrunc item %d", i), "--type", "task")
+	}
+
+	run := func(t *testing.T, args ...string) (stdout, stderr string) {
+		t.Helper()
+		full := append([]string{"search", "--json"}, args...)
+		cmd := exec.Command(bd, full...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		so, se, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("bd search --json %v failed: %v\nstdout:\n%s\nstderr:\n%s", args, err, so.String(), se.String())
+		}
+		return so.String(), se.String()
+	}
+
+	t.Run("truncated: stdout stays a valid 2-element array, stderr warns of the true total", func(t *testing.T) {
+		stdout, stderr := run(t, "jsontrunc", "--limit", "2")
+		// stdout must remain a parseable JSON array of exactly the page size (2).
+		var arr []map[string]interface{}
+		if jerr := json.Unmarshal(bytes.TrimSpace([]byte(stdout)), &arr); jerr != nil {
+			t.Fatalf("beads-uopti: stdout must stay a valid JSON array, got parse error %v:\n%s", jerr, stdout)
+		}
+		if len(arr) != 2 {
+			t.Fatalf("expected 2 elements under --limit 2, got %d:\n%s", len(arr), stdout)
+		}
+		// The truncation signal must be on stderr (matching ready/list --json).
+		if !strings.Contains(stderr, "Showing 2 of 3") {
+			t.Fatalf("beads-uopti: expected 'Showing 2 of 3' truncation warning on stderr, got:\n%s", stderr)
+		}
+	})
+
+	t.Run("untruncated: no truncation warning", func(t *testing.T) {
+		stdout, stderr := run(t, "jsontrunc")
+		var arr []map[string]interface{}
+		if jerr := json.Unmarshal(bytes.TrimSpace([]byte(stdout)), &arr); jerr != nil {
+			t.Fatalf("stdout must be a valid JSON array, got %v:\n%s", jerr, stdout)
+		}
+		if len(arr) != 3 {
+			t.Fatalf("expected all 3 elements, got %d:\n%s", len(arr), stdout)
+		}
+		if strings.Contains(stderr, "Showing ") {
+			t.Fatalf("un-truncated search --json should not warn, got stderr:\n%s", stderr)
 		}
 	})
 }

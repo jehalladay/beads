@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -101,7 +102,20 @@ func runSearchDirect(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "Warning: failed to get comment counts: %v\n", err)
 			commentCounts = make(map[string]int)
 		}
-		return outputJSON(buildSearchIssuesWithCounts(issues, labelsMap, depCounts, commentCounts))
+		// beads-uopti: surface --limit truncation on the JSON path too. Previously
+		// the JSON branch returned the truncated slice with NO signal on either
+		// stream, so a consumer got e.g. 50 of 2000 believing they were complete
+		// (the totalMatches re-query below was text-path-only). Keep the bare-array
+		// payload (matching bd ready/list --json) and warn to stderr exactly like
+		// they do — a consistent contract, not a divergent envelope.
+		total := searchTotalMatches(ctx, store, query, params.filter, len(issues))
+		if jerr := outputJSON(buildSearchIssuesWithCounts(issues, labelsMap, depCounts, commentCounts)); jerr != nil {
+			return jerr
+		}
+		if total > len(issues) {
+			fmt.Fprintf(os.Stderr, "Showing %d of %d matches. Use --limit 0 for all, or --limit N to raise the cap.\n", len(issues), total)
+		}
+		return nil
 	}
 
 	labelsMap, _ := store.GetLabelsForIssues(ctx, searchIssueIDs(issues))
@@ -114,14 +128,7 @@ func runSearchDirect(cmd *cobra.Command, args []string) error {
 	// truncation-detection at ready.go). Otherwise `bd search <common> --limit
 	// N` (and a plain search >50 matches, since --limit defaults to 50)
 	// reported "Found N" == page size, undercounting silently.
-	totalMatches := len(issues)
-	if params.filter.Limit > 0 && len(issues) == params.filter.Limit {
-		countFilter := params.filter
-		countFilter.Limit = 0
-		if allIssues, cErr := store.SearchIssues(ctx, query, countFilter); cErr == nil && len(allIssues) > len(issues) {
-			totalMatches = len(allIssues)
-		}
-	}
+	totalMatches := searchTotalMatches(ctx, store, query, params.filter, len(issues))
 	outputSearchResults(issues, query, params.longFormat, totalMatches)
 	return nil
 }
@@ -171,6 +178,22 @@ func searchIssueIDs(issues []*types.Issue) []string {
 
 // buildSearchIssuesWithCounts assembles the --json payload from the enrichment
 // maps, shared by both backends so the JSON shape stays identical.
+// searchTotalMatches returns the TRUE number of matches for a search, so both
+// the text and JSON paths can report/​detect --limit truncation identically
+// (beads-4wn0 text, beads-uopti json). When the returned page fills the limit,
+// it re-queries with Limit=0 to learn the real total; otherwise it returns the
+// page size unchanged (no extra query, matching the prior text-path gating).
+func searchTotalMatches(ctx context.Context, st storage.DoltStorage, query string, filter types.IssueFilter, pageLen int) int {
+	if filter.Limit > 0 && pageLen == filter.Limit {
+		countFilter := filter
+		countFilter.Limit = 0
+		if allIssues, cErr := st.SearchIssues(ctx, query, countFilter); cErr == nil && len(allIssues) > pageLen {
+			return len(allIssues)
+		}
+	}
+	return pageLen
+}
+
 func buildSearchIssuesWithCounts(issues []*types.Issue, labelsMap map[string][]string, depCounts map[string]*types.DependencyCounts, commentCounts map[string]int) []*types.IssueWithCounts {
 	for _, issue := range issues {
 		issue.Labels = labelsMap[issue.ID]
