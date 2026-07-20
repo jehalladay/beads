@@ -167,6 +167,10 @@ Examples:
 		ctx := rootCtx
 		verbose, _ := cmd.Flags().GetBool("verbose")
 
+		if usesProxiedServer() {
+			return runSwarmValidateProxied(ctx, args[0], verbose)
+		}
+
 		if store == nil {
 			return HandleErrorRespectJSON("no database connection")
 		}
@@ -634,6 +638,10 @@ Examples:
 
 		ctx := rootCtx
 
+		if usesProxiedServer() {
+			return runSwarmStatusProxied(ctx, args[0])
+		}
+
 		if store == nil {
 			return HandleErrorRespectJSON("no database connection")
 		}
@@ -922,6 +930,10 @@ Examples:
 		coordinator, _ := cmd.Flags().GetString("coordinator")
 		force, _ := cmd.Flags().GetBool("force")
 
+		if usesProxiedServer() {
+			return runSwarmCreateProxied(ctx, args[0], coordinator, force)
+		}
+
 		if store == nil {
 			return HandleErrorRespectJSON("no database connection")
 		}
@@ -1100,6 +1112,10 @@ Examples:
 
 		ctx := rootCtx
 
+		if usesProxiedServer() {
+			return runSwarmListProxied(ctx)
+		}
+
 		if store == nil {
 			return HandleErrorRespectJSON("no database connection")
 		}
@@ -1122,22 +1138,9 @@ Examples:
 		}
 
 		// Build output with status for each swarm
-		type SwarmListItem struct {
-			ID          string  `json:"id"`
-			Title       string  `json:"title"`
-			EpicID      string  `json:"epic_id"`
-			EpicTitle   string  `json:"epic_title"`
-			Status      string  `json:"status"`
-			Coordinator string  `json:"coordinator"`
-			Total       int     `json:"total_issues"`
-			Completed   int     `json:"completed_issues"`
-			Active      int     `json:"active_issues"`
-			Progress    float64 `json:"progress_percent"`
-		}
-
-		var items []SwarmListItem
+		var items []swarmListItem
 		for _, swarm := range swarms {
-			item := SwarmListItem{
+			item := swarmListItem{
 				ID:          swarm.ID,
 				Title:       swarm.Title,
 				Status:      string(swarm.Status),
@@ -1174,25 +1177,51 @@ Examples:
 			return outputJSON(map[string]interface{}{"swarms": items})
 		}
 
-		fmt.Printf("\n%s Active Swarms (%d)\n\n", ui.RenderAccent("🐝"), len(items))
-		for _, item := range items {
-			progressStr := fmt.Sprintf("%d/%d", item.Completed, item.Total)
-			if item.Active > 0 {
-				progressStr += fmt.Sprintf(", %d active", item.Active)
-			}
-
-			fmt.Printf("%s %s\n", ui.RenderID(item.ID), item.Title)
-			if item.EpicID != "" {
-				fmt.Printf("   Epic: %s (%s)\n", item.EpicID, item.EpicTitle)
-			}
-			fmt.Printf("   Progress: %s (%.0f%%)\n", progressStr, item.Progress)
-			if item.Coordinator != "" {
-				fmt.Printf("   Coordinator: %s\n", item.Coordinator)
-			}
-			fmt.Println()
-		}
+		renderSwarmList(items)
 		return nil
 	},
+}
+
+// swarmListItem is one row of `bd swarm list` output. Hoisted to package scope
+// (was declared inside swarmListCmd's RunE) so the proxied handler
+// (runSwarmListProxied) marshals the exact same JSON schema and the human
+// rendering is shared via renderSwarmList (beads-2n2f).
+type swarmListItem struct {
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	EpicID      string  `json:"epic_id"`
+	EpicTitle   string  `json:"epic_title"`
+	Status      string  `json:"status"`
+	Coordinator string  `json:"coordinator"`
+	Total       int     `json:"total_issues"`
+	Completed   int     `json:"completed_issues"`
+	Active      int     `json:"active_issues"`
+	Progress    float64 `json:"progress_percent"`
+}
+
+// renderSwarmList prints the human view of `bd swarm list`. The swarm title is
+// routed through displayTitle (ui.SanitizeForTerminal) because a title can
+// originate from an untrusted import (JSONL/markdown/SCM) carrying OSC/CSI
+// terminal-control escapes; printing it raw would inject control sequences
+// (7n9y title-sink class). Display-only — stored titles are unchanged.
+func renderSwarmList(items []swarmListItem) {
+	fmt.Printf("\n%s Active Swarms (%d)\n\n", ui.RenderAccent("🐝"), len(items))
+	for _, item := range items {
+		progressStr := fmt.Sprintf("%d/%d", item.Completed, item.Total)
+		if item.Active > 0 {
+			progressStr += fmt.Sprintf(", %d active", item.Active)
+		}
+
+		fmt.Printf("%s %s\n", ui.RenderID(item.ID), displayTitle(item.Title))
+		if item.EpicID != "" {
+			fmt.Printf("   Epic: %s (%s)\n", item.EpicID, displayTitle(item.EpicTitle))
+		}
+		fmt.Printf("   Progress: %s (%.0f%%)\n", progressStr, item.Progress)
+		if item.Coordinator != "" {
+			fmt.Printf("   Coordinator: %s\n", item.Coordinator)
+		}
+		fmt.Println()
+	}
 }
 
 func init() {
