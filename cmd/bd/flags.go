@@ -62,7 +62,7 @@ func getDescriptionFlag(cmd *cobra.Command) (string, bool, error) {
 	if stdinFlag, _ := cmd.Flags().GetBool("stdin"); stdinFlag {
 		content, err := readBodyFile("-")
 		if err != nil {
-			return "", false, HandleError("reading from stdin: %v", err)
+			return "", false, HandleErrorRespectJSON("reading from stdin: %v", err)
 		}
 		return content, true, nil
 	}
@@ -77,7 +77,7 @@ func getDescriptionFlag(cmd *cobra.Command) (string, bool, error) {
 		bodyFile, _ := cmd.Flags().GetString("body-file")
 		descFile, _ := cmd.Flags().GetString("description-file")
 		if bodyFile != descFile {
-			return "", false, HandleError("cannot specify both --body-file and --description-file with different values")
+			return "", false, HandleErrorRespectJSON("cannot specify both --body-file and --description-file with different values")
 		}
 	}
 
@@ -90,12 +90,12 @@ func getDescriptionFlag(cmd *cobra.Command) (string, bool, error) {
 		}
 
 		if descChanged || bodyChanged || messageChanged {
-			return "", false, HandleError("cannot specify both --body-file and --description/--body/--message")
+			return "", false, HandleErrorRespectJSON("cannot specify both --body-file and --description/--body/--message")
 		}
 
 		content, err := readBodyFile(filePath)
 		if err != nil {
-			return "", false, HandleError("reading body file: %v", err)
+			return "", false, HandleErrorRespectJSON("reading body file: %v", err)
 		}
 		return content, true, nil
 	}
@@ -139,7 +139,7 @@ func getDescriptionFlag(cmd *cobra.Command) (string, bool, error) {
 		}
 		content, err := readBodyFile("-")
 		if err != nil {
-			return "", false, HandleError("reading from stdin: %v", err)
+			return "", false, HandleErrorRespectJSON("reading from stdin: %v", err)
 		}
 		return content, true, nil
 	}
@@ -209,7 +209,7 @@ func getDesignFlag(cmd *cobra.Command) (string, bool, error) {
 		path, _ := cmd.Flags().GetString("design-file")
 		content, err := readBodyFile(path)
 		if err != nil {
-			return "", false, HandleError("reading from stdin: %v", err)
+			return "", false, HandleErrorRespectJSON("reading from stdin: %v", err)
 		}
 		return content, true, nil
 	}
