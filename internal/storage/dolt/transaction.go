@@ -407,55 +407,63 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 		args = append(args, *filter.Assignee)
 	}
 
-	// Date ranges
+	// Date ranges. beads-zxlib: bounds are INCLUSIVE (>= / <=), mirroring the
+	// ycoly fix to the main read builders (sqlbuild/filter.go + ready.go) so this
+	// in-tx read-your-writes path (SearchIssuesInTx) does not diverge. With strict
+	// >/< an exact-boundary (midnight) row was dropped from BOTH --X-after D and
+	// --X-before D, and an equal-bounds point query (--X-after D --X-before D) was
+	// always empty — a read-path parity divergence from bd list/ready. The
+	// --overdue clause below (due_at < ? with a NULL guard) stays strict on
+	// purpose: "overdue" means strictly past due, not due-exactly-now.
 	if filter.CreatedAfter != nil {
-		whereClauses = append(whereClauses, "created_at > ?")
+		whereClauses = append(whereClauses, "created_at >= ?")
 		args = append(args, filter.CreatedAfter.Format(time.RFC3339))
 	}
 	if filter.CreatedBefore != nil {
-		whereClauses = append(whereClauses, "created_at < ?")
+		whereClauses = append(whereClauses, "created_at <= ?")
 		args = append(args, filter.CreatedBefore.Format(time.RFC3339))
 	}
 	if filter.UpdatedAfter != nil {
-		whereClauses = append(whereClauses, "updated_at > ?")
+		whereClauses = append(whereClauses, "updated_at >= ?")
 		args = append(args, filter.UpdatedAfter.Format(time.RFC3339))
 	}
 	if filter.UpdatedBefore != nil {
-		whereClauses = append(whereClauses, "updated_at < ?")
+		whereClauses = append(whereClauses, "updated_at <= ?")
 		args = append(args, filter.UpdatedBefore.Format(time.RFC3339))
 	}
 	if filter.ClosedAfter != nil {
-		whereClauses = append(whereClauses, "closed_at > ?")
+		whereClauses = append(whereClauses, "closed_at >= ?")
 		args = append(args, filter.ClosedAfter.Format(time.RFC3339))
 	}
 	if filter.ClosedBefore != nil {
-		whereClauses = append(whereClauses, "closed_at < ?")
+		whereClauses = append(whereClauses, "closed_at <= ?")
 		args = append(args, filter.ClosedBefore.Format(time.RFC3339))
 	}
 	if filter.DeferAfter != nil {
-		whereClauses = append(whereClauses, "defer_until > ?")
+		whereClauses = append(whereClauses, "defer_until >= ?")
 		args = append(args, filter.DeferAfter.Format(time.RFC3339))
 	}
 	if filter.DeferBefore != nil {
-		whereClauses = append(whereClauses, "defer_until < ?")
+		whereClauses = append(whereClauses, "defer_until <= ?")
 		args = append(args, filter.DeferBefore.Format(time.RFC3339))
 	}
 	if filter.DueAfter != nil {
-		whereClauses = append(whereClauses, "due_at > ?")
+		whereClauses = append(whereClauses, "due_at >= ?")
 		args = append(args, filter.DueAfter.Format(time.RFC3339))
 	}
 	if filter.DueBefore != nil {
-		whereClauses = append(whereClauses, "due_at < ?")
+		whereClauses = append(whereClauses, "due_at <= ?")
 		args = append(args, filter.DueBefore.Format(time.RFC3339))
 	}
 	// started_at range — mirrors sqlbuild/filter.go so the in-tx read path
 	// honors filter.StartedAfter/StartedBefore (beads-u9zr; was silently dropped).
+	// Inclusive per beads-zxlib (matches the ycoly parity above).
 	if filter.StartedAfter != nil {
-		whereClauses = append(whereClauses, "started_at > ?")
+		whereClauses = append(whereClauses, "started_at >= ?")
 		args = append(args, filter.StartedAfter.Format(time.RFC3339))
 	}
 	if filter.StartedBefore != nil {
-		whereClauses = append(whereClauses, "started_at < ?")
+		whereClauses = append(whereClauses, "started_at <= ?")
 		args = append(args, filter.StartedBefore.Format(time.RFC3339))
 	}
 

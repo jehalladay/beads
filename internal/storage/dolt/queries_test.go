@@ -2077,6 +2077,81 @@ func TestTxSearchIssues_MissingFiltersParity(t *testing.T) {
 	}
 }
 
+// TestTxSearchIssues_DateRangeInclusive gives beads-zxlib teeth: the
+// in-transaction SearchIssues (doltTransaction.SearchIssues, the read-your-writes
+// path of the storage.Transaction interface) must use INCLUSIVE date bounds
+// (>= / <=), matching the ycoly fix to the live sqlbuild builders
+// (sqlbuild/filter.go store-level search / bd list + sqlbuild/ready.go). With the
+// old strict >/< an exact-boundary row was dropped from BOTH --X-after D and
+// --X-before D, and an equal-bounds point query (--X-after D --X-before D) was
+// always empty — a read-path parity divergence from every other read filter.
+//
+// This MUST exercise the transaction path, not store.SearchIssues — the store
+// path delegates to the (already-inclusive) sqlbuild builder, so a store-level
+// test has NO teeth on the transaction.go date clauses. Teeth: the issue is
+// created with an EXACT CreatedAt (preserved to the second by the create path),
+// then queried with equal after==before bounds AT that timestamp. Strict >/<
+// yields 0 results (RED); inclusive >=/<= yields 1 (GREEN). Verified: revert any
+// one operator in transaction.go -> the matching sub-case fails.
+func TestTxSearchIssues_DateRangeInclusive(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// A fixed, second-truncated instant so the stored value sits exactly ON the
+	// query bound (create.go truncates CreatedAt to the second).
+	boundary := time.Date(2026, 3, 15, 8, 30, 0, 0, time.UTC)
+	issue := &types.Issue{
+		ID:        "tx-date-inclusive",
+		Title:     "created exactly on the boundary",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		CreatedAt: boundary,
+	}
+	if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+		t.Fatalf("failed to create issue: %v", err)
+	}
+
+	search := func(name string, f types.IssueFilter) []*types.Issue {
+		var res []*types.Issue
+		if err := store.RunInTransaction(ctx, name, func(tx storage.Transaction) error {
+			r, err := tx.SearchIssues(ctx, "", f)
+			res = r
+			return err
+		}); err != nil {
+			t.Fatalf("%s: tx.SearchIssues error: %v", name, err)
+		}
+		return res
+	}
+	has := func(res []*types.Issue, id string) bool {
+		for _, r := range res {
+			if r.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	b := boundary
+	// created_at >= boundary (--created-after == the exact stored instant).
+	if r := search("zxlib created-after-boundary", types.IssueFilter{CreatedAfter: &b}); !has(r, issue.ID) {
+		t.Fatalf("CreatedAfter(exact boundary): boundary row dropped by strict > (beads-zxlib); got %d results", len(r))
+	}
+	// created_at <= boundary (--created-before == the exact stored instant).
+	if r := search("zxlib created-before-boundary", types.IssueFilter{CreatedBefore: &b}); !has(r, issue.ID) {
+		t.Fatalf("CreatedBefore(exact boundary): boundary row dropped by strict < (beads-zxlib); got %d results", len(r))
+	}
+	// Equal-bounds point query (after == before == boundary) must match — the
+	// exact case that was ALWAYS empty under strict >/< (contradicting the
+	// reversed-range guard's "after==before is a valid inclusive point range").
+	if r := search("zxlib created-equal-bounds", types.IssueFilter{CreatedAfter: &b, CreatedBefore: &b}); !has(r, issue.ID) {
+		t.Fatalf("CreatedAfter==CreatedBefore==boundary: point query empty under strict >/< (beads-zxlib); got %d results", len(r))
+	}
+}
+
 // TestSearchIssues_ByExternalRef verifies two things:
 //  1. A free-text query like "BE-1521" (which looksLikeIssueID returns true for)
 //     matches an issue whose external_ref contains that string.
