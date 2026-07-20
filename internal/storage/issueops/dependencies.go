@@ -462,13 +462,29 @@ func checkDuplicateChainInTx(ctx context.Context, tx DBTX, dep *types.Dependency
 // cycleCheckTypesFor returns the edge-type family whose graph must stay acyclic
 // for the given new-edge type, or nil if the type is not cycle-checked. A
 // blocks/conditional-blocks edge walks the blocking graph; a parent-child edge
-// walks the parent-child graph (beads-8qij).
+// walks the parent-child graph (beads-8qij); a supersedes edge walks the
+// supersedes graph (beads-02v2k).
 func cycleCheckTypesFor(t types.DependencyType) []string {
 	switch t {
 	case types.DepBlocks, types.DepConditionalBlocks:
 		return []string{string(types.DepBlocks), string(types.DepConditionalBlocks)}
 	case types.DepParentChild:
 		return []string{string(types.DepParentChild)}
+	case types.DepSupersedes:
+		// beads-02v2k: reject a supersedes CYCLE (A superseded-by B, then B
+		// superseded-by A) — both issues close naming each other, so no live
+		// successor exists and a tracer following the "superseded by" edge loops
+		// forever. This is the supersede twin of the wqrfi/dfzre duplicate
+		// mutual-cycle gap. Guarding it via the reachability walk (rather than a
+		// wqrfi-style outgoing-edge signal) is deliberate: reachability is blind
+		// to ACYCLIC chains, so a legitimate version chain (v1 -> v2 -> v3, each
+		// newer superseding the prior) stays legal — only a cycle that closes a
+		// loop is rejected. Walking the supersedes family (not the blocking one)
+		// keeps this scoped to supersede edges. Seam-level so all entry points
+		// (bd supersede direct + proxied, bd dep add --type supersedes) are
+		// covered at once — the dfzre lesson that a cmd-layer guard leaves
+		// dep-add as a bypass.
+		return []string{string(types.DepSupersedes)}
 	default:
 		return nil
 	}

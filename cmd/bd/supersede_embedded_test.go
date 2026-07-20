@@ -133,6 +133,41 @@ func TestEmbeddedSupersede(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "No replacement", "--type", "task")
 		bdSupersedeFail(t, bd, dir, issue.ID, "--with", "ss-nonexistent999")
 	})
+
+	// ===== beads-02v2k: reject a supersede MUTUAL CYCLE =====
+	// A superseded-by B, then B superseded-by A closes both issues each naming
+	// the other, so no live successor exists and a "superseded by" tracer loops
+	// forever. The reachability walk (DepSupersedes added to cycleCheckTypesFor)
+	// must reject the second edge: from B's canonical A, A already reaches B.
+	t.Run("error_mutual_cycle_02v2k", func(t *testing.T) {
+		a := bdCreate(t, bd, dir, "cycle A", "--type", "task")
+		b := bdCreate(t, bd, dir, "cycle B", "--type", "task")
+		// A superseded-by B — legal.
+		bdSupersede(t, bd, dir, a.ID, "--with", b.ID)
+		// B superseded-by A — would close the A<->B loop; must be rejected.
+		out := bdSupersedeFail(t, bd, dir, b.ID, "--with", a.ID)
+		if !strings.Contains(strings.ToLower(out), "cycle") {
+			t.Errorf("expected a cycle rejection for B --with A, got: %s", out)
+		}
+	})
+
+	// ===== beads-02v2k regression: a legal version CHAIN still works =====
+	// v1 -> v2 -> v3 (each newer supersedes the prior) is an ACYCLIC chain and
+	// is DELIBERATELY legal — the reachability guard must be blind to it. This
+	// guards against over-fixing 02v2k into the refuted wqrfi-style chain block.
+	t.Run("legal_version_chain_still_works_02v2k", func(t *testing.T) {
+		v1 := bdCreate(t, bd, dir, "chain v1", "--type", "task")
+		v2 := bdCreate(t, bd, dir, "chain v2", "--type", "task")
+		v3 := bdCreate(t, bd, dir, "chain v3", "--type", "task")
+		// v1 superseded-by v2.
+		bdSupersede(t, bd, dir, v1.ID, "--with", v2.ID)
+		// v2 superseded-by v3 — v2 already has an incoming supersedes edge (from
+		// v1) but the chain is acyclic, so this MUST still succeed.
+		out := bdSupersede(t, bd, dir, v2.ID, "--with", v3.ID)
+		if !strings.Contains(out, "superseded") {
+			t.Errorf("legal version chain v2 --with v3 was rejected: %s", out)
+		}
+	})
 }
 
 // TestEmbeddedSupersedeConcurrent exercises supersede operations concurrently.
