@@ -102,8 +102,7 @@ Examples:
 	Args: cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		if !usesSQLServer() {
-			fmt.Fprintln(os.Stderr, "Error: 'bd dolt set' is not supported in embedded mode (no Dolt server)")
-			os.Exit(1)
+			FatalErrorRespectJSON("'bd dolt set' is not supported in embedded mode (no Dolt server)")
 		}
 		key := args[0]
 		value := args[1]
@@ -124,8 +123,7 @@ This verifies that:
 Use this before switching to server mode to ensure the server is running.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if !usesSQLServer() {
-			fmt.Fprintln(os.Stderr, "Error: 'bd dolt test' is not supported in embedded mode (no Dolt server)")
-			os.Exit(1)
+			FatalErrorRespectJSON("'bd dolt test' is not supported in embedded mode (no Dolt server)")
 		}
 		testDoltConnection()
 	},
@@ -1421,8 +1419,7 @@ func setDoltConfig(key, value string, updateConfig bool) {
 	}
 
 	if cfg.GetBackend() != configfile.BackendDolt {
-		fmt.Fprintf(os.Stderr, "Error: not using Dolt backend\n")
-		os.Exit(1)
+		FatalErrorRespectJSON("not using Dolt backend")
 	}
 
 	var yamlKey string
@@ -1431,21 +1428,18 @@ func setDoltConfig(key, value string, updateConfig bool) {
 	case "mode":
 		// Mode will be configurable again when embedded Dolt support returns.
 		// For now, server mode is required (embedded driver not yet re-integrated).
-		fmt.Fprintf(os.Stderr, "Error: mode is not yet configurable; embedded mode is coming soon\n")
-		os.Exit(1)
+		FatalErrorRespectJSON("mode is not yet configurable; embedded mode is coming soon")
 
 	case "database":
 		if value == "" {
-			fmt.Fprintf(os.Stderr, "Error: database name cannot be empty\n")
-			os.Exit(1)
+			FatalErrorRespectJSON("database name cannot be empty")
 		}
 		cfg.DoltDatabase = value
 		yamlKey = "dolt.database"
 
 	case "host":
 		if value == "" {
-			fmt.Fprintf(os.Stderr, "Error: host cannot be empty\n")
-			os.Exit(1)
+			FatalErrorRespectJSON("host cannot be empty")
 		}
 		cfg.DoltServerHost = value
 		yamlKey = "dolt.host"
@@ -1453,8 +1447,7 @@ func setDoltConfig(key, value string, updateConfig bool) {
 	case "port":
 		port, err := strconv.Atoi(value)
 		if err != nil || port <= 0 || port > 65535 {
-			fmt.Fprintf(os.Stderr, "Error: port must be a valid port number (1-65535)\n")
-			os.Exit(1)
+			FatalErrorRespectJSON("port must be a valid port number (1-65535)")
 		}
 		cfg.DoltServerPort = port
 		yamlKey = "dolt.port"
@@ -1466,8 +1459,7 @@ func setDoltConfig(key, value string, updateConfig bool) {
 
 	case "user":
 		if value == "" {
-			fmt.Fprintf(os.Stderr, "Error: user cannot be empty\n")
-			os.Exit(1)
+			FatalErrorRespectJSON("user cannot be empty")
 		}
 		cfg.DoltServerUser = value
 		yamlKey = "dolt.user"
@@ -1478,21 +1470,16 @@ func setDoltConfig(key, value string, updateConfig bool) {
 		// resolution path without affecting the running server, causing
 		// commands to operate on the wrong (often empty) database.
 		if value != "" && cfg.IsDoltServerMode() {
-			fmt.Fprintf(os.Stderr, "Error: setting data-dir in server mode is not supported (GH#2438).\n")
-			fmt.Fprintf(os.Stderr, "In server mode, the database is determined by the 'database' config key,\n")
-			fmt.Fprintf(os.Stderr, "not the local data directory. Setting data-dir would silently disconnect\n")
-			fmt.Fprintf(os.Stderr, "from the configured database '%s'.\n", cfg.GetDoltDatabase())
-			fmt.Fprintf(os.Stderr, "\nTo change which database to use:\n")
-			fmt.Fprintf(os.Stderr, "  bd dolt set database <name>\n")
-			os.Exit(1)
+			FatalErrorWithHintRespectJSON(
+				fmt.Sprintf("setting data-dir in server mode is not supported (GH#2438); in server mode the database is determined by the 'database' config key, not the local data directory. Setting data-dir would silently disconnect from the configured database '%s'.", cfg.GetDoltDatabase()),
+				"To change which database to use: bd dolt set database <name>")
 		}
 		if value == "" {
 			// Allow clearing the custom data dir (revert to default .beads/dolt)
 			cfg.DoltDataDir = ""
 		} else {
 			if !filepath.IsAbs(value) {
-				fmt.Fprintf(os.Stderr, "Error: data-dir must be an absolute path\n")
-				os.Exit(1)
+				FatalErrorRespectJSON("data-dir must be an absolute path")
 			}
 			cfg.DoltDataDir = value
 			// Absolute paths are machine-specific and won't be persisted to
@@ -1507,13 +1494,11 @@ func setDoltConfig(key, value string, updateConfig bool) {
 	case "shared-server":
 		lower := strings.ToLower(value)
 		if lower != "true" && lower != "false" {
-			fmt.Fprintf(os.Stderr, "Error: shared-server must be 'true' or 'false'\n")
-			os.Exit(1)
+			FatalErrorRespectJSON("shared-server must be 'true' or 'false'")
 		}
 		// shared-server is yaml-only (not stored in metadata.json)
 		if err := config.SetYamlConfig("dolt.shared-server", lower); err != nil {
-			fmt.Fprintf(os.Stderr, "Error setting shared-server: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("setting shared-server: %v", err)
 		}
 		if jsonOutput {
 			if err := outputJSON(map[string]interface{}{
@@ -1535,9 +1520,9 @@ func setDoltConfig(key, value string, updateConfig bool) {
 		return
 
 	default:
-		fmt.Fprintf(os.Stderr, "Error: unknown key '%s'\n", key)
-		fmt.Fprintf(os.Stderr, "Valid keys: database, host, port, socket, user, data-dir, shared-server\n")
-		os.Exit(1)
+		FatalErrorWithHintRespectJSON(
+			fmt.Sprintf("unknown key '%s'", key),
+			"Valid keys: database, host, port, socket, user, data-dir, shared-server")
 	}
 
 	// Audit log: record who changed what
@@ -1545,8 +1530,7 @@ func setDoltConfig(key, value string, updateConfig bool) {
 
 	// Save to metadata.json
 	if err := cfg.Save(beadsDir); err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
-		os.Exit(1)
+		FatalErrorRespectJSON("saving config: %v", err)
 	}
 
 	if jsonOutput {
