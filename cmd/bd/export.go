@@ -80,6 +80,17 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	ctx := rootCtx
 
+	// beads-1bw1q: reject the contradictory --include-memories + --no-memories
+	// combination rather than silently letting the deprecated --no-memories win
+	// (the resolution at :214 is `... && !exportNoMemories`, so an explicit
+	// --include-memories produces the OPPOSITE of what the user asked with no
+	// warning). Same reject-a-silently-contradictory-combination precedent as
+	// beads-a0nmp (--claim + --status) / 7f3g / 9sdix. Only fires when BOTH are
+	// explicitly set (Changed), so the deprecated-default path is unaffected.
+	if cmd.Flags().Changed("include-memories") && cmd.Flags().Changed("no-memories") {
+		return HandleErrorRespectJSON("--include-memories cannot be combined with --no-memories (they are contradictory; --no-memories is deprecated — memories are excluded by default, use --include-memories to include them)")
+	}
+
 	// Determine output destination. File output uses atomic writes
 	// (temp file + rename) so concurrent exports and crashes never
 	// leave a truncated or interleaved JSONL file.
