@@ -570,6 +570,14 @@ Examples:
 		}()
 
 		gateTypeFilter, _ := cmd.Flags().GetString("type")
+		// beads-68cgv: reject an unknown/typo/retired --type filter up front.
+		// shouldCheckGate uses exact-match, so a value like "ghpr" or the retired
+		// "bead" would fall through, match zero gates, and print "No open gates of
+		// type X found" + exit 0 — reading as "all clear" while real gates go
+		// unchecked. Mirrors the ds9tr validateGateCreate fail-early guard.
+		if err := validateGateCheckType(gateTypeFilter); err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		escalateFlag, _ := cmd.Flags().GetBool("escalate")
 		limit, _ := cmd.Flags().GetInt("limit")
@@ -741,6 +749,22 @@ Examples:
 		}
 		return nil
 	},
+}
+
+// validateGateCheckType rejects an unknown/typo/retired `bd gate check --type`
+// filter (beads-68cgv). Without this, shouldCheckGate's exact-match silently
+// drops an unrecognized filter to zero matches — the command prints "No open
+// gates of type X found" and exits 0, so a typo like "ghpr" or the retired
+// "bead" reads as "all clear" while real gh:pr/timer gates go unchecked. The
+// accepted set mirrors the --type flag help: the "" (all) default, the "all"
+// and "gh" aggregates, and each concrete gate type.
+func validateGateCheckType(typeFilter string) error {
+	switch typeFilter {
+	case "", "all", "gh", "gh:run", "gh:pr", "timer", "human":
+		return nil
+	default:
+		return fmt.Errorf("invalid gate type filter %q (must be one of: gh, gh:run, gh:pr, timer, human, all)", typeFilter)
+	}
 }
 
 // shouldCheckGate returns true if the gate matches the type filter
@@ -1014,7 +1038,7 @@ func init() {
 	gateResolveCmd.Flags().StringP("reason", "r", "", "Reason for resolving the gate")
 
 	// gate check flags
-	gateCheckCmd.Flags().StringP("type", "t", "", "Gate type to check (gh, gh:run, gh:pr, timer, bead, all)")
+	gateCheckCmd.Flags().StringP("type", "t", "", "Gate type to check (gh, gh:run, gh:pr, timer, human, all)")
 	gateCheckCmd.Flags().Bool("dry-run", false, "Show what would happen without making changes")
 	gateCheckCmd.Flags().BoolP("escalate", "e", false, "Escalate failed/expired gates")
 	gateCheckCmd.Flags().IntP("limit", "l", 100, "Limit results (default 100)")
