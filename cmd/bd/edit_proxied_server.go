@@ -158,7 +158,11 @@ func runEditorForField(editor, fieldToEdit, currentValue string) (newValue, tmpP
 		return "", tmpPath, false, fmt.Errorf("reading edited file: %v", rerr)
 	}
 	newValue = strings.TrimSpace(string(editedContent))
-	if newValue == currentValue {
+	// beads-v1ncz: compare TRIMMED-to-TRIMMED (newValue is trimmed and is stored
+	// trimmed) so a no-op editor save on a field with leading/trailing
+	// whitespace is correctly detected as "unchanged" instead of a spurious
+	// trim-only write. Mirrors the direct edit.go fix.
+	if newValue == strings.TrimSpace(currentValue) {
 		_ = os.Remove(tmpPath)
 		return newValue, tmpPath, false, nil
 	}

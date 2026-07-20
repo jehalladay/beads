@@ -134,7 +134,14 @@ Examples:
 
 		newValue := strings.TrimSpace(string(editedContent))
 
-		if newValue == currentValue {
+		// beads-v1ncz: compare the TRIMMED edited value against the TRIMMED
+		// stored value. newValue is trimmed (and the write path stores it
+		// trimmed), so comparing it against the RAW currentValue misfired
+		// whenever the stored field had leading/trailing whitespace (e.g. a
+		// description ending in "\n"): a no-op editor save then looked like a
+		// change → a spurious trim-only write + false audit event, and the
+		// "No changes made" / --json unchanged-array was never reached.
+		if newValue == strings.TrimSpace(currentValue) {
 			editSaved = true
 			// beads-8872: honor --json — the field is unchanged, so emit the
 			// (unmodified) issue as a one-element array, matching the update/
