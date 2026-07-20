@@ -78,6 +78,25 @@ Examples:
 			return HandleErrorRespectJSON("--days must be non-negative")
 		}
 
+		// beads-bvug2 (aocj proxied-routing class, maint leg): `bd compact` (the
+		// Dolt-history squash — distinct from `bd admin compact`) is NOT in
+		// noDbCommands and calls store.Log directly below. In proxied-server mode
+		// main.go PersistentPreRun returns before newDoltStore, leaving the global
+		// `store` nil — so store.Log nil-panicked (RED-proven SIGSEGV at
+		// compact_dolt.go:81; sibling of the beads-jr2h4 branch, beads-i2v77
+		// merge-slot, beads-6iwwf vc legs). Dolt history compaction manipulates
+		// the LOCAL Dolt store and has no proxied/UOW equivalent, and the store
+		// factory refuses to open a direct store in proxied config, so — like
+		// `bd branch` / `bd vc` / `compact --analyze` — this requires
+		// direct/embedded Dolt access: fail loud with a clear, --json-contract-
+		// correct message instead of panicking.
+		if usesProxiedServer() {
+			return HandleErrorRespectJSON("compact (Dolt-history squash) requires direct/embedded Dolt access and is not available in proxied-server mode")
+		}
+		if err := ensureStoreActive(); err != nil {
+			return HandleErrorWithHintRespectJSON(err.Error(), diagHint())
+		}
+
 		logEntries, logErr := store.Log(ctx, 0)
 		if logErr != nil {
 			return HandleErrorRespectJSON("failed to read commit log: %v", logErr)
