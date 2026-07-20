@@ -84,11 +84,15 @@ func formatIssueMetadata(issue *types.Issue) string {
 
 	// Line 1: Owner/Assignee · Type
 	metaParts := []string{}
+	// Owner/Assignee are identity strings that can originate from an untrusted
+	// import (JSONL/SCM) — normalizeAssignee only trims whitespace, so they can
+	// carry OSC/CSI terminal escapes. Sanitize at the display site (beads-i8dsb,
+	// 7n9y sibling axis); never mutate the stored value.
 	if issue.CreatedBy != "" {
-		metaParts = append(metaParts, fmt.Sprintf("Owner: %s", issue.CreatedBy))
+		metaParts = append(metaParts, fmt.Sprintf("Owner: %s", ui.SanitizeForTerminal(issue.CreatedBy)))
 	}
 	if issue.Assignee != "" {
-		metaParts = append(metaParts, fmt.Sprintf("Assignee: %s", issue.Assignee))
+		metaParts = append(metaParts, fmt.Sprintf("Assignee: %s", ui.SanitizeForTerminal(issue.Assignee)))
 	}
 
 	// Type with semantic color
@@ -128,9 +132,11 @@ func formatIssueMetadata(issue *types.Issue) string {
 		lines = append(lines, ui.RenderMuted(fmt.Sprintf("Close reason: %s", issue.CloseReason)))
 	}
 
-	// Line 4: External ref (if exists)
+	// Line 4: External ref (if exists). ExternalRef is set verbatim from an
+	// untrusted import (JSONL/SCM) with no control-char validation, so sanitize
+	// at the display site (beads-i8dsb); the stored value is left untouched.
 	if issue.ExternalRef != nil && *issue.ExternalRef != "" {
-		lines = append(lines, fmt.Sprintf("External: %s", *issue.ExternalRef))
+		lines = append(lines, fmt.Sprintf("External: %s", ui.SanitizeForTerminal(*issue.ExternalRef)))
 	}
 	if issue.SpecID != "" {
 		lines = append(lines, fmt.Sprintf("Spec: %s", issue.SpecID))
