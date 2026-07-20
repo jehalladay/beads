@@ -47,9 +47,17 @@ func detectTestPollution(issues []*types.Issue) []pollutionResult {
 
 		title := strings.ToLower(issue.Title)
 
-		// Check for test prefixes (strong signal)
+		// Check for test prefixes (strong signal, but NOT self-sufficient).
+		// beads-9y89f: a bare title-prefix match must NOT reach the 0.7 scrub
+		// threshold on its own — a legit item titled "Debug ...", "Sample ...",
+		// "Temp ...", "Test harness ..." etc. with a real description is not
+		// pollution. Contribute 0.6 so a prefix match needs at least one
+		// corroborating signal (empty/short description +0.2/+0.1, sequential
+		// ID +0.4, rapid batch +0.3, or a generic test title +0.5) to be
+		// classified. A prefixed title WITH a substantial description scores
+		// 0.6 alone and survives.
 		if testPrefixPattern.MatchString(title) {
-			score += 0.7
+			score += 0.6
 			reasons = append(reasons, "Title starts with test prefix")
 		}
 

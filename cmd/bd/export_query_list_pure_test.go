@@ -53,6 +53,47 @@ func TestFilterOutPollutionFn(t *testing.T) {
 	}
 }
 
+// TestFilterOutPollutionKeepsPrefixedWithRealDescription is the beads-9y89f
+// regression: a legit work item whose title merely STARTS with a scrub-prefix
+// word (debug/sample/temp/test/tmp/benchmark/dummy) but which carries a real,
+// substantial description must NOT be silently dropped by export --scrub.
+//
+// Before the fix, filterOutPollution keyed the drop on the bare isTestIssue()
+// prefix boolean, so these items were scrubbed on the prefix coincidence alone
+// with zero corroborating evidence. The fix routes --scrub through the scored
+// detectTestPollution(), where a prefix match contributes 0.6 — below the 0.7
+// threshold — so a co-signal (empty/short description, sequential ID, rapid
+// batch, generic test title) is required before an item is classified.
+func TestFilterOutPollutionKeepsPrefixedWithRealDescription(t *testing.T) {
+	realDesc := "This is a genuine, substantial description of real engineering work that clearly is not test pollution."
+
+	// Legit items: scrub-prefix in the title, but a real (>20 char) description
+	// and a non-sequential ID → no corroborating signal → must survive.
+	legit := []*types.Issue{
+		{ID: "bd-a1b2c3", Title: "Debug logging for the auth flow", Description: realDesc},
+		{ID: "bd-d4e5f6", Title: "Sample rate config for telemetry", Description: realDesc},
+		{ID: "bd-g7h8i9", Title: "Temp directory cleanup on shutdown", Description: realDesc},
+		{ID: "bd-j1k2l3", Title: "Test harness for the e2e suite", Description: realDesc},
+		{ID: "bd-m4n5o6", Title: "Benchmark tuning for the query planner", Description: realDesc},
+	}
+	out := filterOutPollution(legit)
+	if len(out) != len(legit) {
+		t.Fatalf("beads-9y89f: legit prefixed-with-real-description items were dropped: kept %d/%d: %+v", len(out), len(legit), out)
+	}
+
+	// Actual pollution: prefix AND a corroborating signal (empty description)
+	// must still be scrubbed, so the fix does not defang the scrubber.
+	polluted := []*types.Issue{
+		{ID: "bd-p7q8r9", Title: "test-throwaway", Description: ""},          // prefix + no desc
+		{ID: "bd-s1t2u3", Title: "tmp-scratch", Description: "x"},            // prefix + short desc
+		{ID: "bd-v4w5x6", Title: "Real feature request", Description: realDesc}, // clean, kept
+	}
+	cleaned := filterOutPollution(polluted)
+	if len(cleaned) != 1 || cleaned[0].ID != "bd-v4w5x6" {
+		t.Fatalf("beads-9y89f: scrubber should keep only the clean item, got %+v", cleaned)
+	}
+}
+
 func TestHasExplicitStatusFilter(t *testing.T) {
 	cases := map[string]bool{
 		"status=open":                           true,

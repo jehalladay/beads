@@ -299,10 +299,29 @@ func sanitizeZeroTime(issue *types.Issue) {
 }
 
 // filterOutPollution removes issues that look like test/pollution records.
+//
+// beads-9y89f: this drives `bd export --scrub`, whose documented job is to
+// exclude test/pollution records. It previously keyed the drop on the bare
+// isTestIssue() title-prefix boolean, which silently dropped any legit item
+// titled "Debug ...", "Sample ...", "Temp ...", "Test harness ..." etc. —
+// even one with a real multi-sentence description — because the prefix alone
+// was treated as pollution with zero corroborating evidence. Route --scrub
+// through the same scored detectTestPollution() used by doctor --check=pollution
+// so a prefix match must co-occur with a corroborating signal (empty/short
+// description, sequential ID, rapid batch, or a generic test title) before an
+// issue is scrubbed. A prefixed title WITH a substantial description survives.
 func filterOutPollution(issues []*types.Issue) []*types.Issue {
-	var clean []*types.Issue
+	polluted := detectTestPollution(issues)
+	// Key the drop set on pointer identity, not issue.ID: detectTestPollution
+	// returns the same *types.Issue pointers it was given, and keying on ID
+	// would over-drop when multiple issues share an ID (e.g. empty IDs).
+	drop := make(map[*types.Issue]bool, len(polluted))
+	for _, p := range polluted {
+		drop[p.issue] = true
+	}
+	clean := make([]*types.Issue, 0, len(issues))
 	for _, issue := range issues {
-		if !isTestIssue(issue.Title) {
+		if !drop[issue] {
 			clean = append(clean, issue)
 		}
 	}
