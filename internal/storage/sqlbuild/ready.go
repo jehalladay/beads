@@ -187,6 +187,11 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 		whereClauses = append(whereClauses, `LOWER(title) LIKE ? ESCAPE '\\'`)
 		args = append(args, LikeContains(filter.TitleContains))
 	}
+	// beads-gqcmu: empty/missing description, parity with bd list (filter.go:252
+	// EmptyDescription → same clause verbatim). Same issues-table column.
+	if filter.EmptyDescription {
+		whereClauses = append(whereClauses, "(description IS NULL OR description = '')")
+	}
 	// beads-10y4y: created/updated date-range filters (parity with bd list,
 	// whose filter.go applies the same {col, op, *time.Time} loop over these
 	// columns). Both the direct ready.go RunE and gatherReadyInput (proxied)
@@ -271,6 +276,12 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 			args = append(args, label)
 		}
 		whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (SELECT issue_id FROM %s WHERE LOWER(label) IN (%s))", tables.Labels, strings.Join(placeholders, ", ")))
+	}
+	// beads-gqcmu: only issues with NO labels, parity with bd list (filter.go:210
+	// NoLabels → id NOT IN SELECT DISTINCT issue_id FROM labels). tables.Labels
+	// matches the ready builder's per-table-family pattern used just above.
+	if filter.NoLabels {
+		whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (SELECT DISTINCT issue_id FROM %s)", tables.Labels))
 	}
 
 	// Parent filtering: return all transitive descendants of parentID.

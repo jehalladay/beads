@@ -1483,10 +1483,13 @@ type WorkFilter struct {
 	Labels        []string // AND semantics: issue must have ALL these labels
 	LabelsAny     []string // OR semantics: issue must have AT LEAST ONE of these labels
 	ExcludeLabels []string // Exclusion: issue must NOT have ANY of these labels
+	NoLabels      bool     // beads-gqcmu: only issues with NO labels; parity with IssueFilter/bd list
 	LabelPattern  string   // Glob pattern for label matching (e.g., "tech-*")
 	LabelRegex    string   // Regex pattern for label matching (e.g., "tech-(debt|legacy)")
-	Limit         int
-	SortPolicy    SortPolicy
+	// beads-gqcmu: only issues with empty/missing description; parity with IssueFilter/bd list.
+	EmptyDescription bool
+	Limit            int
+	SortPolicy       SortPolicy
 
 	// Parent filtering: filter to descendants of a bead/epic (recursive)
 	ParentID *string // Show all descendants of this issue

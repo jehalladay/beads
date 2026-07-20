@@ -226,6 +226,10 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		if tc, _ := cmd.Flags().GetString("title-contains"); tc != "" {
 			filter.TitleContains = tc
 		}
+		// beads-gqcmu: --no-labels / --empty-description, parity with bd list.
+		// Plain bools (no validation); the proxied path sets the same in gatherReadyInput.
+		filter.NoLabels, _ = cmd.Flags().GetBool("no-labels")
+		filter.EmptyDescription, _ = cmd.Flags().GetBool("empty-description")
 		// beads-10y4y: created/updated date-range filters (parity with bd list).
 		// parseListTimeFlag is relative-time aware (+6h/tomorrow/yesterday) and
 		// returns a *time.Time (nil when the flag is empty). The proxied path
@@ -893,6 +897,8 @@ func init() {
 	readyCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL). Can combine with --label-any")
 	readyCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE). Can combine with --label")
 	readyCmd.Flags().StringSlice("exclude-label", []string{}, "Exclude issues that have ANY of these labels")
+	readyCmd.Flags().Bool("no-labels", false, "Filter issues with no labels")
+	readyCmd.Flags().Bool("empty-description", false, "Filter issues with empty or missing description")
 	readyCmd.Flags().StringP("type", "t", "", "Filter by issue type (task, bug, feature, epic, decision, merge-request). Aliases: mr→merge-request, feat→feature, mol→molecule, dec/adr→decision")
 	readyCmd.Flags().String("title-contains", "", "Filter by title substring (case-insensitive)")
 	readyCmd.Flags().String("mol", "", "Filter to steps within a specific molecule")

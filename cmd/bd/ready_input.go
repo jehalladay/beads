@@ -211,6 +211,10 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 	if tc, _ := cmd.Flags().GetString("title-contains"); tc != "" {
 		in.filter.TitleContains = tc
 	}
+	// beads-gqcmu: --no-labels / --empty-description on the PROXIED ready path too
+	// (parity with bd list). Plain bools; the direct ready.go RunE sets them separately.
+	in.filter.NoLabels, _ = cmd.Flags().GetBool("no-labels")
+	in.filter.EmptyDescription, _ = cmd.Flags().GetBool("empty-description")
 	// beads-10y4y: created/updated date-range filters on the PROXIED ready path
 	// too (parity with bd list). Shared input path, so parsing here covers
 	// runReadyProxiedServer; the direct ready.go RunE parses separately (same

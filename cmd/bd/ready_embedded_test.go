@@ -589,6 +589,79 @@ func TestEmbeddedReadyTitleContains(t *testing.T) {
 	})
 }
 
+// TestEmbeddedReadyNoLabelsEmptyDescription is the teeth for beads-gqcmu:
+// `bd ready --no-labels` returns only issues with no labels, and
+// `--empty-description` returns only issues with an empty/missing description.
+// Parity with `bd list` (filter.go:210 / :252). Runs against real Dolt so the
+// label-subquery + description clause execute end-to-end.
+func TestEmbeddedReadyNoLabelsEmptyDescription(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "nl")
+
+	// Labeled + described; unlabeled + described; unlabeled + no description.
+	bdCreate(t, bd, dir, "Labeled with desc", "--type", "task", "-d", "has a description", "--label", "area-x")
+	bdCreate(t, bd, dir, "Bare unlabeled with desc", "--type", "task", "-d", "also described")
+	bdCreate(t, bd, dir, "Bare no desc", "--type", "task")
+
+	readyTitles := func(t *testing.T, args ...string) []string {
+		t.Helper()
+		full := append([]string{"ready", "--json", "--limit", "0"}, args...)
+		cmd := exec.Command(bd, full...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("bd ready %v failed: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
+		}
+		var ready []types.IssueWithCounts
+		if jerr := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &ready); jerr != nil {
+			t.Fatalf("parse ready JSON (%v): %v\n%s", args, jerr, stdout.String())
+		}
+		titles := make([]string, 0, len(ready))
+		for _, r := range ready {
+			titles = append(titles, r.Title)
+		}
+		return titles
+	}
+
+	t.Run("no_filter_returns_all_three", func(t *testing.T) {
+		if got := readyTitles(t); len(got) != 3 {
+			t.Fatalf("no filter: got %d titles, want 3: %v", len(got), got)
+		}
+	})
+
+	t.Run("no_labels_excludes_the_labeled_issue", func(t *testing.T) {
+		got := readyTitles(t, "--no-labels")
+		if len(got) != 2 {
+			t.Fatalf("--no-labels: got %d titles, want 2: %v", len(got), got)
+		}
+		for _, tt := range got {
+			if strings.Contains(tt, "Labeled") {
+				t.Errorf("--no-labels returned the labeled issue %q", tt)
+			}
+		}
+	})
+
+	t.Run("empty_description_matches_only_the_no_desc_issue", func(t *testing.T) {
+		got := readyTitles(t, "--empty-description")
+		if len(got) != 1 || got[0] != "Bare no desc" {
+			t.Errorf("--empty-description: got %v, want [Bare no desc]", got)
+		}
+	})
+
+	t.Run("combined_no_labels_and_empty_description", func(t *testing.T) {
+		got := readyTitles(t, "--no-labels", "--empty-description")
+		if len(got) != 1 || got[0] != "Bare no desc" {
+			t.Errorf("--no-labels --empty-description: got %v, want [Bare no desc]", got)
+		}
+	})
+}
+
 // TestEmbeddedReadyTitleContainsEscapesLikeMetachars is the teeth for
 // beads-b9ova: --title-contains must treat % and _ as LITERAL characters, not
 // LIKE wildcards. Runs against real Dolt so the ESCAPE '\\' clause + backslash
