@@ -146,7 +146,7 @@ Example:
 		fmt.Printf("%s Found %d duplicate group(s):\n\n", ui.RenderWarn("🔍"), len(duplicateGroups))
 		for i, group := range duplicateGroups {
 			target := chooseMergeTarget(group, refCounts, structuralScores)
-			fmt.Printf("%s Group %d: %s\n", ui.RenderAccent("━━"), i+1, group[0].Title)
+			fmt.Printf("%s Group %d: %s\n", ui.RenderAccent("━━"), i+1, displayTitle(group[0].Title))
 			for _, issue := range group {
 				refs := refCounts[issue.ID]
 				weight := 0
