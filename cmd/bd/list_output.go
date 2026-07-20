@@ -21,6 +21,23 @@ func printTruncationHint(truncated bool, effectiveLimit int) {
 	fmt.Fprint(os.Stderr, ui.RenderWarn(msg))
 }
 
+// printJSONTruncationWarn is the --json-path truncation warning for bd list
+// (beads-qyoff). Unlike printTruncationHint it is NOT terminal-gated: a JSON
+// consumer piping stdout is exactly the case that must still learn the result
+// was truncated, and stderr never pollutes the parseable stdout payload. This
+// matches bd search (beads-uopti) and bd ready, which emit their truncation
+// warning to stderr unconditionally — list was the outlier that dropped the
+// signal entirely under a pipe (terminal-gated hint + bare-array stdout). Uses
+// list's fetch-one-extra semantics (knows "more exist", not the exact total),
+// so the message says "more results matched" without a specific total, matching
+// printTruncationHint's wording.
+func printJSONTruncationWarn(truncated bool, effectiveLimit int) {
+	if !truncated || effectiveLimit <= 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Showing %d issues; more results matched but were hidden by --limit. Use --limit 0 for all, or --limit N to raise the cap.\n", effectiveLimit)
+}
+
 // printTreeLimitIgnoredHint warns when `bd list --parent X --limit N --pretty`
 // was given a positive --limit that the child count exceeds. The tree view
 // intentionally renders the FULL subtree (truncating mid-hierarchy would orphan

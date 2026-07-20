@@ -160,3 +160,49 @@ func withSuppressedStdout(t *testing.T, fn func() error) error {
 	}()
 	return fn()
 }
+
+// TestPrintJSONTruncationWarn is the teeth for beads-qyoff: bd list --json must
+// warn on stderr when the result is truncated, UNCONDITIONALLY (not
+// terminal-gated like printTruncationHint) — a JSON consumer piping stdout is
+// exactly the case that must still learn results were hidden. Matches bd
+// search (beads-uopti) / ready, which warn unconditionally; list was the
+// outlier that dropped the signal under a pipe.
+func TestPrintJSONTruncationWarn(t *testing.T) {
+	capture := func(fn func()) string {
+		old := os.Stderr
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("pipe: %v", err)
+		}
+		os.Stderr = w
+		fn()
+		w.Close()
+		os.Stderr = old
+		buf := make([]byte, 4096)
+		n, _ := r.Read(buf)
+		return string(buf[:n])
+	}
+
+	t.Run("truncated emits warning to non-terminal stderr", func(t *testing.T) {
+		// os.Pipe stderr is NOT a terminal — printTruncationHint would suppress
+		// here; printJSONTruncationWarn must NOT.
+		got := capture(func() { printJSONTruncationWarn(true, 50) })
+		if !strings.Contains(got, "more results matched but were hidden by --limit") {
+			t.Fatalf("beads-qyoff: expected truncation warning on non-terminal stderr, got %q", got)
+		}
+	})
+
+	t.Run("not truncated is silent", func(t *testing.T) {
+		got := capture(func() { printJSONTruncationWarn(false, 50) })
+		if got != "" {
+			t.Fatalf("expected no output when not truncated, got %q", got)
+		}
+	})
+
+	t.Run("zero limit is silent", func(t *testing.T) {
+		got := capture(func() { printJSONTruncationWarn(true, 0) })
+		if got != "" {
+			t.Fatalf("expected no output when effectiveLimit<=0, got %q", got)
+		}
+	})
+}

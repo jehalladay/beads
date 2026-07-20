@@ -301,7 +301,11 @@ func emitProxiedListJSONResult(iwc []*types.IssueWithCounts, in listInput, hasMo
 	if err != nil {
 		return err
 	}
-	printTruncationHint(hasMore, in.effectiveLimit)
+	// beads-qyoff: JSON path uses the non-terminal-gated warn so a piped
+	// consumer still learns the result was truncated (matches the direct list
+	// path + bd search/ready). printTruncationHint here would be terminal-gated
+	// and silently drop the signal under a pipe.
+	printJSONTruncationWarn(hasMore, in.effectiveLimit)
 	return nil
 }
 

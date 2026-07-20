@@ -616,13 +616,13 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 			if err := outputJSON(newSkipLabelsListJSONResponse(iwc)); err != nil {
 				return err
 			}
-			printTruncationHint(truncated, in.effectiveLimit)
+			printJSONTruncationWarn(truncated, in.effectiveLimit)
 			return nil
 		}
 		if err := outputJSON(iwc); err != nil {
 			return err
 		}
-		printTruncationHint(truncated, in.effectiveLimit)
+		printJSONTruncationWarn(truncated, in.effectiveLimit)
 		return nil
 	}
 
