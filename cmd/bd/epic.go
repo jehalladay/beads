@@ -188,7 +188,11 @@ func renderEpicCloseEligible(epics []*types.EpicStatus, dryRun bool, closeFn fun
 			// beads-qos4p: emit the STABLE dict shape (same schema as dry-run
 			// and actually-closed) so a --json consumer sees one static shape
 			// regardless of outcome, not a bare array here + a dict elsewhere.
-			return outputJSON(epicCloseEligibleResult(eligibleEpics, []string{}, true))
+			// beads-btdm2: report the ACTUAL dryRun arg, not a hardcoded true —
+			// "nothing eligible" happens on both real and dry-run invocations,
+			// so a plain `close-eligible --json` (no --dry-run) here previously
+			// mislabeled itself dry_run:true.
+			return outputJSON(epicCloseEligibleResult(eligibleEpics, []string{}, dryRun))
 		}
 		fmt.Println("No epics eligible for closure")
 		return nil
