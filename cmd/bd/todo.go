@@ -180,6 +180,21 @@ func runTodoListCore(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// todoDoneReasonOrDefault returns the close reason for `bd todo done`, falling
+// through to the "Completed" default when no reason was provided. A
+// whitespace-only --reason is treated as NOT provided (beads-07sko): the plain
+// `reason == ""` guard let a whitespace value through, so it was stored as the
+// issue's close_reason instead of the default — the override-a-default axis of
+// the stored-blank-reason class (mirrors bd close's TrimSpace guard in93a and
+// bd mol squash --summary au0rt). A genuine reason is used VERBATIM (its
+// formatting preserved).
+func todoDoneReasonOrDefault(reason string) string {
+	if strings.TrimSpace(reason) == "" {
+		return "Completed"
+	}
+	return reason
+}
+
 var doneTodoCmd = &cobra.Command{
 	Use:           "done <id> [<id>...]",
 	Short:         "Mark TODO(s) as done",
@@ -199,9 +214,7 @@ var doneTodoCmd = &cobra.Command{
 		ctx := rootCtx
 
 		reason, _ := cmd.Flags().GetString("reason")
-		if reason == "" {
-			reason = "Completed"
-		}
+		reason = todoDoneReasonOrDefault(reason)
 
 		var closedIDs []string
 		failedCount := 0
