@@ -439,6 +439,22 @@ func PrepareIssueForInsert(issue *types.Issue, customStatuses, customTypes []str
 	} else {
 		issue.UpdatedAt = issue.UpdatedAt.UTC().Truncate(time.Second)
 	}
+	// beads-17n4h: due_at/defer_until are DATETIME (second precision) too, but
+	// PrepareIssueForInsert did not truncate them — a relative `--due +6h` /
+	// `--defer +3h` parse (ParseRelativeTime -> now.Add(...)) preserves
+	// time.Now()'s nanoseconds, and cmd/bd/create.go emits this struct verbatim
+	// under --json without re-reading, so the create-emit carried a ns value no
+	// later read (show/list, all second-precision) could reproduce (the same
+	// read-after-write mismatch 8ukct fixed for created_at/updated_at). Truncate
+	// at this shared insert point so the emit matches the persisted column.
+	if issue.DueAt != nil {
+		truncatedDue := issue.DueAt.UTC().Truncate(time.Second)
+		issue.DueAt = &truncatedDue
+	}
+	if issue.DeferUntil != nil {
+		truncatedDefer := issue.DeferUntil.UTC().Truncate(time.Second)
+		issue.DeferUntil = &truncatedDefer
+	}
 
 	// Ensure closed issues have a closed_at timestamp.
 	if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
