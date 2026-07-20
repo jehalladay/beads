@@ -200,6 +200,9 @@ func (t *Tracker) FetchIssue(ctx context.Context, identifier string) (*itracker.
 }
 
 func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*itracker.TrackerIssue, error) {
+	if err := validateNotionLabels(issue.Labels); err != nil {
+		return nil, err
+	}
 	pushIssue, err := PushIssueFromIssue(issue, t.config)
 	if err != nil {
 		return nil, err
@@ -223,6 +226,9 @@ func (t *Tracker) UpdateIssue(ctx context.Context, externalID string, issue *typ
 	}
 	if pageID == "" {
 		return nil, fmt.Errorf("invalid Notion page ID %q", externalID)
+	}
+	if err := validateNotionLabels(issue.Labels); err != nil {
+		return nil, err
 	}
 	pushIssue, err := PushIssueFromIssue(issue, t.config)
 	if err != nil {
@@ -315,6 +321,9 @@ func (t *Tracker) executeBatchPush(ctx context.Context, issues []*types.Issue, f
 func (t *Tracker) pushOne(ctx context.Context, issue *types.Issue, force, dryRun bool) pushOutcome {
 	if issue == nil {
 		return pushOutcome{}
+	}
+	if err := validateNotionLabels(issue.Labels); err != nil {
+		return pushOutcome{err: &itracker.BatchPushError{LocalID: issue.ID, Message: err.Error()}}
 	}
 	pushIssue, err := PushIssueFromIssue(issue, t.config)
 	if err != nil {
