@@ -508,22 +508,35 @@ func TestEmbeddedCountIncludeInfra(t *testing.T) {
 		m := bdCountJSON(t, bd, dir, args...)
 		return int(m["count"].(float64))
 	}
+	// beads-5vanc: the GH#4387 invariant is "count --include-infra <f> counts the
+	// same rows bd list --include-infra <f> returns". The reference list must use
+	// bd list's DEFAULT status scope (no --all), because beads-9iia aligned
+	// `bd count`'s no-status default to `bd list`'s (both now exclude
+	// closed/pinned + custom done/frozen when no explicit --status is given).
+	// Using --all here would reintroduce the closed row on the list side only,
+	// breaking the invariant against count's post-9iia backlog default. An
+	// explicit --status <x> still bypasses the default on BOTH commands, so those
+	// filter cases are unaffected by dropping --all.
 	listCardinality := func(args ...string) int {
 		t.Helper()
-		fullArgs := append([]string{"--include-infra", "--all", "--limit", "0"}, args...)
+		fullArgs := append([]string{"--include-infra", "--limit", "0"}, args...)
 		return len(bdListJSON(t, bd, dir, fullArgs...))
 	}
 
 	t.Run("default_stays_durable_only", func(t *testing.T) {
-		if got := countOf("--type", "task"); got != 3 {
-			t.Errorf("bd count --type task = %d, want 3 (durable tasks only; default must stay byte-identical)", got)
+		// beads-9iia: the no-status default excludes the 1 closed durable task
+		// (2 open durable tasks remain), matching bd list's backlog scope. The
+		// grand total incl. closed is `bd count --type task --status all`.
+		if got := countOf("--type", "task"); got != 2 {
+			t.Errorf("bd count --type task = %d, want 2 (open durable tasks only, 9iia default excludes the closed one)", got)
 		}
 	})
 
 	t.Run("include_infra_counts_wisps_tier", func(t *testing.T) {
-		// 3 durable tasks + 2 no_history tasks + 1 ephemeral task.
-		if got := countOf("--include-infra", "--type", "task"); got != 6 {
-			t.Errorf("bd count --include-infra --type task = %d, want 6", got)
+		// beads-9iia: 2 OPEN durable tasks (the closed one is excluded by the
+		// no-status default) + 2 no_history tasks + 1 ephemeral task = 5.
+		if got := countOf("--include-infra", "--type", "task"); got != 5 {
+			t.Errorf("bd count --include-infra --type task = %d, want 5", got)
 		}
 	})
 
@@ -538,7 +551,7 @@ func TestEmbeddedCountIncludeInfra(t *testing.T) {
 			want := listCardinality(filters...)
 			got := countOf(append([]string{"--include-infra"}, filters...)...)
 			if got != want {
-				t.Errorf("bd count --include-infra %v = %d, but bd list --include-infra --all %v returned %d rows", filters, got, filters, want)
+				t.Errorf("bd count --include-infra %v = %d, but bd list --include-infra %v returned %d rows", filters, got, filters, want)
 			}
 		}
 	})
@@ -558,8 +571,11 @@ func TestEmbeddedCountIncludeInfra(t *testing.T) {
 			gm := g.(map[string]interface{})
 			byType[gm["group"].(string)] = int(gm["count"].(float64))
 		}
-		if byType["task"] != 6 {
-			t.Errorf("grouped task count = %d, want 6 (wisps tier missing from --by-type)", byType["task"])
+		// beads-9iia: --by-type is a non-status grouping, so the no-status default
+		// still applies — the closed durable task is excluded. Task = 2 OPEN
+		// durable + 2 no_history + 1 ephemeral = 5.
+		if byType["task"] != 5 {
+			t.Errorf("grouped task count = %d, want 5 (wisps tier missing from --by-type)", byType["task"])
 		}
 		if byType["bug"] != 1 {
 			t.Errorf("grouped bug count = %d, want 1", byType["bug"])
@@ -575,8 +591,10 @@ func TestEmbeddedCountIncludeInfra(t *testing.T) {
 		for _, g := range groups {
 			gm := g.(map[string]interface{})
 			if gm["group"] == "task" {
-				if got := int(gm["count"].(float64)); got != 3 {
-					t.Errorf("bd count --by-type task = %d, want 3 (durable only)", got)
+				// beads-9iia: --by-type (non-status grouping) excludes the closed
+				// durable task by default → 2 open durable tasks.
+				if got := int(gm["count"].(float64)); got != 2 {
+					t.Errorf("bd count --by-type task = %d, want 2 (open durable only, 9iia default)", got)
 				}
 			}
 		}
