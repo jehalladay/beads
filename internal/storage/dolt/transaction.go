@@ -287,24 +287,99 @@ func (t *doltTransaction) GetIssue(ctx context.Context, id string) (*types.Issue
 
 // SearchIssues searches for issues within the transaction.
 // Supports the same filter fields as DoltStore.SearchIssues (bd-v6v8).
+//
+// Mirrors issueops.SearchIssuesInTx: a non-ephemeral search (Ephemeral nil/false)
+// merges the wisps table so NoHistory beads (ephemeral=0, stored in wisps —
+// GH#3649/#3659) survive, matching the live store + embedded tx paths. Without
+// the merge this in-tx read-your-writes path silently dropped every NoHistory
+// bead (beads-nyhdd). beads-898t2 tracks retiring this hand-copy wholesale by
+// delegating to issueops.SearchIssuesInTx.
 func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
-	table := "issues"
-	if filter.Ephemeral != nil && *filter.Ephemeral {
-		table = "wisps"
-	}
-	// If searching by IDs that are all ephemeral, use wisps table (bd-w2w)
-	if len(filter.IDs) > 0 && allEphemeral(filter.IDs) {
-		table = "wisps"
-	}
-
-	// Derive related table names from the main table
-	depTable := "dependencies"
-	labelTable := "labels"
-	if table == "wisps" {
-		depTable = "wisp_dependencies"
-		labelTable = "wisp_labels"
+	// Route ephemeral-only searches (or an all-ID-ephemeral lookup, bd-w2w) to the
+	// wisps table; every other search reads issues and merges wisps below.
+	ephemeralOnly := (filter.Ephemeral != nil && *filter.Ephemeral) ||
+		(len(filter.IDs) > 0 && allEphemeral(filter.IDs))
+	table, labelTable, depTable := "issues", "labels", "dependencies"
+	if ephemeralOnly {
+		table, labelTable, depTable = "wisps", "wisp_labels", "wisp_dependencies"
 	}
 
+	ids, err := t.searchIssueIDsInTx(ctx, query, filter, table, labelTable, depTable)
+	if err != nil {
+		return nil, err
+	}
+
+	// Merge the wisps table for non-ephemeral searches so NoHistory beads
+	// (ephemeral=0, stored in wisps) are returned, mirroring
+	// issueops.SearchIssuesInTx (search.go:42-88). filter is passed unchanged so
+	// the per-row ephemeral column clause it carries excludes true ephemerals on
+	// an Ephemeral=&false search while keeping NoHistory beads (GH#3659).
+	// SkipWisps opts out of the merge entirely (Q2 perf escape hatch).
+	merged := false
+	if !ephemeralOnly && !filter.SkipWisps {
+		wispIDs, wispErr := t.searchIssueIDsInTx(ctx, query, filter, "wisps", "wisp_labels", "wisp_dependencies")
+		if wispErr != nil && !isTableNotExistError(wispErr) {
+			return nil, wispErr
+		}
+		if len(wispIDs) > 0 {
+			// Dedupe IDs. A colliding ID hydrates from wisps via GetIssue
+			// (isActiveWisp routes wisps-first), matching the canonical
+			// "prefer the canonical wisp record on ID collision".
+			seen := make(map[string]bool, len(ids)+len(wispIDs))
+			combined := make([]string, 0, len(ids)+len(wispIDs))
+			for _, id := range append(append([]string{}, ids...), wispIDs...) {
+				if !seen[id] {
+					seen[id] = true
+					combined = append(combined, id)
+				}
+			}
+			ids = combined
+			merged = true
+		}
+	}
+
+	var issues []*types.Issue
+	for _, id := range ids {
+		issue, err := t.GetIssue(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("search issues in tx: get issue %s: %w", id, err)
+		}
+		issues = append(issues, issue)
+	}
+
+	// Sort. Each per-table query was ORDER BY'd in SQL, but a merged set is the
+	// concatenation of two independently-ordered lists, so it must be re-sorted
+	// globally — sqlbuild.Less mirrors sqlbuild.OrderBy exactly (incl. MySQL
+	// NULL-first semantics), the same post-merge sort issueops uses
+	// (sortAndPaginateMergedIssues). Non-merged results keep their SQL order and
+	// only need the Go-side sort for keys SQL can't order (IsGoSideSort, e.g. "id").
+	if merged || sqlbuild.IsGoSideSort(filter.SortBy) {
+		sort.SliceStable(issues, func(i, j int) bool {
+			return sqlbuild.Less(issues[i], issues[j], filter.SortBy, filter.SortDesc)
+		})
+	}
+
+	// Apply Offset then Limit over the ordered slice, matching
+	// issueops.applyOffsetLimit so pagination is consistent with bd list/search.
+	if filter.Offset > 0 {
+		if filter.Offset >= len(issues) {
+			return nil, nil
+		}
+		issues = issues[filter.Offset:]
+	}
+	if filter.Limit > 0 && len(issues) > filter.Limit {
+		issues = issues[:filter.Limit]
+	}
+	return issues, nil
+}
+
+// searchIssueIDsInTx builds the filtered WHERE clause for a single table (issues
+// or wisps) and returns the matching IDs in SQL sort order. Extracted from
+// SearchIssues so the issues scan and the wisps merge (NoHistory beads,
+// beads-nyhdd) run the identical filter against their respective
+// table/label/dep tables. table/labelTable/depTable are hardcoded caller
+// constants, never user data.
+func (t *doltTransaction) searchIssueIDsInTx(ctx context.Context, query string, filter types.IssueFilter, table, labelTable, depTable string) ([]string, error) {
 	whereClauses := []string{}
 	args := []interface{}{}
 
@@ -709,37 +784,7 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 	}
 	_ = rows.Close()
 
-	var issues []*types.Issue
-	for _, id := range ids {
-		issue, err := t.GetIssue(ctx, id)
-		if err != nil {
-			return nil, fmt.Errorf("search issues in tx: get issue %s: %w", id, err)
-		}
-		issues = append(issues, issue)
-	}
-
-	// Go-side sort for keys SQL can't order (sqlbuild.IsGoSideSort, e.g. "id"):
-	// OrderBy emitted no ORDER BY for these, so the rows came back in an
-	// unspecified order — sort them the same way sqlbuild.Less does for the live
-	// path's post-merge sort.
-	if sqlbuild.IsGoSideSort(filter.SortBy) {
-		sort.SliceStable(issues, func(i, j int) bool {
-			return sqlbuild.Less(issues[i], issues[j], filter.SortBy, filter.SortDesc)
-		})
-	}
-
-	// Apply Offset then Limit over the ordered slice, matching
-	// issueops.applyOffsetLimit so pagination is consistent with bd list/search.
-	if filter.Offset > 0 {
-		if filter.Offset >= len(issues) {
-			return nil, nil
-		}
-		issues = issues[filter.Offset:]
-	}
-	if filter.Limit > 0 && len(issues) > filter.Limit {
-		issues = issues[:filter.Limit]
-	}
-	return issues, nil
+	return ids, nil
 }
 
 func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {

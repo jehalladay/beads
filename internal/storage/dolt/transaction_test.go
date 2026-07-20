@@ -466,3 +466,90 @@ func TestTxGetIssueHydratesLabels(t *testing.T) {
 		t.Fatalf("in-tx GetIssue label hydration: %v", err)
 	}
 }
+
+// TestTxSearchIssuesMergesNoHistoryWisps gives beads-nyhdd teeth: a non-ephemeral
+// in-tx SearchIssues must return NoHistory beads (ephemeral=0, stored in the wisps
+// table — GH#3649/#3659) while still excluding TRUE ephemeral wisps on an
+// Ephemeral=&false filter, mirroring the live store + embedded tx paths which
+// merge the wisps table. Before the fix the in-tx path read only the issues table
+// (unless Ephemeral==true), silently dropping every NoHistory bead.
+func TestTxSearchIssuesMergesNoHistoryWisps(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	regular := &types.Issue{
+		ID:        "test-nyhdd-regular",
+		Title:     "regular issue for nyhdd merge",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	noHistory := &types.Issue{
+		ID:        "test-nyhdd-nohistory",
+		Title:     "no-history bead in wisps for nyhdd merge",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		NoHistory: true, // stored in wisps with ephemeral=0
+	}
+	ephemeral := &types.Issue{
+		ID:        "test-nyhdd-ephemeral",
+		Title:     "true ephemeral wisp for nyhdd merge",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+	}
+	if err := store.RunInTransaction(ctx, "test: nyhdd create regular+nohistory+ephemeral", func(tx storage.Transaction) error {
+		return tx.CreateIssues(ctx, []*types.Issue{regular, noHistory, ephemeral}, "tester")
+	}); err != nil {
+		t.Fatalf("RunInTransaction create nyhdd fixtures: %v", err)
+	}
+
+	contains := func(issues []*types.Issue, id string) bool {
+		for _, is := range issues {
+			if is.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	if err := store.RunInTransaction(ctx, "test: nyhdd in-tx SearchIssues merges wisps", func(tx storage.Transaction) error {
+		// Ephemeral==nil: search everything. The NoHistory bead lives in wisps and
+		// MUST be returned; the true ephemeral is also returned (search-everything).
+		all, err := tx.SearchIssues(ctx, "", types.IssueFilter{})
+		if err != nil {
+			return err
+		}
+		if !contains(all, regular.ID) {
+			return fmt.Errorf("Ephemeral=nil search missing regular %s (got %d issues, beads-nyhdd)", regular.ID, len(all))
+		}
+		if !contains(all, noHistory.ID) {
+			return fmt.Errorf("Ephemeral=nil search missing NoHistory bead %s — wisps table not merged (beads-nyhdd); got %d issues", noHistory.ID, len(all))
+		}
+
+		// Ephemeral=&false: non-ephemeral only. NoHistory (ephemeral=0) must
+		// survive; the true ephemeral must be excluded.
+		no := false
+		nonEph, err := tx.SearchIssues(ctx, "", types.IssueFilter{Ephemeral: &no})
+		if err != nil {
+			return err
+		}
+		if !contains(nonEph, noHistory.ID) {
+			return fmt.Errorf("Ephemeral=&false search missing NoHistory bead %s — wisps not merged (beads-nyhdd)", noHistory.ID)
+		}
+		if !contains(nonEph, regular.ID) {
+			return fmt.Errorf("Ephemeral=&false search missing regular %s (beads-nyhdd)", regular.ID)
+		}
+		if contains(nonEph, ephemeral.ID) {
+			return fmt.Errorf("Ephemeral=&false search leaked true ephemeral %s (beads-nyhdd)", ephemeral.ID)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("in-tx SearchIssues NoHistory merge: %v", err)
+	}
+}
