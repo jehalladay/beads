@@ -65,7 +65,12 @@ func (s *EmbeddedDoltStore) ReopenIssue(ctx context.Context, id string, reason s
 		return err
 	}
 	if reason != "" {
-		if err := s.AddComment(ctx, id, actor, reason); err != nil {
+		// beads-bimd0: record the reason in the COMMENTS table (AddIssueComment),
+		// not the events table (AddComment→EventCommented). bd show / bd comments
+		// read only the comments table, so an events-table row is invisible — the
+		// documented "recorded as a comment" reason silently vanished. Mirrors the
+		// shared issueops.ReopenIssueInTx seam and beads-9l1it (promote).
+		if _, err := s.AddIssueComment(ctx, id, actor, reason); err != nil {
 			return fmt.Errorf("reopen comment: %w", err)
 		}
 	}

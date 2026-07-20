@@ -66,7 +66,15 @@ func ReopenIssueInTx(ctx context.Context, tx DBTX, id, reason, actor string) (*R
 	}
 
 	if reason != "" {
-		if err := AddCommentEventInTx(ctx, tx, id, actor, reason); err != nil {
+		// beads-bimd0: write the reopen reason to the COMMENTS table via
+		// AddIssueCommentInTx, NOT the events table via AddCommentEventInTx.
+		// bd show / bd comments read GetIssueComments (comments table); an
+		// EventCommented row in `events` is surfaced by no read path, so the
+		// documented "recorded as a comment" reason was silently invisible on
+		// every reopen path (same class as beads-9l1it, which moved the promote
+		// reason off the events table for the identical reason). The
+		// EventReopened row above still carries the reason for the audit trail.
+		if _, err := AddIssueCommentInTx(ctx, tx, id, actor, reason); err != nil {
 			return nil, fmt.Errorf("failed to add reopen comment: %w", err)
 		}
 	}
