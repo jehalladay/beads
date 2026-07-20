@@ -577,6 +577,23 @@ type WispGCResult struct {
 	DryRun       bool     `json:"dry_run,omitempty"`
 }
 
+// renderWispGCDryRun formats the human `bd wisp gc --dry-run` preview. Titles
+// come from stored issue data (an untrusted JSONL/markdown/SCM import can carry
+// OSC/CSI escapes), so each is routed through displayTitle for terminal-safe
+// display (beads-hacdt, 7n9y sink-class). Display-only: the --json path
+// (WispGCResult) is unaffected. Extracted from runWispGC so it is unit-testable
+// without a live store.
+func renderWispGCDryRun(abandoned []*types.Issue) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Dry run: would clean %d abandoned wisp(s):\n\n", len(abandoned))
+	for _, issue := range abandoned {
+		age := formatTimeAgo(issue.UpdatedAt)
+		fmt.Fprintf(&b, "  %s: %s (last updated: %s)\n", issue.ID, displayTitle(issue.Title), age)
+	}
+	fmt.Fprintf(&b, "\nRun without --dry-run to delete these wisps.\n")
+	return b.String()
+}
+
 func runWispGC(cmd *cobra.Command, args []string) error {
 	CheckReadonly("wisp gc")
 
@@ -724,12 +741,7 @@ func runWispGC(cmd *cobra.Command, args []string) error {
 				DryRun:       true,
 			})
 		}
-		fmt.Printf("Dry run: would clean %d abandoned wisp(s):\n\n", len(abandoned))
-		for _, issue := range abandoned {
-			age := formatTimeAgo(issue.UpdatedAt)
-			fmt.Printf("  %s: %s (last updated: %s)\n", issue.ID, issue.Title, age)
-		}
-		fmt.Printf("\nRun without --dry-run to delete these wisps.\n")
+		fmt.Print(renderWispGCDryRun(abandoned))
 		return nil
 	}
 

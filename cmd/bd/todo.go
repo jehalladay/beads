@@ -109,7 +109,7 @@ var addTodoCmd = &cobra.Command{
 			// beads-s2oy: outputJSON for schema_version + BD_JSON_ENVELOPE.
 			return outputJSON(issue)
 		}
-		fmt.Printf("Created %s: %s\n", ui.RenderID(issue.ID), issue.Title)
+		fmt.Printf("Created %s: %s\n", ui.RenderID(issue.ID), displayTitle(issue.Title))
 		return nil
 	},
 }
