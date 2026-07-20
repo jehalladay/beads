@@ -421,16 +421,23 @@ func PrepareIssueForInsert(issue *types.Issue, customStatuses, customTypes []str
 	}
 
 	// Normalize timestamps to UTC, defaulting to now.
-	now := time.Now().UTC()
+	//
+	// beads-8ukct: the created_at/updated_at columns are DATETIME (second
+	// precision), so the stored value is second-truncated. Truncate the
+	// in-memory value to match, because cmd/bd/create.go emits this same
+	// struct verbatim under --json without re-reading — without the truncate
+	// the create-emit carries nanosecond time.Now() that no later read (show/
+	// list, all second-precision) can reproduce (read-after-write mismatch).
+	now := time.Now().UTC().Truncate(time.Second)
 	if issue.CreatedAt.IsZero() {
 		issue.CreatedAt = now
 	} else {
-		issue.CreatedAt = issue.CreatedAt.UTC()
+		issue.CreatedAt = issue.CreatedAt.UTC().Truncate(time.Second)
 	}
 	if issue.UpdatedAt.IsZero() {
 		issue.UpdatedAt = now
 	} else {
-		issue.UpdatedAt = issue.UpdatedAt.UTC()
+		issue.UpdatedAt = issue.UpdatedAt.UTC().Truncate(time.Second)
 	}
 
 	// Ensure closed issues have a closed_at timestamp.
