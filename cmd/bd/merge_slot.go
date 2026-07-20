@@ -291,7 +291,19 @@ func runMergeSlotRelease(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	if err := store.MergeSlotRelease(rootCtx, mergeSlotHolder, actor); err != nil {
+	// Resolve the holder the same way acquire does (mergeSlotHolder overrides,
+	// else BEADS_ACTOR). Passing the raw --holder flag meant the normal
+	// BEADS_ACTOR workflow (no --holder) always sent "" — and the storage
+	// ownership guard (MergeSlotReleaseImpl: `holder != "" && meta.Holder !=
+	// holder`) is SKIPPED on empty holder, so any actor could release any
+	// other actor's slot. Mirroring acquire's fallback feeds the guard the
+	// caller's identity so it can enforce ownership (beads-vmwzn).
+	holder := mergeSlotHolder
+	if holder == "" {
+		holder = actor
+	}
+
+	if err := store.MergeSlotRelease(rootCtx, holder, actor); err != nil {
 		return HandleErrorRespectJSON("%v", err)
 	}
 
