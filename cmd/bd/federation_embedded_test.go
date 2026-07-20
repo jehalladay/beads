@@ -250,6 +250,45 @@ func TestFederationStatusPeerJSONSnakeCase(t *testing.T) {
 	}
 }
 
+// TestFederationStatusNestedSyncStatusJSONSnakeCase is the beads-ugb99 teeth.
+//
+// The `bd federation status --json` payload embeds the per-peer sync state as
+// the nested "status" object (peerStatus.Status *storage.SyncStatus). At
+// runtime that field is non-nil (the render loop always sets it), but
+// storage.SyncStatus had NO json tags, so json.Marshal emitted its fields as
+// PascalCase (Peer/LastSync/LocalAhead/LocalBehind/HasConflicts) — a snake_case
+// contract violation nested inside the otherwise-snake_case payload that
+// beads-7mm8 fixed on the outer wrapper. 7mm8's test used Status:nil so the
+// nested object was never marshaled and the leak was missed.
+func TestFederationStatusNestedSyncStatusJSONSnakeCase(t *testing.T) {
+	type peerStatus struct {
+		Status      *storage.SyncStatus `json:"status"`
+		URL         string              `json:"url"`
+		Reachable   bool                `json:"reachable"`
+		ReachError  string              `json:"reach_error"`
+		StatusError string              `json:"status_error"`
+	}
+	raw, err := json.Marshal(peerStatus{
+		URL:       "file:///tmp/p",
+		Reachable: true,
+		Status:    &storage.SyncStatus{Peer: "p", LocalAhead: 1, LocalBehind: 2, HasConflicts: true},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	body := string(raw)
+	for _, want := range []string{`"peer"`, `"last_sync"`, `"local_ahead"`, `"local_behind"`, `"has_conflicts"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected snake_case nested status key %s, got %s", want, body)
+		}
+	}
+	for _, bad := range []string{`"Peer"`, `"LastSync"`, `"LocalAhead"`, `"LocalBehind"`, `"HasConflicts"`} {
+		if strings.Contains(body, bad) {
+			t.Errorf("PascalCase nested status key %s must not appear (snake_case contract), got %s", bad, body)
+		}
+	}
+}
+
 func TestEmbeddedFederationConcurrent(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt federation tests")

@@ -44,12 +44,17 @@ type RemoteInfo struct {
 }
 
 // SyncStatus describes the synchronization state with a peer.
+// SyncStatus json tags keep `bd federation status --json` snake_case: this
+// struct is embedded as the nested "status" object in the peerStatus payload
+// (cmd/bd/federation.go), and without tags json.Marshal emits PascalCase
+// (Peer/LastSync/...), violating the snake_case JSON contract nested inside the
+// otherwise-snake_case payload beads-7mm8 fixed on the outer wrapper (beads-ugb99).
 type SyncStatus struct {
-	Peer         string    // Peer name
-	LastSync     time.Time // When last synced
-	LocalAhead   int       // Commits ahead of peer
-	LocalBehind  int       // Commits behind peer
-	HasConflicts bool      // Whether there are unresolved conflicts
+	Peer         string    `json:"peer"`          // Peer name
+	LastSync     time.Time `json:"last_sync"`     // When last synced
+	LocalAhead   int       `json:"local_ahead"`   // Commits ahead of peer
+	LocalBehind  int       `json:"local_behind"`  // Commits behind peer
+	HasConflicts bool      `json:"has_conflicts"` // Whether there are unresolved conflicts
 }
 
 // FederationPeer represents a remote peer with authentication credentials.
