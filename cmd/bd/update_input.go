@@ -98,6 +98,13 @@ func gatherUpdateInput(ctx context.Context, cmd *cobra.Command) *updateInput {
 	}
 	if cmd.Flags().Changed("append-notes") {
 		in.appendNotes, _ = cmd.Flags().GetString("append-notes")
+		// Reject whitespace-only append text on the proxied path too (mirrors the
+		// direct update.go guard and the --title guard above) so a blank note is
+		// never silently stored regardless of server mode (beads-beln6). The raw
+		// value is preserved on write; only an all-whitespace value is rejected.
+		if strings.TrimSpace(in.appendNotes) == "" {
+			FatalErrorRespectJSON("append-notes text cannot be empty")
+		}
 		in.hasAppendNotes = true
 	}
 	if cmd.Flags().Changed("acceptance") || cmd.Flags().Changed("acceptance-criteria") {

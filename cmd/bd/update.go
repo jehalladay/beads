@@ -163,6 +163,14 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 		}
 		if cmd.Flags().Changed("append-notes") {
 			appendNotes, _ := cmd.Flags().GetString("append-notes")
+			// Reject whitespace-only append text: it would append a blank line to
+			// notes and exit 0, the same silent-blank-store bug fixed for `bd note`
+			// (beads-4q09) and `bd comment`. Mirror the --title whitespace guard
+			// above (beads-beln6). Preserve the raw value on write (no trim) so
+			// legitimate leading/trailing formatting in a real note is kept.
+			if strings.TrimSpace(appendNotes) == "" {
+				return HandleErrorRespectJSON("append-notes text cannot be empty")
+			}
 			updates["append_notes"] = appendNotes
 		}
 		if cmd.Flags().Changed("acceptance") || cmd.Flags().Changed("acceptance-criteria") {
