@@ -152,6 +152,18 @@ func TestProxiedServerReopen(t *testing.T) {
 		}
 	})
 
+	// beads-j43d: a wholly-failed --json batch (no issue reopened) must emit a
+	// parseable JSON error object on stdout, not a bare os.Exit(1) with empty
+	// stdout — matching the direct path (reopen.go, beads-fg6/tx70).
+	t.Run("all_failed_json_emits_stdout_error", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "roj2")
+		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "reopen", "roj2-nope", "--json")
+		if err == nil {
+			t.Fatalf("expected non-zero exit on all-failed --json reopen\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+		assertJSONErrorObject(t, stdout, err)
+	})
+
 	t.Run("reopens_wisp", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "rorw")
 		wisp := bdProxiedCreate(t, bd, p.dir, "Wisp reopen", "--ephemeral")

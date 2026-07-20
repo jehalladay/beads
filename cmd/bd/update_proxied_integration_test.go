@@ -29,6 +29,18 @@ func TestProxiedServerUpdate(t *testing.T) {
 		}
 	})
 
+	// beads-j43d: a wholly-failed --json batch (no issue updated) must emit a
+	// parseable JSON error object on stdout, not a bare os.Exit(1) with empty
+	// stdout — matching the direct path (update.go, beads-fg6/tx70).
+	t.Run("all_failed_json_emits_stdout_error", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "unj")
+		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "update", "unj-nope", "--priority", "1", "--json")
+		if err == nil {
+			t.Fatalf("expected non-zero exit on all-failed --json update\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+		assertJSONErrorObject(t, stdout, err)
+	})
+
 	t.Run("no_flags_is_noop_message", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "un2")
 		issue := bdProxiedCreate(t, bd, p.dir, "Seed")

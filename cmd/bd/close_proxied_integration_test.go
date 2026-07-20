@@ -213,6 +213,18 @@ func TestProxiedServerClose(t *testing.T) {
 		}
 	})
 
+	// beads-j43d: a wholly-failed --json batch (no issue closed) must emit a
+	// parseable JSON error object on stdout, not a bare os.Exit(1) with empty
+	// stdout — matching the direct path (close.go, beads-fg6/tx70).
+	t.Run("all_failed_json_emits_stdout_error", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "cbj")
+		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "close", "cbj-nope", "--json")
+		if err == nil {
+			t.Fatalf("expected non-zero exit on all-failed --json close\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+		assertJSONErrorObject(t, stdout, err)
+	})
+
 	t.Run("close_default_reason", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "cdr")
 		issue := bdProxiedCreate(t, bd, p.dir, "Default reason")

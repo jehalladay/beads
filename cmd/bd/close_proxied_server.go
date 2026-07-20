@@ -174,6 +174,14 @@ func runCloseProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 	// a partial batch (e.g. `bd close good-id ghost-id`) — a false-clean read
 	// for a proxied crew scripting `bd close a b c || fail`.
 	if len(outcomes) < len(args) {
+		// beads-j43d: on a wholly-failed batch (nothing closed) under --json, emit
+		// a stdout JSON error object instead of a bare os.Exit(1) with empty stdout
+		// — mirrors the direct path (close.go) so a --json consumer can distinguish
+		// "command failed" from "produced no output". A partial batch already
+		// emitted the JSON above (len(closedIssues) > 0) and keeps the plain exit.
+		if in.jsonOut && len(closedIssues) == 0 {
+			FatalErrorRespectJSON("no issues closed matching the provided IDs")
+		}
 		os.Exit(1)
 	}
 }

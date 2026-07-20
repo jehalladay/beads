@@ -82,6 +82,14 @@ func runReopenProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 		_ = outputJSON(reopenedIssues)
 	}
 	if hasError {
+		// beads-j43d: on a wholly-failed batch (nothing reopened) under --json,
+		// emit a stdout JSON error object instead of a bare os.Exit(1) with empty
+		// stdout — mirrors the direct path (reopen.go) so a --json consumer can
+		// distinguish "command failed" from "produced no output". Partial success
+		// (len>0) already emitted the array above and keeps the plain exit.
+		if jsonOut && len(reopenedIssues) == 0 {
+			FatalErrorRespectJSON("no issues reopened matching the provided IDs")
+		}
 		os.Exit(1)
 	}
 }
