@@ -618,6 +618,25 @@ func normalizeIssueTimestamps(issue *types.Issue) {
 		truncated := issue.DeferUntil.UTC().Truncate(time.Second)
 		issue.DeferUntil = &truncated
 	}
+	// beads-kg5tf: closed_at and started_at are DATETIME columns too
+	// (0001_create_issues.up.sql closed_at DATETIME; 0027 started_at DATETIME),
+	// emitted under --json (types.go closed_at/started_at ,omitempty), but 82pv3
+	// only added due/defer here. On the domain/proxied `bd create --status closed`
+	// path, create() (issue.go) computes closed_at = maxTime.Add(second) from a
+	// raw-ns CreatedAt (deliberately un-truncated there for GenerateHashID
+	// stability) BEFORE reaching this chokepoint, so an un-truncated closed_at was
+	// emitted verbatim while the DATETIME column stored second precision — the same
+	// read-after-write mismatch 82pv3 fixed for due/defer. The direct path is clean
+	// (PrepareIssueForInsert truncates CreatedAt before computing closed_at).
+	// Truncate both at the shared insert chokepoint so the emit matches the column.
+	if issue.ClosedAt != nil {
+		truncated := issue.ClosedAt.UTC().Truncate(time.Second)
+		issue.ClosedAt = &truncated
+	}
+	if issue.StartedAt != nil {
+		truncated := issue.StartedAt.UTC().Truncate(time.Second)
+		issue.StartedAt = &truncated
+	}
 }
 
 func pickIssueTable(useWisps bool) string {
