@@ -648,6 +648,13 @@ func proxiedAdvanceToNextStep(ctx context.Context, uw uow.UnitOfWork, closedStep
 		if claimErr == nil {
 			result.NextStep = candidate
 			result.AutoAdvanced = true
+			// beads-7vvyi: `candidate` is the pre-claim progress snapshot
+			// (status:open, no started_at). Re-read so result.NextStep reflects
+			// the persisted in_progress+started_at state a --json consumer checks
+			// to confirm the auto-advance landed; keep the snapshot on a hiccup.
+			if claimed, rErr := uw.IssueUseCase().GetIssue(ctx, candidate.ID); rErr == nil && claimed != nil {
+				result.NextStep = claimed
+			}
 			return result, nil
 		}
 		if errors.Is(claimErr, storage.ErrAlreadyClaimed) || errors.Is(claimErr, storage.ErrNotClaimable) {

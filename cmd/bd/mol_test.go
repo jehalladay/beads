@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -2062,6 +2063,69 @@ func TestAdvanceToNextStep(t *testing.T) {
 	step2Updated, _ = s.GetIssue(ctx, step2.ID)
 	if step2Updated.Status != types.StatusInProgress {
 		t.Errorf("Step2 status = %v, want in_progress (auto-claim)", step2Updated.Status)
+	}
+}
+
+// TestAdvanceToNextStep_NextStepReflectsPostClaimState pins beads-7vvyi: after an
+// auto-claimed advance, the emitted result.NextStep must reflect the POST-claim
+// persisted row (in_progress + started_at), not the pre-claim GetMoleculeProgress
+// snapshot (status:open, no started_at). A `bd close --continue --json` consumer
+// reads continue.next_step.status/started_at to confirm the auto-advance landed;
+// a stale open snapshot would make it wrongly conclude the claim did not take.
+func TestAdvanceToNextStep_NextStepReflectsPostClaimState(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	testDB := filepath.Join(t.TempDir(), ".beads", "beads.db")
+	s := newTestStore(t, testDB)
+
+	root := &types.Issue{
+		Title:     "PostClaim Advance Molecule",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+		Labels:    []string{BeadsTemplateLabel},
+	}
+	if err := s.CreateIssue(ctx, root, "test"); err != nil {
+		t.Fatalf("Failed to create root: %v", err)
+	}
+
+	step1 := &types.Issue{Title: "Step 1", Status: types.StatusClosed, Priority: 2, IssueType: types.TypeTask}
+	step2 := &types.Issue{Title: "Step 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	for _, step := range []*types.Issue{step1, step2} {
+		if err := s.CreateIssue(ctx, step, "test"); err != nil {
+			t.Fatalf("Failed to create step: %v", err)
+		}
+		if err := s.AddDependency(ctx, &types.Dependency{
+			IssueID:     step.ID,
+			DependsOnID: root.ID,
+			Type:        types.DepParentChild,
+		}, "test"); err != nil {
+			t.Fatalf("Failed to add parent-child dep: %v", err)
+		}
+	}
+	if err := s.AddDependency(ctx, &types.Dependency{
+		IssueID:     step2.ID,
+		DependsOnID: step1.ID,
+		Type:        types.DepBlocks,
+	}, "test"); err != nil {
+		t.Fatalf("Failed to add blocking dep: %v", err)
+	}
+
+	result, err := AdvanceToNextStep(ctx, s, step1.ID, true, "advancer")
+	if err != nil {
+		t.Fatalf("AdvanceToNextStep failed: %v", err)
+	}
+	if result == nil || result.NextStep == nil {
+		t.Fatal("expected a non-nil NextStep after auto-advance")
+	}
+	if !result.AutoAdvanced {
+		t.Fatal("expected AutoAdvanced to be true")
+	}
+	if result.NextStep.Status != types.StatusInProgress {
+		t.Errorf("result.NextStep.Status = %v, want in_progress (stale pre-claim snapshot leaked)", result.NextStep.Status)
+	}
+	if result.NextStep.StartedAt == nil {
+		t.Error("result.NextStep.StartedAt = nil, want set (stale pre-claim snapshot leaked)")
 	}
 }
 

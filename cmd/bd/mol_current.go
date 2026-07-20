@@ -672,6 +672,14 @@ func AdvanceToNextStep(ctx context.Context, s storage.DoltStorage, closedStepID 
 			if err == nil {
 				result.NextStep = candidate
 				result.AutoAdvanced = true
+				// beads-7vvyi: `candidate` is the pre-claim GetMoleculeProgress
+				// snapshot (status:open, no started_at). Re-read the persisted row
+				// so result.NextStep reflects the in_progress+started_at state a
+				// --json consumer checks to confirm the auto-advance landed. Fall
+				// back to the snapshot on a re-read hiccup (the claim succeeded).
+				if claimed, rErr := s.GetIssue(ctx, candidate.ID); rErr == nil && claimed != nil {
+					result.NextStep = claimed
+				}
 				break
 			}
 			// This candidate was already claimed; try the next ready step
