@@ -31,9 +31,22 @@ func runQuickProxiedServer(ctx context.Context, issue *types.Issue, labels []str
 		}
 		return fmt.Sprintf("bd: create %s", result.Issue.ID), nil
 	}); err != nil {
-		FatalError("%v", err)
+		// beads-zykg2: honor the --json error contract, matching the direct path
+		// (quick.go store.CreateIssue → HandleErrorRespectJSON, beads-wf68). Plain
+		// FatalError left stdout empty under --json (fg6/65cgh/0igug class).
+		FatalErrorRespectJSON("%v", err)
 	}
 
 	commandDidWrite.Store(true)
+
+	// beads-zykg2: under --json emit the full issue object, matching the direct
+	// path (quick.go → outputJSON(issue), beads-j54e) and the proxied create path
+	// (create_proxied_server.go). Previously this printed only result.Issue.ID
+	// even under --json — byte-identical to plain output — breaking a scripted
+	// `bd quick <t> --json` json.load consumer in hub/proxied mode.
+	if jsonOutput {
+		_ = outputJSON(result.Issue)
+		return
+	}
 	fmt.Println(result.Issue.ID)
 }
