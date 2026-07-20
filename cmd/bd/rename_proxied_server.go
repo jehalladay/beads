@@ -8,6 +8,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 // runRenameProxiedServer renames an issue ID via the proxied unit-of-work
@@ -18,7 +19,7 @@ import (
 // DBTX). It mirrors the direct path (cmd/bd/rename.go): existence checks
 // (old exists / new free), rename, best-effort text-reference rewrite across
 // all issues, commit, --json payload.
-func runRenameProxiedServer(ctx context.Context, oldID, newID string) error {
+func runRenameProxiedServer(ctx context.Context, oldID, newID string, force bool) error {
 	if uowProvider == nil {
 		FatalError("proxied-server UOW provider not initialized")
 	}
@@ -27,6 +28,21 @@ func runRenameProxiedServer(ctx context.Context, oldID, newID string) error {
 		return HandleErrorRespectJSON("open unit of work: %v", err)
 	}
 	defer uw.Close(ctx)
+
+	// beads-c3igh: enforce the DB-prefix invariant that `bd create --id` enforces
+	// (create_proxied_server.go) and rename's help promises. The format regex in
+	// the caller (rename.go) accepts ANY prefix; without this a rename could
+	// inject an off-prefix, unroutable bead. Live DB prefix stays authoritative;
+	// a disagreeing config.yaml prefix folds into the allowed-list (beads-xevo).
+	// --force is the deliberate override (parity with create --id --force).
+	cctx, cerr := uw.ConfigUseCase().LoadCreateContext(ctx)
+	if cerr != nil {
+		return HandleErrorRespectJSON("load config context: %v", cerr)
+	}
+	dbPrefix, allowed := resolvePrefixValidation(cctx.IssuePrefix, cctx.AllowedPrefixes)
+	if verr := validation.ValidateIDPrefixAllowed(newID, dbPrefix, allowed, force); verr != nil {
+		return HandleErrorRespectJSON("%v", verr)
+	}
 
 	issueUC := uw.IssueUseCase()
 

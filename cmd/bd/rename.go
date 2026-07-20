@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 var renameCmd = &cobra.Command{
@@ -36,6 +37,10 @@ Note: The new ID must use a valid prefix for this database.`,
 }
 
 func init() {
+	// beads-c3igh: --force is the deliberate-override escape hatch for the
+	// DB-prefix guard, mirroring `bd create --id`'s --force (create.go). Without
+	// it a rename could inject an off-prefix, effectively-unroutable bead.
+	renameCmd.Flags().Bool("force", false, "Allow renaming to an ID whose prefix is not a valid/allowed prefix for this database")
 	rootCmd.AddCommand(renameCmd)
 }
 
@@ -63,6 +68,8 @@ func runRename(cmd *cobra.Command, args []string) error {
 		return HandleErrorRespectJSON("invalid new ID format %q: must be prefix-suffix (e.g., bd-dolt)", newID)
 	}
 
+	force, _ := cmd.Flags().GetBool("force")
+
 	ctx := context.Background()
 
 	// In proxied-server mode the global `store` is nil (main.go PersistentPreRun
@@ -71,11 +78,24 @@ func runRename(cmd *cobra.Command, args []string) error {
 	// (beads-lh54, fszd/aocj umbrella) — UpdateIssueID was previously only on
 	// DoltStore, now also on the domain IssueUseCase (RenameIssueID).
 	if usesProxiedServer() {
-		return runRenameProxiedServer(ctx, oldID, newID)
+		return runRenameProxiedServer(ctx, oldID, newID, force)
 	}
 
 	if err := ensureStoreActive(); err != nil {
 		return HandleErrorRespectJSON("failed to get storage: %v", err)
+	}
+
+	// beads-c3igh: enforce the DB-prefix invariant that `bd create --id` enforces
+	// (create.go) and that rename's own help promises ("must use a valid prefix
+	// for this database"). The format regex above accepts ANY prefix; without
+	// this a rename could inject an off-prefix, unroutable bead. The live DB
+	// prefix stays authoritative; a disagreeing config.yaml prefix is folded into
+	// the allowed-list (beads-xevo). --force is the deliberate override.
+	liveDBPrefix, _ := store.GetConfig(ctx, "issue_prefix")
+	allowedFromDB, _ := store.GetConfig(ctx, "allowed_prefixes")
+	dbPrefix, allowedPrefixes := resolvePrefixValidation(liveDBPrefix, allowedFromDB)
+	if err := validation.ValidateIDPrefixAllowed(newID, dbPrefix, allowedPrefixes, force); err != nil {
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	oldIssue, err := store.GetIssue(ctx, oldID)
