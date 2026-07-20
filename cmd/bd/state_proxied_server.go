@@ -66,10 +66,21 @@ func runSetStateProxiedServer(ctx context.Context, issueID, dimension, newValue,
 	// target — a stale sibling still needs cleaning.
 	if len(oldLabels) == 1 && oldLabels[0] == newLabel {
 		if jsonOutput {
+			// beads-s64j3: emit the SAME key-set as the change leg below so a
+			// consumer can statically type `set-state --json` regardless of
+			// outcome. This mirrors the direct no-op leg's beads-wd2x4 fix,
+			// which the proxied twin here had missed: the no-op previously
+			// reported the value under a lone "value" key (+ no old_value/
+			// new_value/event_id) while the change leg used old_value/new_value/
+			// event_id — the value payload moved between keys. On a no-op nothing
+			// changed, so old_value==new_value==current value, event_id is null,
+			// and the redundant "value" key is dropped.
 			return outputJSON(map[string]interface{}{
 				"issue_id":  fullID,
 				"dimension": dimension,
-				"value":     newValue,
+				"old_value": newValue,
+				"new_value": newValue,
+				"event_id":  nil,
 				"changed":   false,
 			})
 		}

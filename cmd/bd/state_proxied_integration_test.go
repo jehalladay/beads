@@ -3,6 +3,8 @@
 package main
 
 import (
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -49,6 +51,85 @@ func TestProxiedServerSetState(t *testing.T) {
 		}
 		if !strings.Contains(stdout, `"changed"`) || !strings.Contains(stdout, "degraded") {
 			t.Errorf("expected JSON payload with changed + new value:\n%s", stdout)
+		}
+	})
+
+	// beads-s64j3: the proxied twin of beads-wd2x4. `bd set-state --json` must
+	// emit the SAME key-set on the change and no-op (same-value) legs in
+	// proxied-server mode. The direct no-op leg was fixed by wd2x4; the proxied
+	// no-op leg (state_proxied_server.go) still emitted the pre-wd2x4 shape
+	// {issue_id,dimension,value,changed} (lone "value", missing old_value/
+	// new_value/event_id) while the proxied change leg emitted the 6-key shape —
+	// so a consumer reading .new_value got nothing on a proxied no-op. The fix
+	// drops the lone "value" key and makes the no-op emit old_value/new_value/
+	// event_id too, matching the direct path.
+	t.Run("set_state_json_stable_keyset_change_vs_noop", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "spk")
+		issue := bdProxiedCreate(t, bd, p.dir, "s64j3 keyset", "--type", "task")
+
+		runSetStateJSON := func(t *testing.T) map[string]interface{} {
+			t.Helper()
+			stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "set-state", issue.ID, "tier=gold", "--json")
+			if err != nil {
+				t.Fatalf("proxied set-state --json failed: %v\nstdout:%s\nstderr:%s", err, stdout, stderr)
+			}
+			if strings.Contains(stdout+stderr, "storage is nil") {
+				t.Fatalf("proxied set-state --json hit 'storage is nil':\n%s\n%s", stdout, stderr)
+			}
+			s := strings.TrimSpace(stdout)
+			start := strings.Index(s, "{")
+			if start < 0 {
+				t.Fatalf("proxied set-state --json emitted no JSON object:\n%s", s)
+			}
+			var m map[string]interface{}
+			if e := json.Unmarshal([]byte(s[start:]), &m); e != nil {
+				t.Fatalf("proxied set-state --json invalid JSON: %v\n%s", e, s)
+			}
+			return m
+		}
+
+		keySet := func(m map[string]interface{}) map[string]bool {
+			ks := map[string]bool{}
+			for k := range m {
+				if k == "schema_version" { // envelope-injected, not part of the cmd key-set
+					continue
+				}
+				ks[k] = true
+			}
+			return ks
+		}
+
+		change := runSetStateJSON(t) // first set: real change
+		if c, _ := change["changed"].(bool); !c {
+			t.Errorf("expected changed:true on the first proxied set, got %v", change["changed"])
+		}
+		noop := runSetStateJSON(t) // second set of same value: no-op
+		if c, _ := noop["changed"].(bool); c {
+			t.Errorf("expected changed:false on the proxied no-op set, got %v", noop["changed"])
+		}
+
+		ck, nk := keySet(change), keySet(noop)
+		if !reflect.DeepEqual(ck, nk) {
+			t.Errorf("proxied set-state --json key-set flips by outcome (beads-s64j3):\n  change keys: %v\n  no-op keys:  %v", ck, nk)
+		}
+		for _, want := range []string{"issue_id", "dimension", "old_value", "new_value", "event_id", "changed"} {
+			if !ck[want] {
+				t.Errorf("proxied change leg missing stable key %q; keys=%v", want, ck)
+			}
+			if !nk[want] {
+				t.Errorf("proxied no-op leg missing stable key %q; keys=%v", want, nk)
+			}
+		}
+		// The lone "value" key must be gone (redundant with new_value).
+		if nk["value"] {
+			t.Errorf("proxied no-op leg still emits the redundant \"value\" key (beads-s64j3); keys=%v", nk)
+		}
+		// On a no-op, old_value==new_value==current and event_id is null.
+		if noop["old_value"] != "gold" || noop["new_value"] != "gold" {
+			t.Errorf("proxied no-op leg expected old_value==new_value==\"gold\", got old=%v new=%v", noop["old_value"], noop["new_value"])
+		}
+		if noop["event_id"] != nil {
+			t.Errorf("proxied no-op leg expected event_id null (no event created), got %v", noop["event_id"])
 		}
 	})
 
