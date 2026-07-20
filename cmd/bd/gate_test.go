@@ -110,20 +110,17 @@ func TestShouldCheckGate(t *testing.T) {
 		{"empty filter matches gh:pr", "gh:pr", "", true},
 		{"empty filter matches timer", "timer", "", true},
 		{"empty filter matches human", "human", "", true},
-		{"empty filter matches bead", "bead", "", true},
 
 		// "all" filter matches all
 		{"all filter matches gh:run", "gh:run", "all", true},
 		{"all filter matches gh:pr", "gh:pr", "all", true},
 		{"all filter matches timer", "timer", "all", true},
-		{"all filter matches bead", "bead", "all", true},
 
 		// "gh" filter matches all GitHub types
 		{"gh filter matches gh:run", "gh:run", "gh", true},
 		{"gh filter matches gh:pr", "gh:pr", "gh", true},
 		{"gh filter does not match timer", "timer", "gh", false},
 		{"gh filter does not match human", "human", "gh", false},
-		{"gh filter does not match bead", "bead", "gh", false},
 
 		// Exact type filters
 		{"gh:run filter matches gh:run", "gh:run", "gh:run", true},
@@ -132,8 +129,6 @@ func TestShouldCheckGate(t *testing.T) {
 		{"gh:pr filter does not match gh:run", "gh:run", "gh:pr", false},
 		{"timer filter matches timer", "timer", "timer", true},
 		{"timer filter does not match gh:run", "gh:run", "timer", false},
-		{"bead filter matches bead", "bead", "bead", true},
-		{"bead filter does not match timer", "timer", "bead", false},
 	}
 
 	for _, tt := range tests {
@@ -148,55 +143,6 @@ func TestShouldCheckGate(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCheckBeadGate_InvalidFormat(t *testing.T) {
-	ctx := context.Background()
-
-	tests := []struct {
-		name    string
-		awaitID string
-	}{
-		{name: "empty", awaitID: ""},
-		{name: "no colon", awaitID: "my-project-mp-abc"},
-		{name: "missing rig", awaitID: ":gt-abc"},
-		{name: "missing bead", awaitID: "my-project:"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			satisfied, reason := checkBeadGate(ctx, tt.awaitID)
-			if satisfied {
-				t.Errorf("expected not satisfied for %q", tt.awaitID)
-			}
-			if reason == "" {
-				t.Error("expected reason to be set")
-			}
-			if !gateTestContainsIgnoreCase(reason, "multi-rig routing removed") {
-				t.Errorf("reason %q does not contain %q", reason, "multi-rig routing removed")
-			}
-		})
-	}
-}
-
-func TestCheckBeadGate_RigNotFound(t *testing.T) {
-	ctx := context.Background()
-
-	// With multi-rig routing removed, all bead gates return the same message
-	satisfied, reason := checkBeadGate(ctx, "nonexistent:some-id")
-	if satisfied {
-		t.Error("expected not satisfied for non-existent rig")
-	}
-	if reason == "" {
-		t.Error("expected reason to be set")
-	}
-	if !gateTestContainsIgnoreCase(reason, "multi-rig routing removed") {
-		t.Errorf("reason %q does not contain %q", reason, "multi-rig routing removed")
-	}
-}
-
-func TestCheckBeadGate_TargetClosed(t *testing.T) {
-	t.Skip("SQLite-specific: created SQLite DB directly; full integration testing requires routes.jsonl + Dolt rig infrastructure")
 }
 
 func TestCheckGHPRUsesStateWithoutMergedField(t *testing.T) {
@@ -290,7 +236,6 @@ func TestNeedsDiscovery(t *testing.T) {
 		{"gh:pr gate", "gh:pr", "", false},
 		{"timer gate", "timer", "", false},
 		{"human gate", "human", "", false},
-		{"bead gate", "bead", "rig:id", false},
 	}
 
 	for _, tt := range tests {

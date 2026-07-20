@@ -517,8 +517,6 @@ func isMachineCheckableGate(issue *types.Issue) bool {
 		return true
 	case issue.AwaitType == "timer":
 		return true
-	case issue.AwaitType == "bead":
-		return true
 	default:
 		return false
 	}
@@ -543,12 +541,6 @@ func checkGateSatisfaction(issue *types.Issue) error {
 		resolved, escalated, reason, err = checkGHPR(issue)
 	case issue.AwaitType == "timer":
 		resolved, escalated, reason, err = checkTimer(issue, time.Now())
-	case issue.AwaitType == "bead":
-		resolved, reason = checkBeadGate(rootCtx, issue.AwaitID)
-		if resolved {
-			return nil
-		}
-		return fmt.Errorf("gate condition not satisfied: %s (use --force to override)", reason)
 	}
 
 	if err != nil {

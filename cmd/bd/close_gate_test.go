@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -58,12 +59,14 @@ func TestIsMachineCheckableGate(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "gate with bead await type",
+			// beads-kburh: bead gates were retired (multi-rig routing removed),
+			// so a "bead" await type is no longer machine-checkable.
+			name: "gate with retired bead await type",
 			issue: &types.Issue{
 				IssueType: "gate",
 				AwaitType: "bead",
 			},
-			want: true,
+			want: false,
 		},
 		{
 			name: "gate with empty await type",
@@ -165,27 +168,31 @@ func TestCheckGateSatisfaction_GHRunWithoutAwaitID(t *testing.T) {
 	}
 }
 
-func TestCheckGateSatisfaction_BeadGateInvalidFormat(t *testing.T) {
-	// bead gate with invalid await_id should return an error
+func TestCheckGateSatisfaction_RetiredBeadGate(t *testing.T) {
+	// beads-kburh: bead gates were retired (multi-rig routing removed). A "bead"
+	// await type is no longer machine-checkable, so checkGateSatisfaction returns
+	// nil (close proceeds) rather than blocking on an unresolvable condition.
 	issue := &types.Issue{
 		IssueType: "gate",
 		AwaitType: "bead",
 		AwaitID:   "invalid-no-colon",
-		Title:     "Bead gate with bad format",
+		Title:     "Retired bead gate",
 	}
 
-	err := checkGateSatisfaction(issue)
-	if err == nil {
-		t.Error("checkGateSatisfaction() should return error for bead gate with invalid await_id format")
+	if err := checkGateSatisfaction(issue); err != nil {
+		t.Errorf("checkGateSatisfaction() should return nil for retired bead gate, got: %v", err)
 	}
 }
 
 func TestCheckGateSatisfaction_ErrorMessageFormat(t *testing.T) {
-	// Verify error messages contain the force override hint
+	// Verify error messages contain the force override hint. Use an unexpired
+	// timer gate (not resolved, not escalated) so checkGateSatisfaction falls
+	// through to the "not satisfied" error path.
 	issue := &types.Issue{
 		IssueType: "gate",
-		AwaitType: "bead",
-		AwaitID:   "invalid-no-colon",
+		AwaitType: "timer",
+		Timeout:   time.Hour,
+		CreatedAt: time.Now(),
 		Title:     "Test gate",
 	}
 

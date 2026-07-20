@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -31,15 +30,12 @@ Gate types:
   timer   - Expires after timeout (Phase 2)
   gh:run  - Waits for GitHub workflow (Phase 3)
   gh:pr   - Waits for PR merge (Phase 3)
-  bead    - Waits for cross-rig bead to close (Phase 4)
-
-For bead gates, await_id format is <rig>:<bead-id> (e.g., "other-project:op-abc123").
 
 Examples:
   bd gate list           # Show all open gates
   bd gate list --all     # Show all gates including closed
   bd gate check          # Evaluate all open gates
-  bd gate check --type=bead  # Evaluate only bead gates
+  bd gate check --type=timer # Evaluate only timer gates
   bd gate resolve <id>   # Close a gate manually`,
 }
 
@@ -527,7 +523,6 @@ Gate types:
   gh:run   - Check GitHub Actions workflow runs
   gh:pr    - Check pull request merge status
   timer    - Check timer gates (auto-expire based on timeout)
-  bead     - Check cross-rig bead gates
   all      - Check all gate types
 
 GitHub gates use the 'gh' CLI to query status:
@@ -538,7 +533,6 @@ A gate is resolved when:
   - gh:run: status=completed AND conclusion=success
   - gh:pr: state=MERGED
   - timer: current time > created_at + timeout
-  - bead: target bead status=closed
 
 A gate is escalated when:
   - gh:run: status=completed AND conclusion in (failure, canceled)
@@ -549,7 +543,6 @@ Examples:
   bd gate check --type=gh    # Check only GitHub gates
   bd gate check --type=gh:run # Check only workflow run gates
   bd gate check --type=timer # Check only timer gates
-  bd gate check --type=bead  # Check only cross-rig bead gates
   bd gate check --dry-run    # Show what would happen without changes
   bd gate check --escalate   # Escalate expired/failed gates`,
 	SilenceUsage:  true,
@@ -646,10 +639,10 @@ Examples:
 				result.resolved, result.escalated, result.reason, result.err = checkGHPR(gate)
 			case gate.AwaitType == "timer":
 				result.resolved, result.escalated, result.reason, result.err = checkTimer(gate, now)
-			case gate.AwaitType == "bead":
-				result.resolved, result.reason = checkBeadGate(ctx, gate.AwaitID)
 			default:
-				// Skip unsupported gate types (human gates need manual resolution)
+				// Skip unsupported gate types (human gates need manual resolution;
+				// bead gates were retired in beads-kburh — multi-rig routing is gone,
+				// so cross-rig bead gates could never resolve).
 				continue
 			}
 
@@ -964,16 +957,6 @@ func checkTimer(gate *types.Issue, now time.Time) (resolved, escalated bool, rea
 
 	remaining := expiresAt.Sub(now).Round(time.Second)
 	return false, false, fmt.Sprintf("expires in %s", remaining), nil
-}
-
-// checkBeadGate checks if a cross-rig bead gate is satisfied.
-// await_id format: <rig>:<bead-id> (e.g., "other-project:op-abc123")
-// Returns (satisfied, reason).
-//
-// Multi-rig routing has been removed, so cross-rig bead gates cannot be resolved.
-// This always returns false with a descriptive message.
-func checkBeadGate(_ context.Context, awaitID string) (bool, string) {
-	return false, fmt.Sprintf("cross-rig bead gate %q cannot be checked (multi-rig routing removed)", awaitID)
 }
 
 // closeGate closes a gate issue with the given reason

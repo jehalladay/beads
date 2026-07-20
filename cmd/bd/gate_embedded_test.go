@@ -277,14 +277,18 @@ func TestEmbeddedGate(t *testing.T) {
 		_ = out
 	})
 
-	t.Run("gate_check_bead_type", func(t *testing.T) {
-		// Create a bead-type gate that waits for another issue
+	t.Run("gate_check_bead_type_retired", func(t *testing.T) {
+		// beads-kburh: bead gates were retired. `bd gate check --type=bead` must
+		// still run cleanly (it simply matches no checkable gates now) — the
+		// filter is accepted, there is just no bead-gate check path to invoke.
 		target := bdCreate(t, bd, dir, "Bead gate target", "--type", "task")
 		_ = createGate(t, bd, dir, "Bead gate",
 			"--description", fmt.Sprintf("Waiting for %s", target.ID))
 
 		out := bdGate(t, bd, dir, "check", "--type", "bead")
-		_ = out
+		if !strings.Contains(out, "No open gates") {
+			t.Errorf("expected 'No open gates' for retired bead type, got: %s", out)
+		}
 	})
 
 	t.Run("gate_check_limit", func(t *testing.T) {
@@ -564,6 +568,17 @@ func TestEmbeddedGateCreate(t *testing.T) {
 		out := bdGateFail(t, bd, dir, "create", "--blocks", "gc-nonexistent999")
 		if !strings.Contains(out, "not found") {
 			t.Errorf("expected 'not found' error: %s", out)
+		}
+	})
+
+	t.Run("create_gate_bead_type_rejected", func(t *testing.T) {
+		// beads-kburh: bead gates were retired (multi-rig routing removed) — a
+		// bead gate could never resolve, so create must reject --type=bead
+		// rather than mint a gate that strands its blocked issue forever.
+		task := bdCreate(t, bd, dir, "Task for bead gate", "--type", "task")
+		out := bdGateFail(t, bd, dir, "create", "--blocks", task.ID, "--type", "bead")
+		if !strings.Contains(out, "invalid gate type") {
+			t.Errorf("expected 'invalid gate type' error for --type=bead: %s", out)
 		}
 	})
 
