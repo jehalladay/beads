@@ -122,6 +122,31 @@ func TestEmbeddedHuman(t *testing.T) {
 			t.Fatalf("human stats --json missing 'total' count field: %v", m)
 		}
 	})
+
+	// ===== Respond / Dismiss (beads-gnoav) =====
+	//
+	// respond and dismiss are MUTATING human subcommands. ivje fixed only the
+	// proxied leg; the DIRECT/embedded leg fell through to
+	// resolveAndGetIssueForMutation with the nil global `store` (human is in
+	// noDbCommands) → "storage is nil". These assert both succeed in the DEFAULT
+	// embedded backend. Neuter the ensureStoreActive call in either RunE →
+	// "storage is nil" RED; restore → GREEN.
+
+	t.Run("human_respond_embedded_no_nil_store", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "needs a human response", "--type", "task", "--label", "human")
+		out := bdHuman(t, bd, dir, "respond", issue.ID, "--response", "Approved, proceed")
+		if strings.Contains(out, "storage is nil") {
+			t.Fatalf("`bd human respond` hit 'storage is nil' in embedded mode (beads-gnoav)\nstdout:\n%s", out)
+		}
+	})
+
+	t.Run("human_dismiss_embedded_no_nil_store", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "needs dismissal", "--type", "task", "--label", "human")
+		out := bdHuman(t, bd, dir, "dismiss", issue.ID, "--reason", "No longer applicable")
+		if strings.Contains(out, "storage is nil") {
+			t.Fatalf("`bd human dismiss` hit 'storage is nil' in embedded mode (beads-gnoav)\nstdout:\n%s", out)
+		}
+	})
 }
 
 // TestEmbeddedHumanConcurrent exercises human operations concurrently.

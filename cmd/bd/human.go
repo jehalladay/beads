@@ -259,6 +259,14 @@ Examples:
 			return runHumanRespondProxiedServer(ctx, issueID, response)
 		}
 
+		// beads-gnoav: the DIRECT/embedded path also has a nil global `store`
+		// (`human` is in noDbCommands). ivje guarded only the proxied leg above;
+		// without this, `bd human respond` nil-panics "storage is nil" in the
+		// default embedded backend. Mirror the human list/stats siblings.
+		if err := ensureStoreActive(); err != nil {
+			return HandleErrorRespectJSON("responding to human bead: %v", err)
+		}
+
 		// Resolve partial ID and get issue
 		result, err := resolveAndGetIssueForMutation(ctx, store, issueID)
 		if err != nil {
@@ -349,6 +357,15 @@ Examples:
 		// proxied mode). Route the write through a lazily-built UOW instead.
 		if usesProxiedServer() {
 			return runHumanDismissProxiedServer(ctx, issueID, reason)
+		}
+
+		// beads-gnoav: the proxied caveat above is proxied-specific; on the
+		// DIRECT/embedded path the global `store` is nil (`human` is in
+		// noDbCommands) and ensureStoreActive is exactly the right fix (same as
+		// human list/stats). Without it, `bd human dismiss` nil-panics
+		// "storage is nil" in the default embedded backend.
+		if err := ensureStoreActive(); err != nil {
+			return HandleErrorRespectJSON("dismissing human bead: %v", err)
 		}
 
 		// Resolve partial ID and get issue
