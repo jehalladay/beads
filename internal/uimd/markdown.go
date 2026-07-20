@@ -35,6 +35,17 @@ func RenderMarkdown(markdown string) string {
 	// run). Glamour's OWN OSC 8 hyperlink emission is still handled post-render.
 	markdown = stripOSCSequences(markdown)
 
+	// Also strip C1 control introducers (beads-jbw7b). stripOSCSequences only
+	// removes the 7-bit ESC-introduced forms ("\x1b]"), but xterm-family
+	// terminals interpret the 8-bit C1 single-byte introducers identically:
+	// U+009D (OSC) and U+009B (CSI) start clipboard/title/cursor sequences with
+	// no ESC prefix. Neither stripOSCSequences nor the no-color xansi.Strip
+	// backstop removes them, so an imported Description/Notes carrying
+	// "52;...\a" would leak a clipboard-write escape on both render paths.
+	// Mirror internal/ui.SanitizeForTerminal, which already strips the whole
+	// C1 range (U+0080-U+009F); glamour never legitimately emits C1.
+	markdown = stripC1Controls(markdown)
+
 	// Cap at 100 chars for readability; wider lines are harder to scan.
 	const maxReadableWidth = 100
 	wrapWidth := 80
@@ -130,6 +141,30 @@ func stripOSCSequences(s string) string {
 		i++
 	}
 	return out.String()
+}
+
+// stripC1Controls removes 8-bit C1 control characters (U+0080-U+009F) from s
+// while preserving all other printable UTF-8. C1 controls are encoded in UTF-8
+// as the two bytes 0xC2 0x80..0x9F, so a naive byte scan would corrupt adjacent
+// multibyte runes; this walks the string rune-decoded. Notably strips U+009B
+// (CSI) and U+009D (OSC) — the ESC-less 8-bit introducers that stripOSCSequences
+// (7-bit "\x1b]" only) and the no-color xansi.Strip backstop both miss
+// (beads-jbw7b). Mirrors internal/ui.SanitizeForTerminal's C1 handling.
+func stripC1Controls(s string) string {
+	// Fast path: C1 code points are UTF-8-encoded as 0xC2 0x80..0x9F, so a
+	// string with no 0xC2 lead byte holds no C1 control and needs no rewrite.
+	if strings.IndexByte(s, 0xC2) < 0 {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r >= 0x80 && r <= 0x9F {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // oscSequenceEnd returns the byte index after an OSC control sequence.
