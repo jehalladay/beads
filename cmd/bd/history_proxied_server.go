@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -43,7 +44,10 @@ func runHistoryProxiedServer(ctx context.Context, issueID string) error {
 
 	if len(history) == 0 {
 		if jsonOutput {
-			return outputJSON(history)
+			// beads-5983i: normalize nil→[] so the proxied path emits the array
+			// contract on empty (matches the direct path history.go); a nil
+			// []*HistoryEntry would marshal as JSON null.
+			return outputJSON([]*storage.HistoryEntry{})
 		}
 		fmt.Printf("No history found for issue %s\n", issueID)
 		return nil

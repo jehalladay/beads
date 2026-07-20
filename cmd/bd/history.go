@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -82,7 +83,12 @@ Examples:
 
 		if len(history) == 0 {
 			if jsonOutput {
-				return outputJSON(history)
+				// beads-5983i: History() returns a nil []*HistoryEntry on the
+				// empty path, which wrapWithSchemaVersion emits as JSON `null`
+				// (nil still satisfies reflect.Slice → returned as-is). Normalize
+				// to [] so `bd history --json` honors the array contract on empty,
+				// matching every other --json list path (guib/tamf/036h class).
+				return outputJSON([]*storage.HistoryEntry{})
 			}
 			fmt.Printf("No history found for issue %s\n", issueID)
 			return nil
