@@ -6,9 +6,16 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/steveyegge/beads/internal/atomicfile"
 )
+
+// sweepAge is the age threshold for reaping crash-orphaned atomicfile temps
+// from the pidfile directory. It is deliberately far longer than any real
+// pidfile write so a concurrent in-flight write (a fresh temp) is never
+// mistaken for an orphan — the same safety property as beads-qoda's SweepStale.
+const sweepAge = 24 * time.Hour
 
 type PidFile struct {
 	Pid        int    `json:"pid"`
@@ -40,6 +47,12 @@ func Write(rootDir, name string, pf PidFile) error {
 	if err != nil {
 		return err
 	}
+	// Opportunistically reap crash-orphaned atomicfile temps that a prior proxy
+	// left in rootDir when SIGKILLed/OOMed between Create and rename (beads-9o6s,
+	// follow-on to beads-qoda). Best-effort and age-gated: a sweep failure must
+	// never fail a pidfile write, and a fresh concurrent temp is never touched.
+	_, _ = atomicfile.SweepStale(rootDir, sweepAge)
+
 	return atomicfile.WriteFile(Path(rootDir, name), data, 0o644)
 }
 
