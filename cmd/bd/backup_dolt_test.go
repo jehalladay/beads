@@ -202,7 +202,18 @@ func TestDirSize(t *testing.T) {
 }
 
 func TestShowDoltBackupStatusJSON_NilWhenNotConfigured(t *testing.T) {
-	t.Parallel()
+	// beads-1s73w: this test resolves the active workspace via
+	// showDoltBackupStatusJSON -> loadDoltBackupConfig -> doltBackupConfigPath
+	// -> beads.FindBeadsDir(), which reads BEADS_DIR / cwd. Without isolation
+	// it observed a .beads config left by a concurrently-running sibling
+	// (TestDoltBackupPaths_NoWorkspace writes "file:///x") and saw
+	// configured=true. Isolate to a guaranteed-empty workspace, mirroring that
+	// sibling's t.Setenv+t.Chdir. This is the real fix and makes the test
+	// order-independent; t.Setenv/t.Chdir cannot coexist with t.Parallel (they
+	// panic), and the isolation removes any need for it.
+	t.Setenv("BEADS_DIR", "")
+	t.Setenv("BEADS_DB", "")
+	t.Chdir(t.TempDir())
 	// When no .beads dir exists, should return configured=false
 	result := showDoltBackupStatusJSON()
 	configured, ok := result["configured"].(bool)
