@@ -72,6 +72,15 @@ type IssueSQLRepository interface {
 	// exposing issueops.PromoteFromEphemeralInTx on the repo so the proxied UOW
 	// path can serve `bd promote` without the nil global store (beads-aocj).
 	PromoteFromEphemeral(ctx context.Context, id, actor string) error
+	// Compaction repo methods (beads-aocj compact leg) — expose the existing
+	// issueops compaction InTx helpers on the repo so `bd compact` can run
+	// through the proxied UOW on hub-connected crew (the direct path used the
+	// nil global store). Mirror UpdateIssueID/GetStaleIssues.
+	CheckCompactionEligibility(ctx context.Context, issueID string, tier int) (bool, string, error)
+	GetTier1CompactionCandidates(ctx context.Context) ([]*types.CompactionCandidate, error)
+	GetTier2CompactionCandidates(ctx context.Context) ([]*types.CompactionCandidate, error)
+	SnapshotIssueForCompaction(ctx context.Context, issueID string, tier int) error
+	CompactOverwrite(ctx context.Context, issueID string, updates map[string]interface{}, tier, originalSize int, commitHash, actor string) error
 	GetByIDs(ctx context.Context, ids []string, opts IssueTableOpts) ([]*types.Issue, error)
 	// GetIDsByLabel returns issue/wisp IDs carrying the (case-insensitive)
 	// label, ordered priority ASC then created_at DESC. Used by bd ship
@@ -300,6 +309,14 @@ type IssueUseCase interface {
 	// issueops InTx helper so `bd promote` runs through the proxied UOW on
 	// hub-connected crew.
 	PromoteFromEphemeral(ctx context.Context, id, actor string) error
+	// Compaction methods (beads-aocj compact leg) — let `bd compact` run through
+	// the proxied UOW on hub-connected crew; delegate to the repo/issueops
+	// compaction InTx helpers, mirroring RenameIssueID.
+	CheckCompactionEligibility(ctx context.Context, issueID string, tier int) (bool, string, error)
+	GetTier1CompactionCandidates(ctx context.Context) ([]*types.CompactionCandidate, error)
+	GetTier2CompactionCandidates(ctx context.Context) ([]*types.CompactionCandidate, error)
+	SnapshotIssueForCompaction(ctx context.Context, issueID string, tier int) error
+	CompactOverwrite(ctx context.Context, issueID string, updates map[string]interface{}, tier, originalSize int, commitHash, actor string) error
 	DeleteIssue(ctx context.Context, id, actor string) (DeleteIssuesResult, error)
 	DeleteIssues(ctx context.Context, params DeleteIssuesParams, actor string) (DeleteIssuesResult, error)
 	PreviewDelete(ctx context.Context, ids []string) (DeletePreview, error)
@@ -447,6 +464,32 @@ func (u *issueUseCaseImpl) PromoteFromEphemeral(ctx context.Context, id, actor s
 		return fmt.Errorf("promote %s: %w", id, err)
 	}
 	return nil
+}
+
+func (u *issueUseCaseImpl) CheckCompactionEligibility(ctx context.Context, issueID string, tier int) (bool, string, error) {
+	return u.issueRepo.CheckCompactionEligibility(ctx, issueID, tier)
+}
+
+func (u *issueUseCaseImpl) GetTier1CompactionCandidates(ctx context.Context) ([]*types.CompactionCandidate, error) {
+	return u.issueRepo.GetTier1CompactionCandidates(ctx)
+}
+
+func (u *issueUseCaseImpl) GetTier2CompactionCandidates(ctx context.Context) ([]*types.CompactionCandidate, error) {
+	return u.issueRepo.GetTier2CompactionCandidates(ctx)
+}
+
+func (u *issueUseCaseImpl) SnapshotIssueForCompaction(ctx context.Context, issueID string, tier int) error {
+	if issueID == "" {
+		return fmt.Errorf("snapshot for compaction: id must not be empty")
+	}
+	return u.issueRepo.SnapshotIssueForCompaction(ctx, issueID, tier)
+}
+
+func (u *issueUseCaseImpl) CompactOverwrite(ctx context.Context, issueID string, updates map[string]interface{}, tier, originalSize int, commitHash, actor string) error {
+	if issueID == "" {
+		return fmt.Errorf("compact overwrite: id must not be empty")
+	}
+	return u.issueRepo.CompactOverwrite(ctx, issueID, updates, tier, originalSize, commitHash, actor)
 }
 
 func (u *issueUseCaseImpl) GetWisp(ctx context.Context, id string) (*types.Issue, error) {

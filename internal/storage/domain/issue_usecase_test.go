@@ -51,6 +51,19 @@ type fakeIssueRepo struct {
 	promoteErr   error
 	promoteCalls []string
 
+	// Compaction (beads-aocj compact leg)
+	compactEligible       bool
+	compactReason         string
+	compactEligErr        error
+	tier1                 []*types.CompactionCandidate
+	tier1Err              error
+	tier2                 []*types.CompactionCandidate
+	tier2Err              error
+	snapshotCalls         []string
+	snapshotErr           error
+	compactOverwriteCalls []string
+	compactOverwriteErr   error
+
 	// GetByIDs
 	byIDs    []*types.Issue
 	byIDsErr error
@@ -202,6 +215,23 @@ func (f *fakeIssueRepo) UpdateIssueID(_ context.Context, oldID, newID string, _ 
 func (f *fakeIssueRepo) PromoteFromEphemeral(_ context.Context, id, _ string) error {
 	f.promoteCalls = append(f.promoteCalls, id)
 	return f.promoteErr
+}
+func (f *fakeIssueRepo) CheckCompactionEligibility(context.Context, string, int) (bool, string, error) {
+	return f.compactEligible, f.compactReason, f.compactEligErr
+}
+func (f *fakeIssueRepo) GetTier1CompactionCandidates(context.Context) ([]*types.CompactionCandidate, error) {
+	return f.tier1, f.tier1Err
+}
+func (f *fakeIssueRepo) GetTier2CompactionCandidates(context.Context) ([]*types.CompactionCandidate, error) {
+	return f.tier2, f.tier2Err
+}
+func (f *fakeIssueRepo) SnapshotIssueForCompaction(_ context.Context, id string, _ int) error {
+	f.snapshotCalls = append(f.snapshotCalls, id)
+	return f.snapshotErr
+}
+func (f *fakeIssueRepo) CompactOverwrite(_ context.Context, id string, _ map[string]interface{}, _, _ int, _, _ string) error {
+	f.compactOverwriteCalls = append(f.compactOverwriteCalls, id)
+	return f.compactOverwriteErr
 }
 func (f *fakeIssueRepo) GetByIDs(context.Context, []string, IssueTableOpts) ([]*types.Issue, error) {
 	return f.byIDs, f.byIDsErr

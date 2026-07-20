@@ -908,6 +908,26 @@ func (r *issueSQLRepositoryImpl) PromoteFromEphemeral(ctx context.Context, id, a
 	return issueops.PromoteFromEphemeralInTx(ctx, r.runner, id, actor)
 }
 
+func (r *issueSQLRepositoryImpl) CheckCompactionEligibility(ctx context.Context, issueID string, tier int) (bool, string, error) {
+	return issueops.CheckEligibilityInTx(ctx, r.runner, issueID, tier)
+}
+
+func (r *issueSQLRepositoryImpl) GetTier1CompactionCandidates(ctx context.Context) ([]*types.CompactionCandidate, error) {
+	return issueops.GetTier1CandidatesInTx(ctx, r.runner)
+}
+
+func (r *issueSQLRepositoryImpl) GetTier2CompactionCandidates(ctx context.Context) ([]*types.CompactionCandidate, error) {
+	return issueops.GetTier2CandidatesInTx(ctx, r.runner)
+}
+
+func (r *issueSQLRepositoryImpl) SnapshotIssueForCompaction(ctx context.Context, issueID string, tier int) error {
+	return issueops.SnapshotIssueInTx(ctx, r.runner, issueID, tier)
+}
+
+func (r *issueSQLRepositoryImpl) CompactOverwrite(ctx context.Context, issueID string, updates map[string]interface{}, tier, originalSize int, commitHash, actor string) error {
+	return issueops.CompactOverwriteInTx(ctx, r.runner, issueID, updates, tier, originalSize, commitHash, actor)
+}
+
 func (r *issueSQLRepositoryImpl) GetNextChildID(ctx context.Context, parentID string) (string, error) {
 	return issueops.GetNextChildIDTx(ctx, r.runner, parentID)
 }

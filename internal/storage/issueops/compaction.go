@@ -17,7 +17,7 @@ const (
 )
 
 // getCompactDaysInTx reads the configured compaction threshold for the given tier.
-func getCompactDaysInTx(ctx context.Context, tx *sql.Tx, tier int) int {
+func getCompactDaysInTx(ctx context.Context, tx DBTX, tier int) int {
 	key := "compact_tier1_days"
 	def := defaultTier1Days
 	if tier == 2 {
@@ -37,7 +37,7 @@ func getCompactDaysInTx(ctx context.Context, tx *sql.Tx, tier int) int {
 }
 
 // CheckEligibilityInTx checks if an issue is eligible for compaction at the given tier.
-func CheckEligibilityInTx(ctx context.Context, tx *sql.Tx, issueID string, tier int) (bool, string, error) {
+func CheckEligibilityInTx(ctx context.Context, tx DBTX, issueID string, tier int) (bool, string, error) {
 	var status string
 	var closedAt sql.NullTime
 	var compactionLevel int
@@ -91,7 +91,7 @@ func CheckEligibilityInTx(ctx context.Context, tx *sql.Tx, issueID string, tier 
 // content-overwrite is visible in `bd history` (beads-ehtw). Mirrors the
 // dependency/label add-remove event pattern (beads-1qt9). Compaction targets
 // only real issues (never wisps), so the event routes to the "events" table.
-func ApplyCompactionInTx(ctx context.Context, tx *sql.Tx, issueID string, tier int, originalSize int, commitHash string, actor string) error {
+func ApplyCompactionInTx(ctx context.Context, tx DBTX, issueID string, tier int, originalSize int, commitHash string, actor string) error {
 	now := time.Now().UTC()
 	_, err := tx.ExecContext(ctx,
 		`UPDATE issues SET compaction_level = ?, compacted_at = ?, compacted_at_commit = ?, original_size = ?, updated_at = ? WHERE id = ?`,
@@ -118,7 +118,7 @@ func ApplyCompactionInTx(ctx context.Context, tx *sql.Tx, issueID string, tier i
 // the original (SnapshotIssue) — that stays a separate prior step because it is
 // the recovery anchor. A failure here rolls back the overwrite, leaving the
 // original content intact (and the snapshot harmlessly present).
-func CompactOverwriteInTx(ctx context.Context, tx *sql.Tx, issueID string, updates map[string]interface{}, tier, originalSize int, commitHash, actor string) error {
+func CompactOverwriteInTx(ctx context.Context, tx DBTX, issueID string, updates map[string]interface{}, tier, originalSize int, commitHash, actor string) error {
 	if _, err := UpdateIssueInTx(ctx, tx, issueID, updates, actor); err != nil {
 		return fmt.Errorf("compact overwrite: %w", err)
 	}
@@ -144,7 +144,7 @@ func CompactOverwriteInTx(ctx context.Context, tx *sql.Tx, issueID string, updat
 // as a newer tier-N row, and GetLatestSnapshotInTx (newest-wins) would then
 // return it — shadowing the true pre-compaction content and defeating restore.
 // The first snapshot at a tier captured the genuine originals, so it wins.
-func SnapshotIssueInTx(ctx context.Context, tx *sql.Tx, issueID string, tier int) error {
+func SnapshotIssueInTx(ctx context.Context, tx DBTX, issueID string, tier int) error {
 	var existing int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM compaction_snapshots WHERE issue_id = ? AND compaction_level = ?`,
@@ -261,7 +261,7 @@ func RestoreFromSnapshotInTx(ctx context.Context, tx *sql.Tx, issueID string, ac
 }
 
 // GetTier1CandidatesInTx returns issues eligible for tier 1 compaction.
-func GetTier1CandidatesInTx(ctx context.Context, tx *sql.Tx) ([]*types.CompactionCandidate, error) {
+func GetTier1CandidatesInTx(ctx context.Context, tx DBTX) ([]*types.CompactionCandidate, error) {
 	days := getCompactDaysInTx(ctx, tx, 1)
 	rows, err := tx.QueryContext(ctx, `
 		SELECT i.id, i.closed_at,
@@ -282,7 +282,7 @@ func GetTier1CandidatesInTx(ctx context.Context, tx *sql.Tx) ([]*types.Compactio
 }
 
 // GetTier2CandidatesInTx returns issues eligible for tier 2 compaction.
-func GetTier2CandidatesInTx(ctx context.Context, tx *sql.Tx) ([]*types.CompactionCandidate, error) {
+func GetTier2CandidatesInTx(ctx context.Context, tx DBTX) ([]*types.CompactionCandidate, error) {
 	days := getCompactDaysInTx(ctx, tx, 2)
 	rows, err := tx.QueryContext(ctx, `
 		SELECT i.id, i.closed_at,

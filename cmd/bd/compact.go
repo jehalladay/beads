@@ -152,6 +152,15 @@ Examples:
 
 		// Handle compact stats first
 		if compactStats {
+			// beads-aocj: on hub-connected crew the global `store` is nil in
+			// proxiedServerMode, so runCompactStats(nil) would panic. Route the
+			// read-only stats path through the proxied UOW instead.
+			if usesProxiedServer() {
+				if err := runCompactStatsProxiedServer(ctx); err != nil {
+					FatalErrorRespectJSON("%v", err)
+				}
+				return
+			}
 			runCompactStats(ctx, store)
 			return
 		}
@@ -204,6 +213,14 @@ Examples:
 
 		// Handle auto mode (legacy)
 		if compactAuto {
+			// beads-aocj: --auto builds a compact.Compactor over the direct
+			// store (compact.New(store,...)); the global store is nil in
+			// proxiedServerMode, so guard like --analyze/--apply and fail with a
+			// clean hinted error instead of a nil-store panic in runCompactSingle
+			// /runCompactAll.
+			if err := ensureDirectMode("compact --auto requires direct database access"); err != nil {
+				FatalErrorWithHintRespectJSON(err.Error(), diagHint())
+			}
 			// Validation checks
 			if compactID != "" && compactAll {
 				FatalErrorRespectJSON("cannot use --id and --all together")
@@ -520,45 +537,9 @@ func runCompactStats(ctx context.Context, store storage.DoltStorage) {
 		FatalErrorRespectJSON("failed to get Tier 2 candidates: %v", err)
 	}
 
-	tier1Size := 0
-	for _, c := range tier1 {
-		tier1Size += c.OriginalSize
-	}
-
-	tier2Size := 0
-	for _, c := range tier2 {
-		tier2Size += c.OriginalSize
-	}
-
-	if jsonOutput {
-		output := map[string]interface{}{
-			"tier1": map[string]interface{}{
-				"candidates": len(tier1),
-				"total_size": tier1Size,
-			},
-			"tier2": map[string]interface{}{
-				"candidates":  len(tier2),
-				"total_size":  tier2Size,
-				"implemented": false,
-			},
-		}
-		if err := outputJSON(output); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		}
-		return
-	}
-
-	fmt.Println("Compaction Statistics")
-	fmt.Printf("Tier 1 (30+ days closed):\n")
-	fmt.Printf("  Candidates: %d\n", len(tier1))
-	fmt.Printf("  Total size: %d bytes\n", tier1Size)
-	if tier1Size > 0 {
-		fmt.Printf("  Estimated savings: %d bytes (70%%)\n\n", tier1Size*7/10)
-	}
-
-	fmt.Printf("Tier 2 (90+ days closed, Tier 1 compacted): not yet implemented\n")
-	fmt.Printf("  Candidates: %d\n", len(tier2))
-	fmt.Printf("  Total size: %d bytes\n", tier2Size)
+	// Shared with the proxied path (runCompactStatsProxiedServer) so both render
+	// identically (beads-aocj).
+	renderCompactStats(tier1, tier2)
 }
 
 func runCompactAnalyze(ctx context.Context, store storage.DoltStorage) {
