@@ -73,7 +73,7 @@ func TestIsBlockedInTx(t *testing.T) {
 	flagQ := regexp.QuoteMeta("SELECT is_blocked FROM issues WHERE id = ?")
 	edgeQ := `SELECT .* AS depends_on_id, type FROM dependencies`
 	wispEdgeQ := `FROM wisp_dependencies`
-	statusQ := `SELECT id, status FROM issues WHERE id IN`
+	statusQ := `SELECT id, status, close_reason FROM issues WHERE id IN`
 
 	t.Run("not blocked short-circuits", func(t *testing.T) {
 		_, mock, tx := beginMockTx(t)
@@ -117,13 +117,13 @@ func TestIsBlockedInTx(t *testing.T) {
 		mock.ExpectQuery(wispEdgeQ).WithArgs("bd-1").
 			WillReturnRows(sqlmock.NewRows([]string{"depends_on_id", "type"}))
 		mock.ExpectQuery(statusQ).WillReturnRows(
-			sqlmock.NewRows([]string{"id", "status"}).
-				AddRow("bd-open", "open").
-				AddRow("bd-wait", "open").
-				AddRow("bd-done", "closed"))
-		// wisps status lookup (second table in loadStatusByIDInTx).
-		mock.ExpectQuery(`SELECT id, status FROM wisps WHERE id IN`).
-			WillReturnRows(sqlmock.NewRows([]string{"id", "status"}))
+			sqlmock.NewRows([]string{"id", "status", "close_reason"}).
+				AddRow("bd-open", "open", "").
+				AddRow("bd-wait", "open", "").
+				AddRow("bd-done", "closed", ""))
+		// wisps status lookup (second table in loadStatusAndReasonByIDInTx).
+		mock.ExpectQuery(`SELECT id, status, close_reason FROM wisps WHERE id IN`).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "status", "close_reason"}))
 		blocked, blockers, err := IsBlockedInTx(context.Background(), tx, "bd-1")
 		if err != nil {
 			t.Fatalf("IsBlockedInTx: %v", err)

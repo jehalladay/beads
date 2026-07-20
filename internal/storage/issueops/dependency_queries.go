@@ -774,17 +774,37 @@ func IsBlockedInTx(ctx context.Context, tx DBTX, issueID string) (bool, []string
 	for _, e := range edges {
 		blockerIDs = append(blockerIDs, e.dependsOnID)
 	}
-	statusByID, err := loadStatusByIDInTx(ctx, tx, blockerIDs)
+	// beads-htsxn: load status AND close_reason so the blockers-display loop can
+	// apply the same reason-aware conditional-blocks rule as the is_blocked
+	// recompute (beads-a3hm) and GetBlockedIssuesInTx (beads-mxe4b). The naive
+	// status-only skip below dropped a success-closed conditional-blocks blocker
+	// from the blockers list, so this returned blocked=true with an EMPTY list.
+	// Consumers gate on `blocked && len(blockers) > 0` (e.g. cmd/bd/close.go:182,
+	// update.go, batch.go) — an empty list bypasses the guard, closing/updating a
+	// blocked issue WITHOUT --force. This is the mxe4b sibling on the guard path
+	// (mxe4b was the display-only `bd blocked` view).
+	statusByID, err := loadStatusAndReasonByIDInTx(ctx, tx, blockerIDs)
 	if err != nil {
 		return false, nil, fmt.Errorf("check blocker status: %w", err)
 	}
 	var blockers []string
 	for _, e := range edges {
-		status, ok := statusByID[e.dependsOnID]
+		ts, ok := statusByID[e.dependsOnID]
 		if !ok {
 			continue
 		}
-		if status == types.StatusClosed || status == types.StatusPinned {
+		// A conditional-blocks edge stays an active blocker while the target is
+		// open AND while it is closed with a non-failure (success) reason — the
+		// dependent "runs only if the blocker FAILS", so a success close means it
+		// can never run. 'blocks'/'waits-for' block only while the target is open
+		// (unchanged): isActiveConditionalOrHardBlocker returns false for
+		// waits-for, so keep the open-check as the base and only widen the
+		// conditional-blocks case (a blanket swap would regress waits-for).
+		active := ts.status != types.StatusClosed && ts.status != types.StatusPinned
+		if e.depType == string(types.DepConditionalBlocks) {
+			active = isActiveConditionalOrHardBlocker(types.DepConditionalBlocks, ts)
+		}
+		if !active {
 			continue
 		}
 		if e.depType != "blocks" {
