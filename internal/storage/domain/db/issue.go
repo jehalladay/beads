@@ -590,16 +590,33 @@ func (r *issueSQLRepositoryImpl) seedCounterFromExisting(ctx context.Context, pr
 }
 
 func normalizeIssueTimestamps(issue *types.Issue) {
-	now := time.Now().UTC()
+	// beads-82pv3: truncate to second precision (the DATETIME column width),
+	// mirroring issueops.PrepareIssueForInsert (beads-17n4h/8ukct) on the
+	// direct/embedded path. This is the shared domain insert chokepoint (Insert +
+	// InsertBatch) used by proxied-server create, which emits the in-memory
+	// result.Issue verbatim under --json — without truncation a relative
+	// --due/--defer (ParseRelativeTime carries ns from time.Now()) or a ns
+	// created/updated emitted ns while every later read returned the
+	// second-truncated column: a read-after-write mismatch on the proxied twin
+	// that 17n4h (issueops-only) did not cover.
+	now := time.Now().UTC().Truncate(time.Second)
 	if issue.CreatedAt.IsZero() {
 		issue.CreatedAt = now
 	} else {
-		issue.CreatedAt = issue.CreatedAt.UTC()
+		issue.CreatedAt = issue.CreatedAt.UTC().Truncate(time.Second)
 	}
 	if issue.UpdatedAt.IsZero() {
 		issue.UpdatedAt = now
 	} else {
-		issue.UpdatedAt = issue.UpdatedAt.UTC()
+		issue.UpdatedAt = issue.UpdatedAt.UTC().Truncate(time.Second)
+	}
+	if issue.DueAt != nil {
+		truncated := issue.DueAt.UTC().Truncate(time.Second)
+		issue.DueAt = &truncated
+	}
+	if issue.DeferUntil != nil {
+		truncated := issue.DeferUntil.UTC().Truncate(time.Second)
+		issue.DeferUntil = &truncated
 	}
 }
 
