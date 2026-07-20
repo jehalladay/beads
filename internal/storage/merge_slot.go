@@ -132,7 +132,22 @@ func MergeSlotAcquireImpl(ctx context.Context, s Storage, holder, actor string, 
 						return fmt.Errorf("failed to add to waiters: %w", err)
 					}
 					result.Waiting = true
+					// beads-ssall: report the holder's ACTUAL 1-based rank in the
+					// queue, not the total queue depth. len(meta.Waiters) is only
+					// correct for a first enqueue (the just-appended holder is the
+					// tail); a RE-POLL by an already-queued head/middle waiter
+					// (alreadyWaiting==true, not appended) keeps its existing rank,
+					// so reporting len() told it a position further back than its
+					// real place — the only per-waiter progress signal a polling
+					// merge driver has. Scanning for the holder yields the true
+					// rank in both cases (tail case still yields len).
 					result.Position = len(meta.Waiters)
+					for i, w := range meta.Waiters {
+						if w == holder {
+							result.Position = i + 1
+							break
+						}
+					}
 				}
 				return nil
 			}

@@ -154,6 +154,59 @@ func TestMergeSlotAcquireImpl(t *testing.T) {
 			t.Errorf("waiter should not be duplicated, got %v", w)
 		}
 	})
+
+	// beads-ssall: a re-poll by a non-tail waiter must report its ACTUAL 1-based
+	// rank, not the total queue depth. Before the fix, result.Position was set
+	// to len(meta.Waiters) unconditionally, so a head/middle waiter that
+	// re-polled (the normal "am I next yet?" driver loop) was told a position
+	// further back than its real place; only the tail waiter was coincidentally
+	// correct. Queue order is unaffected — this is a report-only defect.
+	t.Run("re-poll reports actual rank, not queue depth (beads-ssall)", func(t *testing.T) {
+		// Queue: [bob, carol, dave], slot held by alice. Each re-polls.
+		cases := []struct {
+			waiter  string
+			wantPos int
+		}{
+			{"bob", 1},   // head — the bug reported 3
+			{"carol", 2}, // middle — the bug reported 3
+			{"dave", 3},  // tail — coincidentally correct even under the bug
+		}
+		for _, tc := range cases {
+			f := newTxSlotStore()
+			putSlot(f, types.StatusInProgress, "alice", "bob", "carol", "dave")
+			res, err := MergeSlotAcquireImpl(ctx, f, tc.waiter, "actor", true)
+			if err != nil {
+				t.Fatalf("re-poll %s: %v", tc.waiter, err)
+			}
+			if !res.Waiting {
+				t.Fatalf("re-poll %s: expected Waiting=true, got %+v", tc.waiter, res)
+			}
+			if res.Position != tc.wantPos {
+				t.Errorf("re-poll %s: Position = %d, want %d (rank, not queue depth)", tc.waiter, res.Position, tc.wantPos)
+			}
+			// Queue must be unchanged (no duplicate append, order intact).
+			if w := readSlotMeta(f).Waiters; len(w) != 3 || w[0] != "bob" || w[1] != "carol" || w[2] != "dave" {
+				t.Errorf("re-poll %s: waiters = %v, want [bob carol dave] unchanged", tc.waiter, w)
+			}
+		}
+	})
+
+	// A FIRST enqueue (not yet waiting) must still get the tail position — the
+	// fix must not regress the append-then-report path.
+	t.Run("first enqueue reports tail position (beads-ssall regression guard)", func(t *testing.T) {
+		f := newTxSlotStore()
+		putSlot(f, types.StatusInProgress, "alice", "bob", "carol")
+		res, err := MergeSlotAcquireImpl(ctx, f, "dave", "actor", true)
+		if err != nil {
+			t.Fatalf("first enqueue: %v", err)
+		}
+		if !res.Waiting || res.Position != 3 {
+			t.Fatalf("first enqueue: expected waiting at position 3 (new tail), got %+v", res)
+		}
+		if w := readSlotMeta(f).Waiters; len(w) != 3 || w[2] != "dave" {
+			t.Errorf("first enqueue: waiters = %v, want dave appended at tail", w)
+		}
+	})
 }
 
 func TestMergeSlotReleaseImpl(t *testing.T) {
