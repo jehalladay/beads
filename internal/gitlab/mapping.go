@@ -25,6 +25,30 @@ func beadsEstimateLabel(minutes int) string {
 	return beadsEstimateLabelPrefix + strconv.Itoa(minutes)
 }
 
+// validateGitLabLabels fails loud, before any GitLab API call, if a user label
+// carries the reserved "bd:estimate:" prefix. GitLab round-trip smuggles beads'
+// exact EstimatedMinutes through the label array as a "bd:estimate:<minutes>"
+// marker (see beadsEstimateLabelPrefix). A user label with the same prefix is
+// indistinguishable from that marker and corrupts the round-trip: on pull
+// stripEstimateLabels SILENTLY DROPS it, and estimateFromLabels lets a
+// "bd:estimate:N" label HIJACK the issue's EstimatedMinutes. The prefix check
+// mirrors those helpers' HasPrefix semantics exactly, so a normal label like
+// "my-estimate:5" or "bd:estimatex" is never false-rejected. Per the reusable
+// SCM per-field-constraint class the correct behavior is to reject with a
+// beads-side message naming the offending label. Sibling of the ADO "beads:"
+// prefix guard (validateADOTags, beads-sdmy) — the reserved-prefix collision
+// axis, distinct from the delimiter-collision guards. GitLab's own scoped
+// priority::/status::/type:: labels are a native bidirectional convention and
+// are intentionally NOT rejected. beads-yl92.
+func validateGitLabLabels(labels []string) error {
+	for _, l := range labels {
+		if strings.HasPrefix(l, beadsEstimateLabelPrefix) {
+			return fmt.Errorf("label %q uses the reserved %q prefix; GitLab round-trip reserves it for the internal estimate marker and would silently drop or misread it — rename the label before syncing", l, beadsEstimateLabelPrefix)
+		}
+	}
+	return nil
+}
+
 // estimateFromLabels recovers the exact beads EstimatedMinutes from a
 // bd:estimate:N label, if present and valid (> 0). Returns ok=false when no
 // such label exists or the value is malformed/non-positive.
