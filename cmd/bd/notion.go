@@ -228,7 +228,7 @@ func runNotionStatus(cmd *cobra.Command, _ []string) error {
 	cfg := getNotionConfig()
 	auth, err := resolveNotionAuth(cmd.Context())
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	result := notion.StatusResponse{
 		Configured:   auth != nil && strings.TrimSpace(auth.Token) != "" && cfg.DataSourceID != "",
@@ -298,23 +298,23 @@ func runNotionInit(cmd *cobra.Command, _ []string) error {
 	}()
 
 	if err := ensureStoreActive(); err != nil {
-		return HandleError("database not available: %v", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 	auth, err := resolveNotionAuth(cmd.Context())
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if err := validateNotionToken(auth); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	client := newNotionSetupClient(auth.Token)
 	db, err := client.CreateDatabase(cmd.Context(), notionInitParent, notionInitTitle)
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if len(db.DataSources) == 0 || strings.TrimSpace(db.DataSources[0].ID) == "" {
-		return HandleError("Notion create database response did not include a child data source")
+		return HandleErrorRespectJSON("Notion create database response did not include a child data source")
 	}
 	result := notionSetupResult{
 		Action:       "init",
@@ -324,7 +324,7 @@ func runNotionInit(cmd *cobra.Command, _ []string) error {
 		Message:      "Notion target initialized",
 	}
 	if err := saveNotionTargetConfig(cmd.Context(), result.DataSourceID, result.ViewURL); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if jsonOutput {
 		return writeNotionJSON(cmd, result)
@@ -348,24 +348,24 @@ func runNotionConnect(cmd *cobra.Command, _ []string) error {
 	}()
 
 	if err := ensureStoreActive(); err != nil {
-		return HandleError("database not available: %v", err)
+		return HandleErrorRespectJSON("database not available: %v", err)
 	}
 	auth, err := resolveNotionAuth(cmd.Context())
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if err := validateNotionToken(auth); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	client := newNotionSetupClient(auth.Token)
 	resolved, err := notion.ResolveDataSourceReference(cmd.Context(), client, notionConnectURL)
 	if err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	schema := notion.ValidateDataSourceSchema(resolved.DataSource)
 	if len(schema.Missing) > 0 {
-		return HandleError("target is missing required Notion properties: %s", strings.Join(schema.Missing, ", "))
+		return HandleErrorRespectJSON("target is missing required Notion properties: %s", strings.Join(schema.Missing, ", "))
 	}
 	result := notionSetupResult{
 		Action:       "connect",
@@ -378,7 +378,7 @@ func runNotionConnect(cmd *cobra.Command, _ []string) error {
 		result.DatabaseID = strings.TrimSpace(resolved.Database.ID)
 	}
 	if err := saveNotionTargetConfig(cmd.Context(), result.DataSourceID, result.ViewURL); err != nil {
-		return HandleError("%v", err)
+		return HandleErrorRespectJSON("%v", err)
 	}
 	if jsonOutput {
 		return writeNotionJSON(cmd, result)
