@@ -140,7 +140,7 @@ func displayStaleIssues(issues []*types.Issue, days int, truncated bool, effecti
 		fmt.Printf("%d. [%s] %s: %s\n", i+1, ui.RenderPriority(issue.Priority), ui.RenderID(issue.ID), displayTitle(issue.Title))
 		fmt.Printf("   Status: %s, Last updated: %d days ago\n", ui.RenderStatus(string(issue.Status)), daysStale)
 		if issue.Assignee != "" {
-			fmt.Printf("   Assignee: %s\n", issue.Assignee)
+			fmt.Printf("   Assignee: %s\n", ui.SanitizeForTerminal(issue.Assignee))
 		}
 		fmt.Println()
 	}

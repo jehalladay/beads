@@ -447,7 +447,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 					fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
 				}
 				if issue.Assignee != "" {
-					fmt.Printf("   Assignee: %s\n", issue.Assignee)
+					fmt.Printf("   Assignee: %s\n", ui.SanitizeForTerminal(issue.Assignee))
 				}
 			}
 			fmt.Println()

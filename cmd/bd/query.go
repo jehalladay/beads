@@ -349,7 +349,7 @@ func outputQueryResults(issues []*types.Issue, queryStr string, longFormat, trun
 			// slice) — an untrusted imported title can carry OSC/CSI escapes.
 			fmt.Printf("  %s\n", displayTitle(issue.Title))
 			if issue.Assignee != "" {
-				fmt.Printf("  Assignee: %s\n", issue.Assignee)
+				fmt.Printf("  Assignee: %s\n", ui.SanitizeForTerminal(issue.Assignee))
 			}
 			if len(issue.Labels) > 0 {
 				fmt.Printf("  Labels: %v\n", issue.Labels)
@@ -375,7 +375,7 @@ func formatQueryIssue(buf *strings.Builder, issue *types.Issue) {
 	}
 	assigneeStr := ""
 	if issue.Assignee != "" {
-		assigneeStr = fmt.Sprintf(" @%s", issue.Assignee)
+		assigneeStr = fmt.Sprintf(" @%s", ui.SanitizeForTerminal(issue.Assignee))
 	}
 
 	// Get styled status icon

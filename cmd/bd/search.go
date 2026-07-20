@@ -493,7 +493,7 @@ func outputSearchResults(issues []*types.Issue, query string, longFormat bool, t
 			fmt.Printf("%s [P%d] [%s] %s\n", issue.ID, issue.Priority, issue.IssueType, issue.Status)
 			fmt.Printf("  %s\n", displayTitle(issue.Title))
 			if issue.Assignee != "" {
-				fmt.Printf("  Assignee: %s\n", issue.Assignee)
+				fmt.Printf("  Assignee: %s\n", ui.SanitizeForTerminal(issue.Assignee))
 			}
 			if len(issue.Labels) > 0 {
 				fmt.Printf("  Labels: %v\n", issue.Labels)
@@ -510,7 +510,7 @@ func outputSearchResults(issues []*types.Issue, query string, longFormat bool, t
 			}
 			assigneeStr := ""
 			if issue.Assignee != "" {
-				assigneeStr = fmt.Sprintf(" @%s", issue.Assignee)
+				assigneeStr = fmt.Sprintf(" @%s", ui.SanitizeForTerminal(issue.Assignee))
 			}
 			fmt.Printf("%s [P%d] [%s] %s%s%s - %s\n",
 				issue.ID, issue.Priority, issue.IssueType, issue.Status,
