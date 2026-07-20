@@ -463,17 +463,25 @@ func collectCloseReasonFlags(cmd *cobra.Command) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if reason != "" {
+		// beads-in93a: treat a whitespace-only value as "not provided" so it
+		// falls through to the default "Closed" — matching --reason "" and the
+		// --reason-file whitespace rejection, instead of storing a blank reason.
+		if strings.TrimSpace(reason) != "" {
 			return []string{reason}, nil
 		}
 	}
 	return nil, nil
 }
 
+// nonEmptyCloseReasons drops empty AND whitespace-only entries (beads-in93a) so
+// `bd close --reason "   "` falls through to the default "Closed" rather than
+// storing a blank reason, consistent with the exactly-empty case. The surviving
+// values are returned VERBATIM (no trim) so a genuine reason keeps its
+// formatting, matching the beads-beln6 append-notes principle.
 func nonEmptyCloseReasons(reasons []string) []string {
 	out := make([]string, 0, len(reasons))
 	for _, reason := range reasons {
-		if reason != "" {
+		if strings.TrimSpace(reason) != "" {
 			out = append(out, reason)
 		}
 	}

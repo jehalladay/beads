@@ -21,6 +21,18 @@ func TestNonEmptyCloseReasons(t *testing.T) {
 	if len(nonEmptyCloseReasons([]string{"", ""})) != 0 {
 		t.Error("all-empty → empty")
 	}
+	// beads-in93a: whitespace-only entries are dropped like empties, but a
+	// genuine reason is kept VERBATIM (untrimmed) to preserve formatting.
+	got = nonEmptyCloseReasons([]string{"  ", "\t\n", "  real  ", ""})
+	if len(got) != 1 {
+		t.Fatalf("whitespace-only entries not dropped: %v", got)
+	}
+	if got[0] != "  real  " {
+		t.Errorf("surviving reason must be verbatim (untrimmed), got %q", got[0])
+	}
+	if len(nonEmptyCloseReasons([]string{"   ", "\t"})) != 0 {
+		t.Error("all-whitespace → empty (beads-in93a)")
+	}
 }
 
 func TestReasonForCloseIndex(t *testing.T) {
@@ -93,6 +105,33 @@ func TestCollectCloseReasonFlags(t *testing.T) {
 		reasons, err := collectCloseReasonFlags(cmd)
 		if err != nil || len(reasons) != 1 || reasons[0] != "git-style message" {
 			t.Fatalf("expected message alias, got %v (err %v)", reasons, err)
+		}
+	})
+
+	// beads-in93a: a whitespace-only --reason must be dropped so the caller
+	// falls through to the default "Closed", not stored as a blank reason.
+	t.Run("whitespace-only --reason is dropped", func(t *testing.T) {
+		cmd := buildCloseCmd()
+		_ = cmd.Flags().Set("reason", "   ")
+		reasons, err := collectCloseReasonFlags(cmd)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if reasons != nil {
+			t.Errorf("whitespace-only --reason must yield nil (default Closed), got %v", reasons)
+		}
+	})
+
+	// beads-in93a: same for the resolution/message/comment alias loop.
+	t.Run("whitespace-only --comment alias is dropped", func(t *testing.T) {
+		cmd := buildCloseCmd()
+		_ = cmd.Flags().Set("comment", "\t\n ")
+		reasons, err := collectCloseReasonFlags(cmd)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if reasons != nil {
+			t.Errorf("whitespace-only --comment must yield nil (default Closed), got %v", reasons)
 		}
 	})
 }
