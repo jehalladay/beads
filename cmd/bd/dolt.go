@@ -1120,12 +1120,7 @@ var doltRemoteAddCmd = &cobra.Command{
 
 		result, err := ensureDoltRemote(ctx, st, name, url, confirmDoltRemoteOverwrite)
 		if err != nil {
-			if jsonOutput {
-				_ = outputJSONError(err, "remote_add_failed")
-			} else {
-				fmt.Fprintf(os.Stderr, "Error adding remote: %v\n", err)
-			}
-			os.Exit(1)
+			FatalErrorRespectJSON("adding remote: %v", err)
 		}
 		if result.Canceled {
 			fmt.Println("Canceled.")
@@ -1167,12 +1162,7 @@ var doltRemoteListCmd = &cobra.Command{
 
 		remotes, err := st.ListRemotes(ctx)
 		if err != nil {
-			if jsonOutput {
-				_ = outputJSONError(err, "remote_list_failed")
-			} else {
-				fmt.Fprintf(os.Stderr, "Error listing remotes: %v\n", err)
-			}
-			os.Exit(1)
+			FatalErrorRespectJSON("listing remotes: %v", err)
 		}
 
 		if jsonOutput {
@@ -1228,12 +1218,7 @@ var doltRemoteRemoveCmd = &cobra.Command{
 		name := args[0]
 
 		if err := st.RemoveRemote(ctx, name); err != nil {
-			if jsonOutput {
-				_ = outputJSONError(err, "remote_remove_failed")
-			} else {
-				fmt.Fprintf(os.Stderr, "Error removing remote: %v\n", err)
-			}
-			os.Exit(1)
+			FatalErrorRespectJSON("removing remote: %v", err)
 		}
 
 		if name == "origin" {
