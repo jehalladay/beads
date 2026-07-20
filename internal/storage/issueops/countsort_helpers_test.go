@@ -210,4 +210,90 @@ func TestReadyWorkWispIssueFilter(t *testing.T) {
 			t.Errorf("ParentID = %v, want bd-mol", got.ParentID)
 		}
 	})
+
+	// beads-3y8y8: the wisp tier dropped filters the main ready-issues path
+	// (and bd list) honor — priority-min/max, title/desc/notes contains,
+	// created/updated/due date ranges, overdue, no-labels, empty-description,
+	// label glob/regex. Because wispFilter flows through the standard
+	// IssueFilter SQL builder (sqlbuild/filter.go honors all of these), NOT
+	// forwarding them made `bd ready --include-ephemeral` silently return
+	// wisps that violate those filters (asymmetric with the main path — same
+	// class as mz2p LabelsAny). Forward every field the IssueFilter builder
+	// supports so the wisp tier honors identical filter semantics.
+	t.Run("beads-3y8y8: parity filters forwarded to wisp IssueFilter", func(t *testing.T) {
+		t.Parallel()
+		pmin, pmax := 1, 3
+		ca := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		cb := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+		ua := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+		ub := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+		da := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		db := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+		got := readyWorkWispIssueFilter(types.WorkFilter{
+			PriorityMin:         &pmin,
+			PriorityMax:         &pmax,
+			TitleContains:       "alpha",
+			DescriptionContains: "beta",
+			NotesContains:       "gamma",
+			CreatedAfter:        &ca,
+			CreatedBefore:       &cb,
+			UpdatedAfter:        &ua,
+			UpdatedBefore:       &ub,
+			DueAfter:            &da,
+			DueBefore:           &db,
+			Overdue:             true,
+			NoLabels:            true,
+			EmptyDescription:    true,
+			LabelPattern:        "tech-*",
+			LabelRegex:          "tech-(debt|legacy)",
+		})
+		if got.PriorityMin == nil || *got.PriorityMin != pmin {
+			t.Errorf("PriorityMin = %v, want %d", got.PriorityMin, pmin)
+		}
+		if got.PriorityMax == nil || *got.PriorityMax != pmax {
+			t.Errorf("PriorityMax = %v, want %d", got.PriorityMax, pmax)
+		}
+		if got.TitleContains != "alpha" {
+			t.Errorf("TitleContains = %q, want alpha", got.TitleContains)
+		}
+		if got.DescriptionContains != "beta" {
+			t.Errorf("DescriptionContains = %q, want beta", got.DescriptionContains)
+		}
+		if got.NotesContains != "gamma" {
+			t.Errorf("NotesContains = %q, want gamma", got.NotesContains)
+		}
+		if got.CreatedAfter == nil || !got.CreatedAfter.Equal(ca) {
+			t.Errorf("CreatedAfter = %v, want %v", got.CreatedAfter, ca)
+		}
+		if got.CreatedBefore == nil || !got.CreatedBefore.Equal(cb) {
+			t.Errorf("CreatedBefore = %v, want %v", got.CreatedBefore, cb)
+		}
+		if got.UpdatedAfter == nil || !got.UpdatedAfter.Equal(ua) {
+			t.Errorf("UpdatedAfter = %v, want %v", got.UpdatedAfter, ua)
+		}
+		if got.UpdatedBefore == nil || !got.UpdatedBefore.Equal(ub) {
+			t.Errorf("UpdatedBefore = %v, want %v", got.UpdatedBefore, ub)
+		}
+		if got.DueAfter == nil || !got.DueAfter.Equal(da) {
+			t.Errorf("DueAfter = %v, want %v", got.DueAfter, da)
+		}
+		if got.DueBefore == nil || !got.DueBefore.Equal(db) {
+			t.Errorf("DueBefore = %v, want %v", got.DueBefore, db)
+		}
+		if !got.Overdue {
+			t.Error("Overdue not forwarded")
+		}
+		if !got.NoLabels {
+			t.Error("NoLabels not forwarded")
+		}
+		if !got.EmptyDescription {
+			t.Error("EmptyDescription not forwarded")
+		}
+		if got.LabelPattern != "tech-*" {
+			t.Errorf("LabelPattern = %q, want tech-*", got.LabelPattern)
+		}
+		if got.LabelRegex != "tech-(debt|legacy)" {
+			t.Errorf("LabelRegex = %q, want tech-(debt|legacy)", got.LabelRegex)
+		}
+	})
 }

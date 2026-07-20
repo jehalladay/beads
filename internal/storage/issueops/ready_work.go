@@ -310,16 +310,39 @@ func readyWorkExcludeLabels(filter types.WorkFilter) []string {
 func readyWorkWispIssueFilter(filter types.WorkFilter) types.IssueFilter {
 	pinnedFalse := false
 	wispFilter := types.IssueFilter{
-		Priority:       filter.Priority,
-		Labels:         filter.Labels,
-		LabelsAny:      filter.LabelsAny,
-		ExcludeLabels:  readyWorkExcludeLabels(filter),
-		Limit:          filter.Limit,
-		MolType:        filter.MolType,
-		WispType:       filter.WispType,
-		Pinned:         &pinnedFalse,
-		MetadataFields: filter.MetadataFields,
-		HasMetadataKey: filter.HasMetadataKey,
+		Priority:      filter.Priority,
+		Labels:        filter.Labels,
+		LabelsAny:     filter.LabelsAny,
+		ExcludeLabels: readyWorkExcludeLabels(filter),
+		Limit:         filter.Limit,
+		MolType:       filter.MolType,
+		WispType:      filter.WispType,
+		Pinned:        &pinnedFalse,
+		// beads-3y8y8: forward the filters the IssueFilter SQL builder
+		// (sqlbuild/filter.go) honors so the wisp tier applies identical
+		// semantics to the main ready-issues path (and bd list). Previously
+		// dropped → `bd ready --include-ephemeral` returned wisps that violated
+		// priority-min/max, title/desc/notes-contains, created/updated/due date
+		// ranges, overdue, no-labels, empty-description, and label glob/regex
+		// (asymmetric with the main path; same parity class as mz2p LabelsAny).
+		PriorityMin:         filter.PriorityMin,
+		PriorityMax:         filter.PriorityMax,
+		TitleContains:       filter.TitleContains,
+		DescriptionContains: filter.DescriptionContains,
+		NotesContains:       filter.NotesContains,
+		CreatedAfter:        filter.CreatedAfter,
+		CreatedBefore:       filter.CreatedBefore,
+		UpdatedAfter:        filter.UpdatedAfter,
+		UpdatedBefore:       filter.UpdatedBefore,
+		DueAfter:            filter.DueAfter,
+		DueBefore:           filter.DueBefore,
+		Overdue:             filter.Overdue,
+		NoLabels:            filter.NoLabels,
+		EmptyDescription:    filter.EmptyDescription,
+		LabelPattern:        filter.LabelPattern,
+		LabelRegex:          filter.LabelRegex,
+		MetadataFields:      filter.MetadataFields,
+		HasMetadataKey:      filter.HasMetadataKey,
 	}
 	if filter.Status != "" {
 		s := filter.Status
