@@ -115,6 +115,20 @@ func reopenProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string,
 			fmt.Fprintf(os.Stderr, "cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override\n", id, closedEpics)
 			return reopenProxiedOutcome{}, false
 		}
+		// Superseded-issue guard (beads-8sjb3), mirrored on the proxied path
+		// (beads-1mfmk) so a hub-connected crew can't bypass it: `bd supersede
+		// old --with new` adds a `supersedes` edge (old→new) and closes old.
+		// Reopening old leaves that edge, producing the contradictory "open but
+		// superseded by new" state — and since `supersedes` is non-blocking, old
+		// reappears in `bd ready`. The direct reopen path enforces this
+		// (cmd/bd/reopen.go supersededByTargets); the proxied handler mirrored
+		// only the closed-epic-parent guard, never the supersede guard (the
+		// beads-dfzre cmd-layer-misses-proxied gap the 8nugc duplicates guard
+		// exposed). Overridable with --force.
+		if supersedes := proxiedSupersededByTargets(ctx, uw, id, isWisp); len(supersedes) > 0 {
+			fmt.Fprintf(os.Stderr, "cannot reopen %s: it is superseded by %v; remove the supersedes link (bd dep remove %s <target> --type supersedes) or use --force to override\n", id, supersedes, id)
+			return reopenProxiedOutcome{}, false
+		}
 		// Duplicate-issue guard (beads-8nugc), mirrored on the proxied path so a
 		// hub-connected crew can't bypass it: reopening an issue that still carries
 		// an outgoing `duplicates` edge leaves the contradictory "open but duplicate"
@@ -148,6 +162,26 @@ func reopenProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string,
 	}
 	auditStatusChange(id, oldStatus, string(types.StatusOpen), actor, reason)
 	return reopenProxiedOutcome{id: id, before: current, after: res.Issue, reopened: res.Reopened}, true
+}
+
+// proxiedSupersededByTargets returns the IDs of the issues that supersede `id`
+// (i.e. id has an outgoing `supersedes` dep, created by `bd supersede <old>
+// --with <new>`). Proxied twin of the direct-path supersededByTargets
+// (cmd/bd/reopen.go, beads-8sjb3); mirrors proxiedDuplicatesTargets —
+// proxiedListDeps returns the OUTGOING deps, each carrying the target Issue +
+// DependencyType.
+func proxiedSupersededByTargets(ctx context.Context, uw uow.UnitOfWork, id string, isWisp bool) []string {
+	deps, err := proxiedListDeps(ctx, uw, id, isWisp, domain.DepListFilter{Direction: domain.DepDirectionOut})
+	if err != nil {
+		return nil
+	}
+	var targets []string
+	for _, dep := range deps {
+		if dep.DependencyType == types.DepSupersedes {
+			targets = append(targets, dep.Issue.ID)
+		}
+	}
+	return targets
 }
 
 // proxiedDuplicatesTargets returns the IDs of the canonical issues `id` is a
