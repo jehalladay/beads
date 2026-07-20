@@ -2075,6 +2075,41 @@ func TestTxSearchIssues_MissingFiltersParity(t *testing.T) {
 	if r := search("u9zr started-before", types.IssueFilter{StartedBefore: &past}); has(r, "uz-a") || has(r, "uz-b") {
 		t.Fatalf("StartedBefore(past): unstarted issues leaked (clause dropped, beads-u9zr): %d results", len(r))
 	}
+
+	// beads-kyr9q: two MORE fields the hand-copy dropped after u9zr's disjoint
+	// 5-field pass — Blocked (is_blocked pseudo-status) and EmptyNotes.
+
+	// EmptyNotes: uz-a has no notes; give uz-b notes so it must be EXCLUDED.
+	// Dropped clause -> uz-b (with notes) leaks in (RED); the clause keeps only
+	// the no-notes rows (GREEN). uz-a must survive.
+	if err := store.UpdateIssue(ctx, "uz-b", map[string]interface{}{"notes": "has real notes"}, "tester"); err != nil {
+		t.Fatalf("set notes on uz-b: %v", err)
+	}
+	rEmpty := search("kyr9q empty-notes", types.IssueFilter{EmptyNotes: true})
+	if has(rEmpty, "uz-b") {
+		t.Fatalf("EmptyNotes=true: uz-b (has notes) leaked (clause dropped, beads-kyr9q): %d results", len(rEmpty))
+	}
+	if !has(rEmpty, "uz-a") {
+		t.Fatalf("EmptyNotes=true: uz-a (no notes) wrongly removed (should be kept, beads-kyr9q)")
+	}
+
+	// Blocked: add a blocks dependency so uz-b becomes is_blocked; uz-a stays
+	// unblocked. Blocked=&true must return ONLY the blocked issue. Dropped clause
+	// -> uz-a (unblocked) leaks in (RED); the clause narrows to is_blocked=1
+	// (GREEN). Mirrors bd blocked's is_blocked semantics (beads-7f3g).
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID: "uz-b", DependsOnID: "uz-a", Type: types.DepBlocks,
+	}, "tester"); err != nil {
+		t.Fatalf("AddDependency to block uz-b: %v", err)
+	}
+	blockedTrue := true
+	rBlocked := search("kyr9q blocked-true", types.IssueFilter{Blocked: &blockedTrue})
+	if has(rBlocked, "uz-a") {
+		t.Fatalf("Blocked=true: uz-a (unblocked) leaked (clause dropped, beads-kyr9q): %d results", len(rBlocked))
+	}
+	if !has(rBlocked, "uz-b") {
+		t.Fatalf("Blocked=true: uz-b (blocked) wrongly removed (should be kept, beads-kyr9q)")
+	}
 }
 
 // TestTxSearchIssues_DateRangeInclusive gives beads-zxlib teeth: the

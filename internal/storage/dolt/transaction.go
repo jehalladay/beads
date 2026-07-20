@@ -471,6 +471,14 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 	if filter.EmptyDescription {
 		whereClauses = append(whereClauses, "(description IS NULL OR description = '')")
 	}
+	// EmptyNotes — mirrors sqlbuild/filter.go:265 so the in-tx read-your-writes
+	// path honors filter.EmptyNotes like the live search path (beads-kyr9q;
+	// without this the whole clause was silently dropped -> issues WITH notes
+	// leaked into the result set). Adjacent to its EmptyDescription sibling
+	// (they're paired in the shared builder) so the copy-omission can't recur.
+	if filter.EmptyNotes {
+		whereClauses = append(whereClauses, "(notes IS NULL OR notes = '')")
+	}
 	if filter.NoAssignee {
 		whereClauses = append(whereClauses, "(assignee IS NULL OR assignee = '')")
 	}
@@ -556,6 +564,20 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 			whereClauses = append(whereClauses, "pinned = 1")
 		} else {
 			whereClauses = append(whereClauses, "(pinned = 0 OR pinned IS NULL)")
+		}
+	}
+
+	// Blocked pseudo-status — mirrors sqlbuild/filter.go:221-231 (beads-7f3g) so
+	// the in-tx read-your-writes path honors filter.Blocked like the live search
+	// path (beads-kyr9q; was silently dropped -> a Blocked=&true filter leaked
+	// non-blocked issues). "blocked" is a derived pseudo-status keyed on the
+	// is_blocked column with bd blocked's closed/pinned exclusion, not a stored
+	// status value.
+	if filter.Blocked != nil {
+		if *filter.Blocked {
+			whereClauses = append(whereClauses, "is_blocked = 1 AND status <> 'closed' AND status <> 'pinned'")
+		} else {
+			whereClauses = append(whereClauses, "(is_blocked = 0 OR is_blocked IS NULL)")
 		}
 	}
 
