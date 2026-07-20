@@ -1084,6 +1084,16 @@ func init() {
 // on an empty AwaitID returns "no PR number specified" (pending, never resolves,
 // never escalates) → the blocked issue is stranded forever. Requiring await_id
 // up front is the ds9tr-consistent create-time guard.
+//
+// beads-cx0eu (uncovered ds9tr leg): a timer --timeout must be POSITIVE, not
+// merely non-empty and well-formed. time.ParseDuration accepts "0s" and negative
+// durations, so the string-non-empty check let two degenerate timers through:
+// --timeout=0s persists Timeout==0, which checkTimer treats identically to a
+// missing timeout ("no timeout set" error on every check → stranded forever, the
+// exact ds9tr strand); a negative --timeout puts expiresAt in the past so the
+// "timer" resolves on the very first check without ever waiting (silently
+// degenerate — not the wait the caller asked for). Validate the parsed duration,
+// not the raw string.
 func validateGateCreate(gateType, awaitID, timeoutStr string) error {
 	switch gateType {
 	case "human", "gh:run":
@@ -1095,6 +1105,12 @@ func validateGateCreate(gateType, awaitID, timeoutStr string) error {
 	case "timer":
 		if timeoutStr == "" {
 			return fmt.Errorf("gate type \"timer\" requires --timeout (an infinite timer can never resolve and would block the issue forever)")
+		}
+		// The call sites already reject a malformed --timeout; a well-formed but
+		// non-positive duration (0s / negative) is still unresolvable, so guard
+		// it here. Ignore a parse error — the format check upstream owns that.
+		if d, perr := time.ParseDuration(timeoutStr); perr == nil && d <= 0 {
+			return fmt.Errorf("gate type \"timer\" requires a positive --timeout (got %q); a zero timer errors on every check (\"no timeout set\") and a negative timer expires before it starts, so neither can hold the issue as intended", timeoutStr)
 		}
 	default:
 		return fmt.Errorf("invalid gate type %q (must be one of: human, timer, gh:run, gh:pr)", gateType)

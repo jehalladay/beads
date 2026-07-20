@@ -64,6 +64,26 @@ func TestGateCreateRejectsUnresolvableGates(t *testing.T) {
 		}
 	})
 
+	// beads-cx0eu: a well-formed but non-positive --timeout is still
+	// unresolvable. --timeout=0s persists Timeout==0 (checkTimer errors
+	// "no timeout set" forever); a negative --timeout expires before it starts.
+	// Both must be rejected at create, like a missing --timeout.
+	t.Run("timer_zero_timeout_rejected", func(t *testing.T) {
+		task := bdCreate(t, bd, dir, "Task timer-zero", "--type", "task")
+		out := bdGateFail(t, bd, dir, "create", "--type", "timer", "--timeout", "0s", "--blocks", task.ID)
+		if !strings.Contains(out, "positive --timeout") {
+			t.Errorf("expected positive-timeout rejection for 0s, got: %s", out)
+		}
+	})
+
+	t.Run("timer_negative_timeout_rejected", func(t *testing.T) {
+		task := bdCreate(t, bd, dir, "Task timer-neg", "--type", "task")
+		out := bdGateFail(t, bd, dir, "create", "--type", "timer", "--timeout", "-5m", "--blocks", task.ID)
+		if !strings.Contains(out, "positive --timeout") {
+			t.Errorf("expected positive-timeout rejection for -5m, got: %s", out)
+		}
+	})
+
 	t.Run("ghpr_accepted", func(t *testing.T) {
 		task := bdCreate(t, bd, dir, "Task ghpr", "--type", "task")
 		out := bdGate(t, bd, dir, "create", "--type", "gh:pr", "--await-id", "42", "--blocks", task.ID)
