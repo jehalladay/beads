@@ -135,21 +135,21 @@ Dolt Garbage Collection:
 
 Examples:
   # Dolt garbage collection
-  bd compact --dolt                        # Run Dolt GC
-  bd compact --dolt --dry-run              # Preview without running GC
+  bd admin compact --dolt                  # Run Dolt GC
+  bd admin compact --dolt --dry-run        # Preview without running GC
 
   # Agent-driven workflow (recommended)
-  bd compact --analyze --json              # Get candidates with full content
-  bd compact --apply --id bd-42 --summary summary.txt
-  bd compact --apply --id bd-42 --summary - < summary.txt
+  bd admin compact --analyze --json        # Get candidates with full content
+  bd admin compact --apply --id bd-42 --summary summary.txt
+  bd admin compact --apply --id bd-42 --summary - < summary.txt
 
   # Legacy AI-powered workflow
-  bd compact --auto --dry-run              # Preview candidates
-  bd compact --auto --all                  # Compact all eligible issues
-  bd compact --auto --id bd-42             # Compact specific issue
+  bd admin compact --auto --dry-run        # Preview candidates
+  bd admin compact --auto --all            # Compact all eligible issues
+  bd admin compact --auto --id bd-42       # Compact specific issue
 
   # Statistics
-  bd compact --stats                       # Show statistics
+  bd admin compact --stats                 # Show statistics
 `,
 	Run: func(_ *cobra.Command, _ []string) {
 		// Block mutating operations in embedded mode; allow --stats, --analyze, --dry-run read-only paths.
@@ -564,7 +564,11 @@ func runCompactAnalyze(ctx context.Context, store storage.DoltStorage) {
 		Compacted          bool   `json:"compacted"`
 	}
 
-	var candidates []Candidate
+	// beads-vdaym: non-nil empty slice so the --analyze --json path emits
+	// "candidates":[] (not null) on an empty candidate set — twin-invariant
+	// member of the tamf/5fv3/nqv0/jbwv nil-slice->[] family. The populated
+	// path (line ~319) already emits an array.
+	candidates := []Candidate{}
 
 	// Single issue mode
 	if compactID != "" {
