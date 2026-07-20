@@ -1470,6 +1470,7 @@ type WorkFilter struct {
 	PriorityMin         *int   // beads-cseh3: minimum priority (inclusive); parity with IssueFilter/bd list
 	PriorityMax         *int   // beads-cseh3: maximum priority (inclusive); parity with IssueFilter/bd list
 	DescriptionContains string // beads-6na9a: case-insensitive substring match on description; parity with IssueFilter/bd list
+	TitleContains       string // beads-d1as8: case-insensitive substring match on title; parity with IssueFilter/bd list
 	Assignee            *string
 	Unassigned          bool     // Filter for issues with no assignee
 	Labels              []string // AND semantics: issue must have ALL these labels

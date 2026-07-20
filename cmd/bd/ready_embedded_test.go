@@ -462,6 +462,71 @@ func TestEmbeddedReadyDescContains(t *testing.T) {
 	})
 }
 
+// TestEmbeddedReadyTitleContains is the teeth for beads-d1as8: bd ready must
+// support --title-contains (case-insensitive substring on title) with the same
+// semantics as bd list. Previously ready had no such flag and the WorkFilter/
+// sqlbuild builder ignored the title entirely.
+func TestEmbeddedReadyTitleContains(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "tc")
+
+	bdCreate(t, bd, dir, "Fix the widget renderer", "--type", "task")
+	bdCreate(t, bd, dir, "Refactor WIDGET storage layer", "--type", "task")
+	bdCreate(t, bd, dir, "Document the sprocket API", "--type", "task")
+
+	readyTitles := func(t *testing.T, args ...string) []string {
+		t.Helper()
+		full := append([]string{"ready", "--json", "--limit", "0"}, args...)
+		cmd := exec.Command(bd, full...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("bd ready %v failed: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
+		}
+		var ready []types.IssueWithCounts
+		if jerr := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &ready); jerr != nil {
+			t.Fatalf("parse ready JSON (%v): %v\n%s", args, jerr, stdout.String())
+		}
+		titles := make([]string, 0, len(ready))
+		for _, r := range ready {
+			titles = append(titles, r.Title)
+		}
+		return titles
+	}
+
+	t.Run("case_insensitive_substring_matches_both_widget_issues", func(t *testing.T) {
+		got := readyTitles(t, "--title-contains", "widget")
+		if len(got) != 2 {
+			t.Fatalf("--title-contains widget: got %d titles, want 2: %v", len(got), got)
+		}
+		for _, tt := range got {
+			if !strings.Contains(strings.ToLower(tt), "widget") {
+				t.Errorf("unexpected title %q for --title-contains widget", tt)
+			}
+		}
+	})
+
+	t.Run("nonmatching_substring_returns_empty", func(t *testing.T) {
+		got := readyTitles(t, "--title-contains", "nonesuch")
+		if len(got) != 0 {
+			t.Errorf("--title-contains nonesuch: expected no matches, got %v", got)
+		}
+	})
+
+	t.Run("distinct_substring_matches_one", func(t *testing.T) {
+		got := readyTitles(t, "--title-contains", "sprocket")
+		if len(got) != 1 || !strings.Contains(strings.ToLower(got[0]), "sprocket") {
+			t.Errorf("--title-contains sprocket: got %v, want the sprocket issue only", got)
+		}
+	})
+}
+
 func TestEmbeddedReadyConcurrent(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")

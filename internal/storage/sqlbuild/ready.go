@@ -172,6 +172,12 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 		whereClauses = append(whereClauses, "LOWER(description) LIKE ?")
 		args = append(args, "%"+strings.ToLower(filter.DescriptionContains)+"%")
 	}
+	// beads-d1as8: case-insensitive title substring, parity with bd list
+	// (filter.go TitleContains → LOWER(title) LIKE ?). Same issues-table column.
+	if filter.TitleContains != "" {
+		whereClauses = append(whereClauses, "LOWER(title) LIKE ?")
+		args = append(args, "%"+strings.ToLower(filter.TitleContains)+"%")
+	}
 	if filter.Type != "" {
 		whereClauses = append(whereClauses, "issue_type = ?")
 		args = append(args, filter.Type)

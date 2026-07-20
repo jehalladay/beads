@@ -216,6 +216,11 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		if dc, _ := cmd.Flags().GetString("desc-contains"); dc != "" {
 			filter.DescriptionContains = dc
 		}
+		// beads-d1as8: case-insensitive title substring, parity with bd list.
+		// The proxied path parses the same in gatherReadyInput.
+		if tc, _ := cmd.Flags().GetString("title-contains"); tc != "" {
+			filter.TitleContains = tc
+		}
 		if assignee != "" && !unassigned {
 			filter.Assignee = &assignee
 		}
@@ -860,6 +865,7 @@ func init() {
 	readyCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE). Can combine with --label")
 	readyCmd.Flags().StringSlice("exclude-label", []string{}, "Exclude issues that have ANY of these labels")
 	readyCmd.Flags().StringP("type", "t", "", "Filter by issue type (task, bug, feature, epic, decision, merge-request). Aliases: mr→merge-request, feat→feature, mol→molecule, dec/adr→decision")
+	readyCmd.Flags().String("title-contains", "", "Filter by title substring (case-insensitive)")
 	readyCmd.Flags().String("mol", "", "Filter to steps within a specific molecule")
 	readyCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
 	readyCmd.Flags().String("mol-type", "", "Filter by molecule type: swarm, patrol, or work")
