@@ -150,7 +150,10 @@ func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string, 
 		buf.WriteString(fmt.Sprintf("  %s\n", displayTitle(issue.Title)))
 	}
 	if issue.Assignee != "" {
-		buf.WriteString(fmt.Sprintf("  Assignee: %s\n", issue.Assignee))
+		// Assignee can come from an untrusted import (no control-char validation;
+		// normalizeAssignee only trims whitespace) — sanitize at the display site
+		// to strip OSC/CSI escapes (beads-i8dsb); stored value is untouched.
+		buf.WriteString(fmt.Sprintf("  Assignee: %s\n", ui.SanitizeForTerminal(issue.Assignee)))
 	}
 	if desc := strings.TrimSpace(issue.Description); desc != "" {
 		buf.WriteString("  Description:\n")
@@ -284,7 +287,8 @@ func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []strin
 	}
 	assigneeStr := ""
 	if issue.Assignee != "" {
-		assigneeStr = fmt.Sprintf(" @%s", issue.Assignee)
+		// See above: sanitize the untrusted assignee at the display site (beads-i8dsb).
+		assigneeStr = fmt.Sprintf(" @%s", ui.SanitizeForTerminal(issue.Assignee))
 	}
 
 	// Format dependency info
