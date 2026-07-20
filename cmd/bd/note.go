@@ -63,7 +63,7 @@ Examples:
 			return HandleErrorRespectJSON("no note text provided (use positional args, --stdin, or --file)")
 		}
 
-		if noteText == "" {
+		if strings.TrimSpace(noteText) == "" {
 			return HandleErrorRespectJSON("note text is empty")
 		}
 
