@@ -278,16 +278,27 @@ func TestEmbeddedGate(t *testing.T) {
 	})
 
 	t.Run("gate_check_bead_type_retired", func(t *testing.T) {
-		// beads-kburh: bead gates were retired. `bd gate check --type=bead` must
-		// still run cleanly (it simply matches no checkable gates now) — the
-		// filter is accepted, there is just no bead-gate check path to invoke.
+		// beads-kburh retired the non-functional bead gate type end-to-end.
+		// beads-68cgv then made `bd gate check --type` REJECT an unknown/retired
+		// filter up front (validateGateCheckType, gate.go) rather than silently
+		// matching zero gates + printing "No open gates" + exit 0 — the fail-late
+		// footgun that reads as "all clear" while real gates go unchecked.
+		//
+		// beads-tvnvy: this test was landed by kburh (Jul 20) asserting the OLD
+		// "runs clean / No open gates" no-op, but 68cgv landed AFTER and rejects
+		// "bead" as an invalid filter → the test went RED on origin/main
+		// (landed-test-vs-landed-feature conflict). 68cgv is the current, safe
+		// design (retired type → fail-early reject, mirroring ds9tr on create),
+		// so the test is reconciled to assert the REJECTION, not the stale no-op.
 		target := bdCreate(t, bd, dir, "Bead gate target", "--type", "task")
 		_ = createGate(t, bd, dir, "Bead gate",
 			"--description", fmt.Sprintf("Waiting for %s", target.ID))
 
-		out := bdGate(t, bd, dir, "check", "--type", "bead")
-		if !strings.Contains(out, "No open gates") {
-			t.Errorf("expected 'No open gates' for retired bead type, got: %s", out)
+		// The retired "bead" filter must be rejected with a clear, actionable
+		// error (68cgv), not silently accepted.
+		out := bdGateFail(t, bd, dir, "check", "--type", "bead")
+		if !strings.Contains(out, "invalid gate type filter") {
+			t.Errorf("expected `bd gate check --type bead` to reject the retired filter with 'invalid gate type filter' (beads-68cgv/tvnvy), got: %s", out)
 		}
 	})
 
