@@ -493,22 +493,17 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store stor
 		FatalErrorRespectJSON("batch compaction failed: %v", err)
 	}
 
-	successCount := 0
-	failCount := 0
-	totalSaved := 0
-	totalOriginal := 0
+	// beads-jxe6a: summarize via a pure helper so the success flag, counts and
+	// per-issue failure list are computed in one testable place. Before this
+	// fix the batch --json output hardcoded "success": true and returned rc0
+	// even when CompactTier1Batch reported non-fatal per-issue failures
+	// (BatchResult.Err) — a self-contradicting {success:true, failed:N}
+	// envelope automation could not act on.
+	summary := summarizeCompactBatch(results)
 
-	for i, result := range results {
-		if !jsonOutput {
+	if !jsonOutput {
+		for i := range results {
 			fmt.Printf("[%s] %d/%d\r", progressBar(i+1, len(results)), i+1, len(results))
-		}
-
-		if result.Err != nil {
-			failCount++
-		} else {
-			successCount++
-			totalOriginal += result.OriginalSize
-			totalSaved += (result.OriginalSize - result.CompactedSize)
 		}
 	}
 
@@ -516,28 +511,83 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store stor
 
 	if jsonOutput {
 		output := map[string]interface{}{
-			"success":       true,
+			"success":       summary.Success,
 			"tier":          compactTier,
 			"total":         len(results),
-			"succeeded":     successCount,
-			"failed":        failCount,
-			"saved_bytes":   totalSaved,
-			"original_size": totalOriginal,
+			"succeeded":     summary.Succeeded,
+			"failed":        summary.Failed,
+			"saved_bytes":   summary.SavedBytes,
+			"original_size": summary.OriginalSize,
 			"elapsed_ms":    elapsed.Milliseconds(),
+		}
+		if len(summary.Failures) > 0 {
+			output["failures"] = summary.Failures
 		}
 		if err := outputJSON(output); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		}
+		// beads-jxe6a: a partial batch must exit non-zero so automation can
+		// detect it — matching the batch partial-failure contract (beads-uctf/
+		// z8z9) and this file's own post-output os.Exit(1) precedent (dolt gc).
+		// The stdout JSON document is already complete above.
+		if !summary.Success {
+			os.Exit(1)
 		}
 		return
 	}
 
 	fmt.Printf("\n\nCompleted in %v\n\n", elapsed)
 	fmt.Printf("Summary:\n")
-	fmt.Printf("  Succeeded: %d\n", successCount)
-	fmt.Printf("  Failed: %d\n", failCount)
-	if totalOriginal > 0 {
-		fmt.Printf("  Saved: %d bytes (%.1f%%)\n", totalSaved, float64(totalSaved)/float64(totalOriginal)*100)
+	fmt.Printf("  Succeeded: %d\n", summary.Succeeded)
+	fmt.Printf("  Failed: %d\n", summary.Failed)
+	if summary.OriginalSize > 0 {
+		fmt.Printf("  Saved: %d bytes (%.1f%%)\n", summary.SavedBytes, float64(summary.SavedBytes)/float64(summary.OriginalSize)*100)
 	}
+	// beads-jxe6a: the human path silently returned rc0 on partial failure too;
+	// align it with the --json exit code.
+	if !summary.Success {
+		os.Exit(1)
+	}
+}
+
+// compactBatchFailure names an issue whose batch compaction failed, with its
+// error string (beads-jxe6a). It is exported into the --json output under
+// "failures" so a consumer can act on WHICH issues failed, not just a count.
+type compactBatchFailure struct {
+	IssueID string `json:"issue_id"`
+	Error   string `json:"error"`
+}
+
+// compactBatchSummary is the outcome of a `bd compact --all` batch.
+type compactBatchSummary struct {
+	Success      bool
+	Succeeded    int
+	Failed       int
+	SavedBytes   int
+	OriginalSize int
+	Failures     []compactBatchFailure
+}
+
+// summarizeCompactBatch reduces the per-issue BatchResults into the batch
+// outcome (beads-jxe6a). Success is TRUE only when no issue failed — the batch
+// --json path previously hardcoded success:true regardless of failCount, so a
+// partial batch reported {success:true, failed:N} at rc0 and a structured
+// consumer could not detect the failed compactions. Pure (no I/O) so the teeth
+// can mutation-verify the success/exit mapping without a live store.
+func summarizeCompactBatch(results []compact.BatchResult) compactBatchSummary {
+	var s compactBatchSummary
+	for _, result := range results {
+		if result.Err != nil {
+			s.Failed++
+			s.Failures = append(s.Failures, compactBatchFailure{IssueID: result.IssueID, Error: result.Err.Error()})
+		} else {
+			s.Succeeded++
+			s.OriginalSize += result.OriginalSize
+			s.SavedBytes += result.OriginalSize - result.CompactedSize
+		}
+	}
+	s.Success = s.Failed == 0
+	return s
 }
 
 func runCompactStats(ctx context.Context, store storage.DoltStorage) {
