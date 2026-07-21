@@ -59,6 +59,20 @@ func clientServerShareFilesystem() bool {
 // bd sessions don't need a chatty repeat on every command.
 var autoBackupSkipNoticeOnce sync.Once
 
+// emitAutoBackupSkipWarning writes the raw "Warning: auto-backup skipped: ..."
+// text to stderr ONLY in human, non-quiet mode. maybeAutoBackup is a
+// best-effort PersistentPostRun side-effect: its backupDir/loadBackupState/
+// GetCurrentCommit failures previously wrote this line UNCONDITIONALLY, so a
+// --json consumer's captured stderr was polluted with non-JSON noise — unlike
+// the sibling notices in this same function (the :91 Info and the
+// "auto-backup failed" warning), which both !isQuiet()&&!jsonOutput-guard.
+// Intra-function-inconsistent twin of mfmcf's ado sync leak (beads-80evy).
+func emitAutoBackupSkipWarning(detail string) {
+	if !isQuiet() && !jsonOutput {
+		fmt.Fprintf(os.Stderr, "Warning: auto-backup skipped: %s\n", detail)
+	}
+}
+
 // maybeAutoBackup runs a Dolt-native backup if enabled and the throttle interval has passed.
 // Called from PersistentPostRun after auto-commit.
 func maybeAutoBackup(ctx context.Context) {
@@ -102,13 +116,13 @@ func maybeAutoBackup(ctx context.Context) {
 
 	dir, err := backupDir()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-backup skipped: %v\n", err)
+		emitAutoBackupSkipWarning(fmt.Sprintf("%v", err))
 		return
 	}
 
 	state, err := loadBackupState(dir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-backup skipped: %v\n", err)
+		emitAutoBackupSkipWarning(fmt.Sprintf("%v", err))
 		return
 	}
 
@@ -126,7 +140,7 @@ func maybeAutoBackup(ctx context.Context) {
 	// Change detection: skip if nothing changed
 	currentCommit, err := store.GetCurrentCommit(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-backup skipped: failed to get current commit: %v\n", err)
+		emitAutoBackupSkipWarning(fmt.Sprintf("failed to get current commit: %v", err))
 		return
 	}
 	if currentCommit == state.LastDoltCommit && state.LastDoltCommit != "" {
