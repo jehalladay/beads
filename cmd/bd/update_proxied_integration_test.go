@@ -217,8 +217,9 @@ func TestProxiedServerUpdate(t *testing.T) {
 		child := bdProxiedCreate(t, bd, p.dir, "Loose task")
 		bdProxiedUpdateOne(t, bd, p.dir, epic.ID, "-s", "closed") // no children yet, close allowed
 		out := bdProxiedUpdateFail(t, bd, p.dir, child.ID, "--parent", epic.ID)
-		if !strings.Contains(out, "closed epic") {
-			t.Errorf("expected a 'closed epic' guard error on proxied reparent, got: %s", out)
+		// beads-hxtzy generalized the reparent error text "closed epic" -> "closed parent".
+		if !strings.Contains(out, "closed parent") {
+			t.Errorf("expected a 'closed parent' guard error on proxied reparent, got: %s", out)
 		}
 		db := openProxiedDB(t, p)
 		// The child must not have been reparented under the closed epic.
@@ -230,6 +231,31 @@ func TestProxiedServerUpdate(t *testing.T) {
 		}
 		if count != 0 {
 			t.Errorf("open child must not be reparented under a closed epic (a8a1b), got %d parent edges", count)
+		}
+	})
+
+	// beads-hxtzy: MOLECULE parent (aw9x8 widening axis) — reparenting an open
+	// child under a closed MOLECULE root must be refused on the proxied path too,
+	// not just epics. Mutation: reverting the guard to bare TypeEpic turns this
+	// RED (edge lands, rc=0).
+	t.Run("reparent_open_child_under_closed_molecule_refused", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "urcm")
+		mol := bdProxiedCreate(t, bd, p.dir, "Closed molecule reparent", "-t", "molecule")
+		child := bdProxiedCreate(t, bd, p.dir, "Loose mol task")
+		bdProxiedUpdateOne(t, bd, p.dir, mol.ID, "-s", "closed")
+		out := bdProxiedUpdateFail(t, bd, p.dir, child.ID, "--parent", mol.ID)
+		if !strings.Contains(out, "closed parent") {
+			t.Errorf("expected a 'closed parent' guard error on proxied reparent under a closed molecule, got: %s", out)
+		}
+		db := openProxiedDB(t, p)
+		var count int
+		if err := db.QueryRowContext(context.Background(),
+			"SELECT COUNT(*) FROM dependencies WHERE issue_id = ? AND depends_on_issue_id = ? AND type = 'parent-child'",
+			child.ID, mol.ID).Scan(&count); err != nil {
+			t.Fatalf("count parent dep: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("open child must not be reparented under a closed molecule, got %d parent edges", count)
 		}
 	})
 

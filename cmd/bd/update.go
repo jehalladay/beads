@@ -761,9 +761,14 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 					// reparenting a closed child, or under an open/non-epic
 					// parent, is unaffected. Overridable with --force, matching
 					// `bd close --force`.
-					if !forceFlag && parentIssue.IssueType == types.TypeEpic &&
+					// beads-hxtzy: use the shared isAutoClosingParentType (epic OR
+					// molecule OR ephemeral, beads-aw9x8) — the "scope to epics"
+					// reasoning is stale now that the create/close/reopen/dep-add
+					// guards widened, so a closed MOLECULE/wisp root was the
+					// reparent straggler still accepting an open child here.
+					if !forceFlag && isAutoClosingParentType(parentIssue) &&
 						parentIssue.Status == types.StatusClosed && issue.Status != types.StatusClosed {
-						reportUpdateItemError("cannot reparent %s under closed epic %s: the epic is closed and %s is open (would create a closed epic with an open child); reopen the epic first or use --force to override", id, newParent, id)
+						reportUpdateItemError("cannot reparent %s under closed parent %s: the parent is closed and %s is open (would create a closed parent with an open child); reopen the parent first or use --force to override", id, newParent, id)
 						closeIfUnmutated(result)
 						continue
 					}

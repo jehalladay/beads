@@ -97,13 +97,14 @@ func TestClosedEpicParentAssignmentGuard(t *testing.T) {
 		}
 	})
 
-	// (2) update <open child> --parent <closed epic> is refused.
+	// (2) update <open child> --parent <closed epic> is refused. beads-hxtzy
+	//     generalized the reparent error text "closed epic" -> "closed parent".
 	t.Run("reparent_open_child_under_closed_epic_refused", func(t *testing.T) {
 		epicID := makeClosedEpic(t, "a8a1b closed epic reparent")
 		child := bdCreate(t, bd, dir, "loose task", "--type", "task")
 		out := bdUpdateFail(t, bd, dir, child.ID, "--parent", epicID)
-		if !strings.Contains(out, "closed epic") {
-			t.Errorf("expected a 'closed epic' guard error on reparent, got: %s", out)
+		if !strings.Contains(out, "closed parent") {
+			t.Errorf("expected a 'closed parent' guard error on reparent, got: %s", out)
 		}
 	})
 
@@ -112,6 +113,27 @@ func TestClosedEpicParentAssignmentGuard(t *testing.T) {
 		epicID := makeClosedEpic(t, "a8a1b closed epic reparent force")
 		child := bdCreate(t, bd, dir, "loose task force", "--type", "task")
 		bdUpdate(t, bd, dir, child.ID, "--parent", epicID, "--force")
+	})
+
+	// (2-hxtzy) reparent under a closed MOLECULE root is refused too — the aw9x8
+	//     widening axis the reparent guard had missed (was bare TypeEpic).
+	//     Mutation: reverting update.go's predicate to bare TypeEpic turns this
+	//     RED (child reparented, rc=0).
+	t.Run("reparent_open_child_under_closed_molecule_refused", func(t *testing.T) {
+		molID := makeClosedParent(t, "hxtzy closed molecule reparent", "molecule")
+		child := bdCreate(t, bd, dir, "loose mol task", "--type", "task")
+		out := bdUpdateFail(t, bd, dir, child.ID, "--parent", molID)
+		if !strings.Contains(out, "closed parent") {
+			t.Errorf("expected a 'closed parent' guard error on reparent under a closed molecule, got: %s", out)
+		}
+	})
+
+	// (2-hxtzy-neg) reparent under an OPEN molecule still succeeds — guard fires
+	//     only on a CLOSED parent (no over-fire on the widened type).
+	t.Run("reparent_under_open_molecule_still_allowed", func(t *testing.T) {
+		openMol := bdCreate(t, bd, dir, "hxtzy open molecule", "--type", "molecule")
+		child := bdCreate(t, bd, dir, "task to open molecule", "--type", "task")
+		bdUpdate(t, bd, dir, child.ID, "--parent", openMol.ID)
 	})
 
 	// Negative: reparenting under an OPEN epic is unaffected (no false-positive).

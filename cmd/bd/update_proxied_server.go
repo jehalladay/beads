@@ -343,9 +343,12 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 	// unaffected. --force bypass is handled by the caller (runs only when !force).
 	if reparent != nil && *reparent != "" && current != nil && current.Status != types.StatusClosed {
 		parent, err := uw.IssueUseCase().GetIssue(ctx, *reparent)
-		if err == nil && parent != nil &&
-			parent.IssueType == types.TypeEpic && parent.Status == types.StatusClosed {
-			return fmt.Errorf("cannot reparent %s under closed epic %s: the epic is closed and %s is open (would create a closed epic with an open child); reopen the epic first or use --force to override", id, *reparent, id)
+		// beads-hxtzy: widen to the shared isAutoClosingParentType (epic OR
+		// molecule OR ephemeral, beads-aw9x8), mirroring the direct update.go
+		// reparent guard — a closed MOLECULE/wisp root was reparentable-under on
+		// the proxied path too.
+		if err == nil && isAutoClosingParentType(parent) && parent.Status == types.StatusClosed {
+			return fmt.Errorf("cannot reparent %s under closed parent %s: the parent is closed and %s is open (would create a closed parent with an open child); reopen the parent first or use --force to override", id, *reparent, id)
 		}
 	}
 
