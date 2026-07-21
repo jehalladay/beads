@@ -50,6 +50,7 @@ By default, performs bidirectional sync:
 - Pushes local beads issues to GitHub
 
 Use --pull-only or --push-only to limit direction.`,
+	Args:          cobra.NoArgs, // beads-euyjs: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runGitHubSync,
@@ -60,6 +61,7 @@ var githubStatusCmd = &cobra.Command{
 	Use:           "status",
 	Short:         "Show GitHub sync status",
 	Long:          `Display current GitHub configuration and sync status.`,
+	Args:          cobra.NoArgs, // beads-euyjs: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runGitHubStatus,
@@ -70,6 +72,7 @@ var githubReposCmd = &cobra.Command{
 	Use:           "repos",
 	Short:         "List accessible GitHub repositories",
 	Long:          `List GitHub repositories that the configured token has access to.`,
+	Args:          cobra.NoArgs, // beads-euyjs: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runGitHubRepos,

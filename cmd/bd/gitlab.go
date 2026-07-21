@@ -53,6 +53,7 @@ By default, performs bidirectional sync:
 - Pushes local beads issues to GitLab
 
 Use --pull-only or --push-only to limit direction.`,
+	Args:          cobra.NoArgs, // beads-euyjs: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runGitLabSync,
@@ -63,6 +64,7 @@ var gitlabStatusCmd = &cobra.Command{
 	Use:           "status",
 	Short:         "Show GitLab sync status",
 	Long:          `Display current GitLab configuration and sync status.`,
+	Args:          cobra.NoArgs, // beads-euyjs: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runGitLabStatus,
@@ -73,6 +75,7 @@ var gitlabProjectsCmd = &cobra.Command{
 	Use:           "projects",
 	Short:         "List accessible GitLab projects",
 	Long:          `List GitLab projects that the configured token has access to.`,
+	Args:          cobra.NoArgs, // beads-euyjs: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runGitLabProjects,
