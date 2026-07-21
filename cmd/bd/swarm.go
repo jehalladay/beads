@@ -971,18 +971,32 @@ Examples:
 				CreatedBy:   actor,
 			}
 
-			if err := store.CreateIssue(ctx, wrapperEpic, actor); err != nil {
-				return HandleErrorRespectJSON("failed to create wrapper epic: %v", err)
-			}
-
-			dep := &types.Dependency{
-				IssueID:     issue.ID,
-				DependsOnID: wrapperEpic.ID,
-				Type:        types.DepParentChild,
-				CreatedBy:   actor,
-			}
-			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				return HandleErrorRespectJSON("failed to link issue to epic: %v", err)
+			// beads-ary2n: wrap the wrapper-epic create + parent-child link in a
+			// single transaction so the pair is all-or-nothing, mirroring the
+			// atomic PROXIED twin (runSwarmCreateProxied buffers both on one UOW +
+			// single uw.Commit) and the graph_apply.go RunInTransaction precedent.
+			// Previously these were two separate autocommitting store.* calls: if
+			// the AddDependency failed after CreateIssue committed, an orphaned
+			// "Swarm Epic:" wrapper was left with the original issue never linked
+			// as its child. tx.CreateIssue writes wrapperEpic.ID back onto the
+			// struct (read post-commit, avoiding the reset-inside-retryable-closure
+			// class beads-t0h3z — there is no accumulator here).
+			if err := store.RunInTransaction(ctx, "bd: create swarm wrapper epic", func(tx storage.Transaction) error {
+				if err := tx.CreateIssue(ctx, wrapperEpic, actor); err != nil {
+					return fmt.Errorf("failed to create wrapper epic: %w", err)
+				}
+				dep := &types.Dependency{
+					IssueID:     issue.ID,
+					DependsOnID: wrapperEpic.ID,
+					Type:        types.DepParentChild,
+					CreatedBy:   actor,
+				}
+				if err := tx.AddDependency(ctx, dep, actor); err != nil {
+					return fmt.Errorf("failed to link issue to epic: %w", err)
+				}
+				return nil
+			}); err != nil {
+				return HandleErrorRespectJSON("%v", err)
 			}
 
 			epicID = wrapperEpic.ID
@@ -1051,18 +1065,31 @@ Examples:
 			CreatedBy:   actor,
 		}
 
-		if err := store.CreateIssue(ctx, swarmMol, actor); err != nil {
-			return HandleErrorRespectJSON("failed to create swarm molecule: %v", err)
-		}
-
-		dep := &types.Dependency{
-			IssueID:     swarmMol.ID,
-			DependsOnID: epicID,
-			Type:        types.DepRelatesTo,
-			CreatedBy:   actor,
-		}
-		if err := store.AddDependency(ctx, dep, actor); err != nil {
-			return HandleErrorRespectJSON("failed to link swarm to epic: %v", err)
+		// beads-ary2n: wrap the swarm-molecule create + relates-to link in a
+		// single transaction so the pair is all-or-nothing, mirroring the atomic
+		// PROXIED twin + graph_apply.go precedent. Previously these were two
+		// separate autocommitting store.* calls: if AddDependency failed after
+		// CreateIssue committed, an orphaned swarm molecule was left with NO
+		// relates-to link to the epic — invisible to findExistingSwarm (which
+		// matches only on that link), so a retry created a SECOND molecule and
+		// repeat failures accumulated undiscoverable duplicate orphans. tx.CreateIssue
+		// writes swarmMol.ID back onto the struct; it is read post-commit below.
+		if err := store.RunInTransaction(ctx, "bd: create swarm molecule", func(tx storage.Transaction) error {
+			if err := tx.CreateIssue(ctx, swarmMol, actor); err != nil {
+				return fmt.Errorf("failed to create swarm molecule: %w", err)
+			}
+			dep := &types.Dependency{
+				IssueID:     swarmMol.ID,
+				DependsOnID: epicID,
+				Type:        types.DepRelatesTo,
+				CreatedBy:   actor,
+			}
+			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+				return fmt.Errorf("failed to link swarm to epic: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		commandDidWrite.Store(true)
