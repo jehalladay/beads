@@ -231,11 +231,15 @@ func updateReferencesInAllIssuesTx(ctx context.Context, tx storage.Transaction, 
 
 	rewrite := idReferenceRewriter(oldID, newID)
 
+	// beads-k0yri: do NOT skip the renamed row. UpdateIssueID re-keys the row
+	// and re-writes its own text fields VERBATIM from the pre-fetch, so a body
+	// that references its own old id (e.g. "supersedes oldID") keeps the vanished
+	// oldID = a dangling self-reference (RC=0, no warning). The sweep's
+	// SearchIssues runs after the re-key, so the renamed row appears here as
+	// newID with an old-id-containing body; visiting it lets the shared rewriter
+	// fix the self-ref. The rewriter maps oldID->newID and the newID token is
+	// id-char-bounded, so re-visiting an already-rewritten row is a no-op.
 	for _, issue := range issues {
-		if issue.ID == newID {
-			continue // Skip the renamed issue itself
-		}
-
 		updated := false
 		updates := make(map[string]interface{})
 

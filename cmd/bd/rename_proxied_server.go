@@ -104,11 +104,12 @@ func updateReferencesInAllIssuesProxied(ctx context.Context, uw uow.UnitOfWork, 
 	// issues.
 	rewrite := idReferenceRewriter(oldID, newID)
 
+	// beads-k0yri: do NOT skip the renamed row — its own body was re-written
+	// verbatim by RenameIssueID above, so a self-reference to the old id would
+	// otherwise stay dangling (twin of the direct-path fix in rename.go). The
+	// rewriter maps oldID->newID with an id-char-bounded newID token, so
+	// visiting the already-renamed row is idempotent.
 	for _, issue := range page.Items {
-		if issue.ID == newID {
-			continue // Skip the renamed issue itself.
-		}
-
 		updates := make(map[string]any)
 		if v, ok := rewrite(issue.Title); ok {
 			updates["title"] = v
