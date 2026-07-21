@@ -209,6 +209,18 @@ normal 'bd' subcommands for interactive/read operations.`,
 			return HandleErrorRespectJSON("%v", err)
 		}
 
+		// beads-c2pr1: the tx committed — now flush the GC-survivable audit-file
+		// trail for every status transition, mirroring the single-invocation
+		// paths (close.go:204-208, update.go:706). This runs AFTER commit so a
+		// mid-batch rollback leaves no orphan audit entries, and at the cmd layer
+		// because audit.LogFieldChange writes a cwd-based file (a client concern
+		// the shared tx core deliberately does not touch — audit_field_changes.go).
+		for _, r := range results {
+			if r.auditID != "" && r.auditOldStatus != r.auditNewStatus {
+				auditStatusChange(r.auditID, r.auditOldStatus, r.auditNewStatus, getActor(), r.auditReason)
+			}
+		}
+
 		commandDidWrite.Store(true)
 
 		if jsonOutput {
@@ -253,6 +265,17 @@ type batchOpResult struct {
 	Line   int    `json:"line"`
 	Op     string `json:"op"`
 	Target string `json:"target,omitempty"`
+
+	// beads-c2pr1: a status transition performed by this op, captured inside the
+	// tx (read-your-writes oldStatus) so the caller can flush the GC-survivable
+	// audit-file entry AFTER the tx commits — mirroring close.go/update.go, which
+	// emit auditStatusChange/auditIssueUpdate only after the mutation succeeds.
+	// Flushing inside the tx loop would orphan the audit file on a later-op
+	// rollback (the whole batch is one tx). Not serialized to JSON (internal).
+	auditID        string `json:"-"`
+	auditOldStatus string `json:"-"`
+	auditNewStatus string `json:"-"`
+	auditReason    string `json:"-"`
 }
 
 // parseBatchScript reads the whole input and tokenizes each non-empty,
@@ -383,12 +406,23 @@ func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp, session
 		if len(op.args) > 1 {
 			reason = strings.Join(op.args[1:], " ")
 		}
+		// beads-c2pr1: capture oldStatus BEFORE the mutation (read-your-writes
+		// within the tx) so the caller can write the GC-survivable audit-file
+		// entry after the tx commits, at parity with bd close (close.go:204-208).
+		oldStatus := "open"
+		if pre, gerr := tx.GetIssue(ctx, id); gerr == nil && pre != nil {
+			oldStatus = string(pre.Status)
+		}
 		// beads-szy1h: stamp the closing session (mirrors bd close close.go:196)
 		// so a loop→batch refactor preserves closed_by_session provenance.
 		if err := tx.CloseIssue(ctx, id, reason, actorName, session); err != nil {
 			return result, err
 		}
 		result.Target = id
+		result.auditID = id
+		result.auditOldStatus = oldStatus
+		result.auditNewStatus = string(types.StatusClosed)
+		result.auditReason = reason
 		return result, nil
 
 	case "update":
@@ -407,6 +441,18 @@ func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp, session
 		// map. Only when a session is present (matching update.go:111-113).
 		if s, ok := updates["status"].(string); ok && types.Status(s) == types.StatusClosed && session != "" {
 			updates["closed_by_session"] = session
+		}
+		// beads-c2pr1: capture a status transition BEFORE the mutation so the
+		// caller can write the GC-survivable audit-file entry after the tx
+		// commits, at parity with bd update --status (update.go:706 auditIssueUpdate).
+		if s, ok := updates["status"].(string); ok && s != "" {
+			oldStatus := ""
+			if pre, gerr := tx.GetIssue(ctx, id); gerr == nil && pre != nil {
+				oldStatus = string(pre.Status)
+			}
+			result.auditID = id
+			result.auditOldStatus = oldStatus
+			result.auditNewStatus = s
 		}
 		if err := tx.UpdateIssue(ctx, id, updates, actorName); err != nil {
 			return result, err
