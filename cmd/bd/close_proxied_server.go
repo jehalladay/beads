@@ -241,7 +241,12 @@ func closeProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string, 
 		return closeProxiedOutcome{}, false
 	}
 
-	if !in.force && current.IssueType == types.TypeEpic {
+	// beads-bigro: forward close-time guard mirrors the direct path
+	// (close.go) — use the shared isAutoClosingParentType predicate (epic OR
+	// molecule/ephemeral root) that aw9x8 wired into the backward guards, so a
+	// molecule/wisp root cannot be manually closed with open children on the
+	// proxied path either.
+	if !in.force && isAutoClosingParentType(current) {
 		var openChildren int
 		var err error
 		if isWisp {
@@ -250,7 +255,7 @@ func closeProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string, 
 			openChildren, err = uw.IssueUseCase().CountOpenChildren(ctx, id)
 		}
 		if err == nil && openChildren > 0 {
-			report("cannot close epic %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
+			report("cannot close %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
 			return closeProxiedOutcome{}, false
 		}
 	}

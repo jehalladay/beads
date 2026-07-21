@@ -155,11 +155,20 @@ the flags appear in the command line.`,
 				continue
 			}
 
-			// Epic close guard: prevent closing epics with open children (mw-local-4so.5.2)
-			if !force && issue != nil && issue.IssueType == types.TypeEpic {
+			// Parent close guard: prevent closing an auto-closing parent (epic OR
+			// molecule/ephemeral root) with open children (mw-local-4so.5.2).
+			// beads-bigro: the forward close-time guard must use the same shared
+			// isAutoClosingParentType predicate that aw9x8 wired into the backward
+			// (reopen/dep-add) guards — otherwise a molecule/wisp root can be
+			// MANUALLY closed while it still has open children, reaching the exact
+			// closed-parent-with-open-child state the family forbids via the
+			// forward path aw9x8 left uncovered. countEpicOpenChildren counts any
+			// parent-child open child regardless of parent type, so it already
+			// works for molecule/wisp roots.
+			if !force && isAutoClosingParentType(issue) {
 				openChildren := countEpicOpenChildren(ctx, activeStore, id)
 				if openChildren > 0 {
-					reportCloseItemError("cannot close epic %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
+					reportCloseItemError("cannot close %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
 					continue
 				}
 			}
