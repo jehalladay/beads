@@ -31,6 +31,11 @@ func TestGetBlockingInfoAcrossIssuesAndWispsWispTableMissing(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"issue_id", "depends_on_id", "type"}))
 	mock.ExpectQuery("FROM dependencies WHERE").
 		WillReturnRows(sqlmock.NewRows([]string{"issue_id", "depends_on_id", "type"}))
+	// beads-dqje3: the perm pass also runs a waits-for fanout-gate query
+	// (aliased `d`, so it does NOT match the un-aliased "FROM dependencies WHERE"
+	// patterns above). No rows here → contributes nothing to the empty result.
+	mock.ExpectQuery("FROM dependencies d WHERE d.issue_id IN").
+		WillReturnRows(sqlmock.NewRows([]string{"issue_id", "depends_on_id"}))
 
 	// Wisp-table pass: the first (outbound) query fails with MySQL 1146
 	// (table doesn't exist), which IsTableNotExist must recognize.
