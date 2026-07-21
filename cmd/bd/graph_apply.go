@@ -427,6 +427,18 @@ func validateGraphApplyPlan(plan *GraphApplyPlan, customTypes []string) error {
 				return fmt.Errorf("node %q: %s", node.Key, msg)
 			}
 		}
+		// beads-h79ym: reject an out-of-range priority (must be 0-4) for parity
+		// with single `bd create`, which rejects it via validation.ValidatePriority.
+		// node.Priority flows straight into the minted Issue.Priority
+		// (executeGraphApply + proxied materializeGraphNodeIssue) and storage does
+		// not range-check it, so without this a node with "priority":9 (or -1)
+		// silently minted a bead with an invalid priority invisible to `bd list -p`
+		// filters. Only an explicitly-supplied value is checked; a nil Priority
+		// keeps the documented P2 default. Mirrors the node-type (beads-h3k5) and
+		// edge-type (beads-0kno) parity guards already in this validator.
+		if node.Priority != nil && (*node.Priority < 0 || *node.Priority > 4) {
+			return fmt.Errorf("node %q: invalid priority %d (expected 0-4)", node.Key, *node.Priority)
+		}
 		// Validate MetadataRefs point to known keys.
 		for metaKey, refKey := range node.MetadataRefs {
 			if !seenKeys[refKey] {

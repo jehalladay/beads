@@ -590,3 +590,57 @@ func TestValidateGraphApplyPlanRejectsProvidesLabels_o70m1(t *testing.T) {
 		t.Fatal("GT_INTERNAL must NOT bypass the provides: reservation on graph-apply")
 	}
 }
+
+// beads-h79ym: `bd create --graph <file>` copies each node's Priority (*int)
+// straight into the minted Issue.Priority (executeGraphApply :551 and proxied
+// materializeGraphNodeIssue) with NO range check, while single `bd create`
+// rejects an out-of-range priority via validation.ValidatePriority (0-4).
+// validateGraphApplyPlan already enforces node-type (beads-h3k5) and edge-type
+// (beads-0kno) validity for bd-create parity but skipped priority, so a node
+// with "priority": 9 (or -1) silently minted a bead with an out-of-range
+// priority invisible to `bd list -p` filters. Guarding at validateGraphApplyPlan
+// (the shared direct+proxied+dry-run chokepoint) matches the type/edge-type
+// precedent and covers both backends.
+// MUTATION-VERIFIED: removing the priority-range check makes the reject
+// sub-tests go RED (the plan validates).
+func TestValidateGraphApplyPlanRejectsOutOfRangePriority_h79ym(t *testing.T) {
+	p := func(v int) *int { return &v }
+
+	for _, bad := range []int{-1, 5, 9, 100} {
+		plan := &GraphApplyPlan{
+			Nodes: []GraphApplyNode{
+				{Key: "root", Title: "Root", Type: "task", Priority: p(bad)},
+			},
+		}
+		err := validateGraphApplyPlan(plan, nil)
+		if err == nil {
+			t.Fatalf("expected out-of-range priority %d to be rejected, got nil", bad)
+		}
+		if !strings.Contains(err.Error(), "root") || !strings.Contains(err.Error(), "priority") {
+			t.Fatalf("priority error for %d = %q, want it to name the node key and 'priority'", bad, err.Error())
+		}
+	}
+
+	// In-range 0..4 all validate.
+	for _, ok := range []int{0, 1, 2, 3, 4} {
+		plan := &GraphApplyPlan{
+			Nodes: []GraphApplyNode{
+				{Key: "root", Title: "Root", Type: "task", Priority: p(ok)},
+			},
+		}
+		if err := validateGraphApplyPlan(plan, nil); err != nil {
+			t.Fatalf("expected in-range priority %d to validate, got %v", ok, err)
+		}
+	}
+
+	// nil Priority (the documented P2 default) validates — the range check must
+	// only fire on an explicitly-supplied value.
+	nilPlan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "root", Title: "Root", Type: "task"},
+		},
+	}
+	if err := validateGraphApplyPlan(nilPlan, nil); err != nil {
+		t.Fatalf("expected nil priority (defaults P2) to validate, got %v", err)
+	}
+}
