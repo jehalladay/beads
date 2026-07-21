@@ -14,6 +14,7 @@ import (
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/remotecache"
@@ -797,6 +798,10 @@ func isValidRemoteURL(rawURL string) bool {
 func findBeadsRepoRoot(startPath string) string {
 	path := startPath
 	for {
+		// beads-uwdua: test-only ceiling (no-op in production).
+		if debug.WalkCeilingReached(path) {
+			break
+		}
 		beadsDir := filepath.Join(path, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			return path

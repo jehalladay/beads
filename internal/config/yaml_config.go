@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/debug"
 	"gopkg.in/yaml.v3"
 )
 
@@ -595,6 +596,10 @@ func findProjectBeadsDir() string {
 	}
 
 	for dir := cwd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+		// beads-uwdua: test-only ceiling (no-op in production).
+		if debug.WalkCeilingReached(dir) {
+			break
+		}
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			return beadsDir

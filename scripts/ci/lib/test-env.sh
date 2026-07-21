@@ -44,6 +44,16 @@ beads_test_env_enter() {
     export GIT_CONFIG_NOSYSTEM=1
     export GIT_CONFIG_GLOBAL="$root/gitconfig"
     export BEADS_TEST_IGNORE_REPO_CONFIG=1
+
+    # beads-uwdua: cap the upward .beads/workspace-discovery walks at the temp
+    # base so a test running from t.TempDir() (which lives under $TMPDIR) cannot
+    # climb out into a host workspace's real .beads/. On the refinery worktree
+    # TMPDIR=/fsx/ubuntu/tmp sits under /fsx/ubuntu/.beads, which false-FAILed
+    # every "no-workspace / expect-error" test; a clean-checkout CI run has no
+    # .beads above the temp base and is unaffected. Unset in production, where
+    # the ceiling is a no-op. NOTE: GT_ prefix (not BEADS_/BD_) so config tests'
+    # envSnapshot(t) does not strip it.
+    export GT_TEST_WORKSPACE_CEILING="${TMPDIR:-/tmp}"
     if [[ "${BEADS_TEST_ENV_RUN_DOLT:-0}" != "1" ]]; then
         beads_test_env_add_skip "dolt"
     fi

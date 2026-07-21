@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/utils"
@@ -401,6 +402,11 @@ func findLocalBeadsDir() string {
 	}
 
 	for dir := cwd; dir != "/" && dir != "."; {
+		// beads-uwdua: test-only ceiling — never climb out of the isolated test
+		// temp base into a host workspace's .beads (no-op in production).
+		if debug.WalkCeilingReached(dir) {
+			break
+		}
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			return beadsDir
@@ -563,6 +569,10 @@ func FindBeadsDirFrom(startDir string) string {
 	}
 
 	for dir := startDir; dir != "/" && dir != "."; {
+		// beads-uwdua: test-only ceiling (no-op in production).
+		if debug.WalkCeilingReached(dir) {
+			break
+		}
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			resolved := FollowRedirect(beadsDir)
@@ -752,6 +762,10 @@ func FindBeadsDir() string {
 		walkBoundaryCanonical = utils.CanonicalizePath(walkBoundary)
 	}
 	for dir := cwdCanonical; dir != "/" && dir != "."; {
+		// beads-uwdua: test-only ceiling (no-op in production).
+		if debug.WalkCeilingReached(dir) {
+			break
+		}
 		// Stop at the walk boundary (exclusive — don't check this directory).
 		// For worktrees: stops before worktree root so step 3 handles it.
 		// For non-worktrees: stops before git root (which is checked below in the
@@ -901,6 +915,10 @@ func FindBeadsDir() string {
 		}
 
 		for dir := walkBoundaryCanonical; dir != "/" && dir != "."; {
+			// beads-uwdua: test-only ceiling (no-op in production).
+			if debug.WalkCeilingReached(dir) {
+				break
+			}
 			beadsDir := filepath.Join(dir, ".beads")
 			if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 				beadsDir = FollowRedirect(beadsDir)
@@ -1178,6 +1196,10 @@ func findDatabaseInTree() string {
 
 	// Walk up directory tree (regular repository or worktree fallback)
 	for {
+		// beads-uwdua: test-only ceiling (no-op in production).
+		if debug.WalkCeilingReached(dir) {
+			break
+		}
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			// Follow redirect if present
@@ -1228,6 +1250,10 @@ func FindAllDatabases() []DatabaseInfo {
 
 	// Walk up directory tree
 	for {
+		// beads-uwdua: test-only ceiling (no-op in production).
+		if debug.WalkCeilingReached(dir) {
+			break
+		}
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			// Follow redirect if present

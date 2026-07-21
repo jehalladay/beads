@@ -134,6 +134,11 @@ func Initialize() error {
 
 		// Walk up parent directories to find .beads/config.yaml.
 		for dir := cwd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+			// beads-uwdua: test-only ceiling — never climb out of the isolated
+			// test temp base into a host workspace's .beads (no-op in production).
+			if debug.WalkCeilingReached(dir) {
+				break
+			}
 			p := filepath.Join(dir, ".beads", "config.yaml")
 			if _, err := os.Stat(p); err == nil {
 				// When BEADS_DIR points at a different runtime workspace, do not
