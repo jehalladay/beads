@@ -250,6 +250,15 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 	// the direct legs).
 	autoCloseProxiedCompletedMolecule(ctx, uw, fromID, actor, "", isJSONOutput())
 
+	// beads-r3m8v: capture the source's pre-close status for the GC-survivable
+	// audit-file entry emitted after the commit. fromIssue was loaded before the
+	// close, so it holds the real old status (mirrors close_proxied_server.go's
+	// current.Status read).
+	fromOldStatus := string(fromIssue.Status)
+	if fromOldStatus == "" {
+		fromOldStatus = "open"
+	}
+
 	// Single commit: edge + source close + any molecule root auto-close land
 	// together or not at all (njnw atomicity).
 	if err := uw.Commit(ctx, in.commitMsg); err != nil && !isDoltNothingToCommit(err) {
@@ -257,6 +266,16 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 	}
 
 	commandDidWrite.Store(true)
+
+	// beads-r3m8v: write the GC-survivable audit-FILE trail (.beads/
+	// interactions.jsonl) for the source close, at parity with the direct legs
+	// and bd close/update (n4sn class). audit.LogFieldChange writes a cwd-based
+	// file, NOT a UOW op, so it must run AFTER uw.Commit succeeds — a pre-commit
+	// emit would orphan the entry if the deferred uw.Close rolled the tx back
+	// (matches the batch c2pr1 fix, which flushes audit only post-commit). The
+	// idempotent same-target no-op returned early above, so reaching here always
+	// means a real open→closed transition.
+	auditStatusChange(fromID, fromOldStatus, "closed", actor, fmt.Sprintf("%s of %s", in.commitMsg, toID))
 
 	if isJSONOutput() {
 		return outputJSON(map[string]interface{}{

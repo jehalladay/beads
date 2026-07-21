@@ -166,6 +166,16 @@ func runDuplicate(cmd *cobra.Command, args []string) error {
 		return HandleErrorRespectJSON("%s is already a duplicate of %s — remove the existing duplicates link or reopen %s first (a second canonical would leave %s a duplicate of multiple live issues)", duplicateID, d.ID, duplicateID, duplicateID)
 	}
 
+	// beads-r3m8v: capture the source's pre-close status for the GC-survivable
+	// audit-file trail emitted after the close. The guards above load deps but
+	// not the source issue itself; a status audit entry must record the real
+	// old→new transition (mirrors close.go:213, which reads issue.Status).
+	dupPre, _ := store.GetIssue(ctx, duplicateID)
+	dupOldStatus := "open"
+	if dupPre != nil {
+		dupOldStatus = string(dupPre.Status)
+	}
+
 	// Add a "duplicates" dependency edge (duplicate → canonical) AND close the
 	// duplicate atomically (beads-njnw): a mid-sequence failure must not leave
 	// the edge added while the issue stays open.
@@ -179,6 +189,16 @@ func runDuplicate(cmd *cobra.Command, args []string) error {
 	}
 
 	commandDidWrite.Store(true)
+
+	// beads-r3m8v: marking a duplicate closes the source via LinkAndClose, whose
+	// DB EventClosed row survives only until a Dolt GC flatten. bd close/update
+	// ALSO write a GC-survivable audit-FILE entry (.beads/interactions.jsonl) via
+	// auditStatusChange (n4sn) — but this leg dropped it, so after a flatten a
+	// duplicated issue's close vanished from the durable record while a plainly
+	// closed issue's did not. Emit the same status field_change (audit-parity
+	// sibling of c2pr1/qeb2p on the LinkAndClose leg). LinkAndClose already
+	// committed durably, so this reflects a real transition.
+	auditStatusChange(duplicateID, dupOldStatus, "closed", actor, fmt.Sprintf("duplicate of %s", canonicalID))
 
 	// beads-26gea: marking a duplicate closes the source via LinkAndClose, which
 	// (like `bd update --status closed`, beads-zzp26) bypasses the cmd-layer
@@ -302,6 +322,14 @@ func runSupersede(cmd *cobra.Command, args []string) error {
 		return HandleErrorRespectJSON("%s is already superseded by %s — remove the existing supersedes link or reopen %s first (a second replacement would leave %s with multiple live successors)", oldID, d.ID, oldID, oldID)
 	}
 
+	// beads-r3m8v: capture the source's pre-close status for the GC-survivable
+	// audit-file trail emitted after the close (see the duplicate leg above).
+	oldPre, _ := store.GetIssue(ctx, oldID)
+	oldOldStatus := "open"
+	if oldPre != nil {
+		oldOldStatus = string(oldPre.Status)
+	}
+
 	// Add a "supersedes" dependency edge (old → new) AND close the superseded
 	// issue atomically (beads-njnw): a mid-sequence failure must not leave the
 	// edge added while the issue stays open.
@@ -315,6 +343,13 @@ func runSupersede(cmd *cobra.Command, args []string) error {
 	}
 
 	commandDidWrite.Store(true)
+
+	// beads-r3m8v: superseding closes the source via LinkAndClose, whose DB
+	// EventClosed row does not survive a Dolt GC flatten. bd close/update write a
+	// GC-survivable audit-FILE entry (.beads/interactions.jsonl); this leg
+	// dropped it (n4sn class, LinkAndClose leg). Emit the same status
+	// field_change so a superseded issue's close stays in the durable record.
+	auditStatusChange(oldID, oldOldStatus, "closed", actor, fmt.Sprintf("superseded by %s", newID))
 
 	// beads-26gea: superseding closes the source via LinkAndClose, bypassing the
 	// cmd-layer completed-molecule auto-close cascade `bd close` runs (same class
