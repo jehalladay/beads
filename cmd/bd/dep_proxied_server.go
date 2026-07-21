@@ -40,6 +40,24 @@ func proxiedLookupTitle(ctx context.Context, uw uow.UnitOfWork, id string) strin
 	return ""
 }
 
+// proxiedResolveDepEndpoint resolves a dep endpoint (issue first, then wisp) to
+// its *types.Issue for the beads-j8ekq closed-parent guard. Returns nil on any
+// lookup miss (fail-open to the normal add path, matching the direct path's
+// best-effort posture — a transient lookup error must not hard-block a legit
+// dep-add). External refs are never resolvable locally, so callers skip them.
+func proxiedResolveDepEndpoint(ctx context.Context, uw uow.UnitOfWork, id string) *types.Issue {
+	if IsExternalRef(id) {
+		return nil
+	}
+	if issue, err := uw.IssueUseCase().GetIssue(ctx, id); err == nil && issue != nil {
+		return issue
+	}
+	if wisp, err := uw.IssueUseCase().GetWisp(ctx, id); err == nil && wisp != nil {
+		return wisp
+	}
+	return nil
+}
+
 // proxiedDepEdgeExistsSameType reports whether a fromID -> toID edge of the
 // given type already exists (beads-epuz). Mirrors the direct path's bwla
 // precheck: AddDependencies is idempotent (a same-type re-add just refreshes
@@ -211,6 +229,31 @@ func runDepAddProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 
 	uw := openDepProxiedUOW(ctx)
 	defer uw.Close(ctx)
+
+	// Closed-parent guard (beads-eth8 / beads-j8ekq): the direct dep-add path
+	// (dep.go) refuses attaching an OPEN child to an already-CLOSED auto-closing
+	// parent via a parent-child edge — it would silently recreate the
+	// closed-parent-with-open-child inconsistency the close-guard family
+	// (2hkd/b0tw/eth8) forbids. The proxied handler mirrored the OTHER three
+	// direct guards (isChildOf deadlock, IsValid/IsWellKnown, relates-to) but
+	// dropped this one, so a hub-connected crew's `bd dep add <open-child>
+	// <closed-parent> --type parent-child` landed the forbidden edge silently.
+	// This is the add-side sibling of beads-6fns (proxied reopen dropped the same
+	// guard). `bd dep add <child> <parent>` maps child->fromID, parent->toID.
+	// Uses the shared isAutoClosingParentType (epic OR molecule OR ephemeral),
+	// matching the direct path (beads-aw9x8). Refuse unless --force. Best-effort:
+	// only guards when both endpoints resolve locally (non-external); a
+	// molecule/wisp parent is resolved via GetWisp as a fallback.
+	depForce, _ := cmd.Flags().GetBool("force")
+	if !depForce && dt == types.DepParentChild && !strings.HasPrefix(toID, "external:") {
+		parent := proxiedResolveDepEndpoint(ctx, uw, toID)
+		child := proxiedResolveDepEndpoint(ctx, uw, fromID)
+		if parent != nil && child != nil &&
+			isAutoClosingParentType(parent) && parent.Status == types.StatusClosed &&
+			child.Status != types.StatusClosed {
+			FatalErrorRespectJSON("cannot add %s as a child of closed parent %s: it would leave the closed parent with an open child; reopen the parent, close the child first, or use --force to override", fromID, toID)
+		}
+	}
 
 	// beads-epuz: mirror the direct path's bwla honest-no-op report. A same-type
 	// re-add is idempotent (just refreshes metadata), so an unconditional
