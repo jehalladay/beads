@@ -127,6 +127,19 @@ func IssueUpsertAssignments(rejectStaleUpdate bool) string {
 	return issueUpsertAssignments(rejectStaleUpdate)
 }
 
+// IssueUpsertColumns returns a copy of the columns the issue UPSERT's
+// ON DUPLICATE KEY UPDATE clause rewrites. It is exported so callers that must
+// stay in lockstep with this exact set — notably the import preserve-on-absent
+// restore (cmd/bd/import_shared.go, beads-w258p/beads-djgv8) — can assert
+// column parity in a test and fail loudly when a new column is added here but
+// not classified there, instead of silently drifting (the beads-djgv8 class:
+// the restore covered only 14 of these and wiped the rest on a partial import).
+func IssueUpsertColumns() []string {
+	out := make([]string, len(issueUpsertColumns))
+	copy(out, issueUpsertColumns)
+	return out
+}
+
 // InsertIssueIntoTable inserts an issue into the specified table ("issues" or "wisps"),
 // using ON DUPLICATE KEY UPDATE to handle pre-existing records gracefully.
 func InsertIssueIntoTable(ctx context.Context, tx *sql.Tx, table string, issue *types.Issue) error {

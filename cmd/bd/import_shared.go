@@ -287,6 +287,38 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 	}, nil
 }
 
+// restoredUpsertColumns and notRestoredUpsertColumns together classify EVERY
+// column in issueops.IssueUpsertColumns() (the ON DUPLICATE KEY UPDATE write
+// set), so a drift guard (TestRestoreAbsentColumnsCoverIssueUpsertSet_djgv8)
+// fails the build when a new upsert column is added but not consciously
+// handled here. This is the durable fix for the beads-djgv8 drift class: the
+// restore list is a manual mirror of the upsert set, and w258p's copy fell 21
+// columns behind, silently wiping them on a partial newer-ts import.
+//
+// These are DB COLUMN names (as in issueUpsertColumns). The restore body below
+// keys off JSON tag names (the peek presence keys), which differ for exactly
+// one column: timeout_ns (column) ↔ "timeout" (JSON tag).
+var restoredUpsertColumns = map[string]struct{}{
+	"title": {}, "description": {}, "design": {}, "acceptance_criteria": {},
+	"notes": {}, "spec_id": {}, "status": {}, "priority": {}, "issue_type": {},
+	"assignee": {}, "owner": {}, "estimated_minutes": {}, "due_at": {},
+	"defer_until": {}, "started_at": {}, "closed_at": {}, "close_reason": {},
+	"closed_by_session": {}, "external_ref": {}, "source_system": {},
+	"pinned": {}, "sender": {}, "wisp_type": {}, "mol_type": {}, "work_type": {},
+	"await_type": {}, "await_id": {}, "timeout_ns": {}, "waiters": {},
+	"event_kind": {}, "actor": {}, "target": {}, "payload": {}, "metadata": {},
+}
+
+// notRestoredUpsertColumns are upsert columns deliberately NOT preserved on
+// absence, mirroring issueUpsertColumns' own documented exclusions. content_hash
+// is derived from the other fields; updated_at is the stale-guard comparison
+// column (restoring it would defeat the "strictly newer wins" gate). source_repo
+// is multi-repo ownership (json:"-", never on an export line, so its presence is
+// meaningless). All are safe to let the incoming value stand.
+var notRestoredUpsertColumns = map[string]struct{}{
+	"content_hash": {}, "updated_at": {}, "source_repo": {},
+}
+
 // restoreAbsentFieldsFromLocal implements preserve-on-absent for the import
 // upsert (beads-w258p). For each incoming issue that already exists locally,
 // any rewritten column whose JSON field name was NOT present on the source
@@ -347,7 +379,28 @@ func restoreAbsentFieldsFromLocal(ctx context.Context, store storage.DoltStorage
 		present := presentByID[issue.ID]
 		absent := func(field string) bool { return !present[field] }
 
+		// beads-djgv8: the restore set must mirror issueops.issueUpsertColumns
+		// (the ON DUPLICATE KEY UPDATE write set) EXACTLY — every user-mutable
+		// column the upsert rewrites needs a preserve-on-absent branch, or a
+		// partial newer-ts line silently wipes the ones left out. The original
+		// w258p list covered only ~14 of them, so pinned/due_at/defer_until/
+		// closed_at/started_at/closed_by_session/spec_id/sender/wisp_type/
+		// mol_type/work_type/waiters/timeout/await_*/event_kind/actor/target/
+		// payload/title were still cleared on absence. Fields are keyed by their
+		// JSON tag (the peek map keys are the literal JSON field names).
+		//
+		// Deliberately NOT restored (mirrors issueUpsertColumns' exclusions,
+		// verified not assumed): id/created_at/created_by (identity/immutable);
+		// content_hash/updated_at (derived / the stale-guard comparison column);
+		// ephemeral/no_history/is_template (table-routing, not in-place updated);
+		// compaction_level/compacted_at/compacted_at_commit/original_size
+		// (compaction-manager-owned, not user round-trip data); source_repo
+		// (multi-repo ownership, not JSON-exported — json:"-").
+
 		// Content
+		if absent("title") {
+			issue.Title = local.Title
+		}
 		if absent("description") {
 			issue.Description = local.Description
 		}
@@ -359,6 +412,9 @@ func restoreAbsentFieldsFromLocal(ctx context.Context, store storage.DoltStorage
 		}
 		if absent("notes") {
 			issue.Notes = local.Notes
+		}
+		if absent("spec_id") {
+			issue.SpecID = local.SpecID
 		}
 		// Status & workflow. priority is the sharp edge: non-omitempty int,
 		// so absent == explicit 0 in the struct — presence is the only signal.
@@ -381,9 +437,25 @@ func restoreAbsentFieldsFromLocal(ctx context.Context, store storage.DoltStorage
 		if absent("estimated_minutes") {
 			issue.EstimatedMinutes = local.EstimatedMinutes
 		}
-		// Close bookkeeping
+		// Scheduling
+		if absent("due_at") {
+			issue.DueAt = local.DueAt
+		}
+		if absent("defer_until") {
+			issue.DeferUntil = local.DeferUntil
+		}
+		// Lifecycle timestamps & close bookkeeping
+		if absent("started_at") {
+			issue.StartedAt = local.StartedAt
+		}
+		if absent("closed_at") {
+			issue.ClosedAt = local.ClosedAt
+		}
 		if absent("close_reason") {
 			issue.CloseReason = local.CloseReason
+		}
+		if absent("closed_by_session") {
+			issue.ClosedBySession = local.ClosedBySession
 		}
 		// External integration
 		if absent("external_ref") {
@@ -391,6 +463,48 @@ func restoreAbsentFieldsFromLocal(ctx context.Context, store storage.DoltStorage
 		}
 		if absent("source_system") {
 			issue.SourceSystem = local.SourceSystem
+		}
+		// Context / persistence markers
+		if absent("pinned") {
+			issue.Pinned = local.Pinned
+		}
+		if absent("sender") {
+			issue.Sender = local.Sender
+		}
+		if absent("wisp_type") {
+			issue.WispType = local.WispType
+		}
+		if absent("mol_type") {
+			issue.MolType = local.MolType
+		}
+		if absent("work_type") {
+			issue.WorkType = local.WorkType
+		}
+		// Gate / await condition
+		if absent("await_type") {
+			issue.AwaitType = local.AwaitType
+		}
+		if absent("await_id") {
+			issue.AwaitID = local.AwaitID
+		}
+		if absent("timeout") {
+			issue.Timeout = local.Timeout
+		}
+		if absent("waiters") {
+			issue.Waiters = local.Waiters
+		}
+		// Event fields
+		if absent("event_kind") {
+			issue.EventKind = local.EventKind
+		}
+		if absent("actor") {
+			issue.Actor = local.Actor
+		}
+		if absent("target") {
+			issue.Target = local.Target
+		}
+		if absent("payload") {
+			issue.Payload = local.Payload
 		}
 		// Custom metadata
 		if absent("metadata") {
