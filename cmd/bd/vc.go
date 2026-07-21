@@ -87,6 +87,17 @@ Examples:
 		ctx := rootCtx
 		branchName := args[0]
 
+		// beads-71jpi (EARLY-VALIDATION-PARITY with bd federation sync): validate
+		// --strategy UP-FRONT, before store.Merge runs. Otherwise an invalid value
+		// (e.g. the typo 'our') is silently accepted on a clean merge — never
+		// consulted, prints "Successfully merged" RC=0 — and on a conflicting merge
+		// fails only LATE in store.ResolveConflicts, after Merge already mutated the
+		// working set. federation.go rejects a bad strategy RC!=0 before any work;
+		// mirror that guard here so both commands sharing this flag behave alike.
+		if vcMergeStrategy != "" && vcMergeStrategy != "ours" && vcMergeStrategy != "theirs" {
+			return HandleErrorRespectJSON("invalid strategy %q: must be 'ours' or 'theirs'", vcMergeStrategy)
+		}
+
 		// Pre-merge HEAD scopes the post-resolution is_blocked recompute
 		// (bd-578h9.11); empty degrades to a full-graph pass.
 		preHead, _ := store.GetCurrentCommit(ctx)
