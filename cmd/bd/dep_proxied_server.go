@@ -436,7 +436,10 @@ func runDepListProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 		issue, _, err := proxiedGetIssueOrWisp(ctx, uw, id)
 		if err != nil {
 			if batchMode {
-				fmt.Fprintf(os.Stderr, "warning: resolving %s: %v (skipped)\n", id, err)
+				// beads-7kxly: JSON-aware per-item skip (mirrors the direct path
+				// in cmd/bd/dep.go) — reportItemError emits a parseable JSON object
+				// to stderr under --json, keeps the plaintext warning otherwise.
+				reportItemError("warning: resolving %s: %v (skipped)", id, err)
 				failedCount++
 				continue
 			}
@@ -444,7 +447,8 @@ func runDepListProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 		}
 		if issue == nil {
 			if batchMode {
-				fmt.Fprintf(os.Stderr, "warning: no issue found: %s (skipped)\n", id)
+				// beads-7kxly: JSON-aware per-item skip (see above).
+				reportItemError("warning: no issue found: %s (skipped)", id)
 				failedCount++
 				continue
 			}

@@ -3,7 +3,9 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -55,6 +57,53 @@ func TestEmbeddedDepListExitCode(t *testing.T) {
 		}
 		if !strings.Contains(out, "dl-ghost-z") {
 			t.Errorf("expected the skipped ghost id reported, got:\n%s", out)
+		}
+	})
+
+	// beads-7kxly: under --json, a partial/all-ghost batch skip must not leak a
+	// bare-plaintext "warning: ...(skipped)" line onto stderr — that corrupts a
+	// consumer scraping the --json stream via 2>&1. The per-item skip must route
+	// through reportItemError so every non-empty stderr line is a parseable JSON
+	// object (the fg6/2j2og/en28 per-item-error contract), while stdout stays the
+	// flat JSON array. Mutation-verified LOAD-BEARING: reverting either dep.go
+	// skip leg back to fmt.Fprintf(os.Stderr, "warning: ...") makes this RED
+	// ("stderr line is not JSON"). Non-JSON stderr shape is unchanged (covered by
+	// batch_partial_exits_nonzero_still_lists_valid above).
+	t.Run("batch_json_partial_2>&1_is_all_json", func(t *testing.T) {
+		// The whole combined 2>&1 stream a `bd dep list ... --json 2>&1 | json`
+		// consumer sees must be a sequence of parseable JSON values: the flat
+		// dependency array on stdout AND the per-item skip error object on stderr
+		// (via reportItemError), with NO interleaved bare-plaintext "warning:
+		// ...(skipped)" line. A json.Decoder trips on any non-JSON token — a bare
+		// warning line is not a JSON value — so this is RED on the pre-fix
+		// fmt.Fprintf(os.Stderr, "warning: ...") legs.
+		cmd := exec.Command(bd, "dep", "list", a.ID, "dl-ghost-z", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		combined, cerr := cmd.CombinedOutput()
+		if cerr == nil {
+			t.Fatalf("expected non-zero exit on a partial batch under --json, got success:\n%s", combined)
+		}
+		trimmed := strings.TrimSpace(string(combined))
+		if trimmed == "" {
+			t.Fatalf("combined 2>&1 stream is EMPTY under --json")
+		}
+		dec := json.NewDecoder(strings.NewReader(trimmed))
+		count := 0
+		for {
+			var v json.RawMessage
+			derr := dec.Decode(&v)
+			if derr != nil {
+				if derr.Error() == "EOF" {
+					break
+				}
+				t.Fatalf("combined 2>&1 stream has a non-JSON (interleaved plain-text warning) token — breaks --json consumers (beads-7kxly):\n%v\ncombined:\n%s", derr, combined)
+			}
+			count++
+		}
+		// The dep array (stdout) + the skip error object (stderr) => >=2 values.
+		if count < 2 {
+			t.Fatalf("expected the dep array AND the per-item skip error as JSON on the 2>&1 stream (>=2 values), got %d:\n%s", count, combined)
 		}
 	})
 

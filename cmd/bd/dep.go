@@ -876,7 +876,12 @@ Examples:
 			routedResult, err := resolveAndGetIssueWithRouting(ctx, store, arg)
 			if err != nil {
 				if batchMode {
-					fmt.Fprintf(os.Stderr, "warning: resolving %s: %v (skipped)\n", arg, err)
+					// beads-7kxly: route the per-item skip through reportItemError
+					// so under --json it emits a parseable JSON object to stderr
+					// (matching the fg6/2j2og per-item-error contract) instead of a
+					// bare "warning: ...(skipped)" line that corrupts a --json 2>&1
+					// consumer. Non-JSON keeps the identical plaintext warning.
+					reportItemError("warning: resolving %s: %v (skipped)", arg, err)
 					failedCount++
 					continue
 				}
@@ -884,7 +889,8 @@ Examples:
 			}
 			if routedResult == nil || routedResult.Issue == nil {
 				if batchMode {
-					fmt.Fprintf(os.Stderr, "warning: no issue found: %s (skipped)\n", arg)
+					// beads-7kxly: JSON-aware per-item skip (see above).
+					reportItemError("warning: no issue found: %s (skipped)", arg)
 					failedCount++
 					continue
 				}
