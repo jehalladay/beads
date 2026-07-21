@@ -81,6 +81,21 @@ func (s *DoltStore) ImportIssueComment(ctx context.Context, issueID, author, tex
 	return result, nil
 }
 
+// UpdateCommentText overwrites a single comment's body text (beads-g8qfo).
+func (s *DoltStore) UpdateCommentText(ctx context.Context, issueID, commentID, newText string) error {
+	isWisp := s.isActiveWisp(ctx, issueID)
+	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
+		return issueops.UpdateCommentTextInTx(ctx, tx, issueID, commentID, newText)
+	}); err != nil {
+		return err
+	}
+	if isWisp {
+		// wisp_comments are dolt-ignored (clone-local); no Dolt commit.
+		return nil
+	}
+	return s.doltAddAndCommit(ctx, []string{"comments"}, fmt.Sprintf("bd: rewrite comment ref %s", issueID))
+}
+
 // GetIssueComments retrieves all comments for an issue
 func (s *DoltStore) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
 	table := "comments"

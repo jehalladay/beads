@@ -20,6 +20,9 @@ type CommentSQLRepository interface {
 	// status) and returns the created comment. Used by bd comments add / promote
 	// via the UOW (beads-m4vx).
 	AddComment(ctx context.Context, issueID, author, text string) (*types.Comment, error)
+	// UpdateCommentText overwrites a single comment's body text (beads-g8qfo).
+	// opts.UseWispsTable selects comments vs wisp_comments.
+	UpdateCommentText(ctx context.Context, commentID, newText string, opts CommentOpts) error
 }
 
 type CommentUseCase interface {
@@ -37,6 +40,10 @@ type CommentUseCase interface {
 
 	// AddComment inserts a comment on an issue/wisp and returns it (beads-m4vx).
 	AddComment(ctx context.Context, issueID, author, text string) (*types.Comment, error)
+	// UpdateIssueCommentText overwrites the body of a comment on a permanent
+	// issue (beads-g8qfo). Used by the proxied rename reference sweep to rewrite
+	// id references that live inside comment bodies.
+	UpdateIssueCommentText(ctx context.Context, commentID, newText string) error
 }
 
 func NewCommentUseCase(commentRepo CommentSQLRepository) CommentUseCase {
@@ -153,4 +160,14 @@ func (u *commentUseCaseImpl) AddComment(ctx context.Context, issueID, author, te
 		return nil, fmt.Errorf("add comment to %s: %w", issueID, err)
 	}
 	return c, nil
+}
+
+func (u *commentUseCaseImpl) UpdateIssueCommentText(ctx context.Context, commentID, newText string) error {
+	if commentID == "" {
+		return fmt.Errorf("update comment text: commentID must not be empty")
+	}
+	if err := u.commentRepo.UpdateCommentText(ctx, commentID, newText, CommentOpts{UseWispsTable: false}); err != nil {
+		return fmt.Errorf("update comment %s: %w", commentID, err)
+	}
+	return nil
 }

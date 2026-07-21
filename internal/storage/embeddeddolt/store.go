@@ -784,6 +784,13 @@ func (s *EmbeddedDoltStore) ImportIssueComment(ctx context.Context, issueID, aut
 	return result, err
 }
 
+// UpdateCommentText overwrites a single comment's body text (beads-g8qfo).
+func (s *EmbeddedDoltStore) UpdateCommentText(ctx context.Context, issueID, commentID, newText string) error {
+	return s.withConn(ctx, true, func(tx *sql.Tx) error {
+		return issueops.UpdateCommentTextInTx(ctx, tx, issueID, commentID, newText)
+	})
+}
+
 func (s *EmbeddedDoltStore) GetCommentsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error) {
 	var result map[string][]*types.Comment
 	err := s.withConn(ctx, false, func(tx *sql.Tx) error {

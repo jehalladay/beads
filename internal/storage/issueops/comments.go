@@ -159,6 +159,24 @@ func ImportIssueCommentInTx(ctx context.Context, tx DBTX, issueID, author, text 
 	}, nil
 }
 
+// UpdateCommentTextInTx overwrites the body text of a single comment within an
+// existing transaction, routing to comments or wisp_comments by the owning
+// issue's wisp status (beads-g8qfo). Used by the rename/rename-prefix reference
+// sweep to rewrite id references that live inside comment bodies.
+//
+//nolint:gosec // G201: table name is one of two hardcoded constants
+func UpdateCommentTextInTx(ctx context.Context, tx DBTX, issueID, commentID, newText string) error {
+	table := "comments"
+	if IsActiveWispInTx(ctx, tx, issueID) {
+		table = "wisp_comments"
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
+		`UPDATE %s SET text = ? WHERE id = ?`, table), newText, commentID); err != nil {
+		return fmt.Errorf("update comment text in %s: %w", table, err)
+	}
+	return nil
+}
+
 // AddCommentEventInTx adds a comment as an event to an issue within a transaction.
 // Routes to events or wisp_events based on wisp status.
 //

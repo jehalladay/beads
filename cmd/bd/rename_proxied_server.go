@@ -131,6 +131,23 @@ func updateReferencesInAllIssuesProxied(ctx context.Context, uw uow.UnitOfWork, 
 				return fmt.Errorf("failed to update references in %s: %w", issue.ID, err)
 			}
 		}
+
+		// beads-g8qfo: rewrite id refs inside comment bodies too — the comments
+		// table was never visited by the reference sweep, silently leaving
+		// dangling old-id refs. Mirrors the direct path (rename.go
+		// rewriteCommentRefs). Only permanent issues route through the proxied
+		// rename, so the issue comment table (not wisp_comments) is correct.
+		comments, cerr := uw.CommentUseCase().GetCommentsForIssue(ctx, issue.ID)
+		if cerr != nil {
+			return fmt.Errorf("failed to read comments for %s: %w", issue.ID, cerr)
+		}
+		for _, c := range comments {
+			if v, ok := rewrite(c.Text); ok {
+				if err := uw.CommentUseCase().UpdateIssueCommentText(ctx, c.ID, v); err != nil {
+					return fmt.Errorf("failed to update comment reference in %s: %w", issue.ID, err)
+				}
+			}
+		}
 	}
 
 	return nil

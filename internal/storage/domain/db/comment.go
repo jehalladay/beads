@@ -115,3 +115,14 @@ func (r *commentSQLRepositoryImpl) IterByIssueID(ctx context.Context, issueID st
 func (r *commentSQLRepositoryImpl) AddComment(ctx context.Context, issueID, author, text string) (*types.Comment, error) {
 	return issueops.AddIssueCommentInTx(ctx, r.runner, issueID, author, text)
 }
+
+// UpdateCommentText overwrites a single comment's body text (beads-g8qfo).
+func (r *commentSQLRepositoryImpl) UpdateCommentText(ctx context.Context, commentID, newText string, opts domain.CommentOpts) error {
+	table := pickCommentTable(opts.UseWispsTable)
+	//nolint:gosec // G201: table is one of two hardcoded constants
+	q := fmt.Sprintf(`UPDATE %s SET text = ? WHERE id = ?`, table)
+	if _, err := r.runner.ExecContext(ctx, q, newText, commentID); err != nil {
+		return fmt.Errorf("db: CommentSQLRepository.UpdateCommentText: %w", err)
+	}
+	return nil
+}

@@ -71,6 +71,10 @@ func (f *fakeCommentRepo) AddComment(ctx context.Context, issueID, author, text 
 	return &types.Comment{IssueID: issueID, Author: author, Text: text}, nil
 }
 
+func (f *fakeCommentRepo) UpdateCommentText(ctx context.Context, commentID, newText string, opts CommentOpts) error {
+	return nil
+}
+
 func TestCommentUseCase_Counts(t *testing.T) {
 	ctx := context.Background()
 
