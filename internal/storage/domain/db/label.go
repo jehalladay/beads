@@ -41,11 +41,21 @@ func (r *labelSQLRepositoryImpl) Insert(ctx context.Context, issueID, label, act
 	}
 	table := pickLabelTable(opts.UseWispsTable)
 	//nolint:gosec // G201: table is one of two hardcoded constants
-	if _, err := r.runner.ExecContext(ctx,
+	res, err := r.runner.ExecContext(ctx,
 		fmt.Sprintf("INSERT IGNORE INTO %s (issue_id, label) VALUES (?, ?)", table),
 		issueID, label,
-	); err != nil {
+	)
+	if err != nil {
 		return fmt.Errorf("db: LabelSQLRepository.Insert %s/%s: %w", issueID, label, err)
+	}
+	// INSERT IGNORE is a no-op when the label is already present; recording a
+	// label_added event in that case pollutes the audit trail with an addition
+	// that never happened (beads-usz1). Mirror the direct path
+	// (issueops.AddLabelInTx): only record the event on a real insert, and skip
+	// only when RowsAffected==0 AND the driver actually reported it (aerr==nil),
+	// so a driver that doesn't support RowsAffected still records (fail-safe).
+	if affected, aerr := res.RowsAffected(); aerr == nil && affected == 0 {
+		return nil
 	}
 	return r.events.Record(ctx, domain.Event{
 		IssueID:  issueID,
@@ -64,11 +74,21 @@ func (r *labelSQLRepositoryImpl) Delete(ctx context.Context, issueID, label, act
 	}
 	table := pickLabelTable(opts.UseWispsTable)
 	//nolint:gosec // G201: table is one of two hardcoded constants
-	if _, err := r.runner.ExecContext(ctx,
+	res, err := r.runner.ExecContext(ctx,
 		fmt.Sprintf("DELETE FROM %s WHERE issue_id = ? AND label = ?", table),
 		issueID, label,
-	); err != nil {
+	)
+	if err != nil {
 		return fmt.Errorf("db: LabelSQLRepository.Delete %s/%s: %w", issueID, label, err)
+	}
+	// The DELETE is a no-op when the label was never on the issue; recording a
+	// label_removed event in that case pollutes the audit trail with a removal
+	// that never happened (beads-usz1). Mirror the direct path
+	// (issueops.RemoveLabelInTx): only record the event on a real delete, and
+	// skip only when RowsAffected==0 AND the driver actually reported it
+	// (aerr==nil), so a driver that doesn't support RowsAffected still records.
+	if affected, aerr := res.RowsAffected(); aerr == nil && affected == 0 {
+		return nil
 	}
 	return r.events.Record(ctx, domain.Event{
 		IssueID:  issueID,

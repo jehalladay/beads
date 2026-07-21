@@ -9,6 +9,7 @@ func (s *testSuite) TestLabelSQLRepository() {
 	s.Run("Insert", func() {
 		s.Run("RoundTripWithList", s.labelInsertRoundTrip)
 		s.Run("IdempotentDuplicate", s.labelInsertIdempotent)
+		s.Run("DuplicateAddRecordsNoEvent", s.labelInsertDuplicateNoEvent)
 		s.Run("RecordsLabelAddedEvent", s.labelInsertRecordsEvent)
 		s.Run("RejectsEmptyIssueID", s.labelInsertEmptyIssueID)
 		s.Run("RejectsEmptyLabel", s.labelInsertEmptyLabel)
@@ -18,6 +19,7 @@ func (s *testSuite) TestLabelSQLRepository() {
 		s.Run("RemovesLabelRow", s.labelDeleteRemoves)
 		s.Run("RecordsLabelRemovedEvent", s.labelDeleteRecordsEvent)
 		s.Run("MissingLabelIsNoop", s.labelDeleteMissingNoop)
+		s.Run("MissingLabelRecordsNoEvent", s.labelDeleteMissingNoEvent)
 		s.Run("OnlyTargetLabelRemoved", s.labelDeleteSpecificLabel)
 		s.Run("RejectsEmptyIssueID", s.labelDeleteEmptyIssueID)
 		s.Run("RejectsEmptyLabel", s.labelDeleteEmptyLabel)
@@ -64,12 +66,36 @@ func (s *testSuite) labelInsertIdempotent() {
 	s.Require().NoError(err)
 	s.Equal([]string{"needs-review"}, out, "duplicate label add should be a no-op on the labels table")
 
+	// beads-5vpoh: the INSERT IGNORE second add affects zero rows, so it must
+	// NOT record a second label_added event. This proxied (domain/db) leg
+	// previously recorded unconditionally (the direct issueops.AddLabelInTx
+	// already guarded on RowsAffected==0 for beads-usz1); the twin now matches.
 	var count int
 	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
 		"SELECT COUNT(*) FROM events WHERE issue_id = ? AND event_type = ?",
 		"bd-lbl-dup", string(types.EventLabelAdded),
 	).Scan(&count))
-	s.Equal(2, count)
+	s.Equal(1, count, "duplicate label add must record exactly one label_added event, not one per call")
+}
+
+// labelInsertDuplicateNoEvent is the beads-5vpoh no-op-event tooth for the
+// proxied Insert path: adding a label that is ALREADY present (INSERT IGNORE
+// affects 0 rows) must record NO new label_added event, while the FIRST add of
+// a genuinely-new label still records exactly one (the regression guard against
+// under-recording). Mirrors the direct guard in issueops.AddLabelInTx (usz1).
+func (s *testSuite) labelInsertDuplicateNoEvent() {
+	s.seedIssueRow("bd-lbl-dup-evt")
+	r := s.labelRepo()
+
+	// New label → exactly one event.
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-dup-evt", "keep", "tester", domain.LabelOpts{}))
+	s.Equal(1, s.labelEventCount("bd-lbl-dup-evt", types.EventLabelAdded, "labels"),
+		"first add of a new label must record exactly one label_added event")
+
+	// Duplicate add → still exactly one (no spurious no-op event).
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-dup-evt", "keep", "tester", domain.LabelOpts{}))
+	s.Equal(1, s.labelEventCount("bd-lbl-dup-evt", types.EventLabelAdded, "labels"),
+		"re-adding an already-present label (INSERT IGNORE 0 rows) must NOT record a second label_added event")
 }
 
 func (s *testSuite) labelInsertRecordsEvent() {
@@ -259,6 +285,43 @@ func (s *testSuite) labelDeleteMissingNoop() {
 	out, err := r.List(s.Ctx(), "bd-lbl-del-miss", domain.LabelOpts{})
 	s.Require().NoError(err)
 	s.Empty(out)
+}
+
+// labelDeleteMissingNoEvent is the beads-5vpoh no-op-event tooth for the proxied
+// Delete path: removing a label the issue never carried (DELETE affects 0 rows)
+// must record NO label_removed event, while removing a PRESENT label still
+// records exactly one (the regression guard against under-recording). Mirrors
+// the direct guard in issueops.RemoveLabelInTx (usz1).
+func (s *testSuite) labelDeleteMissingNoEvent() {
+	s.seedIssueRow("bd-lbl-del-miss-evt")
+	r := s.labelRepo()
+
+	// Remove a never-present label → no event.
+	s.Require().NoError(r.Delete(s.Ctx(), "bd-lbl-del-miss-evt", "ghost", "tester", domain.LabelOpts{}))
+	s.Equal(0, s.labelEventCount("bd-lbl-del-miss-evt", types.EventLabelRemoved, "labels"),
+		"removing a never-present label (DELETE 0 rows) must NOT record a label_removed event")
+
+	// Add then remove a present label → exactly one label_removed event.
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-del-miss-evt", "real", "tester", domain.LabelOpts{}))
+	s.Require().NoError(r.Delete(s.Ctx(), "bd-lbl-del-miss-evt", "real", "tester", domain.LabelOpts{}))
+	s.Equal(1, s.labelEventCount("bd-lbl-del-miss-evt", types.EventLabelRemoved, "labels"),
+		"removing a present label must record exactly one label_removed event")
+}
+
+// labelEventCount returns how many events of eventType exist for issueID in the
+// given event table ("events" or "wisp_events"). beads-5vpoh helper.
+func (s *testSuite) labelEventCount(issueID string, eventType types.EventType, labelTable string) int {
+	eventTable := "events"
+	if labelTable == "wisp_labels" {
+		eventTable = "wisp_events"
+	}
+	var count int
+	//nolint:gosec // G201: eventTable is one of two hardcoded constants
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT COUNT(*) FROM "+eventTable+" WHERE issue_id = ? AND event_type = ?",
+		issueID, string(eventType),
+	).Scan(&count))
+	return count
 }
 
 func (s *testSuite) labelDeleteSpecificLabel() {
