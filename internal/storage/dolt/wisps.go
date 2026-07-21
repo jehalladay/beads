@@ -520,19 +520,24 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Cycle detection for blocking dependency types: check if adding this edge
-	// would create a cycle. Edge storage is source-routed, so same-class
-	// endpoints can still have mixed-table interior paths.
-	if dep.Type == types.DepBlocks {
-		depTables := wispCycleDetectionTables()
-		var reachable int
-		query := wispCycleReachabilityQuery(depTables)
-		if err := tx.QueryRowContext(ctx, query, dep.DependsOnID, dep.IssueID).Scan(&reachable); err != nil {
-			return fmt.Errorf("failed to check for dependency cycle: %w", err)
-		}
-		if reachable > 0 {
-			return fmt.Errorf("adding dependency would create a cycle")
-		}
+	// Cycle detection: route through the SHARED seam (beads-i9bui) so the
+	// wisp-source path walks the SAME acyclic families the issue-source path
+	// does — blocks+conditional-blocks, parent-child (beads-8qij), supersedes
+	// (beads-8ix02) — plus the duplicate-chain guard (beads-dfzre). Previously
+	// this checked ONLY dep.Type==blocks (bd-xe27, pre-dating the family sweep),
+	// so a wisp-source conditional-blocks / parent-child / supersedes edge could
+	// close a cycle the issue-source seam rejects, and the embedded backend
+	// (which always routes through this seam) rejected. Delegating to the single
+	// source of truth (cycleAuditedFamilies, beads-cjvxq) keeps enforcement in
+	// lockstep and cannot drift. waits-for stays exempt automatically
+	// (cycleCheckTypesFor returns nil for it — beads-8qij's deliberate,
+	// owner-held exemption, beads-vdqra). wispCycleDetectionTables() ==
+	// cycleDetectionTables() (both {dependencies, wisp_dependencies}), so the
+	// mixed-table interior-path coverage is unchanged. Edge storage is
+	// source-routed, so same-class endpoints can still have mixed-table
+	// interior paths — the shared depTables cover both.
+	if err := issueops.CheckDependencyCycleInTx(ctx, tx, dep, wispCycleDetectionTables()); err != nil {
+		return err
 	}
 
 	kind := issueops.ClassifyDepTarget(ctx, tx, dep, isCrossPrefix)
