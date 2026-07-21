@@ -61,6 +61,11 @@ func TestNoArgsSweep_RejectsPositional(t *testing.T) {
 		// interactively and ignores args, so a stray positional (bd create-form
 		// garbage) was silently swallowed with rc=0.
 		{"create-form"},
+		// beads-x91i6: ready is a high-traffic flag-driven leaf. Its RunE reads no
+		// positionals (the --gated path delegates to runMolReadyGatedCore, which
+		// discards args), so a query-style typo (bd ready open, bd ready P1) was
+		// silently ignored, printing ALL ready work with rc=0.
+		{"ready"},
 	}
 
 	for _, path := range commands {

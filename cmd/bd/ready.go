@@ -37,6 +37,12 @@ Use --claim to atomically claim the first ready issue matching the filters:
   bd ready --claim --json
 
 This is useful for agents executing molecules to see which steps can run next.`,
+	// beads-x91i6: reject stray positionals with a clean usage error. ready is
+	// flag-driven and reads no positionals (the --gated path delegates to
+	// runMolReadyGatedCore, which discards args), so without this a query-style
+	// typo (bd ready open, bd ready P1) was silently ignored, printing ALL ready
+	// work with rc=0.
+	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
