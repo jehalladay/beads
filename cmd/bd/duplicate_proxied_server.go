@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/types"
@@ -284,6 +285,25 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 	// Status != closed).
 	if autoClosedRoot != "" {
 		auditStatusChange(autoClosedRoot, "open", "closed", actor, "all steps complete")
+	}
+
+	// beads-usumn: fire the source's mutation hooks at parity with the DIRECT
+	// legs (duplicate.go). The direct path closes via store.LinkAndClose, whose
+	// HookFiringStore decorator fires on_update (hook_decorator.go:180) — and the
+	// direct legs now also fire on_close on the open->closed transition (usumn).
+	// This proxied twin previously fired ZERO hooks, so a hub-connected crew's
+	// duplicate/supersede ran no on_update AND no on_close automation. Reuse the
+	// shared fireProxiedUpdateHooks helper (the proxied UPDATE path's fire): it
+	// runs on_update always + on_close only on before-open/after-closed — exactly
+	// the direct behavior. Emitted AFTER uw.Commit; the after-image is a fresh
+	// post-commit read reflecting the committed closed state (fromIssue is the
+	// pre-close before-image, so the guard sees a real transition). A hook error
+	// is non-fatal (the mutation already committed) — warn, matching the update
+	// twin. Skipped for the idempotent same-target no-op, which returned early.
+	if after := proxiedResolveForNoOp(ctx, fromID); after != nil {
+		if err := fireProxiedUpdateHooks(ctx, fromIssue, after); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", fromID, err)
+		}
 	}
 
 	if isJSONOutput() {

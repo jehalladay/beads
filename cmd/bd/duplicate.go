@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -209,6 +210,26 @@ func runDuplicate(cmd *cobra.Command, args []string) error {
 	// bd close/batch/update use, so completion detection can't drift.
 	autoCloseCompletedMolecule(ctx, store, duplicateID, actor, "")
 
+	// beads-usumn: marking a duplicate closes the source via LinkAndClose, whose
+	// HookFiringStore decorator fires ONLY on_update (hook_decorator.go:180,
+	// "behavior-preserving" — the pre-atomic path closed via UpdateIssue). But
+	// this reaches the same terminal closed state as `bd close` (fires on_close,
+	// hook_decorator.go:149), `bd update --status closed` (beads-vn7dl), and
+	// `bd batch update status=closed` (beads-7o4av) — so on_close automation
+	// (notifications, downstream sync, GC/archival) silently did not run when an
+	// issue was closed by being marked duplicate. Fire the missing EventClose at
+	// the cmd layer, at parity with those siblings; on_update already fired inside
+	// the decorator, so this adds exactly the missing event (no double-fire). Only
+	// on a genuine open->closed transition (the guards above reject re-linking an
+	// already-linked source; dupOldStatus records the real prior status).
+	if dupOldStatus != string(types.StatusClosed) {
+		if runner := getHookRunner(); runner != nil {
+			if after, err := store.GetIssue(ctx, duplicateID); err == nil && after != nil {
+				_ = runner.RunSync(hooks.EventClose, after)
+			}
+		}
+	}
+
 	if isJSONOutput() {
 		return outputJSON(map[string]interface{}{
 			"duplicate": duplicateID,
@@ -356,6 +377,20 @@ func runSupersede(cmd *cobra.Command, args []string) error {
 	// as the duplicate leg above and beads-zzp26). Run it post-close so
 	// superseding a molecule's FINAL step auto-closes the completed root.
 	autoCloseCompletedMolecule(ctx, store, oldID, actor, "")
+
+	// beads-usumn: superseding closes the source via LinkAndClose (on_update-only,
+	// hook_decorator.go:180) — but reaches the same terminal closed state as
+	// `bd close`/`bd update --status closed` (vn7dl)/`bd batch` (7o4av), which all
+	// fire on_close. Fire the missing EventClose at the cmd layer so on_close
+	// automation runs on close-by-supersede too (on_update already fired in the
+	// decorator; only on a genuine open->closed transition).
+	if oldOldStatus != string(types.StatusClosed) {
+		if runner := getHookRunner(); runner != nil {
+			if after, err := store.GetIssue(ctx, oldID); err == nil && after != nil {
+				_ = runner.RunSync(hooks.EventClose, after)
+			}
+		}
+	}
 
 	if isJSONOutput() {
 		return outputJSON(map[string]interface{}{
