@@ -43,6 +43,12 @@ func TestNoArgsSweep_RejectsPositional(t *testing.T) {
 		{"types"},
 		{"where"},
 		{"ping"},
+		// beads-9bthq: residual setup/maint leaves after 7pnnd/rlzyg. "purge" is a
+		// destructive delete command whose dropped pattern positional was the most
+		// dangerous of the tail (bd purge "*-wisp-*" silently ignored the pattern).
+		{"context"},
+		{"purge"},
+		{"init-safety"},
 	}
 
 	for _, path := range commands {

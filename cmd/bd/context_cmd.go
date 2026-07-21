@@ -33,6 +33,7 @@ type ContextInfo struct {
 
 var contextCmd = &cobra.Command{
 	Use:     "context",
+	Args:    cobra.NoArgs, // beads-9bthq: reject stray positionals with a clean usage error
 	GroupID: "setup",
 	Short:   "Show effective backend identity and repository context",
 	Long: `Show the effective backend identity information including repository paths,

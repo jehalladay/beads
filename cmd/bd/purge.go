@@ -43,6 +43,7 @@ type purgeScope struct {
 
 var purgeCmd = &cobra.Command{
 	Use:     "purge",
+	Args:    maintNoArgs, // beads-9bthq: reject stray positionals (destructive delete cmd — a dropped pattern positional is dangerous)
 	GroupID: "maint",
 	Short:   "Delete closed ephemeral beads to reclaim space",
 	Long: `Permanently delete closed ephemeral beads and their associated data.

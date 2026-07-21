@@ -15,6 +15,7 @@ import (
 // docs/adr/0002-init-safety-invariants.md.
 var initSafetyHelpCmd = &cobra.Command{
 	Use:   "init-safety",
+	Args:  cobra.NoArgs, // beads-9bthq: reject stray positionals with a clean usage error
 	Short: "Explain bd init flag semantics and the destroy-token format",
 	Long: `bd init flag safety contract.
 
