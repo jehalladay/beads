@@ -559,9 +559,19 @@ func (r *dependencySQLRepositoryImpl) GetBlockingInfo(ctx context.Context, issue
 	table := pickDepTable(opts.UseWispsTable)
 	idPlaceholders, idArgs := buildInPlaceholders(issueIDs)
 
+	// beads-h7u56/dqje3: the proxied display blocked-indicator must count the
+	// SAME blocking-edge families the authority (is_blocked / bd ready / bd
+	// blocked) counts, or bd list under-signals a genuinely-blocked issue as
+	// ○ open on the hub/proxied path (the recurring proxied-twin gap — the
+	// direct fix lives in issueops.queryBlockedByInfo). 'blocks'/'parent-child'
+	// keep any-close-unblocks semantics; 'conditional-blocks' is resolved
+	// reason-aware below (a success-closed target still blocks — beads-a3hm);
+	// the waits-for GATE is handled by a separate query gated on
+	// issueops.WaitsForGateBlockedSQL (activeBlockerSQL returns false for
+	// waits-for, so a status check alone cannot resolve it).
 	//nolint:gosec // G201: table and depTargetExpr are hardcoded constants
 	outQ := fmt.Sprintf(
-		"SELECT issue_id, %s AS depends_on_id, type FROM %s WHERE issue_id IN (%s) AND type IN ('blocks', 'parent-child')",
+		"SELECT issue_id, %s AS depends_on_id, type FROM %s WHERE issue_id IN (%s) AND type IN ('blocks', 'parent-child', 'conditional-blocks')",
 		depTargetExpr, table, idPlaceholders,
 	)
 	outRows, err := r.scanBlockingRows(ctx, outQ, idArgs)
@@ -586,13 +596,24 @@ func (r *dependencySQLRepositoryImpl) GetBlockingInfo(ctx context.Context, issue
 	for _, row := range inRows {
 		statusIDs[row.dependsOnID] = struct{}{}
 	}
-	statusByID, err := r.loadStatusByID(ctx, statusIDs)
+	// Load status + close_reason (not status alone) so conditional-blocks
+	// activeness is resolved reason-aware, matching the authority (beads-a3hm).
+	stateByID, err := r.loadStateByID(ctx, statusIDs)
 	if err != nil {
 		return domain.BlockingInfo{}, fmt.Errorf("db: DependencySQLRepository.GetBlockingInfo: status lookup: %w", err)
 	}
 
 	for _, row := range outRows {
-		if statusByID[row.dependsOnID] == types.StatusClosed {
+		depType := types.DependencyType(row.depType)
+		if depType == types.DepConditionalBlocks {
+			// Reason-aware: keep only while still an active blocker (open OR
+			// success-closed target), matching bd ready / activeBlockerSQL.
+			st := stateByID[row.dependsOnID]
+			if !issueops.IsActiveBlockerByState(depType, st.status, st.closeReason) {
+				continue
+			}
+		} else if stateByID[row.dependsOnID].status == types.StatusClosed {
+			// 'blocks'/'parent-child': any close unblocks (unchanged).
 			continue
 		}
 		if row.depType == "parent-child" {
@@ -602,10 +623,38 @@ func (r *dependencySQLRepositoryImpl) GetBlockingInfo(ctx context.Context, issue
 		}
 	}
 	for _, row := range inRows {
-		if statusByID[row.dependsOnID] == types.StatusClosed {
+		if stateByID[row.dependsOnID].status == types.StatusClosed {
 			continue
 		}
 		info.Blocks[row.dependsOnID] = append(info.Blocks[row.dependsOnID], row.issueID)
+	}
+
+	// beads-dqje3: waits-for fanout-gate edges. The gate (open parent-child
+	// children of the spawner, honoring the all-children/any-children gate
+	// metadata) is exactly issueops.WaitsForGateBlockedSQL — the predicate the
+	// is_blocked recompute uses — so reusing it makes the proxied display map
+	// agree with is_blocked / bd blocked / bd ready by construction. Named
+	// blocker = the spawner (the waits-for depends_on). The predicate requires
+	// the dependency-row alias `d`.
+	//nolint:gosec // G201: table/depTargetExpr are hardcoded constants; predicate is a package const.
+	wfQ := fmt.Sprintf(
+		"SELECT d.issue_id, %s AS depends_on_id FROM %s d WHERE d.issue_id IN (%s) AND d.type = 'waits-for' AND (%s)",
+		depTargetExpr, table, idPlaceholders, issueops.WaitsForGateBlockedSQL(),
+	)
+	wfRows, err := r.runner.QueryContext(ctx, wfQ, idArgs...)
+	if err != nil {
+		return domain.BlockingInfo{}, fmt.Errorf("db: DependencySQLRepository.GetBlockingInfo: waits-for: %w", err)
+	}
+	defer wfRows.Close()
+	for wfRows.Next() {
+		var issueID, spawnerID string
+		if scanErr := wfRows.Scan(&issueID, &spawnerID); scanErr != nil {
+			return domain.BlockingInfo{}, fmt.Errorf("db: DependencySQLRepository.GetBlockingInfo: scan waits-for: %w", scanErr)
+		}
+		info.BlockedBy[issueID] = append(info.BlockedBy[issueID], spawnerID)
+	}
+	if err := wfRows.Err(); err != nil {
+		return domain.BlockingInfo{}, fmt.Errorf("db: DependencySQLRepository.GetBlockingInfo: waits-for rows: %w", err)
 	}
 
 	return info, nil
@@ -662,10 +711,23 @@ func (r *dependencySQLRepositoryImpl) scanBlockingRows(ctx context.Context, q st
 	return out, rows.Err()
 }
 
-func (r *dependencySQLRepositoryImpl) loadStatusByID(ctx context.Context, idSet map[string]struct{}) (map[string]types.Status, error) {
-	statusByID := make(map[string]types.Status, len(idSet))
+// blockerState is a target blocker's status + close_reason, the minimum needed
+// to resolve conditional-blocks activeness reason-aware (beads-a3hm/h7u56) on
+// the proxied path — the twin of issueops.targetState.
+type blockerState struct {
+	status      types.Status
+	closeReason string
+}
+
+// loadStateByID is loadStatusByID plus the close_reason column so the proxied
+// GetBlockingInfo display path can apply the SAME failure-vs-success close
+// semantics as the authoritative is_blocked recompute for conditional-blocks
+// edges (beads-h7u56). Iterates issues then wisps; a cross-table dup errors
+// (same invariant loadStatusByID enforces).
+func (r *dependencySQLRepositoryImpl) loadStateByID(ctx context.Context, idSet map[string]struct{}) (map[string]blockerState, error) {
+	stateByID := make(map[string]blockerState, len(idSet))
 	if len(idSet) == 0 {
-		return statusByID, nil
+		return stateByID, nil
 	}
 	ids := make([]string, 0, len(idSet))
 	for id := range idSet {
@@ -675,39 +737,40 @@ func (r *dependencySQLRepositoryImpl) loadStatusByID(ctx context.Context, idSet 
 	sourceByID := make(map[string]string, len(idSet))
 	for _, table := range []string{"issues", "wisps"} {
 		//nolint:gosec // G201: table is a hardcoded constant
-		q := fmt.Sprintf("SELECT id, status FROM %s WHERE id IN (%s)", table, placeholders)
-		if err := r.scanStatusRows(ctx, q, args, table, statusByID, sourceByID); err != nil {
+		q := fmt.Sprintf("SELECT id, status, close_reason FROM %s WHERE id IN (%s)", table, placeholders)
+		rows, err := r.runner.QueryContext(ctx, q, args...)
+		if err != nil {
+			if dberrors.IsTableNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("status+reason from %s: %w", table, err)
+		}
+		func() {
+			defer rows.Close()
+			for rows.Next() {
+				var id string
+				var status types.Status
+				var closeReason sql.NullString
+				if scanErr := rows.Scan(&id, &status, &closeReason); scanErr != nil {
+					err = fmt.Errorf("status+reason from %s: scan: %w", table, scanErr)
+					return
+				}
+				if existing, dup := sourceByID[id]; dup {
+					err = fmt.Errorf("status id %q exists in both %s and %s", id, existing, table)
+					return
+				}
+				sourceByID[id] = table
+				stateByID[id] = blockerState{status: status, closeReason: closeReason.String}
+			}
+			if rowsErr := rows.Err(); rowsErr != nil && err == nil {
+				err = fmt.Errorf("status+reason rows from %s: %w", table, rowsErr)
+			}
+		}()
+		if err != nil {
 			return nil, err
 		}
 	}
-	return statusByID, nil
-}
-
-func (r *dependencySQLRepositoryImpl) scanStatusRows(ctx context.Context, q string, args []any, table string, statusByID map[string]types.Status, sourceByID map[string]string) error {
-	rows, err := r.runner.QueryContext(ctx, q, args...)
-	if err != nil {
-		if dberrors.IsTableNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("status from %s: %w", table, err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id string
-		var status types.Status
-		if err := rows.Scan(&id, &status); err != nil {
-			return fmt.Errorf("status from %s: scan: %w", table, err)
-		}
-		if existing, dup := sourceByID[id]; dup {
-			return fmt.Errorf("status id %q exists in both %s and %s", id, existing, table)
-		}
-		sourceByID[id] = table
-		statusByID[id] = status
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("status rows from %s: %w", table, err)
-	}
-	return nil
+	return stateByID, nil
 }
 
 func (r *dependencySQLRepositoryImpl) queryDeps(ctx context.Context, q string, args []any, into map[string][]*types.Dependency, keyByIssueID bool) error {

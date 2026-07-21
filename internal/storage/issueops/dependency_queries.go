@@ -308,11 +308,23 @@ func queryBlockedByInfo(
 		inClause := strings.Join(placeholders, ",")
 
 		// Query: "blocked by" — deps where issue_id is in our set.
+		//
+		// beads-h7u56/dqje3: the display blocked-indicator must count the SAME
+		// blocking-edge families the authority (is_blocked / bd ready / bd
+		// blocked) counts, or bd list under-signals a genuinely-blocked issue as
+		// ○ open. types.IsBlockingEdge() = {blocks, conditional-blocks,
+		// waits-for} (+ parent-child inheritance). 'blocks'/'parent-child' keep
+		// their existing any-close-unblocks semantics; 'conditional-blocks' is
+		// resolved reason-aware below via isActiveConditionalOrHardBlocker (the
+		// Go mirror of activeBlockerSQL — a success-closed target still blocks).
+		// The waits-for GATE cannot be resolved from a blocker's status alone
+		// (blocked.go:308-310: activeBlockerSQL returns false for waits-for), so
+		// it is handled by a SEPARATE query gated on waitsForGateBlockedSQL below.
 		//nolint:gosec // G201: depTable is a caller-controlled constant.
 		blockedByQuery := fmt.Sprintf(`
 			SELECT d.issue_id, %s AS depends_on_id, d.type
 			FROM %s d
-			WHERE d.issue_id IN (%s) AND d.type IN ('blocks', 'parent-child')
+			WHERE d.issue_id IN (%s) AND d.type IN ('blocks', 'parent-child', 'conditional-blocks')
 		`, depTargetExpr("d"), depTable, inClause)
 
 		rows, err := tx.QueryContext(ctx, blockedByQuery, args...)
@@ -338,19 +350,63 @@ func queryBlockedByInfo(
 			return fmt.Errorf("get blocking info: blocked-by rows: %w", err)
 		}
 
-		statusByID, err := loadStatusByIDInTx(ctx, tx, blockerIDs)
+		// Load status + close_reason (not status alone) so conditional-blocks
+		// activeness can be resolved reason-aware, matching the authority.
+		stateByID, err := loadStatusAndReasonByIDInTx(ctx, tx, blockerIDs)
 		if err != nil {
 			return fmt.Errorf("get blocking info: blocker status: %w", err)
 		}
 		for _, row := range depRows {
-			if statusByID[row.blockerID] == types.StatusClosed {
+			depType := types.DependencyType(row.depType)
+			if depType == types.DepConditionalBlocks {
+				// Reason-aware: keep only while this edge is still an active
+				// blocker (open OR success-closed target), matching bd ready /
+				// activeBlockerSQL — never over-signal a failure-closed target.
+				if !isActiveConditionalOrHardBlocker(depType, stateByID[row.blockerID]) {
+					continue
+				}
+			} else if stateByID[row.blockerID].status == types.StatusClosed {
+				// 'blocks'/'parent-child': any close unblocks (unchanged).
 				continue
 			}
-			if row.depType == "parent-child" {
+			if depType == types.DepParentChild {
 				parentMap[row.issueID] = row.blockerID
 			} else {
 				blockedByMap[row.issueID] = append(blockedByMap[row.issueID], row.blockerID)
 			}
+		}
+
+		// beads-dqje3: waits-for fanout-gate edges. The gate (open parent-child
+		// children of the spawner, honoring the all-children/any-children gate
+		// metadata) is exactly waitsForGateBlockedSQL — the predicate the
+		// is_blocked recompute (blocked_state.go) uses — so reusing it here makes
+		// the display map agree with is_blocked / bd blocked / bd ready by
+		// construction. Named blocker = the spawner (the waits-for depends_on).
+		//nolint:gosec // G201: depTable is a caller-controlled constant; predicate is a package const.
+		waitsForQuery := fmt.Sprintf(`
+			SELECT d.issue_id, %s AS depends_on_id
+			FROM %s d
+			WHERE d.issue_id IN (%s) AND d.type = 'waits-for' AND (%s)
+		`, depTargetExpr("d"), depTable, inClause, waitsForGateBlockedSQL)
+
+		wfRows, err := tx.QueryContext(ctx, waitsForQuery, args...)
+		if err != nil {
+			if optionalBlockedTable(depTable) && isTableNotExistError(err) {
+				continue
+			}
+			return fmt.Errorf("get waits-for blocking info from %s: %w", depTable, err)
+		}
+		for wfRows.Next() {
+			var issueID, spawnerID string
+			if scanErr := wfRows.Scan(&issueID, &spawnerID); scanErr != nil {
+				_ = wfRows.Close()
+				return fmt.Errorf("get blocking info: scan waits-for: %w", scanErr)
+			}
+			blockedByMap[issueID] = append(blockedByMap[issueID], spawnerID)
+		}
+		_ = wfRows.Close()
+		if err := wfRows.Err(); err != nil {
+			return fmt.Errorf("get blocking info: waits-for rows: %w", err)
 		}
 	}
 
@@ -548,6 +604,32 @@ func isActiveConditionalOrHardBlocker(depType types.DependencyType, ts targetSta
 	default:
 		return false
 	}
+}
+
+// IsActiveBlockerByState is the exported, primitive-typed form of
+// isActiveConditionalOrHardBlocker for callers outside this package (the
+// proxied-server display path, internal/storage/domain/db) that resolve a
+// blocker's activeness reason-aware without reaching the private targetState.
+// It reports whether a 'blocks'/'conditional-blocks' edge to a target in the
+// given status/close_reason should still hold the dependent blocked, using the
+// SAME semantics as the authoritative is_blocked recompute (beads-a3hm): any
+// close unblocks a 'blocks' edge; a conditional-blocks edge stays active while
+// the target is open OR closed-with-success. 'parent-child'/'waits-for' and
+// loose edges return false (waits-for is gate-evaluated, not status-resolved —
+// see WaitsForGateBlockedSQL).
+func IsActiveBlockerByState(depType types.DependencyType, status types.Status, closeReason string) bool {
+	return isActiveConditionalOrHardBlocker(depType, targetState{status: status, closeReason: closeReason})
+}
+
+// WaitsForGateBlockedSQL exposes the waits-for fanout-gate predicate (the exact
+// SQL the is_blocked recompute uses, keyed on the dependency-row alias `d`) so
+// the proxied-server display path (internal/storage/domain/db) can gate its
+// waits-for blocked-indicator query on the SAME condition as the authority,
+// keeping bd list's glyph in lockstep with is_blocked / bd blocked / bd ready
+// (beads-dqje3). The alias MUST be `d` (the predicate references d.depends_on_*
+// / d.metadata).
+func WaitsForGateBlockedSQL() string {
+	return waitsForGateBlockedSQL
 }
 
 // GetNewlyUnblockedByCloseInTx finds issues that become unblocked when the
