@@ -115,6 +115,18 @@ func issueUpsertAssignments(rejectStaleUpdate bool) string {
 	return strings.Join(assignments, ",\n\t\t\t")
 }
 
+// IssueUpsertAssignments renders the shared ON DUPLICATE KEY UPDATE clause for
+// the issue upsert so the domain/db (proxied-server) insert path can reuse the
+// exact same column set as the direct path instead of hand-copying it. This
+// keeps the two upsert paths from drifting (beads-u6lgj: the proxied path had
+// hand-copied only 18 of the ~35 mutable columns, so a proxied re-insert of an
+// existing id silently kept stale owner/spec_id/waiters/due_at/defer_until/
+// pinned/... values). Pass rejectStaleUpdate=false for the plain
+// VALUES(col)-everywhere form the proxied path uses.
+func IssueUpsertAssignments(rejectStaleUpdate bool) string {
+	return issueUpsertAssignments(rejectStaleUpdate)
+}
+
 // InsertIssueIntoTable inserts an issue into the specified table ("issues" or "wisps"),
 // using ON DUPLICATE KEY UPDATE to handle pre-existing records gracefully.
 func InsertIssueIntoTable(ctx context.Context, tx *sql.Tx, table string, issue *types.Issue) error {
