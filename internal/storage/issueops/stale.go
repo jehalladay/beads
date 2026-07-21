@@ -18,8 +18,24 @@ func GetStaleIssuesInTx(ctx context.Context, tx DBTX, filter types.StaleFilter) 
 	cutoff := time.Now().UTC().AddDate(0, 0, -filter.Days)
 
 	statusClause := "status IN ('open', 'in_progress')"
-	if filter.Status != "" {
+	args := []interface{}{cutoff}
+	switch {
+	case filter.Status == "":
+		// default: open + in_progress
+	case filter.Status == string(types.StatusBlocked):
+		// beads-h40fl: "blocked" is a DERIVED pseudo-status, not a stored
+		// status value — a blocked issue keeps stored status='open'/'in_progress'
+		// and its blocked-ness lives in the denormalized is_blocked column. A
+		// plain `status = 'blocked'` clause is unsatisfiable by construction, so
+		// `bd stale --status blocked` silently returned 0 with rc=0 (false
+		// negative) even when stale blocked issues existed. Route to the
+		// is_blocked predicate, matching the beads-7f3g routing for
+		// `bd list/count --status blocked` and bd blocked's semantics
+		// (issueops/blocked.go:247), incl. its closed/pinned exclusion.
+		statusClause = "is_blocked = 1 AND status <> 'closed' AND status <> 'pinned'"
+	default:
 		statusClause = "status = ?"
+		args = append(args, filter.Status)
 	}
 
 	query := fmt.Sprintf(`
@@ -29,10 +45,6 @@ func GetStaleIssuesInTx(ctx context.Context, tx DBTX, filter types.StaleFilter) 
 		  AND (ephemeral = 0 OR ephemeral IS NULL)
 		ORDER BY updated_at ASC
 	`, statusClause)
-	args := []interface{}{cutoff}
-	if filter.Status != "" {
-		args = append(args, filter.Status)
-	}
 
 	if filter.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", filter.Limit)
