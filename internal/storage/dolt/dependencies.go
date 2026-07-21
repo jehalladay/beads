@@ -63,26 +63,36 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 func (s *DoltStore) LinkAndClose(ctx context.Context, dep *types.Dependency, actor string) error {
 	isCrossPrefix := isCrossPrefixDep(dep.IssueID, dep.DependsOnID)
 
-	targetTable := "issues"
-	kind := issueops.DepTargetIssue
-	switch {
-	case isCrossPrefix, strings.HasPrefix(dep.DependsOnID, "external:"):
-		kind = issueops.DepTargetExternal
-	default:
-		if s.isActiveWisp(ctx, dep.DependsOnID) {
-			targetTable = "wisps"
-			kind = issueops.DepTargetWisp
+	// beads-pega7: do NOT force SourceTable/WriteTable/TargetTable/TargetKind.
+	// Leaving them empty lets issueops.AddDependencyInTx auto-detect wisp-source
+	// routing via IsActiveWispInTx/WispTableRouting — matching the embedded
+	// backend (embeddeddolt.LinkAndClose passes only IsCrossPrefix) and this
+	// store's own AddDependency. Previously LinkAndClose hardcoded
+	// SourceTable:"issues", so a wisp-source duplicate/supersede (bd duplicate /
+	// bd supersede accept a wisp ID — ResolvePartialID falls back to wisps) hit
+	// `SELECT issue_type FROM issues WHERE id=<wisp>` -> ErrNoRows -> a
+	// misleading "issue not found" on hub-connected sql-server crew, while the
+	// embedded backend succeeded (backend-asymmetric; slmql/i9bui/k5oqp/cjvxq
+	// un-mirrored-guard class on the wisp dep path). The close half
+	// (LinkAndCloseInTx -> UpdateIssueInTx -> WispTableRouting) already
+	// auto-routes to the wisps table.
+	opts := issueops.AddDependencyOpts{IsCrossPrefix: isCrossPrefix}
+
+	// Wisps live in dolt_ignored tables — skip Dolt versioning entirely, same as
+	// AddDependency/RemoveDependency for a wisp source.
+	if s.isActiveWisp(ctx, dep.IssueID) {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
+		defer func() { _ = tx.Rollback() }()
+		if err := issueops.LinkAndCloseInTx(ctx, tx, dep, actor, opts); err != nil {
+			return err
+		}
+		return wrapTransactionError("commit link+close wisp dependency", tx.Commit())
 	}
 
 	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
-		opts := issueops.AddDependencyOpts{
-			SourceTable:   "issues",
-			TargetTable:   targetTable,
-			WriteTable:    "dependencies",
-			IsCrossPrefix: isCrossPrefix,
-			TargetKind:    &kind,
-		}
 		return issueops.LinkAndCloseInTx(ctx, tx, dep, actor, opts)
 	}); err != nil {
 		return err
