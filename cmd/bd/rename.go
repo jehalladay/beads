@@ -116,16 +116,28 @@ func runRename(cmd *cobra.Command, args []string) error {
 
 	oldIssue.ID = newID
 	actor := getActorWithGit()
-	if err := store.UpdateIssueID(ctx, oldID, newID, oldIssue, actor); err != nil {
-		return HandleErrorRespectJSON("failed to rename issue: %v", err)
-	}
 
-	refWarning := ""
-	if err := updateReferencesInAllIssues(ctx, store, oldID, newID, actor); err != nil {
-		refWarning = err.Error()
-		if !jsonOutput {
-			fmt.Printf("Warning: failed to update some references: %v\n", err)
+	// beads-uorhi: the rename + cross-issue reference rewrite is a composite
+	// write. Previously it ran as a self-committing store.UpdateIssueID followed
+	// by a separate self-committing ref-rewrite loop, so a mid-sweep failure
+	// (a per-issue UpdateIssue error, process death, or ctx cancel) left the id
+	// already renamed while an arbitrary suffix of the issue set still textually
+	// referenced the now-nonexistent old id — dangling refs, reported to the
+	// operator only as a soft warning with RC=0. Wrap both in ONE transaction,
+	// mirroring the atomic proxied UOW twin (rename_proxied_server.go: rename +
+	// updateReferencesInAllIssuesProxied staged onto one uw + single Commit) and
+	// the ary2n/zcq86 direct-leg-to-in-tx precedent. All-or-nothing: a ref-rewrite
+	// failure now rolls back the rename too, so old id keeps resolving.
+	if err := store.RunInTransaction(ctx, fmt.Sprintf("bd: rename %s -> %s", oldID, newID), func(tx storage.Transaction) error {
+		if err := tx.UpdateIssueID(ctx, oldID, newID, oldIssue, actor); err != nil {
+			return fmt.Errorf("failed to rename issue: %w", err)
 		}
+		if err := updateReferencesInAllIssuesTx(ctx, tx, oldID, newID, actor); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		return HandleErrorRespectJSON("%v", err)
 	}
 
 	commandDidWrite.Store(true)
@@ -135,9 +147,6 @@ func runRename(cmd *cobra.Command, args []string) error {
 			"renamed": true,
 			"old_id":  oldID,
 			"new_id":  newID,
-		}
-		if refWarning != "" {
-			out["ref_update_warning"] = refWarning
 		}
 		return outputJSON(out)
 	}
@@ -187,10 +196,35 @@ func idReferenceRewriter(oldID, newID string) func(string) (string, bool) {
 	}
 }
 
-// updateReferencesInAllIssues updates text references to the old ID in all issues
-func updateReferencesInAllIssues(ctx context.Context, store storage.DoltStorage, oldID, newID, actor string) error {
-	// Get all issues
-	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+// rewriteCommentRefs applies rewrite to every comment body on issueID and
+// persists the ones that changed (beads-g8qfo). Shared by the singular rename
+// (updateReferencesInAllIssues) and rename-prefix sweeps so the comment-visit
+// logic can never drift between them.
+func rewriteCommentRefs(ctx context.Context, store storage.DoltStorage, issueID string, rewrite func(string) (string, bool)) error {
+	comments, err := store.GetIssueComments(ctx, issueID)
+	if err != nil {
+		return fmt.Errorf("failed to read comments for %s: %w", issueID, err)
+	}
+	for _, c := range comments {
+		if v, ok := rewrite(c.Text); ok {
+			if err := store.UpdateCommentText(ctx, issueID, c.ID, v); err != nil {
+				return fmt.Errorf("failed to update comment reference in %s: %w", issueID, err)
+			}
+		}
+	}
+	return nil
+}
+
+// updateReferencesInAllIssuesTx is the transaction-scoped mirror of
+// updateReferencesInAllIssues (beads-uorhi): the identical field + comment-body
+// reference rewrite, but issued against a storage.Transaction so it commits in
+// the SAME unit as the id rename. Any per-issue error returns before the tx
+// commits, rolling the rename back (no dangling refs) — matching the atomic
+// proxied twin (updateReferencesInAllIssuesProxied). The rewriter and visited
+// fields are kept identical to the store version so the two direct paths (and
+// the proxied path via idReferenceRewriter) can never diverge.
+func updateReferencesInAllIssuesTx(ctx context.Context, tx storage.Transaction, oldID, newID, actor string) error {
+	issues, err := tx.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
 		return fmt.Errorf("failed to list issues: %w", err)
 	}
@@ -205,7 +239,6 @@ func updateReferencesInAllIssues(ctx context.Context, store storage.DoltStorage,
 		updated := false
 		updates := make(map[string]interface{})
 
-		// Check and update each text field
 		if v, ok := rewrite(issue.Title); ok {
 			updates["title"] = v
 			updated = true
@@ -228,39 +261,19 @@ func updateReferencesInAllIssues(ctx context.Context, store storage.DoltStorage,
 		}
 
 		if updated {
-			if err := store.UpdateIssue(ctx, issue.ID, updates, actor); err != nil {
+			if err := tx.UpdateIssue(ctx, issue.ID, updates, actor); err != nil {
 				return fmt.Errorf("failed to update references in %s: %w", issue.ID, err)
 			}
 		}
 
-		// beads-g8qfo: the 5 issue fields above are not the only text the user
-		// wrote — a reference inside a COMMENT body ("see bd-abc") was never
-		// visited, so it kept the old id and became a dangling ref. Rewrite
-		// matching comment bodies too, reusing the same token-boundary rewriter.
-		if err := rewriteCommentRefs(ctx, store, issue.ID, rewrite); err != nil {
+		// beads-g8qfo: comment bodies are user-authored ref sites too.
+		// (Uses rewriteCommentRefsInTx, the shared tx comment-rewrite helper
+		// landed by beads-xu7q9 — identical logic to what beads-uorhi needs.)
+		if err := rewriteCommentRefsInTx(ctx, tx, issue.ID, rewrite); err != nil {
 			return err
 		}
 	}
 
-	return nil
-}
-
-// rewriteCommentRefs applies rewrite to every comment body on issueID and
-// persists the ones that changed (beads-g8qfo). Shared by the singular rename
-// (updateReferencesInAllIssues) and rename-prefix sweeps so the comment-visit
-// logic can never drift between them.
-func rewriteCommentRefs(ctx context.Context, store storage.DoltStorage, issueID string, rewrite func(string) (string, bool)) error {
-	comments, err := store.GetIssueComments(ctx, issueID)
-	if err != nil {
-		return fmt.Errorf("failed to read comments for %s: %w", issueID, err)
-	}
-	for _, c := range comments {
-		if v, ok := rewrite(c.Text); ok {
-			if err := store.UpdateCommentText(ctx, issueID, c.ID, v); err != nil {
-				return fmt.Errorf("failed to update comment reference in %s: %w", issueID, err)
-			}
-		}
-	}
 	return nil
 }
 
