@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"regexp"
 
 	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
@@ -99,7 +98,11 @@ func updateReferencesInAllIssuesProxied(ctx context.Context, uw uow.UnitOfWork, 
 		return fmt.Errorf("failed to list issues: %w", err)
 	}
 
-	oldPattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(oldID) + `\b`)
+	// beads-1nvr5: share the direct path's id-charclass boundary rewriter so
+	// the two rename paths can never diverge. The old `\b`...`\b` matched inside
+	// hyphen-extended sibling ids (bd-abc-2), corrupting references to distinct
+	// issues.
+	rewrite := idReferenceRewriter(oldID, newID)
 
 	for _, issue := range page.Items {
 		if issue.ID == newID {
@@ -107,20 +110,20 @@ func updateReferencesInAllIssuesProxied(ctx context.Context, uw uow.UnitOfWork, 
 		}
 
 		updates := make(map[string]any)
-		if oldPattern.MatchString(issue.Title) {
-			updates["title"] = oldPattern.ReplaceAllString(issue.Title, newID)
+		if v, ok := rewrite(issue.Title); ok {
+			updates["title"] = v
 		}
-		if oldPattern.MatchString(issue.Description) {
-			updates["description"] = oldPattern.ReplaceAllString(issue.Description, newID)
+		if v, ok := rewrite(issue.Description); ok {
+			updates["description"] = v
 		}
-		if oldPattern.MatchString(issue.Design) {
-			updates["design"] = oldPattern.ReplaceAllString(issue.Design, newID)
+		if v, ok := rewrite(issue.Design); ok {
+			updates["design"] = v
 		}
-		if oldPattern.MatchString(issue.Notes) {
-			updates["notes"] = oldPattern.ReplaceAllString(issue.Notes, newID)
+		if v, ok := rewrite(issue.Notes); ok {
+			updates["notes"] = v
 		}
-		if oldPattern.MatchString(issue.AcceptanceCriteria) {
-			updates["acceptance_criteria"] = oldPattern.ReplaceAllString(issue.AcceptanceCriteria, newID)
+		if v, ok := rewrite(issue.AcceptanceCriteria); ok {
+			updates["acceptance_criteria"] = v
 		}
 
 		if len(updates) > 0 {

@@ -147,6 +147,46 @@ func runRename(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// idReferenceRewriter returns a rewriter that replaces standalone text
+// references to oldID with newID, treating an issue ID as a full token bounded
+// by a NON-ID character.
+//
+// beads-1nvr5: the old pattern was `\b` + oldID + `\b`. Go's \b word boundary
+// treats '-' as a NON-word char, so `\bbd-abc\b` matches at the hyphen INSIDE a
+// hyphen-extended sibling id like bd-abc-2 — silently rewriting the bd-abc
+// prefix of a DIFFERENT, unrelated issue (bd-abc-2 -> bd-xyz-2) and corrupting
+// a reference to it. The rename ID regex (rename.go idPattern) and the proven
+// in-tree pattern in cmd/bd/delete.go define an id token by the charclass
+// [A-Za-z0-9_-], not \w. We match the same: the id is a full token only when
+// the surrounding chars are not id-continuation chars, and we re-emit those
+// delimiters ($1/$3). This is shared by the direct and proxied rename paths so
+// the two regexes can never diverge.
+func idReferenceRewriter(oldID, newID string) func(string) (string, bool) {
+	re := regexp.MustCompile(`(^|[^A-Za-z0-9_-])(` + regexp.QuoteMeta(oldID) + `)($|[^A-Za-z0-9_-])`)
+	repl := `${1}` + newID + `${3}`
+	return func(s string) (string, bool) {
+		if !re.MatchString(s) {
+			return s, false
+		}
+		// Loop until stable: a match CONSUMES its trailing delimiter, which is
+		// also the leading delimiter of an immediately-adjacent second
+		// reference ("bd-abc bd-abc" shares one space), so a single
+		// ReplaceAllString pass would rewrite only the first of a run. Go RE2
+		// has no lookbehind to make the boundary zero-width, so we re-scan; the
+		// re-emitted delimiters ($1/$3) survive each pass and the newID token is
+		// itself id-char-bounded, so it can never re-match — the loop always
+		// terminates.
+		out := s
+		for {
+			next := re.ReplaceAllString(out, repl)
+			if next == out {
+				return out, true
+			}
+			out = next
+		}
+	}
+}
+
 // updateReferencesInAllIssues updates text references to the old ID in all issues
 func updateReferencesInAllIssues(ctx context.Context, store storage.DoltStorage, oldID, newID, actor string) error {
 	// Get all issues
@@ -155,8 +195,7 @@ func updateReferencesInAllIssues(ctx context.Context, store storage.DoltStorage,
 		return fmt.Errorf("failed to list issues: %w", err)
 	}
 
-	// Pattern to match the old ID as a word boundary
-	oldPattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(oldID) + `\b`)
+	rewrite := idReferenceRewriter(oldID, newID)
 
 	for _, issue := range issues {
 		if issue.ID == newID {
@@ -167,24 +206,24 @@ func updateReferencesInAllIssues(ctx context.Context, store storage.DoltStorage,
 		updates := make(map[string]interface{})
 
 		// Check and update each text field
-		if oldPattern.MatchString(issue.Title) {
-			updates["title"] = oldPattern.ReplaceAllString(issue.Title, newID)
+		if v, ok := rewrite(issue.Title); ok {
+			updates["title"] = v
 			updated = true
 		}
-		if oldPattern.MatchString(issue.Description) {
-			updates["description"] = oldPattern.ReplaceAllString(issue.Description, newID)
+		if v, ok := rewrite(issue.Description); ok {
+			updates["description"] = v
 			updated = true
 		}
-		if oldPattern.MatchString(issue.Design) {
-			updates["design"] = oldPattern.ReplaceAllString(issue.Design, newID)
+		if v, ok := rewrite(issue.Design); ok {
+			updates["design"] = v
 			updated = true
 		}
-		if oldPattern.MatchString(issue.Notes) {
-			updates["notes"] = oldPattern.ReplaceAllString(issue.Notes, newID)
+		if v, ok := rewrite(issue.Notes); ok {
+			updates["notes"] = v
 			updated = true
 		}
-		if oldPattern.MatchString(issue.AcceptanceCriteria) {
-			updates["acceptance_criteria"] = oldPattern.ReplaceAllString(issue.AcceptanceCriteria, newID)
+		if v, ok := rewrite(issue.AcceptanceCriteria); ok {
+			updates["acceptance_criteria"] = v
 			updated = true
 		}
 
