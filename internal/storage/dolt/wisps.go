@@ -543,6 +543,50 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	kind := issueops.ClassifyDepTarget(ctx, tx, dep, isCrossPrefix)
 	targetCol := kind.Column()
 
+	// Cross-type blocking validation (GH#1495, beads-slmql): tasks can only
+	// block tasks, epics can only block epics. The shared issue-source seam
+	// (issueops.AddDependencyInTx, dependencies.go) enforces this and the
+	// embedded backend (which always routes through that seam) rejects a
+	// task-blocks-epic / epic-blocks-task edge — but this bespoke wisp-source
+	// path never read/compared issue_type, so the mismatch was silently ALLOWED
+	// on hub-connected sql-server crew (3rd un-mirrored guard on this method,
+	// after the cycle-family seam beads-i9bui and the audit event beads-k5oqp;
+	// the recurring drift is the beads-cjvxq hand-copy-defect class). Only
+	// dep.Type==blocks is gated (matching the shared check); other edge types
+	// are unaffected. The source is always an active wisp here (wisps.issue_type
+	// exists — cli_migrations.go); the target routes via kind to issues/wisps.
+	// External and cross-prefix targets are skipped, mirroring the shared seam.
+	if dep.Type == types.DepBlocks && kind != issueops.DepTargetExternal && !isCrossPrefix {
+		var sourceType, targetType string
+		if err := tx.QueryRowContext(ctx,
+			`SELECT issue_type FROM wisps WHERE id = ?`, dep.IssueID).Scan(&sourceType); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("issue %s not found", dep.IssueID)
+			}
+			return fmt.Errorf("failed to check wisp source issue_type: %w", err)
+		}
+		targetTable := "issues"
+		if kind == issueops.DepTargetWisp {
+			targetTable = "wisps"
+		}
+		//nolint:gosec // G201: targetTable is a fixed literal ("issues" or "wisps")
+		if err := tx.QueryRowContext(ctx,
+			fmt.Sprintf(`SELECT issue_type FROM %s WHERE id = ?`, targetTable), dep.DependsOnID).Scan(&targetType); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("issue %s not found", dep.DependsOnID)
+			}
+			return fmt.Errorf("failed to check target issue_type: %w", err)
+		}
+		sourceIsEpic := sourceType == string(types.TypeEpic)
+		targetIsEpic := targetType == string(types.TypeEpic)
+		if sourceIsEpic != targetIsEpic {
+			if sourceIsEpic {
+				return fmt.Errorf("epics can only block other epics, not tasks")
+			}
+			return fmt.Errorf("tasks can only block other tasks, not epics")
+		}
+	}
+
 	// Check for existing dependency to prevent silent type overwrites.
 	var existingType string
 	//nolint:gosec // G201: targetCol from DepTargetKind.Column()
