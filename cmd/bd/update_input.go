@@ -37,6 +37,13 @@ func gatherUpdateInput(ctx context.Context, cmd *cobra.Command) *updateInput {
 
 	if cmd.Flags().Changed("status") {
 		status, _ := cmd.Flags().GetString("status")
+		// Case-fold + trim built-in statuses (OPEN->open, " open "->open) BEFORE
+		// validate+store so the proxied write path accepts the same case/padding
+		// variants the direct path does (update.go:87, beads-gqvu/7wrj). Custom
+		// statuses stay verbatim: Status.Normalize only folds when the trimmed+
+		// lowered form is a built-in. Sibling normalizers issue_type (:140) and
+		// assignee (:73) already do this — status was the odd one out.
+		status = string(types.Status(status).Normalize())
 		validateUpdateStatus(ctx, status)
 		in.fields["status"] = status
 		if status == "closed" {
