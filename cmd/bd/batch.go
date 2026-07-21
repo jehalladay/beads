@@ -204,6 +204,19 @@ normal 'bd' subcommands for interactive/read operations.`,
 			return HandleErrorRespectJSON("%v", err)
 		}
 
+		// Enforce the closed-parent dep-add guard (beads-eth8) for every
+		// parent-child edge this batch adds. `bd dep add <child> <parent>
+		// --type parent-child` refuses (without --force) to attach an OPEN
+		// child to a CLOSED auto-closing parent (epic/molecule/wisp) at
+		// dep.go, but `bd batch dep.add` writes straight to tx.AddDependency
+		// below the CLI guard layer, silently recreating the
+		// closed-parent-with-open-child state the close-guard family prevents
+		// (beads-poj2t, the batch sibling of beads-eth8/beads-aw9x8). Same
+		// read-only, abort-before-write posture as guardBatchCloses.
+		if err := guardBatchDepAdds(ctx, store, ops, force); err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
+
 		results := make([]batchOpResult, 0, len(ops))
 		err = transact(ctx, store, commitMsg, func(tx storage.Transaction) error {
 			for _, op := range ops {
@@ -652,6 +665,100 @@ func batchReopensID(op batchOp) (id string, reopens bool) {
 		return op.args[0], true
 	}
 	return "", false
+}
+
+// batchDepAddParentChild reports whether op is a `dep.add` that adds a
+// parent-child edge and returns the child (from) and parent (to) ids. `bd dep
+// add <child> <parent> --type parent-child` maps child->from (IssueID) and
+// parent->to (DependsOnID), matching dep.go. Non-parent-child edges (blocks,
+// discovered-from, …) can't leave a closed parent with an open child, so they
+// are not guarded (mirrors the dt == types.DepParentChild check at dep.go).
+func batchDepAddParentChild(op batchOp) (child, parent string, ok bool) {
+	if op.cmd != "dep.add" || len(op.args) < 2 {
+		return "", "", false
+	}
+	depType := "blocks"
+	if len(op.args) >= 3 {
+		depType = op.args[2]
+	}
+	if types.DependencyType(depType) != types.DepParentChild {
+		return "", "", false
+	}
+	return op.args[0], op.args[1], true
+}
+
+// guardBatchDepAdds enforces the closed-parent dep-add guard (beads-eth8) for
+// every parent-child edge the batch adds, mirroring the single-command guard at
+// dep.go. Attaching an OPEN child to a CLOSED auto-closing parent
+// (epic/molecule/wisp — the shared isAutoClosingParentType, beads-aw9x8)
+// silently recreates the closed-parent-with-open-child inconsistency the
+// close-guard family prevents; batch wrote straight to tx.AddDependency below
+// the CLI guard layer, dropping it (beads-poj2t). Runs read-only against the
+// committed store BEFORE the write tx opens, so a violation aborts the whole
+// batch with no partial write.
+//
+// It is batch-aware to avoid false-positives on a self-consistent batch: a
+// parent being REOPENED in the same batch is not treated as still-closed, and a
+// child being CLOSED in the same batch is not treated as still-open (parity with
+// the willClose/willReopen exclusions on the close/reopen guards).
+//
+// force==true skips the check (the --force override, matching
+// `bd dep add --force`).
+func guardBatchDepAdds(ctx context.Context, s storage.DoltStorage, ops []batchOp, force bool) error {
+	if force || s == nil {
+		return nil
+	}
+
+	depAddOps := make([]batchOp, 0, len(ops))
+	for _, op := range ops {
+		if _, _, ok := batchDepAddParentChild(op); ok {
+			depAddOps = append(depAddOps, op)
+		}
+	}
+	if len(depAddOps) == 0 {
+		return nil
+	}
+
+	// Order-independent sets of the batch's status transitions, so an edge
+	// added alongside a reopen-of-parent / close-of-child is judged against the
+	// batch's net effect, not just committed state.
+	willReopen := make(map[string]bool)
+	willClose := make(map[string]bool)
+	for _, op := range ops {
+		if id, reopens := batchReopensID(op); reopens {
+			willReopen[id] = true
+		}
+		if id, closes := batchClosesID(op); closes {
+			willClose[id] = true
+		}
+	}
+
+	for _, op := range depAddOps {
+		child, parent, _ := batchDepAddParentChild(op)
+
+		parentIssue, perr := s.GetIssue(ctx, parent)
+		childIssue, cerr := s.GetIssue(ctx, child)
+		if perr != nil || cerr != nil || parentIssue == nil || childIssue == nil {
+			// Not found / lookup error / cross-rig external ref: let runBatchOp
+			// surface the authoritative error against the tx. Best-effort, same
+			// as the single-command guard (dep.go only guards same-store edges).
+			continue
+		}
+
+		// Parent closed at commit time: closed now (and not reopened here) or
+		// being closed in this batch.
+		parentClosed := (parentIssue.Status == types.StatusClosed && !willReopen[parent]) ||
+			willClose[parent]
+		// Child open at commit time: open now (and not closed here) or being
+		// reopened in this batch.
+		childOpen := (childIssue.Status != types.StatusClosed && !willClose[child]) ||
+			willReopen[child]
+
+		if isAutoClosingParentType(parentIssue) && parentClosed && childOpen {
+			return fmt.Errorf("line %d (%s): cannot add %s as a child of closed parent %s: it would leave the closed parent with an open child; reopen the parent, close the child first, or use --force to override", op.line, op.raw, child, parent)
+		}
+	}
+	return nil
 }
 
 // guardBatchReopens enforces the child-reopen close-guard (beads-b0tw) for every
