@@ -556,8 +556,11 @@ func runADOSync(cmd *cobra.Command, _ []string) error {
 		engine.OnMessage = func(msg string) { _, _ = fmt.Fprintln(out, "  "+msg) }
 	}
 	engine.OnWarning = func(msg string) {
+		// Always collect the warning so it reaches the machine-readable
+		// envelope (adoSyncResult.Warnings, ado.go json path); the stderr
+		// side-effect is json-guarded in emitADOSyncWarningStderr (beads-mfmcf).
 		warnings = append(warnings, msg)
-		_, _ = fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+		emitADOSyncWarningStderr(msg)
 	}
 
 	// Set up ADO-specific pull hooks (with bootstrap matching and no-create support)
@@ -752,6 +755,18 @@ func collectADOWorkItemMap(ctx context.Context, at *ado.Tracker) map[int]string 
 		}
 	}
 	return m
+}
+
+// emitADOSyncWarningStderr writes a sync warning's raw "Warning:" text to
+// stderr ONLY in human mode. In --json mode the warning is already carried in
+// the machine-readable adoSyncResult.Warnings envelope, and every other warning
+// site in runADOSync suppresses stderr under json — an unconditional write here
+// would double-report and interleave non-JSON noise with a --json consumer's
+// captured stderr (beads-mfmcf). Mirrors the OnMessage json guard.
+func emitADOSyncWarningStderr(msg string) {
+	if !jsonOutput {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+	}
 }
 
 // closeReconciledDeletedIssues closes each local issue whose ADO work item was
