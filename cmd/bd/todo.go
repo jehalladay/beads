@@ -216,6 +216,7 @@ var doneTodoCmd = &cobra.Command{
 
 		reason, _ := cmd.Flags().GetString("reason")
 		reason = todoDoneReasonOrDefault(reason)
+		force, _ := cmd.Flags().GetBool("force")
 
 		var closedIDs []string
 		failedCount := 0
@@ -230,6 +231,44 @@ var doneTodoCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Error: issue %s not found\n", issueID)
 				failedCount++
 				continue
+			}
+
+			// beads-k96re: `bd todo done` is a documented convenience wrapper for
+			// `bd close`, so it must run the SAME three PRE-close guards `bd close`
+			// runs before CloseIssue (close.go:158-203) — otherwise it silently
+			// closes states the guards exist to forbid (a blocked issue, an
+			// auto-closing parent with open children, an unsatisfied gate). --force
+			// overrides all three, mirroring `bd close --force`.
+			if !force {
+				// (1) open-child guard for auto-closing parents (epic/molecule/wisp
+				// root) — close.go:168-174 (beads-bigro/aw9x8 closed-parent invariant).
+				if isAutoClosingParentType(issue) {
+					if openChildren := countEpicOpenChildren(ctx, getStore(), issueID); openChildren > 0 {
+						fmt.Fprintf(os.Stderr, "Error: cannot close %s: %d open child issue(s); close children first or use --force to override\n", issueID, openChildren)
+						failedCount++
+						continue
+					}
+				}
+				// (2) gate-satisfaction guard — close.go:177-190. The error can embed
+				// untrusted external SCM data (gh:pr/gh:run), so sanitize for display
+				// (7n9y sink class).
+				if gerr := checkGateSatisfaction(issue); gerr != nil {
+					fmt.Fprintf(os.Stderr, "Error: cannot close %s: %s\n", issueID, ui.SanitizeForTerminal(gerr.Error()))
+					failedCount++
+					continue
+				}
+				// (3) open-blocker guard — close.go:193-203.
+				blocked, blockers, berr := getStore().IsBlocked(ctx, issueID)
+				if berr != nil {
+					fmt.Fprintf(os.Stderr, "Error: checking blockers for %s: %v\n", issueID, berr)
+					failedCount++
+					continue
+				}
+				if blocked && len(blockers) > 0 {
+					fmt.Fprintf(os.Stderr, "Error: cannot close %s: blocked by open issues %v (use --force to override)\n", issueID, blockers)
+					failedCount++
+					continue
+				}
 			}
 
 			if err := getStore().CloseIssue(ctx, issueID, reason, getActorWithGit(), ""); err != nil {
@@ -305,6 +344,9 @@ func init() {
 	listTodosCmd.Flags().Bool("all", false, "Show all TODOs including completed")
 
 	doneTodoCmd.Flags().String("reason", "", "Reason for closing (default: Completed)")
+	// beads-k96re: mirror `bd close --force` so the blocker/open-child/gate
+	// guards can be deliberately overridden, matching the wrapped command.
+	doneTodoCmd.Flags().BoolP("force", "f", false, "Override pre-close guards (open blockers, open children, unsatisfied gates)")
 
 	// Register with root
 	rootCmd.AddCommand(todoCmd)
