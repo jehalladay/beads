@@ -394,6 +394,7 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 	// to avoid write timeout on large sets — see bd-2ehd, ff-tqm).
 	ephIDs, regularIDs := s.partitionByWispStatus(ctx, ids)
 	wispDeleteCount := 0
+	wispDepsCount, wispLabelsCount, wispEventsCount := 0, 0, 0
 	if len(ephIDs) > 0 {
 		var activeWispIDs []string
 		for _, eid := range ephIDs {
@@ -402,6 +403,27 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 			}
 		}
 		wispDeleteCount = len(activeWispIDs)
+		// beads-shytq: count the wisp aux rows that the deletion removes, so the
+		// server (DoltStore) path reports DependenciesCount/LabelsCount/EventsCount
+		// for wisps the same as the embedded path (DeleteIssuesInTx, fixed by
+		// g7rof/dtmj2). deleteWispBatchTx removes these rows — explicitly for
+		// wisp_dependencies (DeleteWispsFromDependenciesInTx) and via ON DELETE
+		// CASCADE for wisp_labels/wisp_events — but returns only the wisp row count,
+		// so without this the CLI showed "Dependencies/Labels/Events: 0" for a wisp
+		// purge that actually removed those rows. Counted up-front off the current
+		// (pre-deletion) state, so it is valid for both the dry-run and force legs.
+		if len(activeWispIDs) > 0 {
+			var err error
+			if wispDepsCount, err = issueops.CountRowsForIssueIDsInTx(ctx, s.db, "wisp_dependencies", activeWispIDs); err != nil {
+				return nil, fmt.Errorf("count wisp dependencies: %w", err)
+			}
+			if wispLabelsCount, err = issueops.CountRowsForIssueIDsInTx(ctx, s.db, "wisp_labels", activeWispIDs); err != nil {
+				return nil, fmt.Errorf("count wisp labels: %w", err)
+			}
+			if wispEventsCount, err = issueops.CountRowsForIssueIDsInTx(ctx, s.db, "wisp_events", activeWispIDs); err != nil {
+				return nil, fmt.Errorf("count wisp events: %w", err)
+			}
+		}
 		if !dryRun && len(activeWispIDs) > 0 {
 			deleted, err := s.deleteWispBatch(ctx, activeWispIDs)
 			if err != nil {
@@ -412,7 +434,12 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 	}
 	ids = regularIDs
 	if len(ids) == 0 {
-		return &types.DeleteIssuesResult{DeletedCount: wispDeleteCount}, nil
+		return &types.DeleteIssuesResult{
+			DeletedCount:      wispDeleteCount,
+			DependenciesCount: wispDepsCount,
+			LabelsCount:       wispLabelsCount,
+			EventsCount:       wispEventsCount,
+		}, nil
 	}
 
 	var result *types.DeleteIssuesResult
@@ -440,10 +467,20 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 		// Preserve partial result (e.g., OrphanedIssues) on error.
 		if result != nil {
 			result.DeletedCount += wispDeleteCount
+			// beads-shytq: fold in the wisp aux counts alongside the wisp delete
+			// count so a mixed issue+wisp delete reports the wisps' removed aux rows.
+			result.DependenciesCount += wispDepsCount
+			result.LabelsCount += wispLabelsCount
+			result.EventsCount += wispEventsCount
 		}
 		return result, err
 	}
 	result.DeletedCount += wispDeleteCount
+	// beads-shytq: the regular-ID leg counts its own aux rows in DeleteIssuesInTx;
+	// add the wisp aux counts gathered above for the wisp leg of a mixed delete.
+	result.DependenciesCount += wispDepsCount
+	result.LabelsCount += wispLabelsCount
+	result.EventsCount += wispEventsCount
 
 	return result, nil
 }

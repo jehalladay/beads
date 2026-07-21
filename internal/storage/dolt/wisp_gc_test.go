@@ -219,7 +219,79 @@ func TestDeleteWispBatch_LargeBatch(t *testing.T) {
 	}
 }
 
+// TestDeleteIssues_WispAuxCountsReported is the beads-shytq regression: the
+// server (DoltStore) DeleteIssues path routes wisps through deleteWispBatch and
+// used to return DeleteIssuesResult{DeletedCount} only, leaving
+// DependenciesCount/LabelsCount/EventsCount at 0 even though the deletion
+// removes those wisp aux rows (explicitly for wisp_dependencies, via ON DELETE
+// CASCADE for wisp_labels/wisp_events). So `bd purge` displayed "Dependencies/
+// Labels/Events: 0" for a wisp purge that actually removed those rows — the
+// server-path sibling of the embedded g7rof/dtmj2 fix. This asserts the counts
+// are reported for both the force and dry-run legs.
+func TestDeleteIssues_WispAuxCountsReported(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Two wisps: target (directly purged) with a dep on other, plus a label
+	// (which also records a label_added event) → seeds wisp_dependencies,
+	// wisp_labels, and wisp_events rows keyed to target.
+	target := createTestWisp(t, ctx, store, "shytq target wisp")
+	other := createTestWisp(t, ctx, store, "shytq other wisp")
+	mustAddWispDep(t, ctx, store, target.ID, other.ID)
+	if err := store.AddLabel(ctx, target.ID, "shytq-label", "test"); err != nil {
+		t.Fatalf("AddLabel: %v", err)
+	}
+
+	// Ground-truth the seeded aux-row counts for target so the assertion does
+	// not hard-code Dolt's event bookkeeping.
+	wantDeps := countRowsForID(t, ctx, store.db, "wisp_dependencies", target.ID)
+	wantLabels := countRowsForID(t, ctx, store.db, "wisp_labels", target.ID)
+	wantEvents := countRowsForID(t, ctx, store.db, "wisp_events", target.ID)
+	if wantDeps == 0 || wantLabels == 0 || wantEvents == 0 {
+		t.Fatalf("fixture seeded no aux rows (deps=%d labels=%d events=%d); test cannot discriminate",
+			wantDeps, wantLabels, wantEvents)
+	}
+
+	// Dry-run: counts reported without deleting.
+	dry, err := store.DeleteIssues(ctx, []string{target.ID}, false, false, true)
+	if err != nil {
+		t.Fatalf("DeleteIssues dry-run: %v", err)
+	}
+	if dry.DependenciesCount != wantDeps || dry.LabelsCount != wantLabels || dry.EventsCount != wantEvents {
+		t.Errorf("dry-run aux counts = deps %d/labels %d/events %d, want %d/%d/%d",
+			dry.DependenciesCount, dry.LabelsCount, dry.EventsCount, wantDeps, wantLabels, wantEvents)
+	}
+
+	// Force delete: counts reported, and the rows are actually gone.
+	res, err := store.DeleteIssues(ctx, []string{target.ID}, false, true, false)
+	if err != nil {
+		t.Fatalf("DeleteIssues force: %v", err)
+	}
+	if res.DependenciesCount != wantDeps || res.LabelsCount != wantLabels || res.EventsCount != wantEvents {
+		t.Errorf("force-delete aux counts = deps %d/labels %d/events %d, want %d/%d/%d",
+			res.DependenciesCount, res.LabelsCount, res.EventsCount, wantDeps, wantLabels, wantEvents)
+	}
+	if got := countRowsForID(t, ctx, store.db, "wisp_labels", target.ID); got != 0 {
+		t.Errorf("wisp_labels not removed after delete: %d rows remain", got)
+	}
+}
+
 // --- helpers ---
+
+// countRowsForID counts rows in an aux table where issue_id matches id.
+func countRowsForID(t *testing.T, ctx context.Context, db *sql.DB, table, id string) int {
+	t.Helper()
+	var count int
+	//nolint:gosec // G201: table is a test-controlled literal
+	if err := db.QueryRowContext(ctx,
+		fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE issue_id = ?", table), id).Scan(&count); err != nil {
+		t.Fatalf("countRowsForID(%s, %s): %v", table, id, err)
+	}
+	return count
+}
 
 func createTestWisp(t *testing.T, ctx context.Context, store *DoltStore, title string) *types.Issue {
 	t.Helper()
