@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
@@ -371,7 +372,17 @@ func validateGraphApplyPlan(plan *GraphApplyPlan, customTypes []string) error {
 			return fmt.Errorf("duplicate node key %q", node.Key)
 		}
 		seenKeys[node.Key] = true
-		if node.Title == "" {
+		// beads-pwtvp: trim then empty-check and write back, mirroring single
+		// `bd create` (create.go: "title = strings.TrimSpace(title); if
+		// title==\"\"") — so a whitespace-only title is rejected and a padded
+		// title is stored trimmed (not unmatchable). Both graph mint seams
+		// (direct graph_apply.go, proxied materializeGraphNodeIssue) read
+		// plan.Nodes after this validate, so the single write-back covers both.
+		// Sibling of the adjacent assignee normalize (beads-7i4m/llzt) and the
+		// label/closed-parent input-parity legs (l8qsn/t39ph).
+		trimmedTitle := strings.TrimSpace(node.Title)
+		plan.Nodes[i].Title = trimmedTitle
+		if trimmedTitle == "" {
 			return fmt.Errorf("node %q has empty title", node.Key)
 		}
 		if node.Type != "" {
