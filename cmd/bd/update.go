@@ -497,6 +497,18 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 		mutatedStores := map[storage.DoltStorage][]string{}
 		mutatedResults := map[*RoutedResult]bool{}
 		pendingCloseResults := []*RoutedResult{}
+		// beads-zzp26: steps closed by a genuine open->closed transition in this
+		// update run, paired with the store they closed in, so the
+		// completed-molecule auto-close cascade runs post-commit — mirroring
+		// `bd close` (close.go:223) and the batch leg (batch.go, beads-8cxe6).
+		// `bd update --status closed` reaches the SAME terminal close but wrote
+		// straight to UpdateIssue without this cascade, so closing a molecule's
+		// FINAL step via update left the root stuck OPEN (auto-close-parity gap).
+		type closedStep struct {
+			store storage.DoltStorage
+			id    string
+		}
+		var closedSteps []closedStep
 		trackMutation := func(result *RoutedResult) {
 			if result == nil || result.Store == nil {
 				return
@@ -723,6 +735,15 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 				if _, alreadySet := regularUpdates["close_reason"]; !alreadySet {
 					regularUpdates["close_reason"] = "Closed"
 				}
+				// beads-zzp26: record this genuine open->closed transition so the
+				// completed-molecule auto-close cascade runs post-commit (below),
+				// matching `bd close`. Recorded at the same transition guard the
+				// close_reason default keys on; the cascade runs only after the
+				// UpdateIssue write + commit succeed, and autoCloseCompletedMolecule
+				// re-reads the root's completion state, so a mid-loop failure that
+				// skips the write just leaves a no-op cascade entry (the root won't
+				// read as complete).
+				closedSteps = append(closedSteps, closedStep{store: issueStore, id: result.ResolvedID})
 			}
 
 			// --metadata is a whole-blob MERGE with arbitrary (unvalidated) keys,
@@ -1008,6 +1029,23 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 			}
 		}
 		closePendingResults()
+
+		// beads-zzp26: run the auto-close-completed-molecule cascade for each step
+		// closed by an open->closed transition in this update run, mirroring
+		// `bd close` (close.go:223) and the batch leg (batch.go, beads-8cxe6). Runs
+		// AFTER the per-store commit so the closed step is durably visible when the
+		// cascade re-reads the root's completion — and against the SAME store the
+		// step closed in. autoCloseCompletedMolecule is the identical function
+		// `bd close` calls, so completion detection and the which-roots-auto-close
+		// policy (shouldAutoCloseCompletedRoot) can never drift from the single-
+		// close path. Passing session="" matches the batch leg: the root's
+		// auto-close is a system action, not the caller's step-close session.
+		for _, cs := range closedSteps {
+			if cs.store == nil {
+				continue
+			}
+			autoCloseCompletedMolecule(ctx, cs.store, cs.id, actor, "")
+		}
 
 		// Set last touched after all updates complete
 		if firstUpdatedID != "" {
