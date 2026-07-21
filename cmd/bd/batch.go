@@ -879,15 +879,20 @@ func guardBatchCloses(ctx context.Context, s storage.DoltStorage, ops []batchOp,
 			continue
 		}
 
-		// Epic-with-open-children guard, batch-aware: a child that is itself
-		// being closed in this batch does not count as open.
-		if issue.IssueType == types.TypeEpic {
+		// Auto-closing-parent-with-open-children guard, batch-aware: a child
+		// that is itself being closed in this batch does not count as open.
+		// beads-6b9pz: widen from bare TypeEpic to the shared
+		// isAutoClosingParentType predicate (epic OR molecule/wisp root),
+		// matching bigro's close.go forward-guard widening.
+		// countEpicOpenChildrenExcluding counts any parent-child open child
+		// regardless of parent type.
+		if isAutoClosingParentType(issue) {
 			openChildren, cerr := countEpicOpenChildrenExcluding(ctx, s, id, willClose)
 			if cerr != nil {
-				return fmt.Errorf("line %d (%s): checking epic children for %s: %w", op.line, op.raw, id, cerr)
+				return fmt.Errorf("line %d (%s): checking children for %s: %w", op.line, op.raw, id, cerr)
 			}
 			if openChildren > 0 {
-				return fmt.Errorf("line %d (%s): cannot close epic %s: %d open child issue(s); close children first or use --force to override", op.line, op.raw, id, openChildren)
+				return fmt.Errorf("line %d (%s): cannot close %s: %d open child issue(s); close children first or use --force to override", op.line, op.raw, id, openChildren)
 			}
 		}
 

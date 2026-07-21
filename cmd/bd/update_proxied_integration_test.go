@@ -1201,6 +1201,61 @@ func TestProxiedServerUpdate(t *testing.T) {
 			t.Fatalf("expected exactly one LOG-ENTRY after retry, got %d; notes=%q", n, got.Notes)
 		}
 	})
+
+	// beads-6b9pz: `bd update --status closed` over the PROXIED server must
+	// refuse closing an auto-closing parent (epic OR molecule/wisp root) that
+	// still has open children — the forward-close twin of the guard bigro
+	// (@cf791b036) widened only for `bd close`. checkProxiedUpdateCloseGuards
+	// (update_proxied_server.go) previously gated on bare TypeEpic, so a
+	// molecule/wisp root closed cleanly here while `bd close` refused it.
+	// Mutation: restore `current.IssueType == types.TypeEpic` → the molecule
+	// case goes rc=0 (RED); the epic control and the plain-task precision
+	// control stay unchanged.
+	t.Run("update_close_molecule_with_open_child_refused", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "ucmol")
+		root := bdProxiedCreate(t, bd, p.dir, "Molecule root", "-t", "molecule")
+		bdProxiedCreate(t, bd, p.dir, "Open step", "--parent", root.ID)
+		out := bdProxiedUpdateFail(t, bd, p.dir, root.ID, "-s", "closed")
+		if !strings.Contains(out, "open child") {
+			t.Errorf("expected an open-child close guard on proxied update-close of a molecule root, got: %s", out)
+		}
+		if got := bdProxiedShow(t, bd, p.dir, root.ID); got.Status != types.StatusOpen {
+			t.Errorf("molecule root must remain open after a refused proxied update-close, got %s", got.Status)
+		}
+	})
+
+	t.Run("update_close_molecule_with_open_child_force_overrides", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "ucmolf")
+		root := bdProxiedCreate(t, bd, p.dir, "Molecule root force", "-t", "molecule")
+		bdProxiedCreate(t, bd, p.dir, "Open step force", "--parent", root.ID)
+		bdProxiedUpdateOne(t, bd, p.dir, root.ID, "-s", "closed", "--force")
+		if got := bdProxiedShow(t, bd, p.dir, root.ID); got.Status != types.StatusClosed {
+			t.Errorf("--force must close a molecule root with open children over proxied, got %s", got.Status)
+		}
+	})
+
+	t.Run("update_close_epic_with_open_child_still_refused", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "ucepic")
+		root := bdProxiedCreate(t, bd, p.dir, "Epic root", "-t", "epic")
+		bdProxiedCreate(t, bd, p.dir, "Open child", "--parent", root.ID)
+		out := bdProxiedUpdateFail(t, bd, p.dir, root.ID, "-s", "closed")
+		if !strings.Contains(out, "open child") {
+			t.Errorf("expected an open-child close guard on proxied update-close of an epic root (unchanged), got: %s", out)
+		}
+		if got := bdProxiedShow(t, bd, p.dir, root.ID); got.Status != types.StatusOpen {
+			t.Errorf("epic root must remain open after a refused proxied update-close, got %s", got.Status)
+		}
+	})
+
+	t.Run("update_close_plain_task_parent_with_open_child_succeeds", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "uctask")
+		root := bdProxiedCreate(t, bd, p.dir, "Plain task parent", "-t", "task")
+		bdProxiedCreate(t, bd, p.dir, "Open child", "--parent", root.ID)
+		bdProxiedUpdateOne(t, bd, p.dir, root.ID, "-s", "closed")
+		if got := bdProxiedShow(t, bd, p.dir, root.ID); got.Status != types.StatusClosed {
+			t.Errorf("a plain task parent with an open child must update-close freely over proxied, got %s", got.Status)
+		}
+	})
 }
 
 // readPinnedCol reads the stored pinned bool directly from the proxied DB.

@@ -533,10 +533,17 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 			// is overridable with --force, matching `bd close --force`.
 			if newStatus, ok := updates["status"].(string); ok && newStatus == "closed" &&
 				!forceFlag && issue.Status != types.StatusClosed {
-				// Epic close guard: prevent closing epics with open children.
-				if issue.IssueType == types.TypeEpic {
+				// Close guard: prevent closing an auto-closing parent (epic OR
+				// molecule/wisp root, beads-6b9pz) with open children. bigro
+				// (@cf791b036) widened the close.go forward guard from bare
+				// TypeEpic to the shared isAutoClosingParentType predicate but
+				// left this update-status=closed twin bare; a molecule/wisp root
+				// could still be closed with open children via `bd update`.
+				// countEpicOpenChildren counts any parent-child open child
+				// regardless of parent type, so it works for those roots unchanged.
+				if isAutoClosingParentType(issue) {
 					if openChildren := countEpicOpenChildren(ctx, issueStore, result.ResolvedID); openChildren > 0 {
-						reportItemError("cannot close epic %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
+						reportItemError("cannot close %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
 						closeIfUnmutated(result)
 						continue
 					}

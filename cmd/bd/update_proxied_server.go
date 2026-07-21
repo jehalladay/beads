@@ -296,7 +296,11 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 	// transition (already-closed is a no-op close).
 	if newStatus, ok := fields["status"].(string); ok && newStatus == "closed" &&
 		current.Status != types.StatusClosed {
-		if current.IssueType == types.TypeEpic {
+		// beads-6b9pz: widen from bare TypeEpic to the shared
+		// isAutoClosingParentType predicate (epic OR molecule/wisp root),
+		// matching bigro's close.go forward-guard widening. CountOpenChildren/
+		// CountOpenWispChildren count parent-child children regardless of type.
+		if isAutoClosingParentType(current) {
 			var openChildren int
 			var err error
 			if isWisp {
@@ -305,7 +309,7 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 				openChildren, err = uw.IssueUseCase().CountOpenChildren(ctx, id)
 			}
 			if err == nil && openChildren > 0 {
-				return fmt.Errorf("cannot close epic %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
+				return fmt.Errorf("cannot close %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
 			}
 		}
 		// zgku: refuse closing an issue that is blocked by open issues.
