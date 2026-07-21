@@ -336,6 +336,18 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 		if blocked && len(blockers) > 0 {
 			return fmt.Errorf("cannot close %s: blocked by open issues %v (use --force to override)", id, blockers)
 		}
+		// Gate-satisfaction close guard (beads-l9f7j): proxied twin of the
+		// direct update.go gate guard — `bd close` (close.go:178) / its proxied
+		// twin (close_proxied_server.go:276) / `bd batch` (beads-zpq1f) all
+		// REJECT closing an issue with an unsatisfied machine-checkable gate
+		// (timer / gh:pr* / gh:run*); the proxied update close leg bypassed it,
+		// the SAME twin-divergence the zgku/2hkd/b0tw guards above closed.
+		// checkGateSatisfaction self-short-circuits on a non-machine-checkable
+		// gate. Sanitize the error: a gh:pr/gh:run gate embeds untrusted SCM
+		// data that can carry terminal escapes (beads-pbt8m, 7n9y sink class).
+		if err := checkGateSatisfaction(current); err != nil {
+			return fmt.Errorf("cannot close %s: %s", id, ui.SanitizeForTerminal(err.Error()))
+		}
 	}
 
 	// 2hkd + beads-l7l3j: refuse demoting an auto-closing parent (epic OR

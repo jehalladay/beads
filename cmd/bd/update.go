@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/timeparsing"
@@ -599,6 +600,23 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 					closeIfUnmutated(result)
 					continue
 				}
+				// Gate-satisfaction close guard (beads-l9f7j): `bd close`
+				// (close.go:178) and `bd batch` (beads-zpq1f) REJECT closing an
+				// issue whose machine-checkable gate (timer / gh:pr* / gh:run*)
+				// is unsatisfied; the single-update close leg silently bypassed
+				// it — the FOURTH close-side-effect axis on the close-parity
+				// matrix (alongside molecule-autoclose/zzp26, audit/n4sn, and the
+				// zgku/2hkd/b0tw/a8a1b integrity guards). checkGateSatisfaction
+				// self-short-circuits to nil on a non-machine-checkable gate
+				// (close.go), so no isMachineCheckableGate pre-check is needed.
+				// Sanitize the error for display: a gh:pr/gh:run gate embeds
+				// untrusted external SCM data (PR title / workflow name) that can
+				// carry terminal escapes (beads-pbt8m, 7n9y sink class).
+				if err := checkGateSatisfaction(issue); err != nil {
+					reportItemError("cannot close %s: %s", id, ui.SanitizeForTerminal(err.Error()))
+					closeIfUnmutated(result)
+					continue
+				}
 			}
 
 			// Epic-demote close-guard bypass (beads-2hkd): the epic-with-open-
@@ -757,6 +775,28 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 				// shared cmd-layer chokepoint so every field is captured uniformly
 				// (beads-n4sn).
 				auditIssueUpdate(result.ResolvedID, issue, regularUpdates, actor, "")
+
+				// on_close hook parity (beads-vn7dl): a real open->closed update
+				// reaches the same terminal state as `bd close`, which fires
+				// on_close (HookFiringStore.CloseIssue, hook_decorator.go:149) —
+				// and the PROXIED update twin fires it too (fireProxiedUpdateHooks,
+				// update_proxied_server.go:443). But the DIRECT update path goes
+				// through HookFiringStore.UpdateIssue, which fires ONLY on_update
+				// (hook_decorator.go:122) — so on_close automation (notifications,
+				// downstream sync, GC/archival) silently did not run on a
+				// direct-mode close-via-update. Fire the missing EventClose here at
+				// the cmd layer, at parity with the proxied twin; on_update already
+				// fired inside the decorator, so this adds exactly the missing event
+				// (no double-fire). Do NOT change HookFiringStore.UpdateIssue — its
+				// on_update-only contract is relied on by programmatic callers.
+				if newStatus, ok := regularUpdates["status"].(string); ok &&
+					newStatus == string(types.StatusClosed) && issue.Status != types.StatusClosed {
+					if runner := getHookRunner(); runner != nil {
+						if after, err := issueStore.GetIssue(ctx, result.ResolvedID); err == nil && after != nil {
+							_ = runner.RunSync(hooks.EventClose, after)
+						}
+					}
+				}
 			}
 
 			// Apply per-key metadata edits atomically at the server (beads-fnp6).
