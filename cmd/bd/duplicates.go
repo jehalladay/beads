@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -441,53 +442,99 @@ func performMerge(targetID string, sourceIDs []string) map[string]interface{} {
 	errors := []string{}
 
 	for _, sourceID := range sourceIDs {
-		// Re-parent children before closing to prevent orphaning.
-		// Get dependents with metadata to find parent-child relationships.
-		dependents, err := store.GetDependentsWithMetadata(ctx, sourceID)
-		if err == nil {
-			for _, dep := range dependents {
-				if dep.DependencyType != types.DepParentChild {
-					continue
-				}
-				childID := dep.Issue.ID
-				// Remove old parent-child link
-				if err := store.RemoveDependency(ctx, childID, sourceID, getActor()); err != nil {
-					errors = append(errors, fmt.Sprintf("failed to remove parent link %s→%s: %v", childID, sourceID, err))
-					continue
-				}
-				// Add new parent-child link to target
-				newDep := &types.Dependency{
-					IssueID:     childID,
-					DependsOnID: targetID,
-					Type:        types.DepParentChild,
-				}
-				if err := store.AddDependency(ctx, newDep, getActor()); err != nil {
-					errors = append(errors, fmt.Sprintf("failed to reparent %s to %s: %v", childID, targetID, err))
-					continue
-				}
-				reparentedIDs = append(reparentedIDs, childID)
-			}
-		}
-
-		// Close the duplicate issue
+		// beads-zcq86: reparent-children + close-source + link-to-target must be
+		// ATOMIC per source. Previously each of these ran as its own
+		// autocommitting store call, so a mid-sequence failure left a split
+		// state: a child ORPHANED mid-reparent (old parent-child link removed,
+		// new one not added), or the source CLOSED with reason "Duplicate of X"
+		// but with NO "related" edge to the target — a closed duplicate with no
+		// provenance link (the same split-state class store.LinkAndClose fixed
+		// for bd duplicate / bd supersede, beads-njnw; the batch/swarm/gate
+		// siblings are beads-ary2n/ivnqm). Wrapping the whole per-source unit in
+		// one transaction rolls the close (and any partial reparent) back when
+		// the link fails. Per-source (not per-child-pair) atomicity is
+		// deliberate: it additionally prevents a reparent failure from leaving
+		// the source CLOSED while a child still points at it — the
+		// closed-parent-with-open-child invariant the eth8/aw9x8 close-guard
+		// family enforces. Either a source fully merges or nothing changes for
+		// it (a conflicting source is reported and skipped; other sources in the
+		// loop still merge). We do NOT use store.LinkAndClose here because its
+		// close leg (UpdateIssueInTx) defaults close_reason to "Closed" and takes
+		// no reason arg — it would drop merge's meaningful "Duplicate of X"
+		// provenance reason. tx.CloseIssue(reason) preserves it.
 		reason := fmt.Sprintf("Duplicate of %s", targetID)
-		if err := store.CloseIssue(ctx, sourceID, reason, actor, ""); err != nil {
-			errors = append(errors, fmt.Sprintf("failed to close %s: %v", sourceID, err))
-			continue
-		}
-		closedIDs = append(closedIDs, sourceID)
 
-		// Add dependency linking source to target
-		dep := &types.Dependency{
-			IssueID:     sourceID,
-			DependsOnID: targetID,
-			Type:        types.DependencyType("related"),
-		}
-		if err := store.AddDependency(ctx, dep, getActor()); err != nil {
-			errors = append(errors, fmt.Sprintf("failed to link %s to %s: %v", sourceID, targetID, err))
+		// Collect this source's outcome inside the tx; only commit it to the
+		// result slices (and emit the GC-survivable audit) after the tx commits,
+		// so a rolled-back source records an error, not a phantom success.
+		var reparentedThisSource []string
+		sourceClosed := false
+
+		// Re-parent children before closing to prevent orphaning.
+		dependents, derr := store.GetDependentsWithMetadata(ctx, sourceID)
+
+		commitMsg := fmt.Sprintf("bd: merge %s into %s", sourceID, targetID)
+		txErr := transact(ctx, store, commitMsg, func(tx storage.Transaction) error {
+			if derr == nil {
+				for _, dep := range dependents {
+					if dep.DependencyType != types.DepParentChild {
+						continue
+					}
+					childID := dep.Issue.ID
+					// Remove old parent-child link
+					if err := tx.RemoveDependency(ctx, childID, sourceID, getActor()); err != nil {
+						return fmt.Errorf("failed to remove parent link %s→%s: %w", childID, sourceID, err)
+					}
+					// Add new parent-child link to target
+					newDep := &types.Dependency{
+						IssueID:     childID,
+						DependsOnID: targetID,
+						Type:        types.DepParentChild,
+					}
+					if err := tx.AddDependency(ctx, newDep, getActor()); err != nil {
+						return fmt.Errorf("failed to reparent %s to %s: %w", childID, targetID, err)
+					}
+					reparentedThisSource = append(reparentedThisSource, childID)
+				}
+			}
+
+			// Close the duplicate issue (preserving the "Duplicate of X" reason).
+			if err := tx.CloseIssue(ctx, sourceID, reason, actor, ""); err != nil {
+				return fmt.Errorf("failed to close %s: %w", sourceID, err)
+			}
+			sourceClosed = true
+
+			// Add dependency linking source to target.
+			dep := &types.Dependency{
+				IssueID:     sourceID,
+				DependsOnID: targetID,
+				Type:        types.DependencyType("related"),
+			}
+			if err := tx.AddDependency(ctx, dep, getActor()); err != nil {
+				return fmt.Errorf("failed to link %s to %s: %w", sourceID, targetID, err)
+			}
+			return nil
+		})
+		if txErr != nil {
+			// The whole per-source unit rolled back — no reparent, no close, no
+			// link persisted. Record the error and move on (loop-continue parity
+			// with the pre-atomic behavior).
+			errors = append(errors, txErr.Error())
 			continue
 		}
+
+		// Tx committed: this source's reparent + close + link all applied.
+		reparentedIDs = append(reparentedIDs, reparentedThisSource...)
+		closedIDs = append(closedIDs, sourceID)
 		linkedIDs = append(linkedIDs, sourceID)
+
+		// GC-survivable audit trail for the close, mirroring bd close
+		// (close.go:204-208) and bd batch close (batch.go). The transaction seam
+		// closes via CloseIssueWithoutEventInTx, so the file-audit is where the
+		// merge close is durably recorded at parity with the other close paths.
+		if sourceClosed {
+			auditStatusChange(sourceID, "open", "closed", getActor(), reason)
+		}
 	}
 
 	result["closed"] = closedIDs
