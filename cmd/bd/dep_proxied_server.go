@@ -655,7 +655,25 @@ func runDepTreeProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 	}
 
 	if statusFilter != "" {
-		tree = filterTreeByStatus(tree, types.Status(statusFilter))
+		// beads-5gwaj: validate + Normalize --status BEFORE filtering, mirroring
+		// the direct path (dep.go, beads-p330) and the proxied validation-parity
+		// family (find_duplicates_proxied_server.go). filterTreeByStatus does a
+		// raw node.Status == status compare, so without this a typo'd --status
+		// (e.g. "opne") silently matched nothing and returned an empty tree
+		// (exit 0) — the silent-accept gap the enum-value-reject family closed —
+		// and an uppercase --status (e.g. "OPEN") dropped matching nodes because
+		// it was never Normalize()d. --status is single-value (no comma/multi),
+		// so one Normalize+IsValidWithCustom check suffices, like p330.
+		cfg, cfgErr := loadProxiedListFilterConfig(ctx, uw)
+		if cfgErr != nil {
+			FatalErrorRespectJSON("%v", cfgErr)
+		}
+		names := cfg.customStatusNames()
+		s := types.Status(strings.TrimSpace(statusFilter)).Normalize()
+		if !s.IsValidWithCustom(names) {
+			FatalErrorRespectJSON("invalid status %q (valid: %s)", statusFilter, validStatusList(names))
+		}
+		tree = filterTreeByStatus(tree, s)
 	}
 
 	if strings.EqualFold(formatStr, "mermaid") {
