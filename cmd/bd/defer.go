@@ -168,13 +168,16 @@ Examples:
 					}
 					continue
 				}
-				if reason != "" {
-					notes := issue.Notes
-					if notes != "" {
-						notes += "\n"
-					}
-					updates["notes"] = notes + reason
-				}
+				// NOTE: the --reason append is NOT folded into `updates["notes"]`
+				// here. A client-side read (issue.Notes) → concat → whole-blob write
+				// is a read-modify-write that loses a concurrent notes append
+				// (another defer --reason, an `update --append-notes`, or set-state)
+				// landing between the GetIssue above and the UpdateIssue below —
+				// last-writer-wins on the whole notes column, silent. Instead the
+				// reason is appended ATOMICALLY at the DB via store.AppendNotes (a
+				// single server-side CONCAT_WS) after the scalar update, mirroring
+				// `bd update --append-notes` (beads-jscve). The defer sink twin of
+				// that fix (beads-j8yhg).
 			} else if reason != "" {
 				// Reason requested but the issue couldn't be loaded: fail rather
 				// than silently drop the reason (prior behavior).
@@ -189,6 +192,18 @@ Examples:
 			if err := store.UpdateIssue(ctx, fullID, updates, actor); err != nil {
 				fmt.Fprintf(os.Stderr, "Error deferring %s: %v\n", fullID, err)
 				continue
+			}
+			// Append the --reason ATOMICALLY at the DB (beads-j8yhg) — a single
+			// server-side CONCAT_WS in its own transaction — instead of the old
+			// client-side read/concat/whole-blob write, which lost a concurrent
+			// notes append (last-writer-wins, silent). Applied as its own write
+			// after the scalar UpdateIssue so it can't clobber a concurrent append
+			// via UpdateIssue's full-row write. Mirrors `bd update --append-notes`.
+			if reason != "" {
+				if err := store.AppendNotes(ctx, fullID, reason, actor); err != nil {
+					fmt.Fprintf(os.Stderr, "Error appending reason for %s: %v\n", fullID, err)
+					continue
+				}
 			}
 			// Audit log the defer status change (survives Dolt GC flatten) via
 			// the shared cmd-layer chokepoint (beads-n4sn). Uses the ACTUAL target
