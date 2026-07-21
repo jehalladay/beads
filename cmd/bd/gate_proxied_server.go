@@ -249,12 +249,23 @@ func runGateResolveProxied(ctx context.Context, gateID, reason string) error {
 		return nil
 	}
 
+	gateOldStatus := string(issue.Status)
 	if _, err := uw.IssueUseCase().CloseIssue(ctx, gateID, domain.CloseIssueParams{Reason: reason}, actor); err != nil {
 		return HandleErrorRespectJSON("closing gate: %v", err)
 	}
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: gate resolve %s", gateID)); err != nil && !isDoltNothingToCommit(err) {
 		return HandleErrorRespectJSON("failed to commit: %v", err)
 	}
+
+	// beads-1jkl5: write the GC-survivable audit-FILE trail (.beads/
+	// interactions.jsonl) for the gate close, at parity with the direct leg and
+	// bd close/reopen/defer/supersede/duplicate (n4sn/r3m8v class).
+	// audit.LogFieldChange writes a cwd-based file, NOT a UOW op, so it must run
+	// AFTER uw.Commit succeeds — a pre-commit emit would orphan the entry if the
+	// deferred uw.Close rolled the tx back (matches the r3m8v proxied fix). The
+	// already-resolved no-op returned early above, so reaching here always means
+	// a real open→closed transition.
+	auditStatusChange(gateID, gateOldStatus, "closed", actor, reason)
 
 	if jsonOutput {
 		return outputJSON(map[string]interface{}{

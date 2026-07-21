@@ -573,11 +573,24 @@ Use --reason to provide context for why the gate was resolved.`,
 			return nil
 		}
 
+		gateOldStatus := string(issue.Status)
 		if err := store.CloseIssue(ctx, gateID, reason, actor, ""); err != nil {
 			return HandleErrorRespectJSON("closing gate: %v", err)
 		}
 
 		commandDidWrite.Store(true)
+
+		// beads-1jkl5: resolving a gate closes it via store.CloseIssue, whose DB
+		// EventClosed row survives only until a Dolt GC flatten. bd close/reopen/
+		// defer/supersede/duplicate ALSO write a GC-survivable audit-FILE entry
+		// (.beads/interactions.jsonl) via auditStatusChange (n4sn/r3m8v) — but
+		// gate resolve dropped it, so after a flatten a resolved gate's close
+		// vanished from the durable record while a plainly closed issue's did
+		// not. Emit the same status field_change (audit-parity sibling of r3m8v
+		// on the gate-resolve leg). The already-resolved no-op returned early
+		// above, so reaching here always means a real open→closed transition;
+		// store.CloseIssue autocommits durably, so this reflects a real change.
+		auditStatusChange(gateID, gateOldStatus, "closed", actor, reason)
 
 		// beads-u3lt: gate resolve honored --json NOWHERE (success printed
 		// plaintext, errors used bare HandleError) — emit a JSON success doc under
