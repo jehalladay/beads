@@ -759,18 +759,25 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 						continue
 					}
 					// beads-a8a1b: refuse to reparent an OPEN child under a
-					// CLOSED epic — the parent-assignment axis of the "closed
-					// epic with an open child" invariant, which the close-guard
-					// family (zgku/b0tw) enforces on the status-transition axes
-					// but which was WIDE OPEN here (reparent only validated the
-					// new parent EXISTS, not its status). Only a genuine
-					// violation (parent is a closed epic AND this child is open);
-					// reparenting a closed child, or under an open/non-epic
-					// parent, is unaffected. Overridable with --force, matching
+					// CLOSED auto-closing parent — the parent-assignment axis of
+					// the "closed parent with an open child" invariant, which the
+					// close-guard family (zgku/b0tw) enforces on the
+					// status-transition axes but which was WIDE OPEN here
+					// (reparent only validated the new parent EXISTS, not its
+					// status). Only a genuine violation (parent is a closed
+					// auto-closing parent AND this child is open); reparenting a
+					// closed child, or under an open/non-auto-closing parent, is
+					// unaffected. Overridable with --force, matching
 					// `bd close --force`.
-					if !forceFlag && parentIssue.IssueType == types.TypeEpic &&
+					//
+					// beads-hxtzy: widened from bare TypeEpic to the shared
+					// isAutoClosingParentType (epic OR molecule OR ephemeral/wisp,
+					// per aw9x8/czu1s) so a closed MOLECULE/wisp root is caught
+					// too — the reparent-axis sibling of the czu1s create-axis
+					// widen. Error text "closed epic"→"closed parent".
+					if !forceFlag && isAutoClosingParentType(parentIssue) &&
 						parentIssue.Status == types.StatusClosed && issue.Status != types.StatusClosed {
-						reportUpdateItemError("cannot reparent %s under closed epic %s: the epic is closed and %s is open (would create a closed epic with an open child); reopen the epic first or use --force to override", id, newParent, id)
+						reportUpdateItemError("cannot reparent %s under closed parent %s: the parent is closed and %s is open (would create a closed parent with an open child); reopen the parent first or use --force to override", id, newParent, id)
 						closeIfUnmutated(result)
 						continue
 					}

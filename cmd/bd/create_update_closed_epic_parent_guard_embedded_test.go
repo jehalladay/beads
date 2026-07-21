@@ -97,13 +97,15 @@ func TestClosedEpicParentAssignmentGuard(t *testing.T) {
 		}
 	})
 
-	// (2) update <open child> --parent <closed epic> is refused.
+	// (2) update <open child> --parent <closed epic> is refused. beads-hxtzy
+	//     generalized the reparent error text "closed epic" -> "closed parent"
+	//     (matching the czu1s create-axis widen).
 	t.Run("reparent_open_child_under_closed_epic_refused", func(t *testing.T) {
 		epicID := makeClosedEpic(t, "a8a1b closed epic reparent")
 		child := bdCreate(t, bd, dir, "loose task", "--type", "task")
 		out := bdUpdateFail(t, bd, dir, child.ID, "--parent", epicID)
-		if !strings.Contains(out, "closed epic") {
-			t.Errorf("expected a 'closed epic' guard error on reparent, got: %s", out)
+		if !strings.Contains(out, "closed parent") {
+			t.Errorf("expected a 'closed parent' guard error on reparent, got: %s", out)
 		}
 	})
 
@@ -114,10 +116,40 @@ func TestClosedEpicParentAssignmentGuard(t *testing.T) {
 		bdUpdate(t, bd, dir, child.ID, "--parent", epicID, "--force")
 	})
 
+	// (2-hxtzy) update <open child> --parent <closed MOLECULE> is refused.
+	//     A molecule is an auto-closing parent, so an open child reparented
+	//     under a closed molecule is the same invariant violation as under an
+	//     epic. This is the reparent-axis sibling of the czu1s create-axis
+	//     molecule case, and the mutation-RED teeth for the hxtzy widen (bare
+	//     TypeEpic would have let this through).
+	t.Run("reparent_open_child_under_closed_molecule_refused", func(t *testing.T) {
+		molID := makeClosedParent(t, "hxtzy closed molecule reparent", "molecule")
+		child := bdCreate(t, bd, dir, "loose task to molecule", "--type", "task")
+		out := bdUpdateFail(t, bd, dir, child.ID, "--parent", molID)
+		if !strings.Contains(out, "closed parent") {
+			t.Errorf("expected a 'closed parent' guard error reparenting under a closed molecule, got: %s", out)
+		}
+	})
+
+	// (2-hxtzy-force) --force overrides the molecule reparent guard too.
+	t.Run("reparent_open_child_under_closed_molecule_force_overrides", func(t *testing.T) {
+		molID := makeClosedParent(t, "hxtzy closed molecule reparent force", "molecule")
+		child := bdCreate(t, bd, dir, "loose task to molecule force", "--type", "task")
+		bdUpdate(t, bd, dir, child.ID, "--parent", molID, "--force")
+	})
+
 	// Negative: reparenting under an OPEN epic is unaffected (no false-positive).
 	t.Run("reparent_under_open_epic_still_allowed", func(t *testing.T) {
 		openEpic := bdCreate(t, bd, dir, "a8a1b open epic", "--type", "epic")
 		child := bdCreate(t, bd, dir, "task to open epic", "--type", "task")
 		bdUpdate(t, bd, dir, child.ID, "--parent", openEpic.ID)
+	})
+
+	// Negative (hxtzy): reparenting under an OPEN molecule is unaffected — the
+	//     guard fires only on a CLOSED auto-closing parent (no over-fire).
+	t.Run("reparent_under_open_molecule_still_allowed", func(t *testing.T) {
+		openMol := bdCreate(t, bd, dir, "hxtzy open molecule", "--type", "molecule")
+		child := bdCreate(t, bd, dir, "task to open molecule", "--type", "task")
+		bdUpdate(t, bd, dir, child.ID, "--parent", openMol.ID)
 	})
 }

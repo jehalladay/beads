@@ -364,17 +364,22 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 		}
 	}
 
-	// beads-a8a1b: refuse reparenting an OPEN child under a CLOSED epic on the
-	// proxied path (the parent-assignment axis of the closed-epic-with-open-child
-	// invariant), mirroring the direct path in update.go. Only a genuine
-	// violation: a non-empty new parent that is a closed epic AND this child is
-	// open. Reparenting a closed child, or under an open/non-epic parent, is
-	// unaffected. --force bypass is handled by the caller (runs only when !force).
+	// beads-a8a1b: refuse reparenting an OPEN child under a CLOSED auto-closing
+	// parent on the proxied path (the parent-assignment axis of the
+	// closed-parent-with-open-child invariant), mirroring the direct path in
+	// update.go. Only a genuine violation: a non-empty new parent that is a
+	// closed auto-closing parent AND this child is open. Reparenting a closed
+	// child, or under an open/non-auto-closing parent, is unaffected. --force
+	// bypass is handled by the caller (runs only when !force).
+	//
+	// beads-hxtzy: widened from bare TypeEpic to the shared isAutoClosingParentType
+	// (epic OR molecule OR ephemeral/wisp) so a closed MOLECULE/wisp root is caught,
+	// mirroring the direct update.go widen. Error text "closed epic"→"closed parent".
 	if reparent != nil && *reparent != "" && current != nil && current.Status != types.StatusClosed {
 		parent, err := uw.IssueUseCase().GetIssue(ctx, *reparent)
 		if err == nil && parent != nil &&
-			parent.IssueType == types.TypeEpic && parent.Status == types.StatusClosed {
-			return fmt.Errorf("cannot reparent %s under closed epic %s: the epic is closed and %s is open (would create a closed epic with an open child); reopen the epic first or use --force to override", id, *reparent, id)
+			isAutoClosingParentType(parent) && parent.Status == types.StatusClosed {
+			return fmt.Errorf("cannot reparent %s under closed parent %s: the parent is closed and %s is open (would create a closed parent with an open child); reopen the parent first or use --force to override", id, *reparent, id)
 		}
 	}
 
