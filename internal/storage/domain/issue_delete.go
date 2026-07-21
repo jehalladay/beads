@@ -10,8 +10,11 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// deletedReferenceRewriter returns a fn that replaces EVERY standalone reference
+// DeletedReferenceRewriter returns a fn that replaces EVERY standalone reference
 // to id with the "[deleted:id]" tombstone, reporting whether anything changed.
+// This is the single source of truth for the delete-side tombstone rewrite,
+// shared by the domain use-case, cmd/bd/delete.go, and — since beads-rb00b — the
+// storage-layer delete (issueops), so all delete paths tombstone identically.
 //
 // beads-36d6n: the boundary regex (^|non-id)(id)($|non-id) consumes the delimiter
 // a run of adjacent references shares ("bd-abc bd-abc" shares one space), so a
@@ -20,17 +23,27 @@ import (
 // point (the delete-side analogue of the rename adjacent-run fix, beads-1nvr5).
 // The "[deleted:id]" tombstone itself contains id bounded by non-id chars, so we
 // loop via a collision-free NUL sentinel (issue text never holds a raw NUL) and
-// swap in the real tombstone once stable. Mirrors cmd/bd/delete.go's twin.
-func deletedReferenceRewriter(id string) func(string) (string, bool) {
+// swap in the real tombstone once stable.
+//
+// beads-rb00b: IDEMPOTENT. The storage-layer pass hoisted in rb00b may run on
+// text a higher layer (cmd single/batch) already tombstoned, and re-running the
+// original rewriter on "[deleted:id]" would match the id (bounded by ':' and ']',
+// both non-id chars) and corrupt it to "[deleted:[deleted:id]]". We mask any
+// pre-existing tombstone for this id to the NUL sentinel before matching, so only
+// genuinely LIVE references are rewritten; a fully-tombstoned input returns
+// unchanged with ok=false. ok now means "the text actually changed" (out != s).
+func DeletedReferenceRewriter(id string) func(string) (string, bool) {
 	re := regexp.MustCompile(`(^|[^A-Za-z0-9_-])(` + regexp.QuoteMeta(id) + `)($|[^A-Za-z0-9_-])`)
 	const sentinel = "\x00[deleted]\x00"
 	repl := `${1}` + sentinel + `${3}`
 	tomb := "[deleted:" + id + "]"
 	return func(s string) (string, bool) {
-		if !re.MatchString(s) {
+		// Mask pre-existing tombstones so a redundant pass can't re-wrap them.
+		masked := strings.ReplaceAll(s, tomb, sentinel)
+		if !re.MatchString(masked) {
 			return s, false
 		}
-		out := s
+		out := masked
 		for {
 			next := re.ReplaceAllString(out, repl)
 			if next == out {
@@ -38,8 +51,14 @@ func deletedReferenceRewriter(id string) func(string) (string, bool) {
 			}
 			out = next
 		}
-		return strings.ReplaceAll(out, sentinel, tomb), true
+		out = strings.ReplaceAll(out, sentinel, tomb)
+		return out, out != s
 	}
+}
+
+// deletedReferenceRewriter is the unexported alias kept for in-package callers.
+func deletedReferenceRewriter(id string) func(string) (string, bool) {
+	return DeletedReferenceRewriter(id)
 }
 
 func (u *issueUseCaseImpl) DeleteIssue(ctx context.Context, id, actor string) (DeleteIssuesResult, error) {

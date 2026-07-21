@@ -236,6 +236,13 @@ func (s *DoltStore) deleteWisp(ctx context.Context, id string) error {
 		return fmt.Errorf("affected by wisp delete for %s: %w", id, aerr)
 	}
 
+	// beads-rb00b: tombstone live references to this wisp in surviving connected
+	// issues before its row (and dependency edges) go away, so the wisp-delete
+	// path maintains the [deleted:id] convention like regular delete. Idempotent.
+	if _, rerr := issueops.RewriteTextReferencesToDeletedInTx(ctx, tx, []string{id}, ""); rerr != nil {
+		return fmt.Errorf("tombstone text references to wisp %s: %w", id, rerr)
+	}
+
 	result, err := tx.ExecContext(ctx, "DELETE FROM wisps WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete wisp: %w", err)
@@ -307,6 +314,13 @@ func (s *DoltStore) deleteWispBatchTx(ctx context.Context, ids []string) (int, e
 	affectedIssues, affectedWisps, aerr := issueops.AffectedByDeletionInTx(ctx, tx, nil, ids)
 	if aerr != nil {
 		return 0, fmt.Errorf("affected by batched wisp delete: %w", aerr)
+	}
+
+	// beads-rb00b: tombstone live references to these wisps in surviving connected
+	// issues before the rows (and dependency edges) are removed, so bd purge/prune
+	// (the bulk wisp-reclaim ops) maintain the [deleted:id] convention. Idempotent.
+	if _, rerr := issueops.RewriteTextReferencesToDeletedInTx(ctx, tx, ids, ""); rerr != nil {
+		return 0, fmt.Errorf("tombstone text references (batched wisp delete): %w", rerr)
 	}
 
 	inClause, args := doltBuildSQLInClause(ids)

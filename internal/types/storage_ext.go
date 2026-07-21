@@ -39,4 +39,9 @@ type DeleteIssuesResult struct {
 	LabelsCount       int
 	EventsCount       int
 	OrphanedIssues    []string
+	// ReferencesUpdated counts surviving issues whose text (fields/comments) had
+	// a reference to a deleted issue rewritten to the "[deleted:id]" tombstone.
+	// beads-rb00b: the storage-layer delete now performs this rewrite for all
+	// bulk paths (gc/purge/prune/burn), so the count originates here.
+	ReferencesUpdated int
 }

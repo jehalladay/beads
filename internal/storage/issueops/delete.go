@@ -31,6 +31,15 @@ func DeleteIssueInTx(ctx context.Context, tx *sql.Tx, id string) error {
 		return fmt.Errorf("affected by delete for %s: %w", id, aerr)
 	}
 
+	// beads-rb00b: tombstone live references to this id in surviving connected
+	// issues BEFORE the row (and its dependency edges) are deleted, so every path
+	// routing through the storage delete (gc decay, purge, prune, mol burn/squash,
+	// cook, fixtures) maintains the [deleted:id] convention that single-delete
+	// does. Idempotent, so a caller that already rewrote at a higher layer no-ops.
+	if _, err := RewriteTextReferencesToDeletedInTx(ctx, tx, []string{id}, ""); err != nil {
+		return fmt.Errorf("tombstone text references to %s: %w", id, err)
+	}
+
 	if err := deleteIssueRowInTx(ctx, tx, id, isWisp); err != nil {
 		return err
 	}
@@ -275,6 +284,20 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 	if aerr != nil {
 		return nil, fmt.Errorf("affected by batch delete: %w", aerr)
 	}
+
+	// beads-rb00b: tombstone live references to every deleted id in surviving
+	// connected issues BEFORE the rows (and their dependency edges) are removed,
+	// so all bulk-delete callers (purge, prune, batch delete) tombstone like the
+	// single delete. Idempotent for callers that already rewrote at a higher
+	// layer (cmd batch). Passes both regular + wisp ids so cross-table refs are
+	// covered and a survivor is never treated as a neighbor of itself. Uses the
+	// deduped wisp slice (beads-g7rof) so a doubly-listed wisp isn't scanned twice.
+	allDeletedIDs := append(append([]string{}, finalRegularIDs...), allWispIDsDedup...)
+	refsUpdated, rerr := RewriteTextReferencesToDeletedInTx(ctx, tx, allDeletedIDs, "")
+	if rerr != nil {
+		return nil, fmt.Errorf("tombstone text references (batch): %w", rerr)
+	}
+	result.ReferencesUpdated = refsUpdated
 
 	for _, id := range allWispIDs {
 		if err := deleteIssueRowInTx(ctx, tx, id, true); err != nil {

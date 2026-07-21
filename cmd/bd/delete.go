@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -428,35 +429,18 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 		}
 		return nil
 	}
-	connectedIssues := make(map[string]*types.Issue)
-	idSet := make(map[string]bool)
-	for _, id := range issueIDs {
-		idSet[id] = true
-	}
-	for _, id := range issueIDs {
-		deps, err := batchStore.GetDependencies(ctx, id)
-		if err == nil {
-			for _, dep := range deps {
-				if !idSet[dep.ID] {
-					connectedIssues[dep.ID] = dep
-				}
-			}
-		}
-		dependents, err := batchStore.GetDependents(ctx, id)
-		if err == nil {
-			for _, dep := range dependents {
-				if !idSet[dep.ID] {
-					connectedIssues[dep.ID] = dep
-				}
-			}
-		}
-	}
+	// beads-rb00b: the text-reference tombstone pass moved INTO the storage-layer
+	// delete (issueops.DeleteIssuesInTx), so it now runs atomically inside the
+	// same delete transaction and covers every bulk path (gc/purge/prune/burn),
+	// not just this cmd handler. result.ReferencesUpdated carries the count; the
+	// old collect-then-rewrite-after-delete dance here is gone (it rewrote in a
+	// second transaction and left the other bulk paths uncovered).
 	result, err := batchStore.DeleteIssues(ctx, issueIDs, cascade, force, false)
 	if err != nil {
 		return err
 	}
 
-	updatedCount := updateTextReferencesInIssues(ctx, issueIDs, connectedIssues)
+	updatedCount := result.ReferencesUpdated
 
 	commandDidWrite.Store(true)
 
@@ -503,112 +487,14 @@ func showDeletionPreview(issueIDs []string, issues map[string]*types.Issue, casc
 	}
 }
 
-// deletedReferenceRewriter returns a fn that replaces EVERY standalone reference
-// to id with the "[deleted:id]" tombstone, reporting whether anything changed.
-//
-// beads-36d6n: the boundary regex is (^|non-id)(id)($|non-id) — matching a full
-// id token, not a hyphen-extended sibling (the same charclass boundary rename.go
-// adopted in beads-1nvr5). But that boundary CONSUMES the delimiter that a run of
-// adjacent references shares ("bd-abc bd-abc" shares one space), so a single
-// re.ReplaceAllString pass rewrites only the FIRST of the run and leaves the
-// second as a dangling live reference to a now-deleted issue — the delete-side
-// twin of the rename adjacent-run bug 1nvr5 fixed with a re-scan loop.
-//
-// We can't reuse rename's plain loop: the "[deleted:id]" tombstone itself contains
-// id bounded by ':' and ']' (both non-id chars), so it would re-match and loop
-// forever. Instead we rewrite matches to a NUL-delimited sentinel (which carries
-// no id token, so it can never re-match) and re-emit the surrounding delimiters
-// ($1/$3) so an adjacent reference regains its leading delimiter on the next scan;
-// once the text is stable we swap the sentinel for the real tombstone. Issue text
-// never contains a raw NUL, so the sentinel is collision-free.
+// deletedReferenceRewriter delegates to the single source of truth,
+// domain.DeletedReferenceRewriter (beads-rb00b consolidated the three former
+// copies — cmd/domain/storage — into one shared, idempotent implementation).
+// It replaces EVERY standalone LIVE reference to id with the "[deleted:id]"
+// tombstone (loop-to-fixed-point for adjacent runs, beads-36d6n; hyphen-extended
+// siblings untouched, beads-1nvr5) and is idempotent over already-tombstoned text.
 func deletedReferenceRewriter(id string) func(string) (string, bool) {
-	re := regexp.MustCompile(`(^|[^A-Za-z0-9_-])(` + regexp.QuoteMeta(id) + `)($|[^A-Za-z0-9_-])`)
-	const sentinel = "\x00[deleted]\x00"
-	repl := `${1}` + sentinel + `${3}`
-	tomb := "[deleted:" + id + "]"
-	return func(s string) (string, bool) {
-		if !re.MatchString(s) {
-			return s, false
-		}
-		out := s
-		for {
-			next := re.ReplaceAllString(out, repl)
-			if next == out {
-				break
-			}
-			out = next
-		}
-		return strings.ReplaceAll(out, sentinel, tomb), true
-	}
-}
-
-// updateTextReferencesInIssues updates text references to deleted issues in pre-collected connected issues
-func updateTextReferencesInIssues(ctx context.Context, deletedIDs []string, connectedIssues map[string]*types.Issue) int {
-	updatedCount := 0
-	// For each deleted issue, update references in all connected issues
-	for _, id := range deletedIDs {
-		// beads-36d6n: loop-to-fixed-point rewriter (was single-pass, which left
-		// the second of two adjacent references dangling).
-		rewrite := deletedReferenceRewriter(id)
-		for connID, connIssue := range connectedIssues {
-			updates := make(map[string]interface{})
-			// beads-lj36j: rewrite the title too (this DIRECT batch/cascade leg
-			// was missed by beads-989m0, same as the single-delete leg above),
-			// matching the domain rewriter + rename/rename_prefix twins.
-			if v, ok := rewrite(connIssue.Title); ok {
-				updates["title"] = v
-			}
-			if v, ok := rewrite(connIssue.Description); ok {
-				updates["description"] = v
-			}
-			if connIssue.Notes != "" {
-				if v, ok := rewrite(connIssue.Notes); ok {
-					updates["notes"] = v
-				}
-			}
-			if connIssue.Design != "" {
-				if v, ok := rewrite(connIssue.Design); ok {
-					updates["design"] = v
-				}
-			}
-			if connIssue.AcceptanceCriteria != "" {
-				if v, ok := rewrite(connIssue.AcceptanceCriteria); ok {
-					updates["acceptance_criteria"] = v
-				}
-			}
-			// beads-au6dv: rewrite id references inside this connected issue's
-			// COMMENT bodies too — the field-only rewrite above left a "see
-			// bd-abc" reference in a comment as a dangling live ref to the
-			// deleted issue (delete-side twin of the g8qfo rename fix). Reuses the
-			// shared rewriteCommentRefs helper + the same tombstone rewriter.
-			// Best-effort: a comment-rewrite failure must not abort the cascade.
-			if err := rewriteCommentRefs(ctx, store, connID, rewrite); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-			}
-			if len(updates) > 0 {
-				if err := store.UpdateIssue(ctx, connID, updates, actor); err == nil {
-					updatedCount++
-					// Update the in-memory issue to avoid double-replacing
-					if title, ok := updates["title"].(string); ok {
-						connIssue.Title = title
-					}
-					if desc, ok := updates["description"].(string); ok {
-						connIssue.Description = desc
-					}
-					if notes, ok := updates["notes"].(string); ok {
-						connIssue.Notes = notes
-					}
-					if design, ok := updates["design"].(string); ok {
-						connIssue.Design = design
-					}
-					if ac, ok := updates["acceptance_criteria"].(string); ok {
-						connIssue.AcceptanceCriteria = ac
-					}
-				}
-			}
-		}
-	}
-	return updatedCount
+	return domain.DeletedReferenceRewriter(id)
 }
 
 // readIssueIDsFromFile reads issue IDs from a file (one per line)
