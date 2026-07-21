@@ -22,7 +22,7 @@ type WorktreeInfo struct {
 	Path       string `json:"path"`
 	Branch     string `json:"branch"`
 	IsMain     bool   `json:"is_main"`
-	BeadsState string `json:"beads_state"` // "redirect", "shared", "none"
+	BeadsState string `json:"beads_state"` // "redirect", "shared", "local", "none"
 	RedirectTo string `json:"redirect_to,omitempty"`
 }
 
@@ -607,9 +607,49 @@ func getBeadsState(worktreePath, mainBeadsDir string) string {
 		if absBeadsDir == absMainBeadsDir {
 			return "shared"
 		}
-		return "local"
+		// beads-x4i29: a physical .beads/ that isn't the main dir does NOT
+		// imply a local DB. metadata.json + config.yaml are git-TRACKED (only
+		// embeddeddolt/, dolt/, proxieddb/, *.db are gitignored), so every
+		// `bd worktree create`'d worktree checks out a .beads/ with those
+		// tracked artifacts but NO real database — and it resolves the actual
+		// DB via git-common-dir discovery (FindBeadsDir's shared-DB fallback,
+		// the hasBeadsDatabase gate at beads.go:581). Classifying that "local"
+		// contradicts the design ("worktrees automatically share the same beads
+		// database ... no redirect configuration needed"). Only a .beads/ that
+		// owns an actual DB is genuinely local; otherwise it shares.
+		if worktreeHasLocalBeadsDatabase(beadsDir) {
+			return "local"
+		}
+		return "shared"
 	}
 	return "none"
+}
+
+// worktreeHasLocalBeadsDatabase reports whether beadsDir owns an actual beads
+// database (a dolt/ or embeddeddolt/ directory, or a non-backup *.db file), as
+// opposed to only holding git-tracked project artifacts (metadata.json /
+// config.yaml) inherited through a worktree checkout. Mirrors the strict
+// internal/beads.hasBeadsDatabase check that FindBeadsDir uses to distinguish a
+// genuine separate-DB worktree from one that shares via git-common-dir
+// (beads-x4i29). Kept local to cmd/bd because hasBeadsDatabase is unexported.
+func worktreeHasLocalBeadsDatabase(beadsDir string) bool {
+	if info, err := os.Stat(filepath.Join(beadsDir, "dolt")); err == nil && info.IsDir() {
+		return true
+	}
+	if info, err := os.Stat(filepath.Join(beadsDir, "embeddeddolt")); err == nil && info.IsDir() {
+		return true
+	}
+	if info, err := os.Stat(filepath.Join(beadsDir, "proxieddb")); err == nil && info.IsDir() {
+		return true
+	}
+	dbMatches, _ := filepath.Glob(filepath.Join(beadsDir, "*.db"))
+	for _, match := range dbMatches {
+		baseName := filepath.Base(match)
+		if !strings.Contains(baseName, ".backup") && baseName != "vc.db" {
+			return true
+		}
+	}
+	return false
 }
 
 func getRedirectTarget(worktreePath string) string {
