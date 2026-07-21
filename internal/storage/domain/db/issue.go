@@ -65,8 +65,28 @@ func (r *issueSQLRepositoryImpl) Insert(ctx context.Context, issue *types.Issue,
 	}
 
 	table := pickIssueTable(opts.UseWispsTable)
+
+	// insertIssueRow runs INSERT ... ON DUPLICATE KEY UPDATE (an upsert): when
+	// the id already exists the row is UPDATED, not created. Recording an
+	// EventCreated in that case pollutes the audit trail with a "created" event
+	// for an overwrite that never created anything (beads-64nbj). The direct
+	// path guards this — issueops.CreateIssueInTxWithResult records EventCreated
+	// only when isNew (InsertIssueIfNew: existingCount==0). Mirror that by
+	// checking existence BEFORE the upsert; the isNew existence-check is the safe
+	// mirror because ON DUPLICATE KEY UPDATE's RowsAffected is ambiguous
+	// (2 on a changed update, 0 on a no-op update, 1 on a fresh insert). This is
+	// the create-event twin of the 5vpoh label no-op-event fix.
+	existed, err := r.Exists(ctx, issue.ID, domain.IssueTableOpts{UseWispsTable: opts.UseWispsTable})
+	if err != nil {
+		return err
+	}
 	if err := insertIssueRow(ctx, r.runner, table, issue); err != nil {
 		return err
+	}
+	if existed {
+		// Overwrite of an existing row — no create happened, so no created event
+		// (matches the direct isNew guard).
+		return nil
 	}
 	return r.events.Record(ctx, domain.Event{
 		IssueID: issue.ID,
