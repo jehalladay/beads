@@ -134,7 +134,6 @@ Force: Delete and orphan dependents
 		// Pattern: (^|non-word-char)(issueID)($|non-word-char) where word-char includes hyphen
 		idPattern := `(^|[^A-Za-z0-9_-])(` + regexp.QuoteMeta(issueID) + `)($|[^A-Za-z0-9_-])`
 		re := regexp.MustCompile(idPattern)
-		replacementText := `$1[deleted:` + issueID + `]$3`
 		if !force {
 			if jsonOutput {
 				// The DIRECT preview leg previously ignored --json and printed the
@@ -246,6 +245,10 @@ Force: Delete and orphan dependents
 			// (burn/squash/batch); the single-delete leg was out of its scope.
 			updatedIssueCount = 0
 			totalDepsRemoved = 0
+			// beads-36d6n: loop-to-fixed-point rewriter so a run of adjacent
+			// references sharing one delimiter is fully rewritten (single-pass
+			// left the second as a dangling live ref).
+			rewrite := deletedReferenceRewriter(issueID)
 			for id, connIssue := range connectedIssues {
 				updates := make(map[string]interface{})
 				// beads-lj36j: rewrite the title too, matching the domain
@@ -253,20 +256,26 @@ Force: Delete and orphan dependents
 				// This DIRECT single-delete leg was missed by 989m0 (which only
 				// reached the proxied leg via the domain path), leaving a
 				// dangling live ref in the field shown in every list/show view.
-				if re.MatchString(connIssue.Title) {
-					updates["title"] = re.ReplaceAllString(connIssue.Title, replacementText)
+				if v, ok := rewrite(connIssue.Title); ok {
+					updates["title"] = v
 				}
-				if re.MatchString(connIssue.Description) {
-					updates["description"] = re.ReplaceAllString(connIssue.Description, replacementText)
+				if v, ok := rewrite(connIssue.Description); ok {
+					updates["description"] = v
 				}
-				if connIssue.Notes != "" && re.MatchString(connIssue.Notes) {
-					updates["notes"] = re.ReplaceAllString(connIssue.Notes, replacementText)
+				if connIssue.Notes != "" {
+					if v, ok := rewrite(connIssue.Notes); ok {
+						updates["notes"] = v
+					}
 				}
-				if connIssue.Design != "" && re.MatchString(connIssue.Design) {
-					updates["design"] = re.ReplaceAllString(connIssue.Design, replacementText)
+				if connIssue.Design != "" {
+					if v, ok := rewrite(connIssue.Design); ok {
+						updates["design"] = v
+					}
 				}
-				if connIssue.AcceptanceCriteria != "" && re.MatchString(connIssue.AcceptanceCriteria) {
-					updates["acceptance_criteria"] = re.ReplaceAllString(connIssue.AcceptanceCriteria, replacementText)
+				if connIssue.AcceptanceCriteria != "" {
+					if v, ok := rewrite(connIssue.AcceptanceCriteria); ok {
+						updates["acceptance_criteria"] = v
+					}
 				}
 				if len(updates) > 0 {
 					if err := tx.UpdateIssue(ctx, id, updates, actor); err != nil {
@@ -478,34 +487,78 @@ func showDeletionPreview(issueIDs []string, issues map[string]*types.Issue, casc
 	}
 }
 
+// deletedReferenceRewriter returns a fn that replaces EVERY standalone reference
+// to id with the "[deleted:id]" tombstone, reporting whether anything changed.
+//
+// beads-36d6n: the boundary regex is (^|non-id)(id)($|non-id) — matching a full
+// id token, not a hyphen-extended sibling (the same charclass boundary rename.go
+// adopted in beads-1nvr5). But that boundary CONSUMES the delimiter that a run of
+// adjacent references shares ("bd-abc bd-abc" shares one space), so a single
+// re.ReplaceAllString pass rewrites only the FIRST of the run and leaves the
+// second as a dangling live reference to a now-deleted issue — the delete-side
+// twin of the rename adjacent-run bug 1nvr5 fixed with a re-scan loop.
+//
+// We can't reuse rename's plain loop: the "[deleted:id]" tombstone itself contains
+// id bounded by ':' and ']' (both non-id chars), so it would re-match and loop
+// forever. Instead we rewrite matches to a NUL-delimited sentinel (which carries
+// no id token, so it can never re-match) and re-emit the surrounding delimiters
+// ($1/$3) so an adjacent reference regains its leading delimiter on the next scan;
+// once the text is stable we swap the sentinel for the real tombstone. Issue text
+// never contains a raw NUL, so the sentinel is collision-free.
+func deletedReferenceRewriter(id string) func(string) (string, bool) {
+	re := regexp.MustCompile(`(^|[^A-Za-z0-9_-])(` + regexp.QuoteMeta(id) + `)($|[^A-Za-z0-9_-])`)
+	const sentinel = "\x00[deleted]\x00"
+	repl := `${1}` + sentinel + `${3}`
+	tomb := "[deleted:" + id + "]"
+	return func(s string) (string, bool) {
+		if !re.MatchString(s) {
+			return s, false
+		}
+		out := s
+		for {
+			next := re.ReplaceAllString(out, repl)
+			if next == out {
+				break
+			}
+			out = next
+		}
+		return strings.ReplaceAll(out, sentinel, tomb), true
+	}
+}
+
 // updateTextReferencesInIssues updates text references to deleted issues in pre-collected connected issues
 func updateTextReferencesInIssues(ctx context.Context, deletedIDs []string, connectedIssues map[string]*types.Issue) int {
 	updatedCount := 0
 	// For each deleted issue, update references in all connected issues
 	for _, id := range deletedIDs {
-		// Build regex pattern
-		idPattern := `(^|[^A-Za-z0-9_-])(` + regexp.QuoteMeta(id) + `)($|[^A-Za-z0-9_-])`
-		re := regexp.MustCompile(idPattern)
-		replacementText := `$1[deleted:` + id + `]$3`
+		// beads-36d6n: loop-to-fixed-point rewriter (was single-pass, which left
+		// the second of two adjacent references dangling).
+		rewrite := deletedReferenceRewriter(id)
 		for connID, connIssue := range connectedIssues {
 			updates := make(map[string]interface{})
 			// beads-lj36j: rewrite the title too (this DIRECT batch/cascade leg
 			// was missed by beads-989m0, same as the single-delete leg above),
 			// matching the domain rewriter + rename/rename_prefix twins.
-			if re.MatchString(connIssue.Title) {
-				updates["title"] = re.ReplaceAllString(connIssue.Title, replacementText)
+			if v, ok := rewrite(connIssue.Title); ok {
+				updates["title"] = v
 			}
-			if re.MatchString(connIssue.Description) {
-				updates["description"] = re.ReplaceAllString(connIssue.Description, replacementText)
+			if v, ok := rewrite(connIssue.Description); ok {
+				updates["description"] = v
 			}
-			if connIssue.Notes != "" && re.MatchString(connIssue.Notes) {
-				updates["notes"] = re.ReplaceAllString(connIssue.Notes, replacementText)
+			if connIssue.Notes != "" {
+				if v, ok := rewrite(connIssue.Notes); ok {
+					updates["notes"] = v
+				}
 			}
-			if connIssue.Design != "" && re.MatchString(connIssue.Design) {
-				updates["design"] = re.ReplaceAllString(connIssue.Design, replacementText)
+			if connIssue.Design != "" {
+				if v, ok := rewrite(connIssue.Design); ok {
+					updates["design"] = v
+				}
 			}
-			if connIssue.AcceptanceCriteria != "" && re.MatchString(connIssue.AcceptanceCriteria) {
-				updates["acceptance_criteria"] = re.ReplaceAllString(connIssue.AcceptanceCriteria, replacementText)
+			if connIssue.AcceptanceCriteria != "" {
+				if v, ok := rewrite(connIssue.AcceptanceCriteria); ok {
+					updates["acceptance_criteria"] = v
+				}
 			}
 			if len(updates) > 0 {
 				if err := store.UpdateIssue(ctx, connID, updates, actor); err == nil {

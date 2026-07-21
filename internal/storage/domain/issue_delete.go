@@ -4,10 +4,43 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/storage/dberrors"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// deletedReferenceRewriter returns a fn that replaces EVERY standalone reference
+// to id with the "[deleted:id]" tombstone, reporting whether anything changed.
+//
+// beads-36d6n: the boundary regex (^|non-id)(id)($|non-id) consumes the delimiter
+// a run of adjacent references shares ("bd-abc bd-abc" shares one space), so a
+// single re.ReplaceAllString pass rewrites only the FIRST of the run and leaves
+// the second as a dangling live reference to a now-deleted issue. Loop to a fixed
+// point (the delete-side analogue of the rename adjacent-run fix, beads-1nvr5).
+// The "[deleted:id]" tombstone itself contains id bounded by non-id chars, so we
+// loop via a collision-free NUL sentinel (issue text never holds a raw NUL) and
+// swap in the real tombstone once stable. Mirrors cmd/bd/delete.go's twin.
+func deletedReferenceRewriter(id string) func(string) (string, bool) {
+	re := regexp.MustCompile(`(^|[^A-Za-z0-9_-])(` + regexp.QuoteMeta(id) + `)($|[^A-Za-z0-9_-])`)
+	const sentinel = "\x00[deleted]\x00"
+	repl := `${1}` + sentinel + `${3}`
+	tomb := "[deleted:" + id + "]"
+	return func(s string) (string, bool) {
+		if !re.MatchString(s) {
+			return s, false
+		}
+		out := s
+		for {
+			next := re.ReplaceAllString(out, repl)
+			if next == out {
+				break
+			}
+			out = next
+		}
+		return strings.ReplaceAll(out, sentinel, tomb), true
+	}
+}
 
 func (u *issueUseCaseImpl) DeleteIssue(ctx context.Context, id, actor string) (DeleteIssuesResult, error) {
 	if id == "" {
@@ -302,9 +335,9 @@ func (u *issueUseCaseImpl) rewriteTextReferences(
 ) (int, error) {
 	touched := make(map[string]bool)
 	for _, id := range deletedIDs {
-		pattern := `(^|[^A-Za-z0-9_-])(` + regexp.QuoteMeta(id) + `)($|[^A-Za-z0-9_-])`
-		re := regexp.MustCompile(pattern)
-		replacement := `$1[deleted:` + id + `]$3`
+		// beads-36d6n: loop-to-fixed-point rewriter (was single-pass, which left
+		// the second of two adjacent references dangling).
+		rewrite := deletedReferenceRewriter(id)
 		for connID, conn := range connected {
 			updates := map[string]any{}
 			// beads-989m0: rewrite the title too, matching the two structural
@@ -312,20 +345,26 @@ func (u *issueUseCaseImpl) rewriteTextReferences(
 			// title alongside desc/notes/design/ac. Omitting it left a dangling
 			// live reference to a deleted id in the exact field shown in every
 			// list/ready/blocked/show view.
-			if re.MatchString(conn.Title) {
-				updates["title"] = re.ReplaceAllString(conn.Title, replacement)
+			if v, ok := rewrite(conn.Title); ok {
+				updates["title"] = v
 			}
-			if re.MatchString(conn.Description) {
-				updates["description"] = re.ReplaceAllString(conn.Description, replacement)
+			if v, ok := rewrite(conn.Description); ok {
+				updates["description"] = v
 			}
-			if conn.Notes != "" && re.MatchString(conn.Notes) {
-				updates["notes"] = re.ReplaceAllString(conn.Notes, replacement)
+			if conn.Notes != "" {
+				if v, ok := rewrite(conn.Notes); ok {
+					updates["notes"] = v
+				}
 			}
-			if conn.Design != "" && re.MatchString(conn.Design) {
-				updates["design"] = re.ReplaceAllString(conn.Design, replacement)
+			if conn.Design != "" {
+				if v, ok := rewrite(conn.Design); ok {
+					updates["design"] = v
+				}
 			}
-			if conn.AcceptanceCriteria != "" && re.MatchString(conn.AcceptanceCriteria) {
-				updates["acceptance_criteria"] = re.ReplaceAllString(conn.AcceptanceCriteria, replacement)
+			if conn.AcceptanceCriteria != "" {
+				if v, ok := rewrite(conn.AcceptanceCriteria); ok {
+					updates["acceptance_criteria"] = v
+				}
 			}
 			if len(updates) == 0 {
 				continue
