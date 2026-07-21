@@ -129,7 +129,21 @@ Examples:
 				if !s.IsValidWithCustom(lintFilterCfg.customStatusNames()) {
 					return HandleErrorRespectJSON("invalid status %q (valid: %s)", statusFilter, validStatusList(lintFilterCfg.customStatusNames()))
 				}
-				filter.Status = &s
+				if s == types.StatusBlocked {
+					// beads-pbelp: "blocked" is a derived pseudo-status (the
+					// is_blocked column), not a stored status value, so setting
+					// filter.Status = "blocked" builds `status = 'blocked'` which
+					// matches nothing — lint would silently check 0 issues under
+					// `--status blocked` (a false "clean"). Route to filter.Blocked
+					// so it reaches the is_blocked=1 predicate (beads-7f3g), exactly
+					// as bd count (count.go) and bd list do. Sibling of the stale
+					// path (beads-h40fl). --status blocked stays a VALID value
+					// (de4r/8cg2); only its translation to the query is fixed.
+					b := true
+					filter.Blocked = &b
+				} else {
+					filter.Status = &s
+				}
 			}
 
 			if typeFilter != "" {
