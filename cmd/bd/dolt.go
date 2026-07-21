@@ -74,6 +74,7 @@ Examples:
 
 var doltShowCmd = &cobra.Command{
 	Use:   "show",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Show current Dolt configuration with connection status",
 	Run: func(cmd *cobra.Command, args []string) {
 		showDoltConfig(true)
@@ -113,6 +114,7 @@ Examples:
 
 var doltTestCmd = &cobra.Command{
 	Use:   "test",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Test connection to Dolt server",
 	Long: `Test the connection to the configured Dolt server.
 
@@ -487,6 +489,7 @@ func doltCommitMessageProvided(msg string) bool {
 
 var doltCommitCmd = &cobra.Command{
 	Use:   "commit",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Create a Dolt commit from pending changes",
 	Long: `Create a Dolt commit from any uncommitted changes in the working set.
 
@@ -524,6 +527,7 @@ For more options (--stdin, custom messages), see: bd vc commit`,
 
 var doltStartCmd = &cobra.Command{
 	Use:   "start",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Start the Dolt SQL server for this project",
 	Long: `Start a dolt sql-server for the current beads project.
 
@@ -569,6 +573,7 @@ required. Use this command for explicit control or diagnostics.`,
 
 var doltStopCmd = &cobra.Command{
 	Use:   "stop",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Stop the Dolt SQL server for this project",
 	Long: `Stop the dolt sql-server managed by beads for the current project.
 
@@ -596,6 +601,7 @@ on the next bd command unless auto-start is disabled.`,
 
 var doltStatusCmd = &cobra.Command{
 	Use:   "status",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Show Dolt engine status",
 	Long: `Show the status of the Dolt engine for the current project.
 
@@ -864,6 +870,7 @@ func showEmbeddedDoltStatus(beadsDir string) {
 
 var doltKillallCmd = &cobra.Command{
 	Use:   "killall",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Kill all orphan Dolt server processes",
 	Long: `Find and kill orphan dolt sql-server processes not tracked by the
 canonical PID file for the current repo's Dolt data directory.
@@ -912,6 +919,7 @@ var staleDatabasePrefixes = []string{"testdb_", "doctest_", "doctortest_", "bead
 
 var doltCleanDatabasesCmd = &cobra.Command{
 	Use:   "clean-databases",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Drop stale test databases from the Dolt server",
 	Long: `Identify and drop leftover test and agent databases that accumulate
 on the shared Dolt server from interrupted test runs and terminated agents.
@@ -1169,6 +1177,7 @@ var doltRemoteAddCmd = &cobra.Command{
 
 var doltRemoteListCmd = &cobra.Command{
 	Use:   "list",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "List configured Dolt remotes",
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()

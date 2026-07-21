@@ -89,6 +89,49 @@ func TestNoArgsSweep_MolStaleRejectsPositional(t *testing.T) {
 	}
 }
 
+// beads-8jy7e: the NoArgs class was only ever swept at the ROOT level (7pnnd/
+// rlzyg/9bthq). Nested SUBCOMMANDS were never enumerated — the dolt family is
+// the first slice. These flag-only/no-arg dolt subcommands read no positionals
+// but had no Args validator, so a stray positional (bd dolt status foo, or the
+// dangerous bd dolt clean-databases bogus / bd dolt killall extra) was silently
+// ignored with rc=0. Their siblings ARE guarded (dolt set/show use ExactArgs,
+// push/pull use doltRemoteNoPositional), which is the inconsistency this closes.
+func TestNoArgsSweep_DoltSubcommandsRejectPositional(t *testing.T) {
+	commands := [][]string{
+		{"dolt", "show"},
+		{"dolt", "test"},
+		{"dolt", "commit"},
+		{"dolt", "start"},
+		{"dolt", "stop"},
+		{"dolt", "status"},
+		{"dolt", "killall"},
+		{"dolt", "clean-databases"},
+		{"dolt", "remote", "list"},
+	}
+
+	for _, path := range commands {
+		name := path[len(path)-1]
+		t.Run(name, func(t *testing.T) {
+			cmd, _, err := rootCmd.Find(path)
+			if err != nil {
+				t.Fatalf("rootCmd.Find(%v): %v", path, err)
+			}
+			if cmd.Name() != name {
+				t.Fatalf("resolved %q, want %q — path %v did not reach the leaf", cmd.Name(), name, path)
+			}
+			if cmd.Args == nil {
+				t.Fatalf("%q has no Args validator; a stray positional would be silently ignored", name)
+			}
+			if err := cmd.Args(cmd, []string{"stray"}); err == nil {
+				t.Errorf("%q Args validator accepted a stray positional %q, want rejection", name, "stray")
+			}
+			if err := cmd.Args(cmd, nil); err != nil {
+				t.Errorf("%q Args validator rejected the no-arg case: %v", name, err)
+			}
+		})
+	}
+}
+
 // Guard: cobra.NoArgs is the validator used (documents intent + catches an
 // accidental swap to a permissive validator on any swept command).
 func TestNoArgsSweep_UsesNoArgsSemantics(t *testing.T) {
