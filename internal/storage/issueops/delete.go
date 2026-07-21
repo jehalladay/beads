@@ -186,12 +186,26 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 	}
 	eventsCount += wispEventsCount
 
-	for i := 0; i < len(expandedRegularIDs); i += deleteBatchSize {
+	// beads-tvmdn: count inbound dep edges pointing AT any deleted issue from a
+	// surviving source (they are FK-cascade-removed). The target set must be
+	// EVERY deleted ID — finalRegularIDs ∪ allWispIDs — not just
+	// expandedRegularIDs. expandedRegularIDs omits initialWispIDs (wisps named
+	// directly in the purge, as opposed to cascadeWispIDs pulled in via
+	// --cascade), so an inbound edge P(regular)→W(directly-purged wisp) was cut
+	// by the cascade but counted 0 → "Dependencies removed: 0" understated.
+	// allDeletedSet is the deduped union already built above, so iterating its
+	// keys both adds the missing initialWispIDs and avoids double-counting a
+	// target that cascade rediscovered.
+	inboundTargetIDs := make([]string, 0, len(allDeletedSet))
+	for id := range allDeletedSet {
+		inboundTargetIDs = append(inboundTargetIDs, id)
+	}
+	for i := 0; i < len(inboundTargetIDs); i += deleteBatchSize {
 		end := i + deleteBatchSize
-		if end > len(expandedRegularIDs) {
-			end = len(expandedRegularIDs)
+		if end > len(inboundTargetIDs) {
+			end = len(inboundTargetIDs)
 		}
-		batch := expandedRegularIDs[i:end]
+		batch := inboundTargetIDs[i:end]
 		batchInClause, batchArgs := buildSQLInClause(batch)
 
 		for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
