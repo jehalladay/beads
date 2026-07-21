@@ -297,10 +297,23 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 				updates["defer_until"] = t
 				// Align with `bd defer`: set status=deferred so the ❄ icon
 				// shows and the issue leaves the ready queue (GH#3233).
-				// Skip for past dates so the "appears in bd ready immediately"
-				// warning stays truthful, and skip if --status was set explicitly.
-				if _, ok := updates["status"]; !ok && !inPast {
-					updates["status"] = string(types.StatusDeferred)
+				// Skip if --status was set explicitly (that wins).
+				if _, ok := updates["status"]; !ok {
+					if inPast {
+						// beads-z6jqx: a PAST --defer must honor the printed
+						// "appears in bd ready immediately" warning. Merely
+						// skipping the deferred assignment (the old !inPast guard)
+						// left an ALREADY-deferred issue status=deferred+hidden —
+						// the inverse leg jy4r9 missed (it only fixed defer.go and
+						// only reasoned about a fresh/open issue). Actively clear a
+						// pre-existing deferred status back to open, mirroring
+						// defer.go:135 and reusing the clearDeferStatus loop guard
+						// (which flips ONLY when the issue is currently deferred, so
+						// an in_progress/blocked issue is never clobbered).
+						clearDeferStatus = true
+					} else {
+						updates["status"] = string(types.StatusDeferred)
+					}
 				}
 			}
 		}
