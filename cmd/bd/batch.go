@@ -666,7 +666,12 @@ func parseUpdateKVs(kvs []string) (map[string]interface{}, error) {
 			}
 			updates["title"] = value
 		case "assignee":
-			updates["assignee"] = value
+			// beads-5k1y6: trim + fold "none"→"" through the shared normalizer,
+			// mirroring `bd update --assignee` (update.go:132-138, beads-llzt).
+			// Storing the raw value made `bd batch update assignee="  x  "` /
+			// assignee=none unmatchable by `bd ready/list --assignee x`,
+			// orphaning the work — a loop→batch parity regression of llzt.
+			updates["assignee"] = normalizeAssignee(value)
 		default:
 			return nil, fmt.Errorf("update: unsupported key %q (allowed: status, priority, title, assignee)", key)
 		}

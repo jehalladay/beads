@@ -220,6 +220,21 @@ func TestParseUpdateKVs(t *testing.T) {
 			want: map[string]interface{}{"assignee": ""},
 		},
 		{
+			// beads-5k1y6: batch update assignee must be trimmed + fold "none"→""
+			// through normalizeAssignee, mirroring `bd update --assignee`
+			// (beads-llzt). A raw padded value is unmatchable by
+			// `bd ready/list --assignee alice`, orphaning the work.
+			name: "assignee padded value trimmed",
+			in:   []string{"assignee=  alice  "},
+			want: map[string]interface{}{"assignee": "alice"},
+		},
+		{
+			// beads-5k1y6: "none" (any case) folds to the empty unassigned form.
+			name: "assignee none folds to empty",
+			in:   []string{"assignee=None"},
+			want: map[string]interface{}{"assignee": ""},
+		},
+		{
 			name:    "unsupported key",
 			in:      []string{"description=foo"},
 			wantErr: true,
