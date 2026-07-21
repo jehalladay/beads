@@ -677,7 +677,23 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 				combined += appendNotes
 				regularUpdates["notes"] = combined
 			}
-			if len(regularUpdates) > 0 {
+			// beads-absq1: a scalar-only update whose every set field already
+			// equals the issue's current value is a genuine no-op — SKIP the
+			// UpdateIssue write (and its trackMutation + audit) so updated_at is
+			// NOT bumped. bd stale orders by updated_at ASC and computes daysStale
+			// from it, so a self-reported no-op that still wrote silently reset the
+			// staleness clock and hid a stale issue from bd stale (the integrity
+			// defect). onlyScalarFlags guarantees regularUpdates ⊆ scalar keys with
+			// no non-scalar/audit-bearing flag (notes/labels/parent/metadata) and no
+			// --claim, and scalarUpdateIsNoOp confirms every one already matches, so
+			// this cannot swallow a real change, append-notes, metadata edit,
+			// label/parent op, or claim. The bdy2 display branch below still reports
+			// the honest "already matches (no change)" — now WITHOUT a preceding
+			// write. Genuine changes and any mixed/non-scalar update fall through to
+			// UpdateIssue unchanged; store.UpdateIssue's idempotency is untouched for
+			// programmatic callers.
+			scalarNoOp := onlyScalarFlags && scalarUpdateIsNoOp(updates, issue)
+			if len(regularUpdates) > 0 && !scalarNoOp {
 				if err := issueStore.UpdateIssue(ctx, result.ResolvedID, regularUpdates, actor); err != nil {
 					reportUpdateItemError("Error updating %s: %v", id, err)
 					closeIfUnmutated(result)
