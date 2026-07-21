@@ -220,20 +220,14 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 			}
 		}
 
-		// beads-n79c: auto-clear the pinned marker when status transitions AWAY
-		// from "pinned", mirroring the shared seam (updateIssueInTx, update.go).
-		// beads-u3la5: key on the OLD STATUS, not the pinned COLUMN. The pinned
-		// bool (set via --pinned) is an independent prune/purge protection marker
-		// orthogonal to status="pinned" (beads-9ynk); keying on oldPinned stripped
-		// the shield on any status-changing update (e.g. --defer) to a
-		// column-pinned issue. Only when the old row's STATUS was "pinned", the
-		// new status is not "pinned", and the caller did not set pinned explicitly.
-		if oldStatus == types.StatusPinned && coerceStatus(updates["status"]) != types.StatusPinned {
-			if _, callerSetPinned := updates["pinned"]; !callerSetPinned {
-				setClauses = append(setClauses, "`pinned` = ?")
-				args = append(args, false)
-			}
-		}
+		// beads-y20w2: the pinned COLUMN (--pinned) is a prune/purge protection
+		// marker managed SOLELY by --pinned/--no-pinned, orthogonal to the
+		// "pinned" STATUS (beads-9ynk). Entering the pinned STATUS never sets the
+		// column, so an auto-clear on the status-pinned-EXIT leg could only be a
+		// no-op or a silent clobber of an independently-set shield (the u3la5
+		// data-loss class). n79c introduced this mirror; u3la5 narrowed its key
+		// COLUMN->STATUS but left the EXIT leg; y20w2 removes it entirely here too,
+		// keeping parity with the issueops shared seam (updateIssueInTx).
 	}
 
 	setClauses = append(setClauses, "updated_at = ?")

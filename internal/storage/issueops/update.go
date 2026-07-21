@@ -425,26 +425,14 @@ func updateIssueInTx(ctx context.Context, tx DBTX, id string, updates map[string
 		}
 	}
 
-	// Auto-clear pinned column when an issue leaves the "pinned" STATUS.
-	// beads-u3la5: key on the OLD STATUS, not the pinned COLUMN. The pinned
-	// column (bd update --pinned) is an independent prune/purge protection
-	// marker orthogonal to the lifecycle status (beads-9ynk), so a status
-	// change on a column-pinned issue (e.g. --defer) must NOT strip its shield.
-	if rawStatus, ok := updates["status"]; ok {
-		var statusStr string
-		switch v := rawStatus.(type) {
-		case string:
-			statusStr = v
-		case types.Status:
-			statusStr = string(v)
-		}
-		if oldIssue.Status == types.StatusPinned && statusStr != string(types.StatusPinned) {
-			if _, alreadySet := updates["pinned"]; !alreadySet {
-				setClauses = append(setClauses, "`pinned` = ?")
-				args = append(args, false)
-			}
-		}
-	}
+	// beads-y20w2: the pinned COLUMN (bd update --pinned) is a prune/purge
+	// protection marker managed SOLELY by --pinned/--no-pinned, orthogonal to
+	// the lifecycle "pinned" STATUS (beads-9ynk; cmd/bd/update.go:308-311).
+	// Entering the pinned STATUS never sets the column, so an auto-clear on the
+	// status-pinned-EXIT leg could only ever be a no-op (column already false)
+	// or a silent clobber of an independently-set shield (the u3la5 data-loss
+	// class). u3la5 (@fe6a4ad96) narrowed the key COLUMN->STATUS but left this
+	// EXIT leg; y20w2 removes it entirely — the column is never auto-cleared.
 
 	// Auto-manage closed_at (set on close, clear on reopen).
 	setClauses, args = ManageClosedAt(oldIssue, updates, setClauses, args)

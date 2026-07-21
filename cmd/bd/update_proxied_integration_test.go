@@ -1086,10 +1086,14 @@ func TestProxiedServerUpdate(t *testing.T) {
 		}
 	})
 
-	// beads-n79c: `bd update --status <non-pinned>` over the proxied server must
-	// auto-clear the pinned marker when status moves away from "pinned", mirroring
-	// the shared seam — before the fix the domain update path left pinned TRUE.
-	t.Run("update_status_off_pinned_clears_pinned_marker", func(t *testing.T) {
+	// beads-y20w2 (was beads-n79c, INVERTED): moving status off "pinned" must NOT
+	// auto-clear the independent pinned marker. Entering the pinned STATUS never
+	// sets the column (only --pinned does; orthogonal per beads-9ynk), so the
+	// former status-pinned-EXIT auto-clear could only strip a legitimate --pinned
+	// shield = silent prune/purge data-loss. y20w2 removed the EXIT-leg auto-clear
+	// in both the issueops seam and this domain/db proxied twin. The marker is now
+	// managed solely by --pinned/--no-pinned.
+	t.Run("update_status_off_pinned_keeps_pinned_marker", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "uspin")
 		issue := bdProxiedCreate(t, bd, p.dir, "Pinned marker")
 		// Set the pinned bool marker and status=pinned.
@@ -1099,16 +1103,22 @@ func TestProxiedServerUpdate(t *testing.T) {
 		if !readPinnedCol(t, db, issue.ID) {
 			t.Fatalf("pinned marker should be set before the status change")
 		}
-		// Move status off "pinned" → the marker must auto-clear.
+		// Move status off "pinned" with no --no-pinned → the shield must survive.
 		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "-s", "open")
+		if !readPinnedCol(t, db, issue.ID) {
+			t.Errorf("pinned marker was silently stripped when status moved off pinned (beads-y20w2); the column is orthogonal to status and must survive")
+		}
+		// But an explicit --no-pinned during a status change still clears it.
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "-s", "closed", "--no-pinned")
 		if readPinnedCol(t, db, issue.ID) {
-			t.Errorf("pinned marker must auto-clear when status moves off pinned (beads-n79c)")
+			t.Errorf("explicit --no-pinned must clear the marker even during a status change")
 		}
 	})
 
 	t.Run("update_pinned_marker_survives_explicit_reset", func(t *testing.T) {
 		// A caller who explicitly passes --pinned alongside a status change keeps
-		// the marker (caller-set wins over the auto-clear), matching the shared seam.
+		// the marker, matching the shared seam. (Post-y20w2 the marker also survives
+		// WITHOUT an explicit --pinned; this case pins the explicit-set path too.)
 		p := bdProxiedInit(t, bd, "uspinx")
 		issue := bdProxiedCreate(t, bd, p.dir, "Explicit pin")
 		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "-s", "pinned", "--pinned")
