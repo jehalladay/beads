@@ -150,7 +150,10 @@ Force: Delete and orphan dependents
 				// truthful preview here.
 				referencesToUpdate := 0
 				for _, connIssue := range connectedIssues {
-					if re.MatchString(connIssue.Description) ||
+					// beads-lj36j: include title so the preview count matches
+					// what the force path now rewrites.
+					if re.MatchString(connIssue.Title) ||
+						re.MatchString(connIssue.Description) ||
 						(connIssue.Notes != "" && re.MatchString(connIssue.Notes)) ||
 						(connIssue.Design != "" && re.MatchString(connIssue.Design)) ||
 						(connIssue.AcceptanceCriteria != "" && re.MatchString(connIssue.AcceptanceCriteria)) {
@@ -182,7 +185,9 @@ Force: Delete and orphan dependents
 				fmt.Printf("\nConnected issues where text references will be updated:\n")
 				issuesWithRefs := 0
 				for id, connIssue := range connectedIssues {
-					hasRefs := re.MatchString(connIssue.Description) ||
+					// beads-lj36j: include title (force now rewrites it too).
+					hasRefs := re.MatchString(connIssue.Title) ||
+						re.MatchString(connIssue.Description) ||
 						(connIssue.Notes != "" && re.MatchString(connIssue.Notes)) ||
 						(connIssue.Design != "" && re.MatchString(connIssue.Design)) ||
 						(connIssue.AcceptanceCriteria != "" && re.MatchString(connIssue.AcceptanceCriteria))
@@ -204,6 +209,14 @@ Force: Delete and orphan dependents
 		deleteErr := transactHonoringAutoCommit(ctx, activeStore, fmt.Sprintf("bd: delete %s", issueID), func(tx storage.Transaction) error {
 			for id, connIssue := range connectedIssues {
 				updates := make(map[string]interface{})
+				// beads-lj36j: rewrite the title too, matching the domain
+				// rewriter (beads-989m0) and the rename/rename_prefix twins.
+				// This DIRECT single-delete leg was missed by 989m0 (which only
+				// reached the proxied leg via the domain path), leaving a
+				// dangling live ref in the field shown in every list/show view.
+				if re.MatchString(connIssue.Title) {
+					updates["title"] = re.ReplaceAllString(connIssue.Title, replacementText)
+				}
 				if re.MatchString(connIssue.Description) {
 					updates["description"] = re.ReplaceAllString(connIssue.Description, replacementText)
 				}
@@ -419,6 +432,12 @@ func updateTextReferencesInIssues(ctx context.Context, deletedIDs []string, conn
 		replacementText := `$1[deleted:` + id + `]$3`
 		for connID, connIssue := range connectedIssues {
 			updates := make(map[string]interface{})
+			// beads-lj36j: rewrite the title too (this DIRECT batch/cascade leg
+			// was missed by beads-989m0, same as the single-delete leg above),
+			// matching the domain rewriter + rename/rename_prefix twins.
+			if re.MatchString(connIssue.Title) {
+				updates["title"] = re.ReplaceAllString(connIssue.Title, replacementText)
+			}
 			if re.MatchString(connIssue.Description) {
 				updates["description"] = re.ReplaceAllString(connIssue.Description, replacementText)
 			}
@@ -435,6 +454,9 @@ func updateTextReferencesInIssues(ctx context.Context, deletedIDs []string, conn
 				if err := store.UpdateIssue(ctx, connID, updates, actor); err == nil {
 					updatedCount++
 					// Update the in-memory issue to avoid double-replacing
+					if title, ok := updates["title"].(string); ok {
+						connIssue.Title = title
+					}
 					if desc, ok := updates["description"].(string); ok {
 						connIssue.Description = desc
 					}
