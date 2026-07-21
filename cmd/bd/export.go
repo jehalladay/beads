@@ -88,8 +88,14 @@ func runExport(cmd *cobra.Command, args []string) error {
 	// beads-a0nmp (--claim + --status) / 7f3g / 9sdix. Only fires when BOTH are
 	// explicitly set (Changed), so the deprecated-default path is unaffected.
 	// Checked before opening the export source so a bad flag combo rejects
-	// without opening a proxied read tx.
-	if cmd.Flags().Changed("include-memories") && cmd.Flags().Changed("no-memories") {
+	// without opening a proxied read tx. Guard nil cmd (in-process callers such
+	// as the export tests invoke runExport(nil, nil) and set the exportX package
+	// vars directly): with no *cobra.Command there is no flag state to inspect,
+	// so the Changed() contradiction check does not apply. The real CLI path
+	// always passes a non-nil cmd, and the contradiction guard is teeth-tested
+	// through the real binary (export_memories_conflict_test.go), so this is not
+	// a coverage regression.
+	if cmd != nil && cmd.Flags().Changed("include-memories") && cmd.Flags().Changed("no-memories") {
 		return HandleErrorRespectJSON("--include-memories cannot be combined with --no-memories (they are contradictory; --no-memories is deprecated — memories are excluded by default, use --include-memories to include them)")
 	}
 
