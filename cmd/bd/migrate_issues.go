@@ -301,8 +301,19 @@ func findCandidateIssues(ctx context.Context, s storage.DoltStorage, p migrateIs
 
 	// Filter by status
 	if p.status != "" && p.status != "all" {
-		status := types.Status(p.status)
-		filter.Status = &status
+		status := types.Status(p.status).Normalize()
+		if status == types.StatusBlocked {
+			// beads-s5ha0/7f3g: "blocked" is a derived pseudo-status
+			// (is_blocked column), not a stored status, so matching the
+			// status column always yields 0 — a silent no-op move on this
+			// MUTATING command (defeats the beads-ev8m no-op guard). Route to
+			// the is_blocked filter so --status blocked selects the blocked
+			// cohort, matching bd list/count/lint (count.go:154, lint.go:132).
+			b := true
+			filter.Blocked = &b
+		} else {
+			filter.Status = &status
+		}
 	}
 
 	// Filter by priority
