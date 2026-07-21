@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/remotecache"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/kvkeys"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -963,10 +964,24 @@ Examples:
 				}
 
 				ctx := rootCtx
-				for _, p := range dbPairs {
-					if err := store.SetConfig(ctx, p.key, p.value); err != nil {
-						return HandleErrorRespectJSON("setting config %s: %v", p.key, err)
+				// beads-idpba: set every db-backed key in ONE transaction so a
+				// mid-loop fault rolls the whole set-many back. store.SetConfig
+				// commits per call (its own withRetryTx), so the pre-fix loop left
+				// keys 1..N-1 durably written and N..end unwritten — a
+				// partially-applied config (e.g. backup.url set but backup.enabled
+				// not). The proxied path (runConfigSetManyProxiedServer) is already
+				// atomic via a single UOW commit; this matches it (MULTI-WRITE-
+				// ATOMICITY loop-of-writes: a8d14/mtvlf/zcq86/xu7q9).
+				commitMsg := fmt.Sprintf("bd: config set-many (%d keys)", len(dbPairs))
+				if err := store.RunInTransaction(ctx, commitMsg, func(tx storage.Transaction) error {
+					for _, p := range dbPairs {
+						if err := tx.SetConfig(ctx, p.key, p.value); err != nil {
+							return fmt.Errorf("setting config %s: %w", p.key, err)
+						}
 					}
+					return nil
+				}); err != nil {
+					return HandleErrorRespectJSON("%v", err)
 				}
 				commandDidWrite.Store(true)
 			}
