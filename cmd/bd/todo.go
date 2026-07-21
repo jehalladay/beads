@@ -237,6 +237,24 @@ var doneTodoCmd = &cobra.Command{
 				failedCount++
 				continue
 			}
+
+			// beads-58kg8: `bd todo done` is documented as a convenience wrapper
+			// for `bd close` (see this file's help), so it must run the same two
+			// post-close steps `bd close` runs per item (close.go:213-223):
+			//   1. the GC-survivable audit-file trail (beads-n4sn) so the close
+			//      survives a Dolt GC flatten, at parity with bd close/update;
+			//   2. the completed-molecule/wisp/template-epic auto-close cascade
+			//      (beads-26gea/zzp26/8cxe6 family) so closing a TODO that is a
+			//      molecule's FINAL step auto-closes the root instead of leaving
+			//      it stuck OPEN (orphaned-completed-root).
+			// `issue` was fetched (and nil-checked) just above.
+			oldStatus := "open"
+			if issue != nil {
+				oldStatus = string(issue.Status)
+			}
+			auditStatusChange(issueID, oldStatus, "closed", getActorWithGit(), reason)
+			autoCloseCompletedMolecule(ctx, getStore(), issueID, getActorWithGit(), "")
+
 			closedIDs = append(closedIDs, issueID)
 		}
 
