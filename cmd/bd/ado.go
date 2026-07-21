@@ -783,7 +783,7 @@ func emitADOSyncWarningStderr(msg string) {
 // gate-check, 58kg8 todo-done class). Factored into its own function so the
 // emit is unit-testable directly against a store + the audit file, without the
 // full multi-endpoint `bd ado sync` mock harness.
-func closeReconciledDeletedIssues(ctx context.Context, st storage.Storage, actor string, deleted []string, adoIDMap map[int]string, out io.Writer, warnings *[]string) {
+func closeReconciledDeletedIssues(ctx context.Context, st storage.DoltStorage, actor string, deleted []string, adoIDMap map[int]string, out io.Writer, warnings *[]string) {
 	for _, idStr := range deleted {
 		adoID, err := strconv.Atoi(idStr)
 		if err != nil {
@@ -812,6 +812,16 @@ func closeReconciledDeletedIssues(ctx context.Context, st storage.Storage, actor
 		// Emit the GC-survivable audit-file trail via the shared cmd-layer
 		// chokepoint, at parity with the canonical close verb (beads-n4sn).
 		auditStatusChange(localID, oldStatus, "closed", actor, reason)
+		// beads-k2fwc: the reconcile close, like `bd close`/`bd duplicates
+		// --auto-merge` (beads-z252q) / supersede (beads-26gea), goes through the
+		// CloseIssue seam and so bypasses the cmd-layer completed-molecule
+		// auto-close cascade `bd close` runs (close.go:223). If the reconciled
+		// ADO item was a molecule/wisp/template-epic's FINAL open step, the
+		// auto-closing root was left stuck OPEN (orphaned-completed-root). Run the
+		// SAME shared cascade — it self-guards (not-a-step / already-closed-root
+		// both no-op), and the close above already committed durably so the root's
+		// completion re-read is accurate.
+		autoCloseCompletedMolecule(ctx, st, localID, actor, "")
 		msg := fmt.Sprintf("Closed %s: ADO work item %s deleted", localID, idStr)
 		*warnings = append(*warnings, msg)
 		if !jsonOutput {
