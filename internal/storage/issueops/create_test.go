@@ -174,7 +174,7 @@ func TestPersistDependenciesHonorsImportedCreatedBy(t *testing.T) {
 		WithArgs("target").
 		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
 	mock.ExpectExec("INSERT INTO dependencies").
-		WithArgs(depid.New("source", "target"), "source", "target", types.DepRelated, "someone.else", sqlmock.AnyArg()).
+		WithArgs(depid.New("source", "target"), "source", "target", types.DepRelated, "someone.else", sqlmock.AnyArg(), "{}", "").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	result, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{target, source}, "current.user", storage.BatchCreateOptions{})
@@ -216,7 +216,7 @@ func TestPersistDependenciesDefaultsCreatedByToActor(t *testing.T) {
 		WithArgs("target").
 		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
 	mock.ExpectExec("INSERT INTO dependencies").
-		WithArgs(depid.New("source", "target"), "source", "target", types.DepRelated, "current.user", sqlmock.AnyArg()).
+		WithArgs(depid.New("source", "target"), "source", "target", types.DepRelated, "current.user", sqlmock.AnyArg(), "{}", "").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	_, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{target, source}, "current.user", storage.BatchCreateOptions{})
@@ -350,7 +350,7 @@ func TestPersistDependenciesSurfacesCrossKindIDCollision(t *testing.T) {
 	// INSERT ... ON DUPLICATE KEY UPDATE no-ops (rowsAffected=0): the PK is
 	// already taken by the colliding wisp-target edge.
 	mock.ExpectExec("INSERT INTO dependencies").
-		WithArgs(depid.New("source", "X"), "source", "X", types.DepRelated, "tester", sqlmock.AnyArg()).
+		WithArgs(depid.New("source", "X"), "source", "X", types.DepRelated, "tester", sqlmock.AnyArg(), "{}", "").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	// Collision probe: no row at this PK with THIS kind's column (issue) → the
 	// occupant is a different target kind → cross-kind collision.
@@ -411,7 +411,7 @@ func TestPersistDependenciesSameKindReimportIsCleanNoOp(t *testing.T) {
 		WithArgs("target").
 		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
 	mock.ExpectExec("INSERT INTO dependencies").
-		WithArgs(depid.New("source", "target"), "source", "target", types.DepRelated, "tester", sqlmock.AnyArg()).
+		WithArgs(depid.New("source", "target"), "source", "target", types.DepRelated, "tester", sqlmock.AnyArg(), "{}", "").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	// Probe finds the row in THIS kind's column → clean same-kind re-import.
 	mock.ExpectQuery("SELECT 1 FROM dependencies WHERE id = \\? AND depends_on_issue_id = \\?").
@@ -468,7 +468,7 @@ func TestPersistDependenciesPreservesCrossPrefixTarget(t *testing.T) {
 	// No wisps/issues existence query: a cross-prefix target is external, so the
 	// local-existence check must be skipped (exactly as the interactive paths do).
 	mock.ExpectExec("INSERT INTO dependencies").
-		WithArgs(depid.New("foo-1", "other-999"), "foo-1", "other-999", types.DepRelated, "tester", sqlmock.AnyArg()).
+		WithArgs(depid.New("foo-1", "other-999"), "foo-1", "other-999", types.DepRelated, "tester", sqlmock.AnyArg(), "{}", "").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	var skipped []string
@@ -694,5 +694,55 @@ func TestPersistDependenciesErrorsOnEmptyTypeWhenNotSkipping(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// TestPersistDependenciesPersistsMetadataAndThreadID is the beads-gnopw teeth:
+// the batch create/import INSERT must write the edge's metadata and thread_id
+// columns (it historically listed neither, so an export->import round-trip
+// silently dropped them — e.g. an any-children waits-for gate re-imported as {}
+// flips to all-children). A non-empty metadata payload and a thread_id must be
+// bound through to the INSERT verbatim. Mutation-verify: drop the two columns
+// from the create.go INSERT and this expectation goes unmet.
+func TestPersistDependenciesPersistsMetadataAndThreadID(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+
+	target := &types.Issue{ID: "target", IssueType: types.TypeTask}
+	source := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "target",
+			Type:        types.DepRelated,
+			Metadata:    `{"gate": "any-children"}`,
+			ThreadID:    "thread-42",
+		}},
+	}
+
+	mock.ExpectQuery("SELECT 1 FROM wisps WHERE id = \\? LIMIT 1").
+		WithArgs("target").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT 1 FROM issues WHERE id = \\?").
+		WithArgs("target").
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	// The last two bound args are the edge's own metadata and thread_id — not
+	// the "{}"/"" defaults — proving the payload is carried through, not dropped.
+	mock.ExpectExec("INSERT INTO dependencies").
+		WithArgs(depid.New("source", "target"), "source", "target", types.DepRelated, "tester", sqlmock.AnyArg(), `{"gate": "any-children"}`, "thread-42").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	_, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{target, source}, "tester", storage.BatchCreateOptions{})
+	if err != nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = %v, want nil", err)
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations (metadata/thread_id not bound to INSERT?): %v", err)
 	}
 }

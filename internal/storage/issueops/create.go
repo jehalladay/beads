@@ -841,12 +841,33 @@ func PersistDependenciesWithOptionsResult(ctx context.Context, tx *sql.Tx, issue
 			// merge-safe across clones — two clones importing the same JSONL get the
 			// same primary key, not two random UUIDs that collide on uk_dep_* (#4259).
 			createdBy := dependencyCreatedBy(dep, actor)
+			// beads-gnopw: persist the edge's metadata and thread_id, mirroring
+			// the interactive AddDependencyInTx path (dependencies.go:226-228).
+			// The batch INSERT historically listed neither column, so every
+			// import / batch-create silently dropped edge metadata (waits-for
+			// fanout-gate config, similarity/approval/attestation payloads) and
+			// thread_id — an export->import round-trip lost them, and an
+			// any-children waits-for gate re-imported as {} flips to all-children
+			// on read (ParseWaitsForGateMetadata, types.go). Default empty
+			// metadata to "{}" exactly as the interactive path does
+			// (dependencies.go:143-145). The ON DUPLICATE KEY UPDATE stays
+			// `type = type`: depid.New keys on the flattened (issue_id, target),
+			// so a re-import that no-ops here may be a same-kind idempotent edge
+			// OR a cross-kind PK collision (beads-xaxe) — refreshing metadata via
+			// VALUES() would clobber the colliding edge's payload and defeat the
+			// rowsAffected==0 collision probe below, so import stays additive-only
+			// per the merge-safe-clone contract (#4259). The re-import
+			// metadata-refresh question is filed separately.
+			metadata := dep.Metadata
+			if metadata == "" {
+				metadata = "{}"
+			}
 			//nolint:gosec // G201: depTable is one of two hardcoded constants; target column from DepTargetKind.Column()
 			sqlResult, err := tx.ExecContext(ctx, fmt.Sprintf(`
-					INSERT INTO %s (id, issue_id, %s, type, created_by, created_at)
-					VALUES (?, ?, ?, ?, ?, ?)
+					INSERT INTO %s (id, issue_id, %s, type, created_by, created_at, metadata, thread_id)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 					ON DUPLICATE KEY UPDATE type = type
-				`, depTable, kind.Column()), depid.New(dep.IssueID, dep.DependsOnID), dep.IssueID, dep.DependsOnID, dep.Type, createdBy, createdAt)
+				`, depTable, kind.Column()), depid.New(dep.IssueID, dep.DependsOnID), dep.IssueID, dep.DependsOnID, dep.Type, createdBy, createdAt, metadata, dep.ThreadID)
 			if err != nil {
 				return result, fmt.Errorf("failed to insert dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
 			}
