@@ -5,6 +5,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestProxiedServerAssignTag is the teeth for beads-aocj: bd assign / bd tag
@@ -82,6 +83,155 @@ func TestProxiedServerAssignTag(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("label after proxied tag = %v, want to contain needs-review", got.Labels)
+		}
+	})
+
+	// beads-mpkza: proxied `bd assign <id> <same-assignee>` is an idempotent no-op
+	// — it must report an honest "no change" (not a fake "✓ Assigned") AND skip the
+	// write so it does not bump updated_at, matching the direct path (xqsy) and the
+	// proxied priority twin (helt4). The shared applyUpdateProxiedOne core runs
+	// ApplyUpdate+Commit unconditionally, so before the fix a no-op re-assign both
+	// printed a fake ✓ and bumped updated_at (the full xqsy defect). The updated_at
+	// assertion is the load-bearing teeth.
+	t.Run("assign_noop_reports_no_change_and_does_not_bump_updated_at", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "asgnp")
+		a := bdProxiedCreate(t, bd, p.dir, "Assign no-op", "--type", "task", "--assignee", "alice")
+
+		before := bdProxiedShow(t, bd, p.dir, a.ID)
+		if before.Assignee != "alice" {
+			t.Fatalf("setup: assignee = %q, want alice", before.Assignee)
+		}
+		time.Sleep(1100 * time.Millisecond)
+
+		out, err := bdProxiedRun(t, bd, p.dir, "assign", a.ID, "alice")
+		s := string(out)
+		if err != nil {
+			t.Fatalf("proxied no-op assign failed: %v\n%s", err, s)
+		}
+		if strings.Contains(s, "✓") && strings.Contains(s, "Assigned") {
+			t.Errorf("false success: re-assigning to the current owner printed '✓ Assigned': %s", s)
+		}
+		if !strings.Contains(s, "no change") {
+			t.Errorf("expected an 'already assigned to alice, no change' message, got: %s", s)
+		}
+
+		after := bdProxiedShow(t, bd, p.dir, a.ID)
+		if !after.UpdatedAt.Equal(before.UpdatedAt) {
+			t.Errorf("no-op proxied assign bumped updated_at (spurious write/commit, beads-mpkza): before=%v after=%v", before.UpdatedAt, after.UpdatedAt)
+		}
+		if after.Assignee != "alice" {
+			t.Errorf("no-op assign changed the assignee: want alice, got %q", after.Assignee)
+		}
+	})
+
+	// beads-mpkza: proxied `bd assign <id> none` on an already-unassigned issue is a
+	// no-op too — honest "already unassigned, no change", no updated_at bump.
+	t.Run("assign_none_noop_on_unassigned_reports_no_change", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "asgnu")
+		a := bdProxiedCreate(t, bd, p.dir, "Unassigned no-op", "--type", "task")
+
+		before := bdProxiedShow(t, bd, p.dir, a.ID)
+		if before.Assignee != "" {
+			t.Fatalf("setup: assignee = %q, want empty", before.Assignee)
+		}
+		time.Sleep(1100 * time.Millisecond)
+
+		out, err := bdProxiedRun(t, bd, p.dir, "assign", a.ID, "none")
+		s := string(out)
+		if err != nil {
+			t.Fatalf("proxied no-op assign none failed: %v\n%s", err, s)
+		}
+		if strings.Contains(s, "✓") && strings.Contains(s, "Unassigned") {
+			t.Errorf("false success: unassigning an already-unassigned issue printed '✓ Unassigned': %s", s)
+		}
+		if !strings.Contains(s, "no change") {
+			t.Errorf("expected an 'already unassigned, no change' message, got: %s", s)
+		}
+
+		after := bdProxiedShow(t, bd, p.dir, a.ID)
+		if !after.UpdatedAt.Equal(before.UpdatedAt) {
+			t.Errorf("no-op proxied assign none bumped updated_at (beads-mpkza): before=%v after=%v", before.UpdatedAt, after.UpdatedAt)
+		}
+	})
+
+	// beads-mpkza: proxied `bd assign <id> <different>` must still report a genuine
+	// success and persist — the no-op guard must not swallow real changes.
+	t.Run("assign_real_change_still_succeeds", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "asgnr")
+		a := bdProxiedCreate(t, bd, p.dir, "Assign real", "--type", "task", "--assignee", "alice")
+
+		out, err := bdProxiedRun(t, bd, p.dir, "assign", a.ID, "bob")
+		s := string(out)
+		if err != nil {
+			t.Fatalf("proxied real assign failed: %v\n%s", err, s)
+		}
+		if !strings.Contains(s, "Assigned") || strings.Contains(s, "no change") {
+			t.Errorf("real assign change should report a genuine 'Assigned', got: %s", s)
+		}
+		got := bdProxiedShow(t, bd, p.dir, a.ID)
+		if got.Assignee != "bob" {
+			t.Errorf("assignee after real proxied assign = %q, want bob", got.Assignee)
+		}
+	})
+
+	// beads-mpkza: proxied `bd tag <id> <existing-label>` is a no-op — AddLabelInTx
+	// is idempotent (so no spurious write), but the proxied handler printed a fake
+	// "✓ Added label" instead of the direct path's honest "label already present ...
+	// (no change)". Assert the honest message; the label set stays unchanged.
+	t.Run("tag_noop_existing_label_reports_no_change", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "tagnp")
+		a := bdProxiedCreate(t, bd, p.dir, "Tag no-op", "--type", "task")
+
+		if _, err := bdProxiedRun(t, bd, p.dir, "tag", a.ID, "keep"); err != nil {
+			t.Fatalf("setup tag failed: %v", err)
+		}
+
+		out, err := bdProxiedRun(t, bd, p.dir, "tag", a.ID, "keep")
+		s := string(out)
+		if err != nil {
+			t.Fatalf("proxied no-op tag failed: %v\n%s", err, s)
+		}
+		if strings.Contains(s, "✓") && strings.Contains(s, "Added label") {
+			t.Errorf("false success: re-adding an existing label printed '✓ Added label': %s", s)
+		}
+		if !strings.Contains(s, "no change") {
+			t.Errorf("expected a 'label already present ... (no change)' message, got: %s", s)
+		}
+
+		got := bdProxiedShow(t, bd, p.dir, a.ID)
+		count := 0
+		for _, l := range got.Labels {
+			if l == "keep" {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("label 'keep' present %d times after no-op tag, want exactly 1: %v", count, got.Labels)
+		}
+	})
+
+	// beads-mpkza: proxied `bd tag <id> <new-label>` must still add and report ✓.
+	t.Run("tag_real_new_label_still_succeeds", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "tagnr")
+		a := bdProxiedCreate(t, bd, p.dir, "Tag real", "--type", "task")
+
+		out, err := bdProxiedRun(t, bd, p.dir, "tag", a.ID, "fresh")
+		s := string(out)
+		if err != nil {
+			t.Fatalf("proxied real tag failed: %v\n%s", err, s)
+		}
+		if !strings.Contains(s, "Added label") || strings.Contains(s, "no change") {
+			t.Errorf("real tag should report a genuine 'Added label', got: %s", s)
+		}
+		got := bdProxiedShow(t, bd, p.dir, a.ID)
+		found := false
+		for _, l := range got.Labels {
+			if l == "fresh" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("label after real proxied tag = %v, want to contain fresh", got.Labels)
 		}
 	})
 
