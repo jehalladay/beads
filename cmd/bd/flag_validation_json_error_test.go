@@ -33,8 +33,12 @@ func TestFlagValidationErrorJSON_EmitsStdoutErrorObject(t *testing.T) {
 		args    []string
 		wantSub string // a stable substring expected in the JSON error message
 	}{
-		// required-flag: `bd gate create X` requires --blocks (cobra ValidateRequiredFlags).
-		{"required_flag", []string{"gate", "create", "g1", "--json"}, "required flag(s)"},
+		// required-flag: `bd gate create` requires --blocks (cobra ValidateRequiredFlags).
+		// No positional arg: beads-ikzq5 gave `gate create` cobra.NoArgs, so a stray
+		// positional (formerly "g1" here) now aborts with an unknown-command error
+		// BEFORE the required-flag validator runs. Dropping it keeps this case
+		// exercising the required-flag pre-RunE JSON leg it was written for.
+		{"required_flag", []string{"gate", "create", "--json"}, "required flag(s)"},
 		// unknown-flag, --json AFTER the bad flag (pflag aborts parsing at --bogusflag).
 		{"unknown_flag_json_after", []string{"list", "--bogusflag", "--json"}, "unknown flag"},
 		// unknown-flag, --json BEFORE the bad flag (position-independence).

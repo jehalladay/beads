@@ -160,6 +160,18 @@ func (tx *graphApplyFakeTx) AddLabel(context.Context, string, string, string) er
 	return nil
 }
 
+// GetLabels mirrors AddLabel's no-op: this fake does not model labels, so it
+// reports none. beads-l8qsn's graph-child label-inheritance post-pass calls
+// tx.GetLabels on parent/child; without this override the call dispatched to
+// the nil embedded storage.Transaction and panicked (nil pointer), turning the
+// whole cmd/bd package RED and freezing the merge queue. The inheritance
+// behavior itself is covered by the real-binary embedded teeth
+// (TestEmbeddedGraphLabelInheritance_l8qsn), not this dependency-focused fake;
+// returning no labels keeps that post-pass a no-op here.
+func (tx *graphApplyFakeTx) GetLabels(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
 func (tx *graphApplyFakeTx) UpdateIssue(_ context.Context, id string, updates map[string]interface{}, _ string) error {
 	issue, ok := tx.store.issues[id]
 	if !ok {
