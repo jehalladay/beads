@@ -618,28 +618,30 @@ var createCmd = &cobra.Command{
 			// If error getting parent or parent has no source_repo, continue with default
 		}
 
-		if err := store.CreateIssue(ctx, issue, actor); err != nil {
-			return HandleErrorRespectJSON("%v", err)
-		}
-
-		// Track whether any post-create writes occurred. CreateIssue commits
-		// the issue and its initial labels to Dolt internally, but subsequent
-		// AddDependency calls only write to the working set. A follow-up Dolt
-		// commit is needed to persist them (GH#2009).
-		postCreateWrites := false
+		// Build the full dependency edge set up-front (pure parsing + validation,
+		// NO writes) so an invalid --deps type / --waits-for-gate value fails before
+		// we create anything, and so the issue + every edge commit atomically in the
+		// single transaction below.
+		//
+		// beads-a8d14: the DIRECT create path previously self-committed the issue via
+		// store.CreateIssue, then added each edge best-effort (WarnError + RC=0 on
+		// failure). A create whose issue succeeded but whose edge write failed
+		// therefore left a durable issue MISSING its parent/dep/waits-for edges at
+		// exit 0 — while the atomic PROXIED twin (create_proxied_server.go) buffers
+		// the same writes on one UOW and commits once. This wraps CreateIssue + all
+		// AddDependency calls in one store.RunInTransaction (via
+		// transactHonoringAutoCommit, mirroring the proxied UOW + graph_apply.go /
+		// cook.go precedents), so an edge failure rolls the issue back too and the
+		// command exits non-zero — restoring parity with the proxied path.
+		var pendingDeps []*types.Dependency
 
 		// If parent was specified, add parent-child dependency
 		if parentID != "" {
-			dep := &types.Dependency{
+			pendingDeps = append(pendingDeps, &types.Dependency{
 				IssueID:     issue.ID,
 				DependsOnID: parentID,
 				Type:        types.DepParentChild,
-			}
-			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				WarnError("failed to add parent-child dependency %s -> %s: %v", issue.ID, parentID, err)
-			} else {
-				postCreateWrites = true
-			}
+			})
 		}
 
 		// Add dependencies if specified (format: type:id or just id for default "blocks" type)
@@ -694,11 +696,7 @@ var createCmd = &cobra.Command{
 				dep.IssueID = dependsOnID
 				dep.DependsOnID = issue.ID
 			}
-			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				WarnError("failed to add dependency %s -> %s: %v", issue.ID, dependsOnID, err)
-			} else {
-				postCreateWrites = true
-			}
+			pendingDeps = append(pendingDeps, dep)
 		}
 
 		if waitsFor != "" {
@@ -718,28 +716,33 @@ var createCmd = &cobra.Command{
 				return HandleErrorRespectJSON("failed to serialize waits-for metadata: %v", err)
 			}
 
-			dep := &types.Dependency{
+			pendingDeps = append(pendingDeps, &types.Dependency{
 				IssueID:     issue.ID,
 				DependsOnID: waitsFor,
 				Type:        types.DepWaitsFor,
 				Metadata:    string(metaJSON),
-			}
-			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				WarnError("failed to add waits-for dependency %s -> %s: %v", issue.ID, waitsFor, err)
-			} else {
-				postCreateWrites = true
-			}
+			})
 		}
 
-		shouldCommit, err := shouldCommitCreatePostWrites(issue, postCreateWrites)
-		if err != nil {
-			return HandleErrorRespectJSON("dolt auto-commit failed: %v", err)
-		}
-		if shouldCommit {
-			commitMsg := fmt.Sprintf("bd: create %s", issue.ID)
-			if err := store.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
-				WarnError("failed to commit: %v", err)
+		// Create the issue and all its edges atomically. transactHonoringAutoCommit
+		// preserves the prior commit semantics exactly: a Dolt version commit in
+		// server mode and embedded-autocommit-on mode, and SQL-only (no version
+		// commit) in embedded-autocommit-off mode — the same behavior the old
+		// shouldCommitCreatePostWrites gate produced — while also setting
+		// commandDidExplicitDoltCommit so PersistentPostRun does not double-commit.
+		commitMsg := fmt.Sprintf("bd: create %s", issue.ID)
+		if err := transactHonoringAutoCommit(ctx, store, commitMsg, func(tx storage.Transaction) error {
+			if err := tx.CreateIssue(ctx, issue, actor); err != nil {
+				return err
 			}
+			for _, dep := range pendingDeps {
+				if err := tx.AddDependency(ctx, dep, actor); err != nil {
+					return fmt.Errorf("failed to add dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
+				}
+			}
+			return nil
+		}); err != nil {
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		if repoPath != "." && targetStore != nil {
