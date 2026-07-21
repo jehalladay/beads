@@ -26,6 +26,18 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		CheckReadonly("tag")
 
+		// beads-0tm9z: reject reserved gt identity labels (gt:agent/gt:role/gt:rig)
+		// on the tag verb, matching single create (create.go:200), label add
+		// (label.go:277), and the mutation-path guards. `bd tag` is documented as
+		// shorthand for `bd update --add-label`, but it has its OWN RunE and does
+		// NOT route through update.go's chokepoint, so the update-path guard would
+		// not cover it. Guard here — after CheckReadonly, BEFORE the
+		// usesProxiedServer() split — so ONE site covers the direct + proxied paths.
+		// GT_INTERNAL bypass preserved (gt's own stamps still work).
+		if msg := reservedIdentityLabelError(args[1]); msg != "" {
+			return HandleErrorRespectJSON("%s", msg)
+		}
+
 		evt := metrics.NewCommandEvent("tag")
 		defer func() {
 			if c := metrics.Global(); c != nil {
