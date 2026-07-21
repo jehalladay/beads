@@ -253,6 +253,13 @@ func runGateResolveProxied(ctx context.Context, gateID, reason string) error {
 	if _, err := uw.IssueUseCase().CloseIssue(ctx, gateID, domain.CloseIssueParams{Reason: reason}, actor); err != nil {
 		return HandleErrorRespectJSON("closing gate: %v", err)
 	}
+	// beads-346th: cascade-close the parent molecule if this gate was its final
+	// step, at parity with the direct leg + bd close. MUST run BEFORE uw.Commit
+	// so the molecule's close lands in the SAME transaction the gate close does
+	// (autoCloseProxiedCompletedMolecule issues its CloseIssue on this UOW but
+	// does not commit — the caller owns the commit, matching close_proxied_server
+	// :321). Self-guards on not-a-step / already-closed / incomplete-progress.
+	autoCloseProxiedCompletedMolecule(ctx, uw, gateID, actor, "", jsonOutput)
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: gate resolve %s", gateID)); err != nil && !isDoltNothingToCommit(err) {
 		return HandleErrorRespectJSON("failed to commit: %v", err)
 	}
@@ -378,6 +385,11 @@ func closeGateProxied(gateID, oldStatus, reason string) error {
 	if _, err := uw.IssueUseCase().CloseIssue(ctx, gateID, domain.CloseIssueParams{Reason: reason}, actor); err != nil {
 		return err
 	}
+	// beads-346th: cascade-close the parent molecule if this gate was its final
+	// step (gate check auto-resolve leg), at parity with the direct closeGate.
+	// MUST run BEFORE uw.Commit so the molecule close lands in the SAME tx (the
+	// helper issues its CloseIssue on this UOW but does not commit).
+	autoCloseProxiedCompletedMolecule(ctx, uw, gateID, actor, "", jsonOutput)
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: gate check resolved %s", gateID)); err != nil {
 		return err
 	}

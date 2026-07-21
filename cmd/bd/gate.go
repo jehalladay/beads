@@ -592,6 +592,15 @@ Use --reason to provide context for why the gate was resolved.`,
 		// store.CloseIssue autocommits durably, so this reflects a real change.
 		auditStatusChange(gateID, gateOldStatus, "closed", actor, reason)
 
+		// beads-346th: a linked gate is a real molecule step (mol show counts
+		// it), so resolving a molecule's final-step gate must cascade-close the
+		// parent exactly as bd close does (close.go:223). Manual gate resolve
+		// closed via bare store.CloseIssue with NO cascade hop, orphaning the
+		// molecule root open with every step done (CLOSE-PARITY-MATRIX). Fire the
+		// same shared chokepoint; it self-guards (not-a-step / already-closed-root
+		// no-op).
+		autoCloseCompletedMolecule(ctx, store, gateID, actor, "")
+
 		// beads-u3lt: gate resolve honored --json NOWHERE (success printed
 		// plaintext, errors used bare HandleError) — emit a JSON success doc under
 		// --json, and route the error paths through HandleErrorRespectJSON, so the
@@ -1124,6 +1133,15 @@ func closeGate(_ interface{}, gateID, oldStatus, reason string) error {
 	// only reaches closeGate for a resolved OPEN gate, so this is a real
 	// open→closed transition; store.CloseIssue autocommits durably.
 	auditStatusChange(gateID, oldStatus, "closed", actor, reason)
+	// beads-346th: mol show counts a linked gate as a real molecule step, so
+	// closing a gate that is a molecule's final step must cascade-close the
+	// parent exactly as bd close does (close.go:223). The gate check auto-close
+	// loop closed via store.CloseIssue with NO cascade hop, so a molecule whose
+	// last step is a timer/PR/run gate silently stayed open with every step done
+	// (CLOSE-PARITY-MATRIX, sibling of 4v7eb's epic close-eligible leg). Fire the
+	// same shared chokepoint bd close/todo done/duplicate use; it self-guards
+	// (not-a-molecule-step and already-closed-root both no-op).
+	autoCloseCompletedMolecule(rootCtx, store, gateID, actor, "")
 	return nil
 }
 

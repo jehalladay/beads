@@ -46,6 +46,26 @@ func (f *fakeGateCheckStore) CloseIssue(_ context.Context, id, reason, actor, se
 	return nil
 }
 
+// GetDependencyRecordsForIssues stubs the dependency lookup that closeGate's
+// beads-346th molecule-autoclose cascade (findParentMolecule) now performs after
+// a successful gate close. This fake embeds a nil storage.DoltStorage, so
+// without an explicit no-parent stub the cascade nil-panics on the embedded
+// interface (the partial-mock-fake hazard). Returning no parent-child deps makes
+// autoCloseCompletedMolecule cleanly no-op — this test's gate is standalone, not
+// a molecule step, so the cascade must be a no-op here anyway.
+func (f *fakeGateCheckStore) GetDependencyRecordsForIssues(_ context.Context, _ []string) (map[string][]*types.Dependency, error) {
+	return map[string][]*types.Dependency{}, nil
+}
+
+// GetIssuesByIDs stubs the root-molecule lookup findParentMolecules performs
+// after walking the (empty) dependency chain. With no parent-child deps the walk
+// terminates with each id as its own "root", so findParentMolecules batch-fetches
+// those roots here; returning none makes the closed gate resolve to no molecule
+// parent, so the beads-346th cascade cleanly no-ops for this standalone gate.
+func (f *fakeGateCheckStore) GetIssuesByIDs(_ context.Context, _ []string) ([]*types.Issue, error) {
+	return nil, nil
+}
+
 func captureGateStdout(t *testing.T, fn func()) string {
 	t.Helper()
 
