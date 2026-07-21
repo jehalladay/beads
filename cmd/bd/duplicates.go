@@ -241,7 +241,13 @@ type issueScore struct {
 // countReferences counts how many times each issue is referenced in text fields
 func countReferences(issues []*types.Issue) map[string]int {
 	counts := make(map[string]int)
-	idPattern := regexp.MustCompile(`\b[a-zA-Z][-a-zA-Z0-9]*-\d+\b`)
+	// beads-fofnn: the suffix must be alphanumeric, not digits-only. bd IDs are
+	// base36 hashes (e.g. op-16f), so a `-\d+` suffix silently counted 0
+	// references for every letter-suffix id, disabling the textRefs tiebreaker
+	// in chooseMergeTarget. Widen only the suffix (\d+ -> [a-zA-Z0-9]+), keeping
+	// the original case-insensitive prefix class so external-tracker ids
+	// (e.g. HONEY-s2g1) still match. Stays backward-compatible with numeric ids.
+	idPattern := regexp.MustCompile(`\b[a-zA-Z][-a-zA-Z0-9]*-[a-zA-Z0-9]+\b`)
 	for _, issue := range issues {
 		// Search in all text fields
 		textFields := []string{
