@@ -142,6 +142,20 @@ The --reason flag provides context for the event bead (recommended).`,
 			return HandleErrorRespectJSON("invalid state format %q, expected <dimension>=<value> (or <dimension>:<value>)", stateSpec)
 		}
 
+		// beads-rdzwu: reject reserved gt identity labels (gt:agent/gt:role/gt:rig)
+		// on the set-state verb, matching single create (create.go:200), label add
+		// (label.go:277), and the tag verb (tag.go, beads-0tm9z). set-state builds
+		// its label as <dimension>:<value> — so `bd set-state <bead> gt=role`
+		// constructs the exact reserved label "gt:role" and, without this guard,
+		// stamps it via tx.AddLabel (direct) / labelUC.AddLabel (proxied), silently
+		// hiding the bead from `bd ready` (the beads-3c4g spoof vector). Guard here
+		// — after parseStateSpec, BEFORE the usesProxiedServer() split — so ONE site
+		// covers the direct + proxied paths. GT_INTERNAL bypass preserved (gt's own
+		// state stamps still work).
+		if msg := reservedIdentityLabelError(dimension + ":" + newValue); msg != "" {
+			return HandleErrorRespectJSON("%s", msg)
+		}
+
 		reason, _ := cmd.Flags().GetString("reason")
 		// beads-57f51: a whitespace-only --reason must collapse to no-reason so it
 		// does not leave a dangling "\n\nReason:   " label on the recorded event.
