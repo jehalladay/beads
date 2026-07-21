@@ -692,7 +692,19 @@ func runDepTreeProxiedServer(cmd *cobra.Command, ctx context.Context, args []str
 		fmt.Printf("\n%s Dependency tree for %s:\n\n", ui.RenderAccent("🌲"), fullID)
 	}
 
-	renderTree(tree, maxDepth, direction, showAllPaths)
+	// beads-8xwpb: mirror the direct path (dep.go:1336-1342). Compute the
+	// root's READY/BLOCKED verdict from ground truth (DependencyUseCase.IsBlocked,
+	// the same source `bd blocked` uses) for EVERY direction, rather than deriving
+	// it from the (possibly --max-depth-truncated or --reverse) children slice.
+	// The tree-derived verdict was wrong in two directions on the direct path
+	// (x2e9: truncated blocker → false [READY]; wucv: dependents ≠ blockers →
+	// false [BLOCKED]) and was still un-mirrored on this proxied twin, which
+	// called renderTree(...) forwarding a nil rootBlockedOverride.
+	var rootBlockedOverride *bool
+	if blocked, _, berr := depUC.IsBlocked(ctx, fullID); berr == nil {
+		rootBlockedOverride = &blocked
+	}
+	renderTreeWithVerdict(tree, maxDepth, direction, rootBlockedOverride, showAllPaths)
 	fmt.Println()
 }
 
