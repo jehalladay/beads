@@ -425,7 +425,11 @@ func updateIssueInTx(ctx context.Context, tx DBTX, id string, updates map[string
 		}
 	}
 
-	// Auto-clear pinned column when status transitions away from "pinned".
+	// Auto-clear pinned column when an issue leaves the "pinned" STATUS.
+	// beads-u3la5: key on the OLD STATUS, not the pinned COLUMN. The pinned
+	// column (bd update --pinned) is an independent prune/purge protection
+	// marker orthogonal to the lifecycle status (beads-9ynk), so a status
+	// change on a column-pinned issue (e.g. --defer) must NOT strip its shield.
 	if rawStatus, ok := updates["status"]; ok {
 		var statusStr string
 		switch v := rawStatus.(type) {
@@ -434,7 +438,7 @@ func updateIssueInTx(ctx context.Context, tx DBTX, id string, updates map[string
 		case types.Status:
 			statusStr = string(v)
 		}
-		if oldIssue.Pinned && statusStr != string(types.StatusPinned) {
+		if oldIssue.Status == types.StatusPinned && statusStr != string(types.StatusPinned) {
 			if _, alreadySet := updates["pinned"]; !alreadySet {
 				setClauses = append(setClauses, "`pinned` = ?")
 				args = append(args, false)

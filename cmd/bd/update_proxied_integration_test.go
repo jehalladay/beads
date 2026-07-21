@@ -1122,6 +1122,27 @@ func TestProxiedServerUpdate(t *testing.T) {
 		}
 	})
 
+	// beads-u3la5: a status-changing update to a COLUMN-pinned issue whose
+	// STATUS is not "pinned" must NOT strip the pinned column. The pinned column
+	// (--pinned) is an independent prune/purge shield orthogonal to the pinned
+	// STATUS (beads-9ynk); before the fix the domain/proxied guard keyed on the
+	// column (oldPinned) so `bd update --defer` silently cleared the shield.
+	t.Run("update_defer_preserves_column_pin", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "uspind")
+		issue := bdProxiedCreate(t, bd, p.dir, "Shielded")
+		// Set ONLY the pinned column — status stays open (orthogonal marker).
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "--pinned")
+		db := openProxiedDB(t, p)
+		if !readPinnedCol(t, db, issue.ID) {
+			t.Fatalf("pinned column should be set after --pinned")
+		}
+		// A status change that is NOT to "pinned" status must keep the shield.
+		bdProxiedUpdateOne(t, bd, p.dir, issue.ID, "-s", "deferred")
+		if !readPinnedCol(t, db, issue.ID) {
+			t.Errorf("pinned column was silently cleared by a status change (beads-u3la5); prune/purge shield lost")
+		}
+	})
+
 	// beads-cwl8: a PARTIAL-failure update (one real id + one ghost id) must
 	// exit non-zero, matching the direct path (cmd/bd/update.go returns
 	// SilentExit when processedCount < len(args), beads-4i20). Previously the

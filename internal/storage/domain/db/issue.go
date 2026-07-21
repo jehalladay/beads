@@ -135,7 +135,6 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 	var oldIssue *types.Issue
 	var oldStatus types.Status
 	var oldStartedAt sql.NullTime
-	var oldPinned bool
 	_, statusChanging := updates["status"]
 	if statusChanging {
 		got, err := r.Get(ctx, id, opts)
@@ -147,7 +146,6 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 		}
 		oldIssue = got
 		oldStatus = got.Status
-		oldPinned = got.Pinned
 		if got.StartedAt != nil {
 			oldStartedAt = sql.NullTime{Time: *got.StartedAt, Valid: true}
 		}
@@ -224,13 +222,13 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 
 		// beads-n79c: auto-clear the pinned marker when status transitions AWAY
 		// from "pinned", mirroring the shared seam (updateIssueInTx, update.go).
-		// The pinned bool (set via --pinned, orthogonal to status="pinned" per
-		// beads-9ynk) was left TRUE by the domain/proxied UPDATE path when the
-		// status moved off "pinned", where the direct path clears it — a pin that
-		// survived an explicit un-pinning-via-status-change. Only when the old row
-		// was pinned, the new status is not "pinned", and the caller did not set
-		// pinned explicitly. Completes the closed_at/started_at/pinned trilogy.
-		if oldPinned && coerceStatus(updates["status"]) != types.StatusPinned {
+		// beads-u3la5: key on the OLD STATUS, not the pinned COLUMN. The pinned
+		// bool (set via --pinned) is an independent prune/purge protection marker
+		// orthogonal to status="pinned" (beads-9ynk); keying on oldPinned stripped
+		// the shield on any status-changing update (e.g. --defer) to a
+		// column-pinned issue. Only when the old row's STATUS was "pinned", the
+		// new status is not "pinned", and the caller did not set pinned explicitly.
+		if oldStatus == types.StatusPinned && coerceStatus(updates["status"]) != types.StatusPinned {
 			if _, callerSetPinned := updates["pinned"]; !callerSetPinned {
 				setClauses = append(setClauses, "`pinned` = ?")
 				args = append(args, false)
