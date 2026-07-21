@@ -633,14 +633,31 @@ var createCmd = &cobra.Command{
 		// transactHonoringAutoCommit, mirroring the proxied UOW + graph_apply.go /
 		// cook.go precedents), so an edge failure rolls the issue back too and the
 		// command exits non-zero — restoring parity with the proxied path.
-		var pendingDeps []*types.Dependency
+		// beads-1gvh4: parse + validate every requested edge here (pure
+		// parsing, NO writes) so a bad --deps type / --waits-for-gate fails before
+		// anything is created — but do NOT capture issue.ID yet. For an
+		// auto-generated id, issue.ID is EMPTY until tx.CreateIssue mints it inside
+		// the transaction below (issueops GenerateIssueIDInTable writes it back onto
+		// the struct). Capturing issue.ID into the edge structs HERE bound the
+		// EMPTY id for the bare `bd create --deps/--waits-for` path (no --parent/--id),
+		// producing a durable edge with an empty endpoint (e.g. blocks:X stored as
+		// "X -> ''"). We therefore record only the parsed spec (target/type/swap/
+		// metadata) and build the actual types.Dependency INSIDE the closure after
+		// the id exists — restoring the a8d14 atomicity while fixing the empty-id
+		// regression it introduced.
+		type edgeSpec struct {
+			target   string
+			depType  types.DependencyType
+			swap     bool // "blocks:X": store X -> new issue (target becomes IssueID)
+			metadata string
+		}
+		var edgeSpecs []edgeSpec
 
 		// If parent was specified, add parent-child dependency
 		if parentID != "" {
-			pendingDeps = append(pendingDeps, &types.Dependency{
-				IssueID:     issue.ID,
-				DependsOnID: parentID,
-				Type:        types.DepParentChild,
+			edgeSpecs = append(edgeSpecs, edgeSpec{
+				target:  parentID,
+				depType: types.DepParentChild,
 			})
 		}
 
@@ -687,16 +704,11 @@ var createCmd = &cobra.Command{
 				return HandleErrorRespectJSON("unknown dependency type %q; valid types: %s", depType, createDepsAcceptedTypeList())
 			}
 
-			dep := &types.Dependency{
-				IssueID:     issue.ID,
-				DependsOnID: dependsOnID,
-				Type:        depType,
-			}
-			if swapDirection {
-				dep.IssueID = dependsOnID
-				dep.DependsOnID = issue.ID
-			}
-			pendingDeps = append(pendingDeps, dep)
+			edgeSpecs = append(edgeSpecs, edgeSpec{
+				target:  dependsOnID,
+				depType: depType,
+				swap:    swapDirection,
+			})
 		}
 
 		if waitsFor != "" {
@@ -716,11 +728,10 @@ var createCmd = &cobra.Command{
 				return HandleErrorRespectJSON("failed to serialize waits-for metadata: %v", err)
 			}
 
-			pendingDeps = append(pendingDeps, &types.Dependency{
-				IssueID:     issue.ID,
-				DependsOnID: waitsFor,
-				Type:        types.DepWaitsFor,
-				Metadata:    string(metaJSON),
+			edgeSpecs = append(edgeSpecs, edgeSpec{
+				target:   waitsFor,
+				depType:  types.DepWaitsFor,
+				metadata: string(metaJSON),
 			})
 		}
 
@@ -730,12 +741,32 @@ var createCmd = &cobra.Command{
 		// commit) in embedded-autocommit-off mode — the same behavior the old
 		// shouldCommitCreatePostWrites gate produced — while also setting
 		// commandDidExplicitDoltCommit so PersistentPostRun does not double-commit.
+		//
+		// The edge structs are built INSIDE the closure, after tx.CreateIssue mints
+		// an auto-generated issue.ID (write-back onto the struct), so an auto-gen
+		// create's edges reference the real id, not an empty string.
 		commitMsg := fmt.Sprintf("bd: create %s", issue.ID)
+		if commitMsg == "bd: create " {
+			// issue.ID not yet minted (bare auto-gen); use the title so the Dolt
+			// version commit message is non-empty (an empty message makes
+			// StageAndCommit skip the version commit). Nothing parses the message.
+			commitMsg = fmt.Sprintf("bd: create %q", title)
+		}
 		if err := transactHonoringAutoCommit(ctx, store, commitMsg, func(tx storage.Transaction) error {
 			if err := tx.CreateIssue(ctx, issue, actor); err != nil {
 				return err
 			}
-			for _, dep := range pendingDeps {
+			for _, spec := range edgeSpecs {
+				dep := &types.Dependency{
+					IssueID:     issue.ID,
+					DependsOnID: spec.target,
+					Type:        spec.depType,
+					Metadata:    spec.metadata,
+				}
+				if spec.swap {
+					dep.IssueID = spec.target
+					dep.DependsOnID = issue.ID
+				}
 				if err := tx.AddDependency(ctx, dep, actor); err != nil {
 					return fmt.Errorf("failed to add dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
 				}
