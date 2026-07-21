@@ -32,7 +32,15 @@ func fetchFindDuplicatesIssuesProxied(ctx context.Context, status string) ([]*ty
 		if !s.IsValidWithCustom(cfg.customStatusNames()) {
 			return nil, fmt.Errorf("invalid status %q (valid: %s)", status, validStatusList(cfg.customStatusNames()))
 		}
-		filter.Status = &s
+		if s == types.StatusBlocked {
+			// beads-3x0e4: route the derived "blocked" pseudo-status to the
+			// is_blocked filter (mirrors the direct path + beads-7f3g); a status
+			// column match would silently return 0.
+			b := true
+			filter.Blocked = &b
+		} else {
+			filter.Status = &s
+		}
 	}
 
 	page, err := uw.IssueUseCase().SearchIssues(ctx, "", filter)

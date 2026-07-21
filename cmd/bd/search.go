@@ -308,12 +308,30 @@ func parseSearchParams(cmd *cobra.Command, cfg listFilterConfig) (searchParams, 
 			if !s.IsValidWithCustom(names) {
 				return searchParams{}, HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(names))
 			}
-			filter.Status = &s
+			if s == types.StatusBlocked {
+				// beads-3x0e4: "blocked" is a derived pseudo-status (is_blocked
+				// column), not a stored status value, so a status-column match
+				// always returns 0. Route to the is_blocked filter so
+				// `bd search --status blocked` agrees with bd blocked, mirroring
+				// the beads-7f3g list/count fix.
+				b := true
+				filter.Blocked = &b
+			} else {
+				filter.Status = &s
+			}
 		} else {
 			for _, part := range statusParts {
 				s := types.Status(strings.TrimSpace(part)).Normalize()
 				if !s.IsValidWithCustom(names) {
 					return searchParams{}, HandleErrorRespectJSON("invalid status %q in multi-status filter (valid: %s)", strings.TrimSpace(part), validStatusList(names))
+				}
+				if s == types.StatusBlocked {
+					// beads-3x0e4: "blocked" is derived (is_blocked), not a stored
+					// status, so it cannot be OR-combined with real statuses in a
+					// single status-column IN() filter. Reject explicitly instead
+					// of silently returning 0 for the whole multi-status filter —
+					// mirrors the beads-7f3g list_filter.go/count.go precedent.
+					return searchParams{}, HandleErrorRespectJSON("status %q is derived and cannot be combined in a multi-status filter; use `bd blocked` or `--status blocked` alone", "blocked")
 				}
 				filter.Statuses = append(filter.Statuses, s)
 			}

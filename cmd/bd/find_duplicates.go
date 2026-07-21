@@ -151,7 +151,17 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) error {
 			if !s.IsValidWithCustom(filterCfg.customStatusNames()) {
 				return HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(filterCfg.customStatusNames()))
 			}
-			filter.Status = &s
+			if s == types.StatusBlocked {
+				// beads-3x0e4: "blocked" is a derived pseudo-status (is_blocked
+				// column), not a stored status value, so matching it against the
+				// status column always yields 0 (silent false-negative). Route to
+				// the is_blocked filter so find-duplicates --status blocked agrees
+				// with bd blocked, mirroring the beads-7f3g list/count fix.
+				b := true
+				filter.Blocked = &b
+			} else {
+				filter.Status = &s
+			}
 		}
 		issues, err = store.SearchIssues(ctx, "", filter)
 		if err != nil {

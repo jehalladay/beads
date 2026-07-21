@@ -154,7 +154,15 @@ Examples:
 			if !s.IsValidWithCustom(filterCfg.customStatusNames()) {
 				return HandleErrorRespectJSON("invalid status %q (valid: %s)", status, validStatusList(filterCfg.customStatusNames()))
 			}
-			filter.Status = &s
+			if s == types.StatusBlocked {
+				// beads-3x0e4: "blocked" is derived (is_blocked column), not a
+				// stored status, so a status-column match silently returns 0.
+				// Route to the is_blocked filter (mirrors beads-7f3g list/count).
+				b := true
+				filter.Blocked = &b
+			} else {
+				filter.Status = &s
+			}
 		}
 
 		var err error
