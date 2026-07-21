@@ -61,6 +61,7 @@ Examples:
   bd jira sync --push --create-only  # Push new issues only
   bd jira sync --dry-run             # Preview without changes
   bd jira sync --prefer-local        # Bidirectional, local wins`,
+	Args:          cobra.NoArgs, // beads-kwghg: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runJiraSync,
@@ -74,6 +75,7 @@ var jiraStatusCmd = &cobra.Command{
   - Configuration status
   - Number of issues with Jira links
   - Issues pending push (no external_ref)`,
+	Args:          cobra.NoArgs, // beads-kwghg: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runJiraStatus,

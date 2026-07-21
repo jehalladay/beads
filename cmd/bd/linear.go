@@ -139,6 +139,7 @@ Examples:
   bd linear sync --push --parent=bd-abc123      # Push one ticket tree
   bd linear sync --dry-run                      # Preview without changes
   bd linear sync --prefer-local                 # Bidirectional, local wins`,
+	Args:          cobra.NoArgs, // beads-kwghg: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runLinearSync,
@@ -153,6 +154,7 @@ var linearStatusCmd = &cobra.Command{
   - Configuration status
   - Number of issues with Linear links
   - Issues pending push (no external_ref)`,
+	Args:          cobra.NoArgs, // beads-kwghg: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runLinearStatus,
@@ -169,6 +171,7 @@ Use this to find the team ID (UUID) needed for configuration.
 Example:
   bd linear teams
   bd config set linear.team_id "12345678-1234-1234-1234-123456789abc"`,
+	Args:          cobra.NoArgs, // beads-kwghg: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runLinearTeams,

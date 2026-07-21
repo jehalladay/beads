@@ -85,6 +85,7 @@ var notionCmd = &cobra.Command{
 var notionStatusCmd = &cobra.Command{
 	Use:           "status",
 	Short:         "Show Notion sync status",
+	Args:          cobra.NoArgs, // beads-kwghg: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runNotionStatus,
@@ -93,6 +94,7 @@ var notionStatusCmd = &cobra.Command{
 var notionInitCmd = &cobra.Command{
 	Use:           "init",
 	Short:         "Create a dedicated Beads database in Notion",
+	Args:          cobra.NoArgs, // beads-kwghg: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runNotionInit,
@@ -101,6 +103,7 @@ var notionInitCmd = &cobra.Command{
 var notionConnectCmd = &cobra.Command{
 	Use:           "connect",
 	Short:         "Connect bd to an existing Notion database or data source",
+	Args:          cobra.NoArgs, // beads-kwghg: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runNotionConnect,
@@ -111,6 +114,7 @@ var notionSyncCmd = &cobra.Command{
 	Short: "Sync issues with Notion",
 	Long: "Synchronize issues between beads and Notion.\n\n" +
 		"By default this performs bidirectional sync. Use --pull or --push to limit direction.",
+	Args:          cobra.NoArgs, // beads-kwghg: reject stray positionals (RunE reads none)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runNotionSync,
