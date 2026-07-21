@@ -180,6 +180,15 @@ func runDuplicate(cmd *cobra.Command, args []string) error {
 
 	commandDidWrite.Store(true)
 
+	// beads-26gea: marking a duplicate closes the source via LinkAndClose, which
+	// (like `bd update --status closed`, beads-zzp26) bypasses the cmd-layer
+	// completed-molecule auto-close cascade `bd close` runs (close.go:223). So
+	// duplicating a molecule's FINAL step left the auto-closing root stuck OPEN.
+	// Run the SAME cascade post-close — LinkAndClose already committed the close
+	// durably, so the root's completion re-read is accurate. Identical function
+	// bd close/batch/update use, so completion detection can't drift.
+	autoCloseCompletedMolecule(ctx, store, duplicateID, actor, "")
+
 	if isJSONOutput() {
 		return outputJSON(map[string]interface{}{
 			"duplicate": duplicateID,
@@ -306,6 +315,12 @@ func runSupersede(cmd *cobra.Command, args []string) error {
 	}
 
 	commandDidWrite.Store(true)
+
+	// beads-26gea: superseding closes the source via LinkAndClose, bypassing the
+	// cmd-layer completed-molecule auto-close cascade `bd close` runs (same class
+	// as the duplicate leg above and beads-zzp26). Run it post-close so
+	// superseding a molecule's FINAL step auto-closes the completed root.
+	autoCloseCompletedMolecule(ctx, store, oldID, actor, "")
 
 	if isJSONOutput() {
 		return outputJSON(map[string]interface{}{

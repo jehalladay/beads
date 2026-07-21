@@ -235,7 +235,23 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 			return HandleErrorRespectJSON("failed to close %s: %v", fromID, err)
 		}
 	}
-	// Single commit: edge + close land together or not at all (njnw atomicity).
+
+	// beads-26gea: the proxied duplicate/supersede legs close the source via
+	// CloseIssue above but, like the direct legs (duplicate.go) and the proxied
+	// UPDATE path, bypass the completed-molecule auto-close cascade that `bd
+	// close` runs. Run the SAME cascade the proxied close path uses
+	// (autoCloseProxiedCompletedMolecule, close_proxied_server.go) so
+	// superseding/duplicating a molecule's FINAL step auto-closes the completed
+	// root. Called BEFORE uw.Commit (not after) so the root-close it stages
+	// lands in the SAME single commit as the edge+source-close — matching the
+	// proxied close path, which also runs the cascade pre-commit (a post-commit
+	// call would stage the root-close on a UOW that then gets rolled back by the
+	// deferred Close, silently dropping it). session="" (system action, matching
+	// the direct legs).
+	autoCloseProxiedCompletedMolecule(ctx, uw, fromID, actor, "", isJSONOutput())
+
+	// Single commit: edge + source close + any molecule root auto-close land
+	// together or not at all (njnw atomicity).
 	if err := uw.Commit(ctx, in.commitMsg); err != nil && !isDoltNothingToCommit(err) {
 		return HandleErrorRespectJSON("commit %s: %v", in.commitMsg, err)
 	}
