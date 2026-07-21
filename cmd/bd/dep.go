@@ -561,7 +561,14 @@ func addBulkDependencies(cmd *cobra.Command, file string, defaultType string) er
 		return err
 	}
 
-	resolved, err := validateBulkDepEdges(rootCtx, edges)
+	// beads-pogdm: the bulk (--file) path must apply the same eth8 closed-parent
+	// guard the single `bd dep add` enforces (dep.go:450) — without --force, an
+	// OPEN child cannot be attached to a CLOSED auto-closing parent via a
+	// parent-child edge (it would recreate the closed-parent-with-open-child
+	// state the close-guard family forbids). --force overrides, mirroring the
+	// single path and `bd close --force`.
+	depForce, _ := cmd.Flags().GetBool("force")
+	resolved, err := validateBulkDepEdges(rootCtx, edges, depForce)
 	if err != nil {
 		return err
 	}
@@ -725,7 +732,7 @@ func readBulkDepEdges(file string, defaultType string) ([]bulkDepEdge, error) {
 	return edges, nil
 }
 
-func validateBulkDepEdges(ctx context.Context, edges []bulkDepEdge) ([]bulkDepEdge, error) {
+func validateBulkDepEdges(ctx context.Context, edges []bulkDepEdge, force bool) ([]bulkDepEdge, error) {
 	resolved := make([]bulkDepEdge, 0, len(edges))
 	var errs []string
 
@@ -773,6 +780,29 @@ func validateBulkDepEdges(ctx context.Context, edges []bulkDepEdge) ([]bulkDepEd
 			errs = append(errs, fmt.Sprintf("line %d: cannot add dependency: %s is already a child of %s", edge.Line, current.IssueID, current.DependsOnID))
 			resolved = append(resolved, current)
 			continue
+		}
+
+		// Closed-parent guard (beads-eth8 / beads-pogdm): the bulk path must
+		// refuse attaching an OPEN child to a CLOSED auto-closing parent via a
+		// parent-child edge, exactly as the single `bd dep add` does
+		// (dep.go:450) — otherwise the edge the single path refuses lands
+		// silently via --file. Uses the shared isAutoClosingParentType (epic OR
+		// molecule OR ephemeral), matching the single/direct path (beads-aw9x8).
+		// Best-effort: only guards a non-external parent-child edge whose both
+		// endpoints resolve in the source store (same-store lookup, like the
+		// single path); --force overrides. Runs read-only here, before the write
+		// tx opens, so a violation aborts the whole batch with no partial write.
+		if !force && current.Type == types.DepParentChild &&
+			!strings.HasPrefix(current.DependsOnID, "external:") && current.Store != nil {
+			parent, perr := current.Store.GetIssue(ctx, current.DependsOnID)
+			child, cerr := current.Store.GetIssue(ctx, current.IssueID)
+			if perr == nil && cerr == nil && parent != nil && child != nil &&
+				isAutoClosingParentType(parent) && parent.Status == types.StatusClosed &&
+				child.Status != types.StatusClosed {
+				errs = append(errs, fmt.Sprintf("line %d: cannot add %s as a child of closed parent %s: it would leave the closed parent with an open child; reopen the parent, close the child first, or use --force to override", edge.Line, current.IssueID, current.DependsOnID))
+				resolved = append(resolved, current)
+				continue
+			}
 		}
 
 		resolved = append(resolved, current)
