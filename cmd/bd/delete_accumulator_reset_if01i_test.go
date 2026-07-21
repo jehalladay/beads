@@ -75,6 +75,21 @@ func (s *delRetryFakeStore) GetDependencyRecords(_ context.Context, _ string) ([
 	return s.depRecords, nil
 }
 
+// beads-qh4jx: the single-force delete RunE now reads labels + events on the
+// target (to report labels_removed/events_removed in the --json/text output,
+// matching the batch path). Without these no-op overrides the call would
+// dispatch to the embedded nil storage.DoltStorage and SIGSEGV (the embedded-
+// nil-interface-fake panic class — see y5saa). Return empty: this test asserts
+// only accumulator-reset freshness (dependencies_removed/references_updated),
+// not label/event counts.
+func (s *delRetryFakeStore) GetLabels(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+
+func (s *delRetryFakeStore) GetEvents(_ context.Context, _ string, _ int) ([]*types.Event, error) {
+	return nil, nil
+}
+
 func (s *delRetryFakeStore) RunInTransaction(_ context.Context, _ string, fn func(storage.Transaction) error) error {
 	n := s.attempts
 	if n < 1 {

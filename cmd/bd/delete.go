@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -204,6 +205,32 @@ Force: Delete and orphan dependents
 			fmt.Printf("To proceed, run: %s\n\n", ui.RenderWarn("bd delete "+issueID+" --force"))
 			return nil
 		}
+		// beads-qh4jx: count the labels + events the delete removes so the
+		// single-force --json/text output reports them like the batch path
+		// (batchStore.DeleteIssues → DeleteResult{LabelsCount,EventsCount}). The
+		// issue row's DELETE cascades to labels/events via ON DELETE CASCADE
+		// (migrations 0003/0005), so these ARE removed — the single path just
+		// never counted or reported them (a SILENT count-drop, not just an absent
+		// key). Read before the tx (the rows still exist); a read failure is
+		// non-fatal to the delete — report 0 rather than abort a destructive op
+		// on a stats read.
+		labelsRemoved := 0
+		if labels, lerr := activeStore.GetLabels(ctx, issueID); lerr == nil {
+			labelsRemoved = len(labels)
+		}
+		eventsRemoved := 0
+		if events, eerr := activeStore.GetEvents(ctx, issueID, 0); eerr == nil {
+			eventsRemoved = len(events)
+		}
+		// Force-deleting orphans the surviving inbound dependents (their edge to
+		// the target is removed; the issues themselves are kept), matching the
+		// batch path's orphaned_issues (external dependents under --force).
+		orphanedIssues := make([]string, 0, len(dependents))
+		for _, dep := range dependents {
+			orphanedIssues = append(orphanedIssues, dep.ID)
+		}
+		sort.Strings(orphanedIssues)
+
 		updatedIssueCount := 0
 		totalDepsRemoved := 0
 		deleteErr := transactHonoringAutoCommit(ctx, activeStore, fmt.Sprintf("bd: delete %s", issueID), func(tx storage.Transaction) error {
@@ -272,17 +299,35 @@ Force: Delete and orphan dependents
 		commandDidWrite.Store(true)
 
 		if jsonOutput {
+			// beads-qh4jx: emit the SAME shape as the batch/proxied paths so a
+			// --json consumer sees one stable contract regardless of arg count:
+			// - "deleted" is ALWAYS an array (was a bare string on single delete,
+			//   type-flipping string↔array between 1 and N args — a load-bearing
+			//   divergence for a consumer parsing d["deleted"]);
+			// - deleted_count / labels_removed / events_removed / orphaned_issues
+			//   are now present (single path previously dropped them, including
+			//   the labels/events that WERE deleted — a silent count-drop).
 			if err := outputJSON(map[string]interface{}{
-				"deleted":              issueID,
+				"deleted":              []string{issueID},
+				"deleted_count":        1,
 				"dependencies_removed": totalDepsRemoved,
+				"labels_removed":       labelsRemoved,
+				"events_removed":       eventsRemoved,
 				"references_updated":   updatedIssueCount,
+				"orphaned_issues":      orphanedIssues,
 			}); err != nil {
 				return err
 			}
 		} else {
 			fmt.Printf("%s Deleted %s\n", ui.RenderPass("✓"), issueID)
 			fmt.Printf("  Removed %d dependency link(s)\n", totalDepsRemoved)
+			fmt.Printf("  Removed %d label(s)\n", labelsRemoved)
+			fmt.Printf("  Removed %d event(s)\n", eventsRemoved)
 			fmt.Printf("  Updated text references in %d issue(s)\n", updatedIssueCount)
+			if len(orphanedIssues) > 0 {
+				fmt.Printf("  %s Orphaned %d issue(s): %s\n",
+					ui.RenderWarn("⚠"), len(orphanedIssues), strings.Join(orphanedIssues, ", "))
+			}
 		}
 		return nil
 	},
