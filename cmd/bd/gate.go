@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -367,22 +368,31 @@ Examples:
 			Owner:       getOwner(),
 		}
 
-		if err := store.CreateIssue(ctx, gate, actor); err != nil {
-			return HandleErrorRespectJSON("creating gate: %v", err)
-		}
-
-		dep := &types.Dependency{
-			IssueID:     targetIssue.ID,
-			DependsOnID: gate.ID,
-			Type:        types.DepBlocks,
-		}
-		if err := store.AddDependency(ctx, dep, actor); err != nil {
-			return HandleErrorRespectJSON("adding blocking dependency: %v", err)
-		}
-
-		commitMsg := fmt.Sprintf("bd: create gate %s blocking %s", gate.ID, targetIssue.ID)
-		if err := store.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
-			return HandleErrorRespectJSON("failed to commit: %v", err)
+		// beads-ivnqm: the gate create-sequence is TWO writes (gate issue +
+		// blocking dependency) that must land together. Previously each was a
+		// separate autocommitting store call, so an AddDependency failure after
+		// CreateIssue committed left an ORPHAN gate that blocks nothing — the
+		// target silently stays in bd ready while the user believes it is gated
+		// (and a re-run mints a second orphan). Wrap both in one transaction to
+		// match the atomic proxied twin (gate_proxied_server.go single uw.Commit)
+		// and the cook.go / graph_apply.go multi-write precedent. transact commits
+		// once, so the trailing standalone store.Commit is dropped.
+		commitMsg := fmt.Sprintf("bd: create gate blocking %s", targetIssue.ID)
+		if err := transact(ctx, store, commitMsg, func(tx storage.Transaction) error {
+			if err := tx.CreateIssue(ctx, gate, actor); err != nil {
+				return fmt.Errorf("creating gate: %w", err)
+			}
+			dep := &types.Dependency{
+				IssueID:     targetIssue.ID,
+				DependsOnID: gate.ID,
+				Type:        types.DepBlocks,
+			}
+			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+				return fmt.Errorf("adding blocking dependency: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		if jsonOutput {
