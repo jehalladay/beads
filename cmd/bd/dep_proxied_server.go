@@ -341,6 +341,31 @@ func runDepAddBulkProxied(cmd *cobra.Command, ctx context.Context, file, default
 	uw := openDepProxiedUOW(ctx)
 	defer uw.Close(ctx)
 
+	// beads-if6s0: the proxied bulk `bd dep add --file` path (4th leg of the
+	// eth8 closed-parent guard) dropped the guard the direct-bulk (beads-pogdm,
+	// validateBulkDepEdges) and proxied-single (beads-j8ekq, addDepProxiedOne)
+	// paths enforce — it only ran AddDependencies, so a parent-child edge whose
+	// parent is a CLOSED auto-closing root (epic OR molecule OR ephemeral,
+	// beads-aw9x8) with an OPEN child landed silently over the hub. Mirror the
+	// guard using the shared proxiedResolveDepEndpoint + isAutoClosingParentType;
+	// refuse the whole batch (no partial write) unless --force, matching the
+	// single-path error text.
+	depForce, _ := cmd.Flags().GetBool("force")
+	if !depForce {
+		for _, dep := range deps {
+			if dep.Type != types.DepParentChild || strings.HasPrefix(dep.DependsOnID, "external:") {
+				continue
+			}
+			parent := proxiedResolveDepEndpoint(ctx, uw, dep.DependsOnID)
+			child := proxiedResolveDepEndpoint(ctx, uw, dep.IssueID)
+			if parent != nil && child != nil &&
+				isAutoClosingParentType(parent) && parent.Status == types.StatusClosed &&
+				child.Status != types.StatusClosed {
+				FatalErrorRespectJSON("cannot add %s as a child of closed parent %s: it would leave the closed parent with an open child; reopen the parent, close the child first, or use --force to override", dep.IssueID, dep.DependsOnID)
+			}
+		}
+	}
+
 	noCycleCheck, _ := cmd.Flags().GetBool("no-cycle-check")
 	if _, err := uw.DependencyUseCase().AddDependencies(ctx, deps, actor, domain.BulkAddDepsOpts{
 		SkipPerEdgeCycleCheck: noCycleCheck,
