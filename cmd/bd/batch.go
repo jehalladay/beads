@@ -523,9 +523,9 @@ func batchClosesID(op batchOp) (id string, closes bool) {
 }
 
 // guardBatchCloses enforces the close-time integrity guards (blocked-by-open,
-// epic-with-open-children) for every close/update-to-closed op in the batch,
-// mirroring the CLI-layer guards in `bd close` / `bd update --status closed`
-// (beads-zgku). It runs read-only against the committed store BEFORE the write
+// epic-with-open-children, gate-satisfaction) for every close/update-to-closed
+// op in the batch, mirroring the CLI-layer guards in `bd close` /
+// `bd update --status closed` (beads-zgku, beads-zpq1f). It runs read-only against the committed store BEFORE the write
 // transaction opens, so a violation aborts the whole batch with no partial
 // write (matching batch's atomic all-or-nothing contract).
 //
@@ -578,6 +578,15 @@ func guardBatchCloses(ctx context.Context, s storage.DoltStorage, ops []batchOp,
 			if openChildren > 0 {
 				return fmt.Errorf("line %d (%s): cannot close epic %s: %d open child issue(s); close children first or use --force to override", op.line, op.raw, id, openChildren)
 			}
+		}
+
+		// Gate-satisfaction guard: a machine-checkable gate (timer / gh:run /
+		// gh:pr) whose condition is unmet is refused unless --force, mirroring
+		// `bd close` (close.go). checkGateSatisfaction no-ops for non-gate /
+		// non-machine-checkable issues and warn-allows on evaluation error, so
+		// it is safe to call uniformly here (beads-zpq1f).
+		if gerr := checkGateSatisfaction(issue); gerr != nil {
+			return fmt.Errorf("line %d (%s): cannot close %s: %v", op.line, op.raw, id, gerr)
 		}
 
 		// Blocked-by-open guard, batch-aware: a blocker that is itself being
