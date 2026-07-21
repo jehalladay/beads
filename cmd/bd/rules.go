@@ -644,6 +644,7 @@ var rulesCmd = &cobra.Command{
 var rulesAuditCmd = &cobra.Command{
 	Use:           "audit",
 	Short:         "Scan rules for contradictions and merge opportunities",
+	Args:          cobra.NoArgs, // beads-gxhs4: reject stray positionals (audit takes only flags; sibling rulesCompactCmd guarded by zrp4s)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runRulesAudit,

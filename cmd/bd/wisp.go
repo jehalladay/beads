@@ -396,6 +396,7 @@ Examples:
   bd mol wisp list              # List all wisps
   bd mol wisp list --json       # JSON output for programmatic use
   bd mol wisp list --all        # Include closed wisps`,
+	Args:          cobra.NoArgs, // beads-gxhs4: reject stray positionals (list takes only flags; sibling wispGCCmd guarded by zrp4s)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runWispList,
