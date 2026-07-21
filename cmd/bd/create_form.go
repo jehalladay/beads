@@ -275,6 +275,10 @@ The form uses keyboard navigation:
   - Enter: Submit the form (on the last field or submit button)
   - Ctrl+C: Cancel and exit
   - Arrow keys: Navigate within select fields`,
+	// beads-s11cc: reject stray positionals with a clean usage error. The form
+	// reads all input interactively; RunE ignores args, so without this a stray
+	// positional (bd create-form garbage) was silently swallowed with rc=0.
+	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {

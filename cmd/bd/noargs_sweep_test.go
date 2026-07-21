@@ -56,6 +56,11 @@ func TestNoArgsSweep_RejectsPositional(t *testing.T) {
 		{"onboard"},
 		{"preflight"},
 		{"info"},
+		// beads-s11cc: create-form is a top-level issue-creation leaf that the
+		// subcommand-axis sweep (8jy7e) never reached. Its RunE reads all input
+		// interactively and ignores args, so a stray positional (bd create-form
+		// garbage) was silently swallowed with rc=0.
+		{"create-form"},
 	}
 
 	for _, path := range commands {
