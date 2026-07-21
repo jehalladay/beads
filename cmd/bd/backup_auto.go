@@ -102,13 +102,13 @@ func maybeAutoBackup(ctx context.Context) {
 
 	dir, err := backupDir()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-backup skipped: %v\n", err)
+		emitAutoBackupSkipWarning(err)
 		return
 	}
 
 	state, err := loadBackupState(dir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-backup skipped: %v\n", err)
+		emitAutoBackupSkipWarning(err)
 		return
 	}
 
@@ -126,7 +126,7 @@ func maybeAutoBackup(ctx context.Context) {
 	// Change detection: skip if nothing changed
 	currentCommit, err := store.GetCurrentCommit(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-backup skipped: failed to get current commit: %v\n", err)
+		emitAutoBackupSkipWarning(fmt.Errorf("failed to get current commit: %w", err))
 		return
 	}
 	if currentCommit == state.LastDoltCommit && state.LastDoltCommit != "" {
@@ -144,4 +144,22 @@ func maybeAutoBackup(ctx context.Context) {
 	}
 
 	debug.Logf("backup: completed successfully\n")
+}
+
+// emitAutoBackupSkipWarning writes an "auto-backup skipped" diagnostic to
+// stderr for a human operator, suppressed under --quiet and --json.
+//
+// beads-cxq3c: maybeAutoBackup runs from PersistentPostRun after EVERY command
+// (including --json ones). Its Info skip-notice and its "auto-backup failed"
+// warning are both guarded by !isQuiet() && !jsonOutput, but the three
+// "auto-backup skipped: %v" sites (backupDir / loadBackupState /
+// GetCurrentCommit failures) wrote unconditionally, so on a --json invocation
+// where auto-backup's setup fails the raw "Warning:" line polluted a --json
+// consumer's captured stderr — the same leak class as beads-mfmcf (ado sync),
+// and internally inconsistent with the sibling warning right below it. Route
+// them through the same guard.
+func emitAutoBackupSkipWarning(err error) {
+	if !isQuiet() && !jsonOutput {
+		fmt.Fprintf(os.Stderr, "Warning: auto-backup skipped: %v\n", err)
+	}
 }
