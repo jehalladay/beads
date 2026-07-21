@@ -46,6 +46,7 @@ type createFormValues struct {
 	ExternalRef        string
 	Dependencies       []string
 	ParentID           string // Parent issue ID for hierarchical child creation
+	Force              bool   // beads-3jdex: override the closed-parent close-guard, matching `bd create --force`
 }
 
 // parseCreateFormInput parses raw form input into a createFormValues struct.
@@ -102,12 +103,25 @@ func CreateIssueFromFormValues(ctx context.Context, s storage.DoltStorage, fv *c
 	var explicitID string
 	var inheritedLabels []string
 	if fv.ParentID != "" {
-		_, err := s.GetIssue(ctx, fv.ParentID)
+		parentIssue, err := s.GetIssue(ctx, fv.ParentID)
 		if err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				return nil, fmt.Errorf("parent issue %s not found", fv.ParentID)
 			}
 			return nil, fmt.Errorf("failed to check parent issue: %w", err)
+		}
+		// beads-3jdex: the create-FORM axis of the close-guard family. The single
+		// `bd create --parent` path refuses creating a child under a closed
+		// auto-closing parent (create.go:486, a8a1b/czu1s) — that reaches the
+		// forbidden "closed parent with an open child" invariant the family
+		// (zgku/b0tw/aw9x8) enforces. This shared exported entry drove by a real
+		// form submission only checked the parent EXISTS, not its status. New
+		// issues are created open, so any closed auto-closing parent (epic OR
+		// molecule OR wisp, per the aw9x8 shared isAutoClosingParentType) is a
+		// violation. Overridable with --force, matching `bd create --force`.
+		if !fv.Force && parentIssue != nil &&
+			isAutoClosingParentType(parentIssue) && parentIssue.Status == types.StatusClosed {
+			return nil, fmt.Errorf("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", fv.ParentID)
 		}
 		childID, err := s.GetNextChildID(ctx, fv.ParentID)
 		if err != nil {
@@ -424,6 +438,7 @@ func runCreateForm(cmd *cobra.Command) error {
 
 	fv := parseCreateFormInput(raw)
 	fv.ParentID = parentID
+	fv.Force, _ = cmd.Flags().GetBool("force")
 
 	issue, err := CreateIssueFromFormValues(rootCtx, store, fv, actor)
 	if err != nil {
@@ -457,5 +472,6 @@ func printCreatedIssue(issue *types.Issue) {
 func init() {
 	// Note: --json flag is defined as a persistent flag in main.go
 	createFormCmd.Flags().String("parent", "", "Parent issue ID for creating a hierarchical child (e.g., 'bd-a3f8e9')")
+	createFormCmd.Flags().Bool("force", false, "Override the closed-parent guard (create a child under a closed parent)")
 	rootCmd.AddCommand(createFormCmd)
 }

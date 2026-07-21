@@ -771,3 +771,105 @@ func TestFormValuesIntegration(t *testing.T) {
 		}
 	})
 }
+
+// TestCreateIssueFromFormValues_ClosedParentGuard covers beads-3jdex: the
+// create-FORM axis of the close-guard family. Creating a child under a CLOSED
+// auto-closing parent (epic OR molecule OR wisp, per aw9x8's
+// isAutoClosingParentType) must be refused — it would recreate the forbidden
+// "closed parent with an open child" state that the single `bd create --parent`
+// path already guards (a8a1b/czu1s). --force overrides; an OPEN parent, a
+// closed non-auto-closing parent, and no-parent creation stay unaffected.
+func TestCreateIssueFromFormValues_ClosedParentGuard(t *testing.T) {
+	tmpDir := t.TempDir()
+	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
+	s := newTestStore(t, testDB)
+	ctx := context.Background()
+
+	// makeParent creates a parent of the given form type and optionally closes it.
+	makeParent := func(t *testing.T, title, issueType string, closed bool) string {
+		t.Helper()
+		parent, err := CreateIssueFromFormValues(ctx, s, &createFormValues{
+			Title:     title,
+			Priority:  1,
+			IssueType: issueType,
+		}, "test")
+		if err != nil {
+			t.Fatalf("failed to create %s parent: %v", issueType, err)
+		}
+		if closed {
+			if err := s.CloseIssue(ctx, parent.ID, "done", "test", ""); err != nil {
+				t.Fatalf("failed to close parent %s: %v", parent.ID, err)
+			}
+		}
+		return parent.ID
+	}
+
+	// REFUSE cases: closed auto-closing parent → guard fires.
+	refuseCases := []struct {
+		name       string
+		parentType string
+	}{
+		{"ClosedEpicRefused", "epic"},
+		{"ClosedMoleculeRefused", "molecule"},
+	}
+	for _, tc := range refuseCases {
+		t.Run(tc.name, func(t *testing.T) {
+			pid := makeParent(t, tc.name+" parent", tc.parentType, true)
+			_, err := CreateIssueFromFormValues(ctx, s, &createFormValues{
+				Title:     "child under closed " + tc.parentType,
+				Priority:  2,
+				IssueType: "task",
+				ParentID:  pid,
+			}, "test")
+			if err == nil {
+				t.Fatalf("expected refusal creating a child under closed %s, got nil", tc.parentType)
+			}
+			if !strings.Contains(err.Error(), "closed parent") {
+				t.Errorf("expected 'closed parent' guard error, got: %v", err)
+			}
+		})
+	}
+
+	// --force overrides the guard.
+	t.Run("ForceOverridesClosedParent", func(t *testing.T) {
+		pid := makeParent(t, "force parent", "epic", true)
+		child, err := CreateIssueFromFormValues(ctx, s, &createFormValues{
+			Title:     "forced child",
+			Priority:  2,
+			IssueType: "task",
+			ParentID:  pid,
+			Force:     true,
+		}, "test")
+		if err != nil {
+			t.Fatalf("--force should override the closed-parent guard, got: %v", err)
+		}
+		if !strings.HasPrefix(child.ID, pid+".") {
+			t.Errorf("forced child %q should be hierarchical under %q", child.ID, pid)
+		}
+	})
+
+	// CONTROL cases (guard must NOT over-fire): open parent, and a closed
+	// non-auto-closing parent (a task), both allow child creation.
+	t.Run("OpenEpicParentAllowed", func(t *testing.T) {
+		pid := makeParent(t, "open epic", "epic", false)
+		if _, err := CreateIssueFromFormValues(ctx, s, &createFormValues{
+			Title:     "child under open epic",
+			Priority:  2,
+			IssueType: "task",
+			ParentID:  pid,
+		}, "test"); err != nil {
+			t.Fatalf("child under OPEN epic must succeed, got: %v", err)
+		}
+	})
+	t.Run("ClosedTaskParentAllowed", func(t *testing.T) {
+		pid := makeParent(t, "closed task", "task", true)
+		if _, err := CreateIssueFromFormValues(ctx, s, &createFormValues{
+			Title:     "child under closed task",
+			Priority:  2,
+			IssueType: "task",
+			ParentID:  pid,
+		}, "test"); err != nil {
+			t.Fatalf("child under closed NON-auto-closing (task) parent must succeed, got: %v", err)
+		}
+	})
+}
