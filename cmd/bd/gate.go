@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -367,23 +368,41 @@ Examples:
 			Owner:       getOwner(),
 		}
 
-		if err := store.CreateIssue(ctx, gate, actor); err != nil {
-			return HandleErrorRespectJSON("creating gate: %v", err)
-		}
+		// beads-tvinu: wrap the create-gate + blocking-dependency sequence in a
+		// single transaction so it is all-or-nothing, mirroring the atomic
+		// PROXIED twin (runGateCreateProxied buffers CreateIssue + AddDependency
+		// on one UnitOfWork + a single uw.Commit) and the pdzyv/graph_apply
+		// RunInTransaction precedent. Without the tx, store.CreateIssue autocommits
+		// the gate issue internally (GH#2009) while AddDependency only touches the
+		// working set until the explicit store.Commit — so a hard failure on
+		// AddDependency (or a crash before the Commit) left the gate DURABLY
+		// created but not blocking its target: an orphan gate that gates nothing,
+		// while the target issue stays out of `bd ready` on no dependency at all
+		// (defeating the entire purpose of `bd gate create`). Exact ary2n/pdzyv
+		// signature. The commit message references the target (not gate.ID, which
+		// is minted inside the tx) — matching the graph_apply minted-ID-in-tx
+		// precedent.
+		if err := store.RunInTransaction(ctx, fmt.Sprintf("bd: create gate blocking %s", targetIssue.ID), func(tx storage.Transaction) error {
+			if err := tx.CreateIssue(ctx, gate, actor); err != nil {
+				return fmt.Errorf("creating gate: %w", err)
+			}
 
-		dep := &types.Dependency{
-			IssueID:     targetIssue.ID,
-			DependsOnID: gate.ID,
-			Type:        types.DepBlocks,
+			dep := &types.Dependency{
+				IssueID:     targetIssue.ID,
+				DependsOnID: gate.ID,
+				Type:        types.DepBlocks,
+			}
+			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+				return fmt.Errorf("adding blocking dependency: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return HandleErrorRespectJSON("%v", err)
 		}
-		if err := store.AddDependency(ctx, dep, actor); err != nil {
-			return HandleErrorRespectJSON("adding blocking dependency: %v", err)
-		}
-
-		commitMsg := fmt.Sprintf("bd: create gate %s blocking %s", gate.ID, targetIssue.ID)
-		if err := store.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
-			return HandleErrorRespectJSON("failed to commit: %v", err)
-		}
+		// RunInTransaction commits atomically; mark the explicit commit so the
+		// deferred maybeAutoCommit does not double-commit (mirrors the
+		// pdzyv/swarm atomic-twin fixes).
+		commandDidExplicitDoltCommit = true
 
 		if jsonOutput {
 			return outputJSON(gate)
