@@ -55,6 +55,10 @@ type GraphApplyResult struct {
 type GraphApplyOptions struct {
 	Ephemeral bool
 	NoHistory bool
+	// NoInheritLabels, when true, suppresses inheriting parent labels onto graph
+	// children (parity with `bd create --no-inherit-labels`). Zero value inherits,
+	// matching single create's default (beads-l8qsn).
+	NoInheritLabels bool
 }
 
 func (opts GraphApplyOptions) Validate() error {
@@ -644,6 +648,52 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 				}
 				if err := tx.AddDependency(ctx, dep, actor); err != nil {
 					return fmt.Errorf("node %q: adding parent-child dep: %w", node.Key, err)
+				}
+			}
+		}
+
+		// Inherit parent labels onto graph children, matching single create
+		// --parent (beads-l8qsn). The nodes are created top-level in the batch
+		// above (no parent passed to CreateIssues), so the single-create
+		// inheritance path never runs for them; this post-pass mirrors it via the
+		// tx after parent-child deps are linked, so a parent declared later in
+		// plan order (parent_key) is already minted. Union semantics (add only
+		// labels the child lacks). Kept consistent with the domain applyGraph
+		// Pass 4.5 twin. Skipped on the plan-level opt-out (--no-inherit-labels
+		// parity).
+		if !opts.NoInheritLabels {
+			for i, node := range plan.Nodes {
+				parentID := node.ParentID
+				if node.ParentKey != "" {
+					parentID = keyToID[node.ParentKey]
+				}
+				if parentID == "" {
+					continue
+				}
+				childID := issues[i].ID
+				parentLabels, err := tx.GetLabels(ctx, parentID)
+				if err != nil {
+					return fmt.Errorf("node %q: read parent labels for inheritance from %s: %w", node.Key, parentID, err)
+				}
+				if len(parentLabels) == 0 {
+					continue
+				}
+				existing, err := tx.GetLabels(ctx, childID)
+				if err != nil {
+					return fmt.Errorf("node %q: read child labels %s: %w", node.Key, childID, err)
+				}
+				have := make(map[string]bool, len(existing))
+				for _, l := range existing {
+					have[l] = true
+				}
+				for _, label := range parentLabels {
+					if have[label] {
+						continue
+					}
+					if err := tx.AddLabel(ctx, childID, label, actor); err != nil {
+						return fmt.Errorf("node %q: add inherited label %s: %w", node.Key, label, err)
+					}
+					have[label] = true
 				}
 			}
 		}

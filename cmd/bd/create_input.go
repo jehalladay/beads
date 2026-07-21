@@ -296,6 +296,13 @@ func rejectSingleIssueFlagsForMarkdown(cmd *cobra.Command) error {
 
 func rejectSingleIssueFlagsForGraph(cmd *cobra.Command) error {
 	for _, name := range singleIssueOnlyFlags {
+		// --no-inherit-labels is a plan-LEVEL toggle for graph (parity with single
+		// create --no-inherit-labels): it suppresses parent-label inheritance for
+		// every graph child rather than supplying a per-node field, so it is valid
+		// with --graph even though it is rejected for --file (beads-l8qsn).
+		if name == "no-inherit-labels" {
+			continue
+		}
 		if cmd.Flags().Changed(name) {
 			return HandleErrorRespectJSON("--%s is not valid with --graph (graph plans supply per-node fields)", name)
 		}

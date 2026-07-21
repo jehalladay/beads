@@ -80,9 +80,11 @@ var createCmd = &cobra.Command{
 			graphDryRun, _ := cmd.Flags().GetBool("dry-run")
 			wisp, _ := cmd.Flags().GetBool("ephemeral")
 			noHistory, _ := cmd.Flags().GetBool("no-history")
+			noInheritLabels, _ := cmd.Flags().GetBool("no-inherit-labels")
 			graphOpts := GraphApplyOptions{
-				Ephemeral: wisp,
-				NoHistory: noHistory,
+				Ephemeral:       wisp,
+				NoHistory:       noHistory,
+				NoInheritLabels: noInheritLabels,
 			}
 			if err := graphOpts.Validate(); err != nil {
 				return HandleErrorRespectJSON("invalid graph options: %v", err)

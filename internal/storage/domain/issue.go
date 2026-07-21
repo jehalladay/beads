@@ -213,6 +213,10 @@ type CreateIssuesResult struct {
 type GraphPlan struct {
 	Nodes []GraphNode
 	Edges []GraphEdge
+	// NoInheritLabels, when true, suppresses inheriting parent labels onto graph
+	// children (parity with `bd create --no-inherit-labels`). Zero value inherits,
+	// matching single create's default (beads-l8qsn).
+	NoInheritLabels bool
 }
 
 type GraphNode struct {
@@ -1175,6 +1179,60 @@ func (u *issueUseCaseImpl) applyGraph(ctx context.Context, plan GraphPlan, actor
 		}
 		if err := u.depRepo.Insert(ctx, dep, actor, DepInsertOpts{UseWispsTable: useWisp}); err != nil {
 			return GraphApplyResult{}, fmt.Errorf("applyGraph: node %q: parent-child dep %s->%s: %w", node.Key, childID, parentID, err)
+		}
+	}
+
+	// Pass 4.5 — inherit parent labels onto graph children, matching single
+	// create --parent (beads-l8qsn). Pass 1 creates every node top-level (no
+	// ParentID passed to u.create), so the inheritance block at u.create never
+	// runs for graph children — the graph paths were consistent with each other
+	// but diverged from single create. Same create-with-parent input-parity class
+	// as the beads-7i4m/llzt assignee-normalize graph seam. Runs as a post-pass
+	// AFTER Pass 4 so a parent declared later in plan order (parent_key) is already
+	// minted and linked; union semantics mirror u.create (add only labels the
+	// child lacks). Skipped when the plan opts out (--no-inherit-labels parity).
+	if !plan.NoInheritLabels {
+		for _, node := range plan.Nodes {
+			parentID := node.ParentID
+			if node.ParentKey != "" {
+				parentID = keyToID[node.ParentKey]
+			}
+			if parentID == "" {
+				continue
+			}
+			childID := keyToID[node.Key]
+			parentLabels, err := u.labelRepo.List(ctx, parentID, LabelOpts{UseWispsTable: useWisp})
+			switch {
+			case dberrors.IsTableNotExist(err):
+				// Older schemas may lack the wisp label table; nothing to inherit.
+				continue
+			case err != nil:
+				return GraphApplyResult{}, fmt.Errorf("applyGraph: node %q: read parent labels for inheritance from %s: %w", node.Key, parentID, err)
+			}
+			if len(parentLabels) == 0 {
+				continue
+			}
+			existing, err := u.labelRepo.List(ctx, childID, LabelOpts{UseWispsTable: useWisp})
+			if err != nil {
+				return GraphApplyResult{}, fmt.Errorf("applyGraph: node %q: read child labels %s: %w", node.Key, childID, err)
+			}
+			have := make(map[string]bool, len(existing))
+			for _, l := range existing {
+				have[l] = true
+			}
+			for _, label := range parentLabels {
+				clean, err := validateLabelValue(label)
+				if err != nil {
+					return GraphApplyResult{}, fmt.Errorf("applyGraph: node %q: inherited label: %w", node.Key, err)
+				}
+				if clean == "" || have[clean] {
+					continue
+				}
+				if err := u.labelRepo.Insert(ctx, childID, clean, actor, LabelOpts{UseWispsTable: useWisp}); err != nil {
+					return GraphApplyResult{}, fmt.Errorf("applyGraph: node %q: add inherited label %s: %w", node.Key, clean, err)
+				}
+				have[clean] = true
+			}
 		}
 	}
 

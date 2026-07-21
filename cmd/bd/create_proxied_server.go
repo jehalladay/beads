@@ -550,7 +550,7 @@ func buildDomainGraphPlan(plan GraphApplyPlan, in createInput) domain.GraphPlan 
 			Type:    graphApplyDependencyType(e.Type),
 		})
 	}
-	return domain.GraphPlan{Nodes: nodes, Edges: edges}
+	return domain.GraphPlan{Nodes: nodes, Edges: edges, NoInheritLabels: in.noInheritLabels}
 }
 
 func materializeGraphNodeIssue(n GraphApplyNode, in createInput) *types.Issue {
