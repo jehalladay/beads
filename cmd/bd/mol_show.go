@@ -41,6 +41,15 @@ Example:
 
 		ctx := rootCtx
 
+		// beads-ztu1e (ojyjj/mgjco/aocj fail-loud class, read-side): in
+		// proxied-server mode main.go's PersistentPreRunE returns before
+		// newDoltStore (main.go:1147-1155) leaving the global store nil, so the
+		// bare store==nil check below misdiagnoses the proxied config as a local
+		// "no database connection" (reads as an infra outage). Guard BEFORE the
+		// nil check with an accurate message, mirroring mol burn (ojyjj).
+		if usesProxiedServer() {
+			return HandleErrorRespectJSON("mol show is not supported in proxied-server mode (connect directly with an embedded/dolt store)")
+		}
 		if store == nil {
 			return HandleErrorRespectJSON("no database connection")
 		}

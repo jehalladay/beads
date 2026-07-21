@@ -112,6 +112,15 @@ func runMolDistill(cmd *cobra.Command, args []string) error {
 
 	ctx := rootCtx
 
+	// beads-ztu1e (ojyjj/mgjco/aocj fail-loud class, read-side): proxied-server
+	// mode leaves the global store nil (main.go PersistentPreRunE returns before
+	// newDoltStore), so the bare store==nil check misdiagnoses it as a local
+	// "no database connection". mol distill scaffolds files + needs direct reads
+	// through loadTemplateSubgraph (no proxied loader path), so fail loud with an
+	// accurate message BEFORE the nil check, mirroring mol burn (ojyjj).
+	if usesProxiedServer() {
+		return HandleErrorRespectJSON("mol distill is not supported in proxied-server mode (connect directly with an embedded/dolt store)")
+	}
 	if store == nil {
 		return HandleErrorRespectJSON("no database connection")
 	}

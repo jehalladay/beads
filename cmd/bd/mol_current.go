@@ -84,6 +84,13 @@ Use --limit or --range to view specific steps:
 			agent = actor
 		}
 
+		// beads-ztu1e (ojyjj/mgjco/aocj fail-loud class, read-side): proxied-server
+		// mode leaves the global store nil (main.go PersistentPreRunE returns before
+		// newDoltStore), so the bare store==nil check misdiagnoses it as a local
+		// "no database connection". Guard BEFORE the nil check, mirroring mol burn.
+		if usesProxiedServer() {
+			return HandleErrorRespectJSON("mol current is not supported in proxied-server mode (connect directly with an embedded/dolt store)")
+		}
 		if store == nil {
 			return HandleErrorRespectJSON("no database connection")
 		}
