@@ -13,6 +13,10 @@ func (s *testSuite) TestIssueUseCase_Delete() {
 		s.Run("RemovesRowAndDeps", s.iucDeleteRemovesRowAndDeps)
 		s.Run("CascadesAcrossDepTypes", s.iucDeleteCascades)
 		s.Run("RewritesTextReferencesInNeighbors", s.iucDeleteRewritesRefs)
+		s.Run("RewritesTitleReferenceInNeighbor", s.iucDeleteRewritesTitleRef)
+		s.Run("RewritesTitleAndDescriptionTogether", s.iucDeleteRewritesTitleAndDesc)
+		s.Run("RewritesTitleForMultipleDeletedIDs", s.iucDeleteRewritesTitleMultiID)
+		s.Run("LeavesUnconnectedTitleRefAlone", s.iucDeleteLeavesUnconnectedTitle)
 		s.Run("RecomputesIsBlockedOnAffected", s.iucDeleteRecomputesBlocked)
 	})
 	s.Run("DeleteIssues", func() {
@@ -100,6 +104,115 @@ func (s *testSuite) iucDeleteRewritesRefs() {
 	s.Require().NoError(err)
 	s.True(strings.Contains(updated.Description, "[deleted:bd-iuc-ref-target]"),
 		"neighbor description should be rewritten; got %q", updated.Description)
+}
+
+// iucDeleteRewritesTitleRef is the beads-989m0 regression guard: a connected
+// neighbor that references the deleted id ONLY in its title must have that
+// title tombstoned, matching the rename.go / rename_prefix.go twins. Before the
+// fix rewriteTextReferences skipped the title field entirely, leaving a dangling
+// live reference in the field shown in every list/ready/blocked/show view.
+func (s *testSuite) iucDeleteRewritesTitleRef() {
+	s.seedOpenIssue("bd-iuc-tref-target")
+	s.seedOpenIssue("bd-iuc-tref-neighbor")
+	s.Require().NoError(s.issueRepo().Update(s.Ctx(), "bd-iuc-tref-neighbor",
+		map[string]any{"title": "Fix regression from bd-iuc-tref-target"},
+		"seeder", domain.IssueTableOpts{}))
+	s.Require().NoError(s.depRepo().Insert(s.Ctx(),
+		newDep("bd-iuc-tref-target", "bd-iuc-tref-neighbor", types.DepRelated),
+		"tester", domain.DepInsertOpts{}))
+
+	res, err := s.issueUseCase().DeleteIssue(s.Ctx(), "bd-iuc-tref-target", "tester")
+	s.Require().NoError(err)
+	s.GreaterOrEqual(res.ReferencesUpdated, 1, "the title-only reference must be counted")
+
+	updated, err := s.issueRepo().Get(s.Ctx(), "bd-iuc-tref-neighbor", domain.IssueTableOpts{})
+	s.Require().NoError(err)
+	s.True(strings.Contains(updated.Title, "[deleted:bd-iuc-tref-target]"),
+		"neighbor title should be rewritten; got %q", updated.Title)
+}
+
+// iucDeleteRewritesTitleAndDesc proves both fields are tombstoned in one delete
+// when the neighbor references the deleted id in title AND description — no
+// field is left dangling.
+func (s *testSuite) iucDeleteRewritesTitleAndDesc() {
+	s.seedOpenIssue("bd-iuc-tboth-target")
+	s.seedOpenIssue("bd-iuc-tboth-neighbor")
+	s.Require().NoError(s.issueRepo().Update(s.Ctx(), "bd-iuc-tboth-neighbor",
+		map[string]any{
+			"title":       "Fix regression from bd-iuc-tboth-target",
+			"description": "Root cause traced to bd-iuc-tboth-target.",
+		},
+		"seeder", domain.IssueTableOpts{}))
+	s.Require().NoError(s.depRepo().Insert(s.Ctx(),
+		newDep("bd-iuc-tboth-target", "bd-iuc-tboth-neighbor", types.DepRelated),
+		"tester", domain.DepInsertOpts{}))
+
+	res, err := s.issueUseCase().DeleteIssue(s.Ctx(), "bd-iuc-tboth-target", "tester")
+	s.Require().NoError(err)
+	s.GreaterOrEqual(res.ReferencesUpdated, 1)
+
+	updated, err := s.issueRepo().Get(s.Ctx(), "bd-iuc-tboth-neighbor", domain.IssueTableOpts{})
+	s.Require().NoError(err)
+	s.True(strings.Contains(updated.Title, "[deleted:bd-iuc-tboth-target]"),
+		"title should be rewritten; got %q", updated.Title)
+	s.True(strings.Contains(updated.Description, "[deleted:bd-iuc-tboth-target]"),
+		"description should be rewritten; got %q", updated.Description)
+}
+
+// iucDeleteRewritesTitleMultiID proves the in-memory conn.Title mirror keeps
+// multi-deleted-ID correctness: a neighbor whose title references two deleted
+// ids gets BOTH tombstoned in the single delete pass (a later deletedID pass
+// must see the already-rewritten title, same as the desc/notes/design/ac
+// mirrors).
+func (s *testSuite) iucDeleteRewritesTitleMultiID() {
+	s.seedOpenIssue("bd-iuc-tmul-x")
+	s.seedOpenIssue("bd-iuc-tmul-y")
+	s.seedOpenIssue("bd-iuc-tmul-neighbor")
+	s.Require().NoError(s.issueRepo().Update(s.Ctx(), "bd-iuc-tmul-neighbor",
+		map[string]any{"title": "Supersedes bd-iuc-tmul-x and bd-iuc-tmul-y"},
+		"seeder", domain.IssueTableOpts{}))
+	s.Require().NoError(s.depRepo().Insert(s.Ctx(),
+		newDep("bd-iuc-tmul-x", "bd-iuc-tmul-neighbor", types.DepRelated),
+		"tester", domain.DepInsertOpts{}))
+	s.Require().NoError(s.depRepo().Insert(s.Ctx(),
+		newDep("bd-iuc-tmul-y", "bd-iuc-tmul-neighbor", types.DepRelated),
+		"tester", domain.DepInsertOpts{}))
+
+	res, err := s.issueUseCase().DeleteIssues(s.Ctx(), domain.DeleteIssuesParams{
+		IDs:                  []string{"bd-iuc-tmul-x", "bd-iuc-tmul-y"},
+		UpdateTextReferences: true,
+		Cascade:              false,
+	}, "tester")
+	s.Require().NoError(err)
+	s.GreaterOrEqual(res.ReferencesUpdated, 1)
+
+	updated, err := s.issueRepo().Get(s.Ctx(), "bd-iuc-tmul-neighbor", domain.IssueTableOpts{})
+	s.Require().NoError(err)
+	s.True(strings.Contains(updated.Title, "[deleted:bd-iuc-tmul-x]"),
+		"first deleted id must be tombstoned in title; got %q", updated.Title)
+	s.True(strings.Contains(updated.Title, "[deleted:bd-iuc-tmul-y]"),
+		"second deleted id must be tombstoned in title; got %q", updated.Title)
+}
+
+// iucDeleteLeavesUnconnectedTitle preserves the deliberate dep-connected
+// scoping (issue_delete.go:63-65 / beads-rir3): a bead that references the
+// deleted id in its title but is NOT dependency-connected must be left alone.
+func (s *testSuite) iucDeleteLeavesUnconnectedTitle() {
+	s.seedOpenIssue("bd-iuc-tunc-target")
+	s.seedOpenIssue("bd-iuc-tunc-stranger")
+	original := "Related to bd-iuc-tunc-target somehow"
+	s.Require().NoError(s.issueRepo().Update(s.Ctx(), "bd-iuc-tunc-stranger",
+		map[string]any{"title": original},
+		"seeder", domain.IssueTableOpts{}))
+	// No dependency edge → not a connected neighbor.
+
+	_, err := s.issueUseCase().DeleteIssue(s.Ctx(), "bd-iuc-tunc-target", "tester")
+	s.Require().NoError(err)
+
+	survived, err := s.issueRepo().Get(s.Ctx(), "bd-iuc-tunc-stranger", domain.IssueTableOpts{})
+	s.Require().NoError(err)
+	s.Equal(original, survived.Title,
+		"an unconnected bead's title must not be rewritten (dep-connected scoping)")
 }
 
 func (s *testSuite) iucDeleteRecomputesBlocked() {

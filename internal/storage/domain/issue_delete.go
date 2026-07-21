@@ -307,6 +307,14 @@ func (u *issueUseCaseImpl) rewriteTextReferences(
 		replacement := `$1[deleted:` + id + `]$3`
 		for connID, conn := range connected {
 			updates := map[string]any{}
+			// beads-989m0: rewrite the title too, matching the two structural
+			// twins (rename.go:171, rename_prefix.go:374) that both tombstone
+			// title alongside desc/notes/design/ac. Omitting it left a dangling
+			// live reference to a deleted id in the exact field shown in every
+			// list/ready/blocked/show view.
+			if re.MatchString(conn.Title) {
+				updates["title"] = re.ReplaceAllString(conn.Title, replacement)
+			}
 			if re.MatchString(conn.Description) {
 				updates["description"] = re.ReplaceAllString(conn.Description, replacement)
 			}
@@ -327,6 +335,13 @@ func (u *issueUseCaseImpl) rewriteTextReferences(
 				return len(touched), fmt.Errorf("rewrite refs %s: %w", connID, err)
 			}
 			touched[connID] = true
+			// beads-989m0: mirror the rewritten title back onto the in-memory
+			// conn so a later deletedID pass in this loop sees the already-
+			// tombstoned value (same multi-ID correctness as the desc/notes/
+			// design/ac mirrors below).
+			if title, ok := updates["title"].(string); ok {
+				conn.Title = title
+			}
 			if desc, ok := updates["description"].(string); ok {
 				conn.Description = desc
 			}
