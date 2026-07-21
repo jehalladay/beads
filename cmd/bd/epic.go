@@ -143,7 +143,19 @@ var closeEligibleEpicsCmd = &cobra.Command{
 		// Direct path: store.CloseIssue autocommits per call (withConn commit
 		// mode), so there is no batch commit step (commitFn == nil).
 		return renderEpicCloseEligible(epics, dryRun, func(id string) error {
-			return store.CloseIssue(ctx, id, "All children completed", "system", "")
+			if err := store.CloseIssue(ctx, id, "All children completed", "system", ""); err != nil {
+				return err
+			}
+			// beads-4v7eb: a close-eligible epic can itself be the FINAL open
+			// step of an auto-closing molecule/wisp root. `bd close` runs
+			// autoCloseCompletedMolecule (close.go:223) so closing a molecule's
+			// last step cascades the root closed; this bare CloseIssue dropped
+			// that hop, orphaning the parent open. Run the SAME cmd-layer
+			// cascade here (direct store self-commits, so post-close is fine —
+			// the batch/26gea/zzp26 direct pattern). No-op when the epic is not
+			// a molecule step (findParentMolecule returns "").
+			autoCloseCompletedMolecule(ctx, store, id, "system", "")
+			return nil
 		}, nil)
 	},
 }
