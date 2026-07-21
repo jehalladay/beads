@@ -178,6 +178,7 @@ that came from the removed repository.`,
 
 var repoListCmd = &cobra.Command{
 	Use:   "list",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "List all configured repositories",
 	Long: `List all repositories configured in .beads/config.yaml.
 
@@ -242,6 +243,7 @@ repositories configured for hydration.`,
 
 var repoSyncCmd = &cobra.Command{
 	Use:   "sync",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Manually trigger multi-repo sync",
 	Long: `Synchronize issues from all configured additional repositories.
 

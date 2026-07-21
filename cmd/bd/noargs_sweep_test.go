@@ -233,3 +233,40 @@ func TestNoArgsSweep_RemainingSubcommandsRejectPositional(t *testing.T) {
 		})
 	}
 }
+
+func TestNoArgsSweep_MiscSubcommandsRejectPositional(t *testing.T) {
+	commands := [][]string{
+		{"gate", "list"},
+		{"gate", "create"},
+		{"gate", "check"},
+		{"upgrade", "status"},
+		{"upgrade", "review"},
+		{"upgrade", "ack"},
+		{"vc", "commit"},
+		{"vc", "status"},
+		{"repo", "list"},
+		{"repo", "sync"},
+	}
+
+	for _, path := range commands {
+		name := path[len(path)-1]
+		t.Run(path[0]+"_"+name, func(t *testing.T) {
+			cmd, _, err := rootCmd.Find(path)
+			if err != nil {
+				t.Fatalf("rootCmd.Find(%v): %v", path, err)
+			}
+			if cmd.Name() != name {
+				t.Fatalf("resolved %q, want %q — path %v did not reach the leaf", cmd.Name(), name, path)
+			}
+			if cmd.Args == nil {
+				t.Fatalf("%v has no Args validator; a stray positional would be silently ignored", path)
+			}
+			if err := cmd.Args(cmd, []string{"stray"}); err == nil {
+				t.Errorf("%v Args validator accepted a stray positional %q, want rejection", path, "stray")
+			}
+			if err := cmd.Args(cmd, nil); err != nil {
+				t.Errorf("%v Args validator rejected the no-arg case: %v", path, err)
+			}
+		})
+	}
+}

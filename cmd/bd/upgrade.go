@@ -26,6 +26,7 @@ Version tracking is automatic - bd updates metadata.json on every run.`,
 
 var upgradeStatusCmd = &cobra.Command{
 	Use:   "status",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Check if bd version has changed",
 	Long: `Check if bd has been upgraded since you last used it.
 
@@ -78,6 +79,7 @@ Examples:
 
 var upgradeReviewCmd = &cobra.Command{
 	Use:   "review",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Review changes since last bd version",
 	Long: `Show what's new in bd since the last version you used.
 
@@ -156,6 +158,7 @@ Examples:
 
 var upgradeAckCmd = &cobra.Command{
 	Use:   "ack",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Acknowledge the current bd version",
 	Long: `Mark the current bd version as acknowledged.
 

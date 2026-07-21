@@ -42,6 +42,7 @@ Examples:
 // gateListCmd lists gate issues
 var gateListCmd = &cobra.Command{
 	Use:   "list",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "List gate issues",
 	Long: `List all gate issues in the current beads database.
 
@@ -270,6 +271,7 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 // gateCreateCmd creates an ad-hoc gate issue that blocks another issue
 var gateCreateCmd = &cobra.Command{
 	Use:   "create",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Create a gate that blocks an issue",
 	Long: `Create an ad-hoc gate issue that blocks another issue until resolved.
 
@@ -593,6 +595,7 @@ func formatGateCheckReason(reason string) string {
 // gateCheckCmd evaluates gates and closes those that are resolved
 var gateCheckCmd = &cobra.Command{
 	Use:   "check",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Evaluate gates and close resolved ones",
 	Long: `Evaluate gate conditions and automatically close resolved gates.
 

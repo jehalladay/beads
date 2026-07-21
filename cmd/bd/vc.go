@@ -189,6 +189,7 @@ var vcCommitStdin bool
 
 var vcCommitCmd = &cobra.Command{
 	Use:   "commit",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Create a commit with all staged changes",
 	Long: `Create a new Dolt commit with all current changes.
 
@@ -265,6 +266,7 @@ Examples:
 
 var vcStatusCmd = &cobra.Command{
 	Use:   "status",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Show current branch and uncommitted changes",
 	Long: `Show the current branch, commit hash, and any uncommitted changes.
 
