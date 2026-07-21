@@ -310,6 +310,22 @@ The form uses keyboard navigation:
 }
 
 func runCreateForm(cmd *cobra.Command) error {
+	// beads-xwoug: create-form has no proxied-server (_proxied_server.go)
+	// companion — CreateIssueFromFormValues below derefs the global `store`
+	// unconditionally (s.CreateIssue / s.GetIssue / s.GetNextChildID). In
+	// proxied-server mode PersistentPreRunE returns early (main.go) WITHOUT
+	// initializing `store`, so it is a nil interface. Without this guard a
+	// proxied (hub-connected) crew fills out the entire interactive form and
+	// then SIGSEGVs on the nil deref (the non-TTY path fails earlier in
+	// form.Run(), but a real tmux pty reaches the deref). Fail loudly up front
+	// with the shared bucket-3 idiom (rename-prefix/kv/mgjco) so the store
+	// factory's proxied-config refusal surfaces a clean error, not a panic.
+	if store == nil {
+		if err := ensureStoreActive(); err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
+	}
+
 	parentID, _ := cmd.Flags().GetString("parent")
 
 	// Raw form input - will be populated by the form
