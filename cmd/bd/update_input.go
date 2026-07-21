@@ -304,3 +304,47 @@ func isUpdateInputNoop(in *updateInput) bool {
 	}
 	return true
 }
+
+// onlyScalarUpdateInput reports whether in sets ONLY scalar update fields
+// (status/priority/title/assignee) and carries no non-scalar or audit-bearing
+// operation — the proxied-path mirror of the direct update path's
+// onlyScalarFlags gate (cmd/bd/update.go). It is the precondition for the
+// beads-nfr6b scalar-no-op write-skip: only when it holds may scalarUpdateIsNoOp
+// (which compares in.fields' scalar values against the current issue) safely
+// gate the write, because a false here means the update also mutates something
+// (append-notes, labels, parent, metadata, --claim, or a non-scalar field like
+// description/defer/due/type) that legitimately writes and audits even when the
+// scalars match. Kept in lockstep with isUpdateInputNoop's non-scalar checks.
+func onlyScalarUpdateInput(in *updateInput) bool {
+	if in.claim || in.hasAppendNotes {
+		return false
+	}
+	if in.setLabels != nil || in.reparent != nil {
+		return false
+	}
+	if len(in.addLabels) > 0 || len(in.removeLabels) > 0 {
+		return false
+	}
+	if len(in.mergeMetadataIn) > 0 || len(in.setMetadata) > 0 || len(in.unsetMetadata) > 0 {
+		return false
+	}
+	if in.clearDeferStatus {
+		return false
+	}
+	if len(in.fields) == 0 {
+		return false
+	}
+	for k := range in.fields {
+		switch k {
+		case "status", "priority", "title", "assignee":
+			// scalar — ok
+		default:
+			// Any non-scalar field (description/design/notes/defer_until/
+			// due_at/issue_type/metadata/wisp/pinned/await_id/closed_by_session/
+			// external_ref/spec_id/estimated_minutes/acceptance_criteria) can
+			// mutate/audit even when the scalars match; not a scalar-only update.
+			return false
+		}
+	}
+	return true
+}

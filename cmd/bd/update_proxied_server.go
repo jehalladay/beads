@@ -58,12 +58,44 @@ func runUpdateProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 		}
 	}
 
+	// beads-nfr6b: a scalar-only no-op update (every set field ∈
+	// {status,priority,title,assignee} already equal to the issue's current
+	// value, no non-scalar/audit-bearing flag) must NOT write on the proxied
+	// path. The shared core (applyUpdateProxiedOne → ApplyUpdate → UpdateIssue)
+	// runs unconditionally on len(spec.Fields)>0, so once beads-j91h made the
+	// proxied no-op succeed instead of returning ErrNoRows it printed a fake
+	// "✓ Updated issue" AND bumped updated_at — the same integrity harm absq1
+	// fixed on the direct path (bd stale orders by updated_at ASC and derives
+	// daysStale from it, so a self-reported no-op silently reset the staleness
+	// clock and hid a stale issue). This mirrors the landed proxied-twin family
+	// (helt4/mpkza):
+	// the LEAF handler pre-resolves current and reports an honest "no change"
+	// (skip the write), leaving the shared core untouched. Only the scalar-only
+	// case is guarded; any real change or mixed/non-scalar update falls through
+	// to applyUpdateProxiedOne unchanged.
+	scalarOnly := onlyScalarUpdateInput(in)
+
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	var updated []*types.Issue
 	var firstUpdatedID string
 	failedCount := 0
 
 	for _, id := range args {
+		if scalarOnly {
+			if current := proxiedResolveForNoOp(ctx, id); current != nil && scalarUpdateIsNoOp(in.fields, current) {
+				if firstUpdatedID == "" {
+					firstUpdatedID = current.ID
+				}
+				if jsonOut {
+					updated = append(updated, current)
+				} else {
+					fmt.Printf("%s %s already matches (no change)\n",
+						ui.RenderInfoIcon(), formatFeedbackID(current.ID, current.Title))
+				}
+				continue
+			}
+		}
+
 		issue, ok := applyUpdateProxiedOne(ctx, id, in, force)
 		if !ok {
 			failedCount++
@@ -107,6 +139,27 @@ func runUpdateProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 		}
 		os.Exit(1)
 	}
+}
+
+// proxiedResolveForNoOp resolves an id to its current issue/wisp for the
+// beads-nfr6b scalar-no-op pre-check, using its own read-only UOW (opened and
+// closed here, no mutation) exactly as the landed proxied-twin leaf handlers do
+// (assign_tag_proxied_server.go / priority_proxied_server.go). Returns nil if
+// the id does not resolve — the caller then falls through to
+// applyUpdateProxiedOne, which reports the not-found per-item error uniformly.
+func proxiedResolveForNoOp(ctx context.Context, id string) *types.Issue {
+	if uowProvider == nil {
+		FatalError("proxied-server UOW provider not initialized")
+	}
+	uw, err := uowProvider.NewUOW(ctx)
+	if err != nil {
+		// A UOW-open failure here is not fatal to the no-op check — fall through
+		// to applyUpdateProxiedOne, which surfaces the error per-item.
+		return nil
+	}
+	defer uw.Close(ctx)
+	current, _ := proxiedResolveIssueOrWisp(ctx, uw, id)
+	return current
 }
 
 // preresolveProxiedUpdateArgs resolves every id in a batch WITHOUT mutating,
