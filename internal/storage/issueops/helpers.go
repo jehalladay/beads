@@ -62,12 +62,15 @@ var issueUpsertColumns = []string{
 	"content_hash", "title", "description", "design", "acceptance_criteria",
 	"notes", "status", "priority", "issue_type", "assignee",
 	"estimated_minutes", "started_at", "closed_at", "external_ref",
-	"source_repo", "close_reason", "metadata",
+	"source_repo", "close_reason", "closed_by_session", "metadata",
 	// The fields below are all user-mutable AND JSON-exported AND written by the
 	// fresh INSERT above, but were historically omitted from the UPSERT set, so a
 	// `bd export → edit → re-import` over an EXISTING issue silently DROPPED edits
 	// to them (beads-kalv named owner/pinned/mol_type/work_type; beads-lbez mapped
-	// the rest). Adding them here makes re-import lossless for the full mutable
+	// the rest; beads-xapi2 added closed_by_session — its sibling close_reason was
+	// already here, but ni2ph flipped it into the JSON-exported set on the READ
+	// side without a matching write, so import dropped the freshly-exportable
+	// provenance). Adding them here makes re-import lossless for the full mutable
 	// column set. They flow through issueUpsertAssignments, so the stale-reject /
 	// tie-row no-wipe guard (bd-hj85c) applies to them too.
 	//
@@ -127,7 +130,7 @@ func insertIssueIntoTable(ctx context.Context, tx DBTX, table string, issue *typ
 			created_at, created_by, owner, updated_at, started_at, closed_at, external_ref, spec_id,
 			compaction_level, compacted_at, compacted_at_commit, original_size,
 			sender, ephemeral, no_history, wisp_type, pinned, is_template,
-			mol_type, work_type, source_system, source_repo, close_reason,
+			mol_type, work_type, source_system, source_repo, close_reason, closed_by_session,
 			event_kind, actor, target, payload,
 			await_type, await_id, timeout_ns, waiters,
 			due_at, defer_until, metadata
@@ -137,7 +140,7 @@ func insertIssueIntoTable(ctx context.Context, tx DBTX, table string, issue *typ
 			?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?
@@ -150,7 +153,7 @@ func insertIssueIntoTable(ctx context.Context, tx DBTX, table string, issue *typ
 		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.StartedAt, issue.ClosedAt, NullStringPtr(issue.ExternalRef), issue.SpecID,
 		issue.CompactionLevel, issue.CompactedAt, NullStringPtr(issue.CompactedAtCommit), NullIntVal(issue.OriginalSize),
 		issue.Sender, issue.Ephemeral, issue.NoHistory, issue.WispType, issue.Pinned, issue.IsTemplate,
-		issue.MolType, issue.WorkType, issue.SourceSystem, issue.SourceRepo, issue.CloseReason,
+		issue.MolType, issue.WorkType, issue.SourceSystem, issue.SourceRepo, issue.CloseReason, issue.ClosedBySession,
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
 		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), FormatJSONStringArray(issue.Waiters),
 		issue.DueAt, issue.DeferUntil, JSONMetadata(issue.Metadata),

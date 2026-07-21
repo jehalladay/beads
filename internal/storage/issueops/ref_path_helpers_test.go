@@ -150,7 +150,7 @@ var insertIssueColumns = []string{
 	"created_at", "created_by", "owner", "updated_at", "started_at", "closed_at", "external_ref", "spec_id",
 	"compaction_level", "compacted_at", "compacted_at_commit", "original_size",
 	"sender", "ephemeral", "no_history", "wisp_type", "pinned", "is_template",
-	"mol_type", "work_type", "source_system", "source_repo", "close_reason",
+	"mol_type", "work_type", "source_system", "source_repo", "close_reason", "closed_by_session",
 	"event_kind", "actor", "target", "payload",
 	"await_type", "await_id", "timeout_ns", "waiters",
 	"due_at", "defer_until", "metadata",
@@ -225,6 +225,7 @@ func TestInsertColumnsAreUpsertedOrBlessed(t *testing.T) {
 		"spec_id", "due_at", "defer_until", "await_type", "await_id", // lbez tier-A
 		"timeout_ns", "waiters", "wisp_type", "sender", "source_system",
 		"event_kind", "actor", "target", "payload",
+		"closed_by_session", // xapi2: ni2ph made it JSON-exported (READ) — the write set had to follow
 	} {
 		if !upsertSet[col] {
 			t.Errorf("mutable field %q dropped from issueUpsertColumns — re-import silently loses edits", col)
