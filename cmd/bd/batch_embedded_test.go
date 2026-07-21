@@ -23,7 +23,7 @@ func runBatchScriptInTx(t *testing.T, ctx context.Context, st storage.DoltStorag
 	}
 	return st.RunInTransaction(ctx, "test: bd batch", func(tx storage.Transaction) error {
 		for _, op := range ops {
-			if _, err := runBatchOp(ctx, tx, op); err != nil {
+			if _, err := runBatchOp(ctx, tx, op, ""); err != nil {
 				return err
 			}
 		}
@@ -46,7 +46,7 @@ func runBatchGuarded(t *testing.T, ctx context.Context, st storage.DoltStorage, 
 	}
 	return st.RunInTransaction(ctx, "test: bd batch guarded", func(tx storage.Transaction) error {
 		for _, op := range ops {
-			if _, err := runBatchOp(ctx, tx, op); err != nil {
+			if _, err := runBatchOp(ctx, tx, op, ""); err != nil {
 				return err
 			}
 		}

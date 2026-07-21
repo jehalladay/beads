@@ -100,6 +100,18 @@ normal 'bd' subcommands for interactive/read operations.`,
 		// epic-with-open-children) for close/update-to-closed ops, mirroring
 		// `bd close --force` / `bd update --force` (beads-1d08).
 		force, _ := cmd.Flags().GetBool("force")
+		// beads-szy1h: resolve the closing session once (flag → env), mirroring
+		// `bd close` (close.go:76-78) and `bd update --status closed`
+		// (update.go:106-114). batch is a documented drop-in for a `bd close`/
+		// `bd update --status closed` loop, and the town's crew run under a
+		// CLAUDE_SESSION_ID; without reading it here, batch's close legs dropped
+		// closed_by_session (session=""), silently losing closer-session
+		// provenance on the exact loop→batch refactor the command exists to
+		// enable. Threaded into both close legs in runBatchOp below.
+		session, _ := cmd.Flags().GetString("session")
+		if session == "" {
+			session = os.Getenv("CLAUDE_SESSION_ID")
+		}
 
 		var reader io.Reader
 		if filePath != "" {
@@ -183,7 +195,7 @@ normal 'bd' subcommands for interactive/read operations.`,
 		results := make([]batchOpResult, 0, len(ops))
 		err = transact(ctx, store, commitMsg, func(tx storage.Transaction) error {
 			for _, op := range ops {
-				res, rerr := runBatchOp(ctx, tx, op)
+				res, rerr := runBatchOp(ctx, tx, op, session)
 				if rerr != nil {
 					return fmt.Errorf("line %d (%s): %w", op.line, op.raw, rerr)
 				}
@@ -222,6 +234,9 @@ func init() {
 	batchCmd.Flags().Bool("dry-run", false, "Parse input and echo commands without executing")
 	batchCmd.Flags().StringP("message", "m", "", "DOLT_COMMIT message (default: 'bd: batch N ops by <actor>')")
 	batchCmd.Flags().Bool("force", false, "Override close-time integrity guards (blocked-by-open, epic-with-open-children) for close/update-to-closed ops; mirrors 'bd close --force'")
+	// beads-szy1h: mirror closeCmd's --session (close.go:397) so an explicit
+	// session override works; default is $CLAUDE_SESSION_ID (resolved in RunE).
+	batchCmd.Flags().String("session", "", "Session ID to record as closed_by_session for close/update-to-closed ops (default: $CLAUDE_SESSION_ID)")
 	rootCmd.AddCommand(batchCmd)
 }
 
@@ -355,7 +370,7 @@ func tokenizeBatchLine(s string) ([]string, error) {
 // runBatchOp dispatches a single parsed op against the shared transaction.
 // It intentionally does NOT call any of the non-tx cobra handlers; it talks
 // straight to storage.Transaction so everything joins the same SQL tx.
-func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp) (batchOpResult, error) {
+func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp, session string) (batchOpResult, error) {
 	actorName := getActor()
 	result := batchOpResult{Line: op.line, Op: op.cmd}
 	switch op.cmd {
@@ -368,7 +383,9 @@ func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp) (batchO
 		if len(op.args) > 1 {
 			reason = strings.Join(op.args[1:], " ")
 		}
-		if err := tx.CloseIssue(ctx, id, reason, actorName, ""); err != nil {
+		// beads-szy1h: stamp the closing session (mirrors bd close close.go:196)
+		// so a loop→batch refactor preserves closed_by_session provenance.
+		if err := tx.CloseIssue(ctx, id, reason, actorName, session); err != nil {
 			return result, err
 		}
 		result.Target = id
@@ -382,6 +399,14 @@ func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp) (batchO
 		updates, err := parseUpdateKVs(op.args[1:])
 		if err != nil {
 			return result, err
+		}
+		// beads-szy1h: when this op closes the issue, stamp closed_by_session
+		// from the resolved session, mirroring `bd update --status closed`
+		// (update.go:106-114). tx.UpdateIssue has no session parameter, so — as
+		// on the single-invocation path — the value is injected into the updates
+		// map. Only when a session is present (matching update.go:111-113).
+		if s, ok := updates["status"].(string); ok && types.Status(s) == types.StatusClosed && session != "" {
+			updates["closed_by_session"] = session
 		}
 		if err := tx.UpdateIssue(ctx, id, updates, actorName); err != nil {
 			return result, err
