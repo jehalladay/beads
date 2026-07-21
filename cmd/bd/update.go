@@ -58,6 +58,32 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 			return HandleErrorRespectJSON("--claim cannot be combined with --status (--claim already sets status=in_progress); drop one")
 		}
 
+		// beads-5x84h: reject a hand-set reserved gt identity label
+		// (gt:agent/gt:role/gt:rig) on --add-label/--set-labels, the UPDATE
+		// mutation-path twin of the reserved-label guard the create family
+		// (beads-3c4g: create.go:200 + kmw78/f8fvh/kvq0v/1077e) and `bd label add`
+		// (label.go:277) enforce. Without it, `bd update <bead> --add-label
+		// gt:role` silently stamps a system-controlled identity label onto an
+		// existing bead and hides it from `bd ready` (the beads-wqs discriminator)
+		// — the exact spoof/foot-gun 3c4g closed, still live on the update path
+		// (applyLabelUpdates has no guard). Placed before the usesProxiedServer()
+		// dispatch so the one guard covers BOTH the direct and proxied update
+		// paths, matching the a0nmp guard above. GT_INTERNAL privileged writes are
+		// exempt via reservedIdentityLabelError (gt's own registration stamps keep
+		// working). --remove-label is intentionally unguarded — removing a reserved
+		// label is not a spoof and matches `bd label remove`.
+		for _, flag := range []string{"add-label", "set-labels"} {
+			if !cmd.Flags().Changed(flag) {
+				continue
+			}
+			labels, _ := cmd.Flags().GetStringSlice(flag)
+			for _, label := range labels {
+				if msg := reservedIdentityLabelError(label); msg != "" {
+					return HandleErrorRespectJSON("%s", msg)
+				}
+			}
+		}
+
 		if usesProxiedServer() {
 			runUpdateProxiedServer(cmd, rootCtx, args)
 			return nil
