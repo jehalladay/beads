@@ -727,8 +727,19 @@ func FindOrphanedIssues(gitPath string, provider types.IssueProvider) ([]OrphanI
 		return []OrphanIssue{}, nil
 	}
 
-	// Get git log
-	cmd = exec.CommandContext(ctx, "git", "log", "--oneline", "--all")
+	// Get git log. beads-3tjtm: scan the FULL commit message (subject + body),
+	// not `--oneline` (subject line only). Standard git convention puts issue
+	// refs in the trailer/body (e.g. "Refs: (bd-xxx)", "Closes: (bd-xxx)"), so a
+	// subject-only scan silently drops them — the exact orphan `bd orphans`
+	// exists to catch. Emit one record per commit as
+	// hash<US>subject<US>body<RS>, using ASCII separators that cannot appear in
+	// a commit message, so bodies with blank lines/spaces parse unambiguously.
+	// LatestCommitMessage remains the SUBJECT (rendering unchanged); refs are
+	// matched over the whole message.
+	const unitSep = "\x1f"   // between %H / %s / %b within a commit
+	const recordSep = "\x1e" // between commits
+	cmd = exec.CommandContext(ctx, "git", "log", "--all",
+		"--format=%H"+unitSep+"%s"+unitSep+"%b"+recordSep)
 	cmd.Dir = gitPath
 	output, err := cmd.Output()
 	if err != nil {
@@ -741,34 +752,39 @@ func FindOrphanedIssues(gitPath string, provider types.IssueProvider) ([]OrphanI
 	re := regexp.MustCompile(pattern)
 
 	var orphanedIssues []OrphanIssue
-	lines := strings.Split(string(output), "\n")
+	records := strings.Split(string(output), recordSep)
 
-	for _, line := range lines {
-		if line == "" {
+	for _, record := range records {
+		record = strings.Trim(record, "\n")
+		if record == "" {
 			continue
 		}
 
-		// Extract commit hash and message
-		parts := strings.SplitN(line, " ", 2)
-		if len(parts) < 1 {
+		// Extract commit hash, subject, and body.
+		fields := strings.SplitN(record, unitSep, 3)
+		if len(fields) < 1 {
 			continue
 		}
 
-		commitHash := parts[0]
-		commitMsg := ""
-		if len(parts) > 1 {
-			commitMsg = parts[1]
+		commitHash := fields[0]
+		commitSubject := ""
+		if len(fields) > 1 {
+			commitSubject = fields[1]
+		}
+		commitBody := ""
+		if len(fields) > 2 {
+			commitBody = fields[2]
 		}
 
-		// Find issue IDs in this commit
-		matches := re.FindAllString(line, -1)
+		// Find issue IDs anywhere in the commit (subject OR body/footer).
+		matches := re.FindAllString(commitSubject+"\n"+commitBody, -1)
 		for _, match := range matches {
 			issueID := strings.Trim(match, "()")
 			if orphan, exists := openIssues[issueID]; exists {
-				// Only record first (most recent) commit per issue
+				// Only record first (most recent) commit per issue.
 				if orphan.LatestCommit == "" {
 					orphan.LatestCommit = commitHash
-					orphan.LatestCommitMessage = commitMsg
+					orphan.LatestCommitMessage = commitSubject
 				}
 			}
 		}
