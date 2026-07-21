@@ -661,6 +661,27 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 					closeIfUnmutated(result)
 					continue
 				}
+				// beads-50dto: `bd update --status open` reaches the SAME closed->open
+				// terminal state as `bd reopen` (beads-6qo8t) but wired ONLY the
+				// closed-epic-parent guard above, dropping the supersede (beads-8sjb3)
+				// and duplicate (beads-8nugc) reopen guards `bd reopen` enforces
+				// (reopen.go:146-167). Since supersedes/duplicates are NON-blocking
+				// edges, reopening a superseded/duplicate issue via update recreated
+				// the contradictory "open but superseded/duplicate" state AND made the
+				// issue REAPPEAR in `bd ready` as actionable work — exactly the harm
+				// those reopen guards exist to prevent. Mirror both here (same
+				// messages/hints, same --force override) so the closed->open legs
+				// don't diverge.
+				if supersedes := supersededByTargets(ctx, issueStore, result.ResolvedID); len(supersedes) > 0 {
+					reportItemError("cannot reopen %s: it is superseded by %v; remove the supersedes link (bd dep remove %s <target> --type supersedes) or use --force to override", id, supersedes, id)
+					closeIfUnmutated(result)
+					continue
+				}
+				if dups := duplicatesTargets(ctx, issueStore, result.ResolvedID); len(dups) > 0 {
+					reportItemError("cannot reopen %s: it is a duplicate of %v; remove the duplicates link (bd dep remove %s <target> --type duplicates) or use --force to override", id, dups, id)
+					closeIfUnmutated(result)
+					continue
+				}
 			}
 
 			// Handle claim operation atomically using compare-and-swap semantics

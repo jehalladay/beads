@@ -378,6 +378,21 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 		if closedEpics := proxiedClosedEpicParents(ctx, uw, id, isWisp); len(closedEpics) > 0 {
 			return fmt.Errorf("cannot reopen %s: its parent %v is closed; reopen the parent first or use --force to override", id, closedEpics)
 		}
+		// beads-50dto (proxied twin): `bd update --status open` reaches the same
+		// closed->open state as `bd reopen`, which enforces the supersede
+		// (beads-8sjb3) and duplicate (beads-8nugc) reopen guards — but the proxied
+		// update path wired only the closed-epic-parent guard above, so a
+		// hub-connected crew could reopen a superseded/duplicate issue via update
+		// (non-blocking edges → the issue reappears in `bd ready`). Mirror both,
+		// reusing the SAME helpers the proxied reopen path uses
+		// (reopen_proxied_server.go), so the closed->open legs can't diverge across
+		// backends.
+		if supersedes := proxiedSupersededByTargets(ctx, uw, id, isWisp); len(supersedes) > 0 {
+			return fmt.Errorf("cannot reopen %s: it is superseded by %v; remove the supersedes link (bd dep remove %s <target> --type supersedes) or use --force to override", id, supersedes, id)
+		}
+		if dups := proxiedDuplicatesTargets(ctx, uw, id, isWisp); len(dups) > 0 {
+			return fmt.Errorf("cannot reopen %s: it is a duplicate of %v; remove the duplicates link (bd dep remove %s <target> --type duplicates) or use --force to override", id, dups, id)
+		}
 	}
 
 	// beads-a8a1b: refuse reparenting an OPEN child under a CLOSED auto-closing
