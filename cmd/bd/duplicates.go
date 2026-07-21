@@ -534,6 +534,19 @@ func performMerge(targetID string, sourceIDs []string) map[string]interface{} {
 		// merge close is durably recorded at parity with the other close paths.
 		if sourceClosed {
 			auditStatusChange(sourceID, "open", "closed", getActor(), reason)
+
+			// beads-z252q: auto-merging a duplicate closes the source via the
+			// transaction seam, which — like `bd update --status closed`
+			// (beads-zzp26) and `bd duplicate`/supersede (beads-26gea) — bypasses
+			// the cmd-layer completed-molecule auto-close cascade `bd close` runs
+			// (close.go:223). So auto-merging a molecule/wisp/template-epic's FINAL
+			// open step left the auto-closing root stuck OPEN (orphaned-completed-
+			// root). 26gea fixed duplicate.go but NOT this duplicates.go /
+			// performMerge leg. Run the SAME cascade post-close — the per-source tx
+			// already committed the close durably, so the root's completion re-read
+			// is accurate. Identical function bd close/batch/update/duplicate use,
+			// so completion detection can't drift.
+			autoCloseCompletedMolecule(ctx, store, sourceID, getActor(), "")
 		}
 	}
 
