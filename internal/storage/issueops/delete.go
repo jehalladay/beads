@@ -154,15 +154,33 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 	for _, id := range finalRegularIDs {
 		allDeletedSet[id] = true
 	}
+	// beads-g7rof: deduped wisp-ID slice for row counting. allWispIDs is a raw
+	// concat of initialWispIDs and cascadeWispIDs, so a wisp that is BOTH named
+	// directly and rediscovered as a cascade dependent appears twice; feeding
+	// that to the batched CountRowsForIssueIDsInTx would double-count its rows.
+	allWispIDsDedup := make([]string, 0, len(allWispIDs))
+	seenWisp := make(map[string]bool, len(allWispIDs))
 	for _, id := range allWispIDs {
 		allDeletedSet[id] = true
+		if !seenWisp[id] {
+			seenWisp[id] = true
+			allWispIDsDedup = append(allWispIDsDedup, id)
+		}
 	}
 
 	var depsCount, labelsCount, eventsCount int
 	if depsCount, err = CountRowsForIssueIDsInTx(ctx, tx, "dependencies", finalRegularIDs); err != nil {
 		return nil, fmt.Errorf("count dependencies: %w", err)
 	}
-	wispDepsCount, err := CountRowsForIssueIDsInTx(ctx, tx, "wisp_dependencies", cascadeWispIDs)
+	// beads-g7rof: count the source-side dep rows of EVERY deleted wisp, not just
+	// cascadeWispIDs. wisp_dependencies carries fk_wisp_dep_issue ON DELETE CASCADE
+	// (migration 0021), so a directly-purged wisp (initialWispIDs, omitted from
+	// cascadeWispIDs) has its source dep rows FK-cascade-removed but was counted 0,
+	// understating "Dependencies removed". allWispIDsDedup = initialWispIDs ∪
+	// cascadeWispIDs, deduped so a doubly-listed wisp isn't double-counted. (This is
+	// the embedded-backend path; the server DoltStore routes wisps through a
+	// separate deleteWispBatch and never enters this function with wisp IDs.)
+	wispDepsCount, err := CountRowsForIssueIDsInTx(ctx, tx, "wisp_dependencies", allWispIDsDedup)
 	if err != nil {
 		return nil, fmt.Errorf("count wisp dependencies: %w", err)
 	}
@@ -171,6 +189,12 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 	if labelsCount, err = CountRowsForIssueIDsInTx(ctx, tx, "labels", finalRegularIDs); err != nil {
 		return nil, fmt.Errorf("count labels: %w", err)
 	}
+	// beads-g7rof: intentionally still cascadeWispIDs (NOT allWispIDs). Unlike
+	// wisp_dependencies, wisp_labels/wisp_events have no applied FK cascade and no
+	// explicit DELETE in the purge path, so a purged wisp's label/event rows are
+	// NOT removed — counting initialWispIDs here would report deletions that never
+	// happen. The resulting orphan-row leak is tracked separately (see the g7rof
+	// follow-up bead); only the wisp_dependencies count is corrected here.
 	wispLabelsCount, err := CountRowsForIssueIDsInTx(ctx, tx, "wisp_labels", cascadeWispIDs)
 	if err != nil {
 		return nil, fmt.Errorf("count wisp labels: %w", err)
