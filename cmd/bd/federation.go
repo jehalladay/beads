@@ -53,6 +53,7 @@ Examples:
   bd federation sync                      # Sync with all peers
   bd federation sync --peer town-beta     # Sync with specific peer
   bd federation sync --strategy theirs    # Auto-resolve using remote values`,
+	Args:          cobra.NoArgs, // beads-wy9jc: reject stray positionals ([--peer name] is a flag, RunE reads no args)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runFederationSync,
@@ -71,6 +72,7 @@ Displays:
 Examples:
   bd federation status                    # Status for all peers
   bd federation status --peer town-beta   # Status for specific peer`,
+	Args:          cobra.NoArgs, // beads-wy9jc: reject stray positionals ([--peer name] is a flag, RunE reads no args)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runFederationStatus,
