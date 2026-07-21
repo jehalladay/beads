@@ -194,18 +194,26 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	}
 	targetCol := kind.Column()
 
-	// Check for existing dependency between the same pair. Use the resolved
-	// target expression defensively so stale/reclassified rows in another typed
-	// target column cannot bypass the idempotency/conflict check.
+	// Check for an existing dependency of the SAME target kind. Query the
+	// specific typed target column (not the flattened COALESCE): depid.New keys
+	// the edge id on the flattened (issue_id, target-string) with no target-kind
+	// marker, so an issue-target and a wisp-target that share the same id string
+	// derive the SAME primary key (beads-xaxe, root of uekw/jym1). A
+	// COALESCE-flattened pre-check would mistake such a genuinely-distinct
+	// cross-kind edge for a duplicate here — silently refreshing the wrong row's
+	// metadata (same type) or reporting a misleading conflict (different type),
+	// dropping this edge. Discriminating by targetCol lets a cross-kind edge fall
+	// through to the INSERT below, where the PK collision is detected and
+	// surfaced instead of silently collapsing.
 	var existingType string
-	//nolint:gosec // G201: writeTable from WispTableRouting; depTargetEquals has no user input.
-	err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT type FROM %s WHERE issue_id = ? AND %s`, writeTable, depTargetEquals("")),
+	//nolint:gosec // G201: writeTable from WispTableRouting; targetCol from DepTargetKind.Column().
+	err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT type FROM %s WHERE issue_id = ? AND %s = ?`, writeTable, targetCol),
 		dep.IssueID, dep.DependsOnID).Scan(&existingType)
 	if err == nil {
 		if existingType == string(dep.Type) {
 			// Same type — idempotent; update metadata.
-			//nolint:gosec // G201: writeTable from WispTableRouting; depTargetEquals has no user input.
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET metadata = ? WHERE issue_id = ? AND %s`, writeTable, depTargetEquals("")),
+			//nolint:gosec // G201: writeTable from WispTableRouting; targetCol from DepTargetKind.Column().
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET metadata = ? WHERE issue_id = ? AND %s = ?`, writeTable, targetCol),
 				metadata, dep.IssueID, dep.DependsOnID); err != nil {
 				return fmt.Errorf("failed to update dependency metadata: %w", err)
 			}
@@ -220,13 +228,46 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	// id is derived deterministically from the natural edge key (issue_id,
 	// target) so the same edge gets the same primary key on every clone and the
 	// dependencies table merges cleanly across Dolt clones (#4259). DependsOnID
-	// is the resolved target written into targetCol.
+	// is the resolved target written into targetCol. ON DUPLICATE KEY UPDATE
+	// type=type makes a colliding PK a detectable no-op (rowsAffected==0) rather
+	// than a hard duplicate-key error — see the cross-kind collision guard below.
 	//nolint:gosec // G201: writeTable from WispTableRouting; targetCol from DepTargetKind.Column()
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+	sqlResult, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (id, issue_id, %s, type, created_at, created_by, metadata, thread_id)
 		VALUES (?, ?, ?, ?, NOW(), ?, ?, ?)
-	`, writeTable, targetCol), depid.New(dep.IssueID, dep.DependsOnID), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
+		ON DUPLICATE KEY UPDATE type = type
+	`, writeTable, targetCol), depid.New(dep.IssueID, dep.DependsOnID), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID)
+	if err != nil {
 		return fmt.Errorf("failed to add dependency: %w", err)
+	}
+	rowsAffected, err := sqlResult.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check dependency insert result for %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
+	}
+	if rowsAffected == 0 {
+		// The ON DUPLICATE KEY UPDATE type=type no-op'd: a row already occupies
+		// this deterministic PK. The kind-discriminated pre-check above already
+		// ruled out a same-kind duplicate, so depid.New's flattened
+		// (issue_id, target-string) derivation collided with an edge whose target
+		// lives in a DIFFERENT typed column (beads-xaxe). Surface it rather than
+		// silently dropping this edge.
+		var existsSameKind int
+		//nolint:gosec // G201: writeTable from WispTableRouting; targetCol from DepTargetKind.Column().
+		probeErr := tx.QueryRowContext(ctx, fmt.Sprintf(
+			"SELECT 1 FROM %s WHERE id = ? AND %s = ?", writeTable, targetCol),
+			depid.New(dep.IssueID, dep.DependsOnID), dep.DependsOnID).Scan(&existsSameKind)
+		switch {
+		case errors.Is(probeErr, sql.ErrNoRows):
+			// PK exists but not in this kind's column → cross-kind collision.
+			return fmt.Errorf("cannot add dependency %s -> %s: its deterministic id collides with an existing edge that has a different target kind (issue vs wisp vs external); the id derivation does not distinguish target kinds (beads-xaxe)",
+				dep.IssueID, dep.DependsOnID)
+		case probeErr != nil:
+			return fmt.Errorf("failed to probe dependency collision for %s -> %s: %w", dep.IssueID, dep.DependsOnID, probeErr)
+		}
+		// probeErr==nil: a same-kind row appeared between the pre-check and the
+		// INSERT (concurrent add). The edge already exists in the desired form —
+		// a benign idempotent no-op; it was recorded on its first insert.
+		return nil
 	}
 
 	srcIsWisp := writeTable == "wisp_dependencies"

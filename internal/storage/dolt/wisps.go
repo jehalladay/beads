@@ -569,12 +569,45 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	// Deterministic id keyed on (issue_id, target), same derivation as the
 	// dependencies table, so a wisp edge promoted to a real dependency keeps a
 	// clone-stable primary key and wisp_dependencies.id needs no DEFAULT (#4259).
+	// depid.New keys on the flattened (issue_id, target-string) with no
+	// target-kind marker, so an issue-target and a wisp-target sharing the same
+	// id string derive the SAME PK (beads-xaxe). The existence pre-check above is
+	// already kind-discriminated (WHERE issue_id=? AND targetCol=?), so it can't
+	// intercept a cross-kind edge; ON DUPLICATE KEY UPDATE type=type turns the PK
+	// collision into a detectable no-op (rowsAffected==0) instead of a hard
+	// duplicate-key error, and the guard below surfaces it.
 	//nolint:gosec // G201: targetCol from DepTargetKind.Column()
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+	sqlResult, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO wisp_dependencies (id, issue_id, %s, type, created_at, created_by, metadata, thread_id)
 		VALUES (?, ?, ?, ?, NOW(), ?, ?, ?)
-	`, targetCol), depid.New(dep.IssueID, dep.DependsOnID), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
+		ON DUPLICATE KEY UPDATE type = type
+	`, targetCol), depid.New(dep.IssueID, dep.DependsOnID), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID)
+	if err != nil {
 		return fmt.Errorf("failed to add wisp dependency: %w", err)
+	}
+	rowsAffected, err := sqlResult.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check wisp dependency insert result for %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
+	}
+	if rowsAffected == 0 {
+		// The ON DUPLICATE KEY UPDATE type=type no-op'd: a row already occupies
+		// this deterministic PK. The kind-discriminated pre-check ruled out a
+		// same-kind duplicate, so depid.New's flattened derivation collided with
+		// an edge whose target lives in a DIFFERENT typed column (beads-xaxe).
+		//nolint:gosec // G201: targetCol from DepTargetKind.Column().
+		var existsSameKind int
+		probeErr := tx.QueryRowContext(ctx, fmt.Sprintf(
+			"SELECT 1 FROM wisp_dependencies WHERE id = ? AND %s = ?", targetCol),
+			depid.New(dep.IssueID, dep.DependsOnID), dep.DependsOnID).Scan(&existsSameKind)
+		switch {
+		case errors.Is(probeErr, sql.ErrNoRows):
+			return fmt.Errorf("cannot add wisp dependency %s -> %s: its deterministic id collides with an existing edge that has a different target kind (issue vs wisp vs external); the id derivation does not distinguish target kinds (beads-xaxe)",
+				dep.IssueID, dep.DependsOnID)
+		case probeErr != nil:
+			return fmt.Errorf("failed to probe wisp dependency collision for %s -> %s: %w", dep.IssueID, dep.DependsOnID, probeErr)
+		}
+		// probeErr==nil: same-kind row appeared concurrently — benign no-op.
+		return wrapTransactionError("commit add wisp dependency", tx.Commit())
 	}
 
 	affectedIssues, affectedWisps, aerr := issueops.AffectedByDepChangeForWispInTx(ctx, tx, dep.IssueID, dep.DependsOnID, dep.Type)

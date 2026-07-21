@@ -148,18 +148,32 @@ func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dep
 
 	table := pickDepTable(opts.UseWispsTable)
 
+	// Resolve the target kind up front so the existence pre-check can query the
+	// SPECIFIC typed target column. depid.New keys the edge id on the flattened
+	// (issue_id, target-string) with no target-kind marker, so an issue-target
+	// and a wisp-target sharing the same id string derive the SAME primary key
+	// (beads-xaxe). A COALESCE-flattened pre-check would mistake such a
+	// genuinely-distinct cross-kind edge for a duplicate — silently refreshing
+	// the wrong row's metadata (same type) or reporting a misleading conflict
+	// (different type). Discriminating by targetCol lets a cross-kind edge fall
+	// through to the INSERT, where the PK collision is detected and surfaced.
+	targetCol, err := r.pickDepTargetColumn(ctx, dep.DependsOnID)
+	if err != nil {
+		return fmt.Errorf("db: DependencySQLRepository.Insert: %w", err)
+	}
+
 	var existingType string
-	err := r.runner.QueryRowContext(ctx,
-		//nolint:gosec // G201: table and depTargetExpr are hardcoded constants
-		fmt.Sprintf("SELECT type FROM %s WHERE issue_id = ? AND %s = ?", table, depTargetExpr),
+	err = r.runner.QueryRowContext(ctx,
+		//nolint:gosec // G201: table and targetCol are hardcoded/enumerated constants
+		fmt.Sprintf("SELECT type FROM %s WHERE issue_id = ? AND %s = ?", table, targetCol),
 		dep.IssueID, dep.DependsOnID,
 	).Scan(&existingType)
 	switch {
 	case err == nil:
 		if existingType == string(dep.Type) {
-			//nolint:gosec // G201: table and depTargetExpr are hardcoded constants
+			//nolint:gosec // G201: table and targetCol are hardcoded/enumerated constants
 			if _, err := r.runner.ExecContext(ctx,
-				fmt.Sprintf("UPDATE %s SET metadata = ? WHERE issue_id = ? AND %s = ?", table, depTargetExpr),
+				fmt.Sprintf("UPDATE %s SET metadata = ? WHERE issue_id = ? AND %s = ?", table, targetCol),
 				metadata, dep.IssueID, dep.DependsOnID,
 			); err != nil {
 				return fmt.Errorf("db: DependencySQLRepository.Insert: refresh metadata: %w", err)
@@ -182,23 +196,49 @@ func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dep
 		return err
 	}
 
-	targetCol, err := r.pickDepTargetColumn(ctx, dep.DependsOnID)
-	if err != nil {
-		return fmt.Errorf("db: DependencySQLRepository.Insert: %w", err)
-	}
-
 	// Deterministic id keyed on (issue_id, target), the same derivation as the
 	// embedded/issueops path, so server-mode (use-case) dependency creation stays
 	// merge-safe across clones and works once the DEFAULT (UUID()) is dropped (#4259).
+	// ON DUPLICATE KEY UPDATE type=type makes a colliding PK a detectable no-op
+	// (rowsAffected==0) rather than a hard duplicate-key error — see the
+	// cross-kind collision guard below.
 	//nolint:gosec // G201: table is one of two hardcoded constants; targetCol is from pickDepTargetColumn
-	if _, err := r.runner.ExecContext(ctx, fmt.Sprintf(`
+	sqlResult, err := r.runner.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (id, issue_id, %s, type, created_at, created_by, metadata, thread_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE type = type
 	`, table, targetCol),
 		depid.New(dep.IssueID, dep.DependsOnID), dep.IssueID, dep.DependsOnID, string(dep.Type),
 		time.Now().UTC(), actor, metadata, dep.ThreadID,
-	); err != nil {
+	)
+	if err != nil {
 		return fmt.Errorf("db: DependencySQLRepository.Insert: %w", err)
+	}
+	rowsAffected, err := sqlResult.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("db: DependencySQLRepository.Insert: check insert result: %w", err)
+	}
+	if rowsAffected == 0 {
+		// The ON DUPLICATE KEY UPDATE type=type no-op'd: a row already occupies
+		// this deterministic PK. The kind-discriminated pre-check above ruled out
+		// a same-kind duplicate, so depid.New's flattened derivation collided with
+		// an edge whose target lives in a DIFFERENT typed column (beads-xaxe).
+		// Surface it rather than silently dropping this edge.
+		var existsSameKind int
+		//nolint:gosec // G201: table + targetCol are hardcoded/enumerated, no user input.
+		probeErr := r.runner.QueryRowContext(ctx, fmt.Sprintf(
+			"SELECT 1 FROM %s WHERE id = ? AND %s = ?", table, targetCol),
+			depid.New(dep.IssueID, dep.DependsOnID), dep.DependsOnID).Scan(&existsSameKind)
+		switch {
+		case errors.Is(probeErr, sql.ErrNoRows):
+			return fmt.Errorf("db: DependencySQLRepository.Insert: cannot add dependency %s -> %s: its deterministic id collides with an existing edge that has a different target kind (issue vs wisp vs external); the id derivation does not distinguish target kinds (beads-xaxe)",
+				dep.IssueID, dep.DependsOnID)
+		case probeErr != nil:
+			return fmt.Errorf("db: DependencySQLRepository.Insert: probe collision for %s -> %s: %w", dep.IssueID, dep.DependsOnID, probeErr)
+		}
+		// probeErr==nil: a same-kind row appeared between the pre-check and the
+		// INSERT (concurrent add) — a benign idempotent no-op.
+		return nil
 	}
 
 	// Record an audit event so dependency-graph mutations are visible in
