@@ -783,7 +783,12 @@ func emitADOSyncWarningStderr(msg string) {
 // gate-check, 58kg8 todo-done class). Factored into its own function so the
 // emit is unit-testable directly against a store + the audit file, without the
 // full multi-endpoint `bd ado sync` mock harness.
-func closeReconciledDeletedIssues(ctx context.Context, st storage.Storage, actor string, deleted []string, adoIDMap map[int]string, out io.Writer, warnings *[]string) {
+// The store is storage.DoltStorage (not the narrower storage.Storage) so the
+// reconcile close can fire the completed-molecule auto-close cascade at parity
+// with every other cmd-layer close path (beads-7v8wx); the sole caller passes
+// the global store (DoltStorage) and the test passes an embedded store, both of
+// which satisfy it.
+func closeReconciledDeletedIssues(ctx context.Context, st storage.DoltStorage, actor string, deleted []string, adoIDMap map[int]string, out io.Writer, warnings *[]string) {
 	for _, idStr := range deleted {
 		adoID, err := strconv.Atoi(idStr)
 		if err != nil {
@@ -812,6 +817,18 @@ func closeReconciledDeletedIssues(ctx context.Context, st storage.Storage, actor
 		// Emit the GC-survivable audit-file trail via the shared cmd-layer
 		// chokepoint, at parity with the canonical close verb (beads-n4sn).
 		auditStatusChange(localID, oldStatus, "closed", actor, reason)
+		// beads-7v8wx: if this reconciled-closed bead was a molecule's FINAL
+		// open step, cascade-close the completed molecule/wisp root — exactly as
+		// bd close (close.go:223), batch (batch.go:283), gate resolve/check
+		// (beads-346th), todo-done (beads-58kg8), and human respond/dismiss
+		// (beads-rbqo8) do. Without this, an ADO-reconcile that closes a
+		// molecule's last step left the root stranded OPEN with every step done
+		// (CLOSE-PARITY-MATRIX). autoCloseCompletedMolecule is the SAME function
+		// bd close calls (findParentMolecule=="" → safe no-op for a non-molecule
+		// step), so completion detection and the which-roots-auto-close policy
+		// can never drift from the single-close path. Run post-close like batch's
+		// loop: the step is already durably committed by store.CloseIssue.
+		autoCloseCompletedMolecule(ctx, st, localID, actor, "")
 		msg := fmt.Sprintf("Closed %s: ADO work item %s deleted", localID, idStr)
 		*warnings = append(*warnings, msg)
 		if !jsonOutput {
