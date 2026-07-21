@@ -856,8 +856,25 @@ func PersistDependenciesWithOptionsResult(ctx context.Context, tx *sql.Tx, issue
 			// OR a cross-kind PK collision (beads-xaxe) — refreshing metadata via
 			// VALUES() would clobber the colliding edge's payload and defeat the
 			// rowsAffected==0 collision probe below, so import stays additive-only
-			// per the merge-safe-clone contract (#4259). The re-import
-			// metadata-refresh question is filed separately.
+			// per the merge-safe-clone contract (#4259).
+			//
+			// beads-8292k (RULED (A) additive-only): import is additive-only BY
+			// DESIGN — re-importing an edge that already exists at this PK never
+			// refreshes its stored metadata/thread_id (first-write-wins). The new
+			// VALUES here are bound but discarded by the `type = type` no-op on PK
+			// conflict; the stored payload is authoritative. This deliberately
+			// DIVERGES from the two interactive write paths (issueops
+			// AddDependencyInTx dependencies.go:206-212 and domain/db
+			// DependencySQLRepository.Insert dependency.go:158-168), which blind-
+			// refresh metadata on a same-type re-add. Import is idempotent-additive
+			// on purpose so a merge-safe clone round-trip (#4259) is deterministic
+			// and cannot silently mutate an existing edge, and so the cross-kind PK
+			// collision (beads-xaxe) stays detectable via the rowsAffected==0 probe
+			// below. Do NOT change this to a VALUES()-based refresh without a
+			// same-kind guard + the hj85c newer-wins guard; see beads-8292k for the
+			// (B) metadata-refreshing alternative if the merge contract ever
+			// requires import to propagate metadata EDITS. Locked by
+			// TestPersistDependenciesReimportDoesNotRefreshMetadata.
 			metadata := dep.Metadata
 			if metadata == "" {
 				metadata = "{}"

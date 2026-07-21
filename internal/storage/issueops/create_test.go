@@ -746,3 +746,88 @@ func TestPersistDependenciesPersistsMetadataAndThreadID(t *testing.T) {
 		t.Fatalf("unmet expectations (metadata/thread_id not bound to INSERT?): %v", err)
 	}
 }
+
+// TestPersistDependenciesReimportDoesNotRefreshMetadata locks beads-8292k
+// (RULED (A) additive-only): re-importing an edge that already exists at this
+// deterministic PK must NOT refresh its stored metadata — first-write-wins.
+// The batch import INSERT carries the (changed) metadata into VALUES but the
+// `ON DUPLICATE KEY UPDATE type = type` no-op discards it on PK conflict, so
+// the stored payload stays authoritative. This deliberately diverges from the
+// interactive/domain-db paths (which blind-refresh on same-type re-add) so a
+// merge-safe clone round-trip (#4259) is deterministic and cannot silently
+// mutate an existing edge, and so the xaxe cross-kind collision stays
+// detectable via the rowsAffected==0 probe.
+//
+// The regression teeth: the ExpectExec regexp anchors the ODKU clause to
+// `type = type` at end-of-statement. Switching to a metadata-refreshing form
+// (option (B): `ON DUPLICATE KEY UPDATE metadata = VALUES(metadata)`, or
+// appending `, metadata = VALUES(metadata)`) no longer matches → the mock
+// expectation goes unmet → this test fails, catching an accidental (or
+// deliberate-but-unratified) flip away from additive-only.
+func TestPersistDependenciesReimportDoesNotRefreshMetadata(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+
+	target := &types.Issue{ID: "target", IssueType: types.TypeTask}
+	// A re-import of an existing edge whose source metadata has CHANGED (e.g.
+	// the waits-for gate flipped any-children -> all-children upstream). The
+	// edge already exists at this PK, so the INSERT no-ops.
+	source := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "target",
+			Type:        types.DepRelated,
+			Metadata:    `{"gate": "all-children"}`,
+			ThreadID:    "thread-new",
+		}},
+	}
+
+	mock.ExpectQuery("SELECT 1 FROM wisps WHERE id = \\? LIMIT 1").
+		WithArgs("target").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT 1 FROM issues WHERE id = \\?").
+		WithArgs("target").
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	// The new metadata/thread_id ARE bound into the INSERT's VALUES (the code
+	// always carries the payload; the additive-only contract lives in the ODKU
+	// clause, not in dropping the columns — that was gnopw's bug). The clause
+	// must remain `type = type` anchored to end-of-statement: a metadata-
+	// refreshing form (option (B)) would fail to match this regexp.
+	mock.ExpectExec(`ON DUPLICATE KEY UPDATE type = type\s*$`).
+		WithArgs(depid.New("source", "target"), "source", "target", types.DepRelated, "tester", sqlmock.AnyArg(), `{"gate": "all-children"}`, "thread-new").
+		WillReturnResult(sqlmock.NewResult(0, 0)) // rowsAffected==0: PK exists, ODKU no-op'd (no refresh).
+	// rowsAffected==0 -> the same-kind probe confirms the row is a legitimate
+	// idempotent re-import (present in THIS kind's column), so it is a clean
+	// no-op, not a cross-kind collision skip.
+	mock.ExpectQuery("SELECT 1 FROM dependencies WHERE id = \\? AND depends_on_issue_id = \\?").
+		WithArgs(depid.New("source", "target"), "target").
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+
+	var skipped []string
+	result, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{target, source}, "tester", storage.BatchCreateOptions{
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			skipped = append(skipped, issueID+" -> "+dependsOnID+": "+reason)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = %v, want nil", err)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("skipped = %#v, want none (a changed-metadata re-import of a same-kind edge is a clean additive-only no-op, not a collision)", skipped)
+	}
+	// rowsAffected==0 means nothing was written, so the dependencies table must
+	// NOT be marked changed — a refresh (option (B)) would report a change here.
+	if result.ChangedTables["dependencies"] {
+		t.Fatalf("ChangedTables[dependencies]=true, want false: an additive-only re-import that no-ops must not report a metadata change")
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations (import stopped being additive-only — ODKU clause changed away from `type = type`?): %v", err)
+	}
+}
