@@ -627,6 +627,7 @@ The hooks provide:
 
 var hooksInstallCmd = &cobra.Command{
 	Use:   "install",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Install bd git hooks",
 	Long: `Install git hooks for beads integration.
 
@@ -699,6 +700,7 @@ Installed hooks:
 
 var hooksUninstallCmd = &cobra.Command{
 	Use:           "uninstall",
+	Args:          cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short:         "Uninstall bd git hooks",
 	Long:          `Remove bd git hooks from .git/hooks/ directory.`,
 	SilenceUsage:  true,
@@ -729,6 +731,7 @@ var hooksUninstallCmd = &cobra.Command{
 
 var hooksListCmd = &cobra.Command{
 	Use:           "list",
+	Args:          cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short:         "List installed git hooks status",
 	Long:          `Show the status of bd git hooks (installed, outdated, missing).`,
 	SilenceUsage:  true,

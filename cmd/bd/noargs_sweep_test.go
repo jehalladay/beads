@@ -132,6 +132,40 @@ func TestNoArgsSweep_DoltSubcommandsRejectPositional(t *testing.T) {
 	}
 }
 
+// beads-8jy7e (slice 2): the hooks subcommand family. install/uninstall/list
+// read no positionals but had no Args validator, so a stray positional was
+// silently ignored with rc=0. Sibling "hooks run <hook-name> [args...]" DOES
+// consume positionals and is correctly excluded.
+func TestNoArgsSweep_HooksSubcommandsRejectPositional(t *testing.T) {
+	commands := [][]string{
+		{"hooks", "install"},
+		{"hooks", "uninstall"},
+		{"hooks", "list"},
+	}
+
+	for _, path := range commands {
+		name := path[len(path)-1]
+		t.Run(name, func(t *testing.T) {
+			cmd, _, err := rootCmd.Find(path)
+			if err != nil {
+				t.Fatalf("rootCmd.Find(%v): %v", path, err)
+			}
+			if cmd.Name() != name {
+				t.Fatalf("resolved %q, want %q — path %v did not reach the leaf", cmd.Name(), name, path)
+			}
+			if cmd.Args == nil {
+				t.Fatalf("%q has no Args validator; a stray positional would be silently ignored", name)
+			}
+			if err := cmd.Args(cmd, []string{"stray"}); err == nil {
+				t.Errorf("%q Args validator accepted a stray positional %q, want rejection", name, "stray")
+			}
+			if err := cmd.Args(cmd, nil); err != nil {
+				t.Errorf("%q Args validator rejected the no-arg case: %v", name, err)
+			}
+		})
+	}
+}
+
 // Guard: cobra.NoArgs is the validator used (documents intent + catches an
 // accidental swap to a permissive validator on any swept command).
 func TestNoArgsSweep_UsesNoArgsSemantics(t *testing.T) {
