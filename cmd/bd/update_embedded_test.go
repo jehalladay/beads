@@ -1551,6 +1551,37 @@ func TestEmbeddedUpdateDemoteEpicGuard(t *testing.T) {
 		}
 	})
 
+	// beads-l7l3j: MOLECULE root demote (molecule->task) with an open child must
+	// be refused too — the 2hkd demote guard was bare TypeEpic, so a molecule
+	// (an auto-closing root, aw9x8) could be demoted then closed, bypassing the
+	// family. Mutation: reverting update.go's predicate to bare TypeEpic turns
+	// this RED (molecule demoted to task, rc=0).
+	t.Run("demote_molecule_with_open_children_refuses", func(t *testing.T) {
+		mol := bdCreate(t, bd, dir, "Demote molecule guard", "--type", "molecule")
+		child := bdCreate(t, bd, dir, "Demote mol child", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, mol.ID, "--type", "parent-child")
+
+		out := bdUpdateFail(t, bd, dir, mol.ID, "--type", "task")
+		if !strings.Contains(out, "open child issue") {
+			t.Errorf("expected demote-open-children guard message for a molecule root, got:\n%s", out)
+		}
+		if got := bdShow(t, bd, dir, mol.ID); got.IssueType != types.TypeMolecule {
+			t.Errorf("expected molecule to remain type=molecule after refused demote, got %s", got.IssueType)
+		}
+	})
+
+	// beads-l7l3j control: molecule->epic (both auto-closing) is NOT a demote —
+	// must succeed even with an open child (the widening must not over-fire).
+	t.Run("molecule_to_epic_with_open_child_still_allowed", func(t *testing.T) {
+		mol := bdCreate(t, bd, dir, "Molecule to epic", "--type", "molecule")
+		child := bdCreate(t, bd, dir, "Mol->epic child", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, mol.ID, "--type", "parent-child")
+		bdUpdate(t, bd, dir, mol.ID, "--type", "epic")
+		if got := bdShow(t, bd, dir, mol.ID); got.IssueType != types.TypeEpic {
+			t.Errorf("molecule->epic (both auto-closing, not a demote) should succeed, got %s", got.IssueType)
+		}
+	})
+
 	// Full exploit chain proof: once the demote is refused, the epic is still an
 	// epic, so the close guard still fires — the bypass is closed end-to-end.
 	t.Run("exploit_chain_closed_end_to_end", func(t *testing.T) {

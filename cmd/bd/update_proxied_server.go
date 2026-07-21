@@ -338,10 +338,14 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 		}
 	}
 
-	// 2hkd: refuse demoting an epic (epic -> non-epic) that still has open
-	// children — the demote-then-close bypass of the epic close guard.
+	// 2hkd + beads-l7l3j: refuse demoting an auto-closing parent (epic OR
+	// molecule OR wisp, beads-aw9x8) to a NON-auto-closing type while it still
+	// has open children — the demote-then-close bypass of the close guard. The
+	// guard is a transition test; use wouldRemainAutoClosingParent for the target
+	// so molecule->epic (still auto-closing) is not a demote. Mirrors the direct
+	// update.go widening.
 	if newTypeRaw, ok := fields["issue_type"].(string); ok &&
-		current.IssueType == types.TypeEpic && types.IssueType(newTypeRaw).Normalize() != types.TypeEpic {
+		isAutoClosingParentType(current) && !wouldRemainAutoClosingParent(current, types.IssueType(newTypeRaw)) {
 		var openChildren int
 		var err error
 		if isWisp {
@@ -350,7 +354,7 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 			openChildren, err = uw.IssueUseCase().CountOpenChildren(ctx, id)
 		}
 		if err == nil && openChildren > 0 {
-			return fmt.Errorf("cannot demote epic %s to %s: %d open child issue(s); close children first or use --force to override", id, newTypeRaw, openChildren)
+			return fmt.Errorf("cannot demote %s to %s: %d open child issue(s); close children first or use --force to override", id, newTypeRaw, openChildren)
 		}
 	}
 

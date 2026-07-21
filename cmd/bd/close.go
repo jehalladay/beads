@@ -659,6 +659,26 @@ func isAutoClosingParentType(issue *types.Issue) bool {
 		issue.Ephemeral
 }
 
+// wouldRemainAutoClosingParent reports whether an issue that is currently an
+// auto-closing parent type would STILL be one after its type changes to
+// newType. Used by the demote-guard (beads-l7l3j / 2hkd): demoting an
+// auto-closing root (epic OR molecule) to a non-auto-closing type (e.g. task)
+// with open children recreates the closed-parent-with-open-child state the
+// close-guard family forbids, the same way `bd close` on that root would. The
+// ephemeral (wisp) flag is NOT a --type value and survives a type change, so a
+// wisp stays auto-closing regardless of the new type (its demote is a no-op for
+// this guard — matching the aw9x8 membership). Epic->molecule (or the reverse)
+// stays auto-closing and is NOT a demote.
+func wouldRemainAutoClosingParent(issue *types.Issue, newType types.IssueType) bool {
+	if issue == nil {
+		return false
+	}
+	nt := newType.Normalize()
+	return nt == types.TypeEpic ||
+		nt == types.TypeMolecule ||
+		issue.Ephemeral
+}
+
 // shouldAutoCloseCompletedRoot returns true for molecule roots that should
 // auto-close when their final step closes. Regular epics stay open and become
 // explicit close-eligible work, while ephemeral wisps, template-driven

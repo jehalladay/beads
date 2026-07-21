@@ -1003,12 +1003,44 @@ func TestProxiedServerUpdate(t *testing.T) {
 		epic := bdProxiedCreate(t, bd, p.dir, "Demote epic", "-t", "epic")
 		_ = bdProxiedCreate(t, bd, p.dir, "Demote child", "--parent", epic.ID)
 		out := bdProxiedUpdateFail(t, bd, p.dir, epic.ID, "--type", "task")
-		if !strings.Contains(out, "cannot demote epic") {
-			t.Errorf("expected 'cannot demote epic' guard error, got: %s", out)
+		// beads-l7l3j generalized the error text "cannot demote epic" -> "cannot demote".
+		if !strings.Contains(out, "cannot demote") {
+			t.Errorf("expected 'cannot demote' guard error, got: %s", out)
 		}
 		db := openProxiedDB(t, p)
 		if got := readIssueType(t, db, epic.ID); got != types.TypeEpic {
 			t.Errorf("epic must stay an epic after a guarded demote, got %q", got)
+		}
+	})
+
+	// beads-l7l3j: MOLECULE root demote (molecule->task) with an open child must
+	// be refused too — the demote-axis widening the 2hkd guard had missed (it was
+	// bare TypeEpic). Mutation: reverting update_proxied_server.go's predicate to
+	// bare TypeEpic turns this RED (molecule demoted, rc=0).
+	t.Run("update_demote_molecule_open_children_refuses", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "udmor")
+		mol := bdProxiedCreate(t, bd, p.dir, "Demote molecule", "-t", "molecule")
+		_ = bdProxiedCreate(t, bd, p.dir, "Demote mol child", "--parent", mol.ID)
+		out := bdProxiedUpdateFail(t, bd, p.dir, mol.ID, "--type", "task")
+		if !strings.Contains(out, "cannot demote") {
+			t.Errorf("expected 'cannot demote' guard error for a molecule root, got: %s", out)
+		}
+		db := openProxiedDB(t, p)
+		if got := readIssueType(t, db, mol.ID); got != types.TypeMolecule {
+			t.Errorf("molecule must stay a molecule after a guarded demote, got %q", got)
+		}
+	})
+
+	// beads-l7l3j control: molecule->EPIC (both auto-closing) is NOT a demote —
+	// must succeed even with an open child (no false-positive from the widening).
+	t.Run("update_molecule_to_epic_with_open_child_still_allowed", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "umte")
+		mol := bdProxiedCreate(t, bd, p.dir, "Molecule to epic", "-t", "molecule")
+		_ = bdProxiedCreate(t, bd, p.dir, "Mol child", "--parent", mol.ID)
+		bdProxiedUpdateOne(t, bd, p.dir, mol.ID, "--type", "epic")
+		db := openProxiedDB(t, p)
+		if got := readIssueType(t, db, mol.ID); got != types.TypeEpic {
+			t.Errorf("molecule->epic (both auto-closing, not a demote) should succeed, got %q", got)
 		}
 	})
 

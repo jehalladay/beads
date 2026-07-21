@@ -599,10 +599,17 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 			// still has open children (epic -> non-epic), overridable with --force
 			// to match `bd close --force`. Only guards a real epic->non-epic
 			// transition; epic->epic re-normalization and promotions are unaffected.
+			// beads-l7l3j: widen the demote guard to any auto-closing parent type
+			// (epic OR molecule OR wisp, beads-aw9x8), not just epics. The guard is
+			// a TRANSITION test — it must fire when an auto-closing root is demoted
+			// to a NON-auto-closing type (e.g. molecule->task), which would let a
+			// subsequent close leave open children. Widening only the source term
+			// is insufficient: use wouldRemainAutoClosingParent for the target so
+			// molecule->epic (still auto-closing) is not treated as a demote.
 			if newTypeRaw, ok := updates["issue_type"].(string); ok && !forceFlag &&
-				issue.IssueType == types.TypeEpic && types.IssueType(newTypeRaw).Normalize() != types.TypeEpic {
+				isAutoClosingParentType(issue) && !wouldRemainAutoClosingParent(issue, types.IssueType(newTypeRaw)) {
 				if openChildren := countEpicOpenChildren(ctx, issueStore, result.ResolvedID); openChildren > 0 {
-					reportItemError("cannot demote epic %s to %s: %d open child issue(s); close children first or use --force to override", id, newTypeRaw, openChildren)
+					reportItemError("cannot demote %s to %s: %d open child issue(s); close children first or use --force to override", id, newTypeRaw, openChildren)
 					closeIfUnmutated(result)
 					continue
 				}
