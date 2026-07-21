@@ -228,6 +228,16 @@ func renderEpicCloseEligible(epics []*types.EpicStatus, dryRun bool, closeFn fun
 				return HandleErrorRespectJSON("committing epic closures: %v", err)
 			}
 		}
+		// beads-iwzua: each closed epic needs the SAME GC-survivable audit-file
+		// trail (.beads/interactions.jsonl) `bd close` writes (beads-n4sn) —
+		// closeFn (direct store.CloseIssue / proxied issueUC.CloseIssue) records
+		// only the DB EventClosed row, which a Dolt GC flatten destroys. Emitted
+		// here (the shared chokepoint) AFTER commitFn so a rolled-back proxied
+		// batch never leaves an orphaned cwd-file entry (the r3m8v proxied-leg
+		// lesson). Eligible-for-close epics were open, so oldStatus="open".
+		for _, id := range closedIDs {
+			auditStatusChange(id, "open", "closed", "system", "All children completed")
+		}
 	}
 	// All-failed guard: eligibleEpics was non-empty (the len==0 early-out
 	// above already handled "nothing eligible"), so if closedIDs is empty
