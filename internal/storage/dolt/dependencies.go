@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -20,11 +21,20 @@ func isCrossPrefixDep(sourceID, targetID string) bool {
 // Delegates SQL work to issueops.AddDependencyInTx; handles Dolt versioning
 // and cache invalidation.
 func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
+	return s.AddDependencyWithOptions(ctx, dep, actor, storage.DependencyAddOptions{})
+}
+
+// AddDependencyWithOptions adds a single dependency edge honoring opts. beads-2f1ly:
+// the single-edge `bd dep add --no-cycle-check` flag was read only to gate the
+// redundant post-insert warning, never threaded into the insert, so the cycle
+// check always ran (silent no-op). Thread opts.SkipCycleCheck into the
+// issue-source AND wisp-source insert paths, matching the bulk --file path.
+func (s *DoltStore) AddDependencyWithOptions(ctx context.Context, dep *types.Dependency, actor string, opts storage.DependencyAddOptions) error {
 	isCrossPrefix := isCrossPrefixDep(dep.IssueID, dep.DependsOnID)
 
 	// Route to wisp_dependencies if the source is an active wisp.
 	if s.isActiveWisp(ctx, dep.IssueID) {
-		return s.addWispDependency(ctx, dep, actor, isCrossPrefix)
+		return s.addWispDependency(ctx, dep, actor, isCrossPrefix, opts.SkipCycleCheck)
 	}
 
 	targetTable := "issues"
@@ -40,14 +50,15 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 	}
 
 	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
-		opts := issueops.AddDependencyOpts{
-			SourceTable:   "issues",
-			TargetTable:   targetTable,
-			WriteTable:    "dependencies",
-			IsCrossPrefix: isCrossPrefix,
-			TargetKind:    &kind,
+		addOpts := issueops.AddDependencyOpts{
+			SourceTable:    "issues",
+			TargetTable:    targetTable,
+			WriteTable:     "dependencies",
+			IsCrossPrefix:  isCrossPrefix,
+			SkipCycleCheck: opts.SkipCycleCheck,
+			TargetKind:     &kind,
 		}
-		return issueops.AddDependencyInTx(ctx, tx, dep, actor, opts)
+		return issueops.AddDependencyInTx(ctx, tx, dep, actor, addOpts)
 	}); err != nil {
 		return err
 	}

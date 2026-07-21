@@ -663,6 +663,9 @@ func (s *configStore) SearchIssues(_ context.Context, _ string, _ types.IssueFil
 func (s *configStore) AddDependency(_ context.Context, _ *types.Dependency, _ string) error {
 	return nil
 }
+func (s *configStore) AddDependencyWithOptions(_ context.Context, _ *types.Dependency, _ string, _ storage.DependencyAddOptions) error {
+	return nil
+}
 func (s *configStore) LinkAndClose(_ context.Context, _ *types.Dependency, _ string) error {
 	return nil
 }

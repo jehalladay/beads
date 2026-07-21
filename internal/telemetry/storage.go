@@ -219,6 +219,21 @@ func (s *InstrumentedStorage) AddDependency(ctx context.Context, dep *types.Depe
 	return err
 }
 
+// AddDependencyWithOptions instruments the options-bearing single-edge add
+// (beads-2f1ly --no-cycle-check threading), delegating to the inner store.
+func (s *InstrumentedStorage) AddDependencyWithOptions(ctx context.Context, dep *types.Dependency, actor string, opts storage.DependencyAddOptions) error {
+	attrs := []attribute.KeyValue{
+		attribute.String("bd.dep.from", dep.IssueID),
+		attribute.String("bd.dep.to", dep.DependsOnID),
+		attribute.String("bd.dep.type", string(dep.Type)),
+		attribute.Bool("bd.dep.skip_cycle_check", opts.SkipCycleCheck),
+	}
+	ctx, span, t := s.op(ctx, "AddDependencyWithOptions", attrs...)
+	err := s.inner.AddDependencyWithOptions(ctx, dep, actor, opts)
+	s.done(ctx, span, t, err, attrs...)
+	return err
+}
+
 func (s *InstrumentedStorage) LinkAndClose(ctx context.Context, dep *types.Dependency, actor string) error {
 	attrs := []attribute.KeyValue{
 		attribute.String("bd.dep.from", dep.IssueID),

@@ -161,6 +161,17 @@ func (h *HookFiringStore) AddDependency(ctx context.Context, dep *types.Dependen
 	return nil
 }
 
+// AddDependencyWithOptions delegates to the inner store (honoring
+// opts.SkipCycleCheck, beads-2f1ly) then fires on_update — behavior-preserving
+// with AddDependency (which now delegates here with empty opts).
+func (h *HookFiringStore) AddDependencyWithOptions(ctx context.Context, dep *types.Dependency, actor string, opts DependencyAddOptions) error {
+	if err := h.inner.AddDependencyWithOptions(ctx, dep, actor, opts); err != nil {
+		return err
+	}
+	h.fireDependencyHookByID(ctx, hooks.EventUpdate, dep.IssueID)
+	return nil
+}
+
 // LinkAndClose adds a dependency edge and closes the source issue atomically,
 // then fires on_update for the issue — behavior-preserving with the prior
 // two-call path (AddDependency fired on_update; the close ran via UpdateIssue,

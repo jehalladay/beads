@@ -213,20 +213,36 @@ Examples:
 				}
 			}
 
-			if err := fromStore.AddDependency(ctx, dep, actor); err != nil {
+			// beads-2f1ly: --no-cycle-check was a silent no-op on this single-edge
+			// path (read only to gate the redundant warning; the insert always ran
+			// the per-edge cycle check). Honor it EXACTLY like the bulk --file path
+			// (dep.go bulk block): skip the PER-EDGE check for speed, but still run
+			// ONE final whole-graph check inside the same tx so a real blocking
+			// cycle rolls back instead of landing — the documented contract is
+			// "skip per-edge for speed, never graph integrity". Route the insert
+			// through a transaction (the plain store AddDependency auto-commits and
+			// has no post-insert seam for the final check).
+			noCycleCheck, _ := cmd.Flags().GetBool("no-cycle-check")
+			if err := transact(ctx, fromStore, "dependency: add "+string(dep.Type)+" "+fromID+" -> "+toID, func(tx storage.Transaction) error {
+				if err := tx.AddDependencyWithOptions(ctx, dep, actor, storage.DependencyAddOptions{SkipCycleCheck: noCycleCheck}); err != nil {
+					return err
+				}
+				if noCycleCheck {
+					cyclePath, cErr := newCycleThroughEdges(ctx, tx, []bulkDepEdge{{IssueID: fromID, DependsOnID: toID, Type: dt}})
+					if cErr != nil {
+						return fmt.Errorf("final cycle check failed (no edge added): %w", cErr)
+					}
+					if cyclePath != "" {
+						return fmt.Errorf("dependency cycle would be created: %s (no edge added; run 'bd dep cycles' for analysis)", cyclePath)
+					}
+				}
+				return nil
+			}); err != nil {
 				return HandleErrorRespectJSON("%v", err)
 			}
 
-			noCycleCheck, _ := cmd.Flags().GetBool("no-cycle-check")
 			if !noCycleCheck {
 				warnIfCyclesExist(fromStore)
-			}
-
-			if err := commitPendingIfEmbedded(ctx, fromStore, actor, doltAutoCommitParams{
-				Command:  "dep add",
-				IssueIDs: []string{fromID, toID},
-			}); err != nil {
-				return HandleErrorRespectJSON("failed to commit: %v", err)
 			}
 
 			if jsonOutput {
@@ -484,20 +500,33 @@ Examples:
 			}
 		}
 
-		if err := fromStore.AddDependency(ctx, dep, actor); err != nil {
+		// beads-2f1ly: honor --no-cycle-check on this positional single-edge path
+		// exactly like the bulk --file path (skip the per-edge check for speed,
+		// but a final whole-graph check still gates the commit so a real blocking
+		// cycle rolls back — "skip per-edge for speed, never graph integrity").
+		// Route through a transaction (plain store AddDependency auto-commits with
+		// no post-insert seam for the final check).
+		noCycleCheck, _ := cmd.Flags().GetBool("no-cycle-check")
+		if err := transact(ctx, fromStore, "dependency: add "+string(dep.Type)+" "+fromID+" -> "+toID, func(tx storage.Transaction) error {
+			if err := tx.AddDependencyWithOptions(ctx, dep, actor, storage.DependencyAddOptions{SkipCycleCheck: noCycleCheck}); err != nil {
+				return err
+			}
+			if noCycleCheck {
+				cyclePath, cErr := newCycleThroughEdges(ctx, tx, []bulkDepEdge{{IssueID: fromID, DependsOnID: toID, Type: dt}})
+				if cErr != nil {
+					return fmt.Errorf("final cycle check failed (no edge added): %w", cErr)
+				}
+				if cyclePath != "" {
+					return fmt.Errorf("dependency cycle would be created: %s (no edge added; run 'bd dep cycles' for analysis)", cyclePath)
+				}
+			}
+			return nil
+		}); err != nil {
 			return HandleErrorRespectJSON("%v", err)
 		}
 
-		noCycleCheck, _ := cmd.Flags().GetBool("no-cycle-check")
 		if !noCycleCheck {
 			warnIfCyclesExist(fromStore)
-		}
-
-		if err := commitPendingIfEmbedded(ctx, fromStore, actor, doltAutoCommitParams{
-			Command:  "dep add",
-			IssueIDs: []string{fromID, toID},
-		}); err != nil {
-			return HandleErrorRespectJSON("failed to commit: %v", err)
 		}
 
 		if jsonOutput {

@@ -6,14 +6,23 @@ import (
 	"context"
 	"database/sql"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func (s *EmbeddedDoltStore) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
+	return s.AddDependencyWithOptions(ctx, dep, actor, storage.DependencyAddOptions{})
+}
+
+// AddDependencyWithOptions adds a single dependency edge honoring opts (notably
+// opts.SkipCycleCheck for `bd dep add --no-cycle-check`, beads-2f1ly). Self-loop
+// rejection stays unconditional inside AddDependencyInTx (beads-jg2s).
+func (s *EmbeddedDoltStore) AddDependencyWithOptions(ctx context.Context, dep *types.Dependency, actor string, opts storage.DependencyAddOptions) error {
 	return s.withConn(ctx, true, func(tx *sql.Tx) error {
 		return issueops.AddDependencyInTx(ctx, tx, dep, actor, issueops.AddDependencyOpts{
-			IsCrossPrefix: types.ExtractPrefix(dep.IssueID) != types.ExtractPrefix(dep.DependsOnID),
+			IsCrossPrefix:  types.ExtractPrefix(dep.IssueID) != types.ExtractPrefix(dep.DependsOnID),
+			SkipCycleCheck: opts.SkipCycleCheck,
 		})
 	})
 }

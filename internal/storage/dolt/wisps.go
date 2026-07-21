@@ -508,7 +508,7 @@ func (s *DoltStore) getWispsByIDs(ctx context.Context, ids []string) ([]*types.I
 }
 
 // addWispDependency adds a dependency to the wisp_dependencies table.
-func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency, actor string, isCrossPrefix bool) error {
+func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency, actor string, isCrossPrefix, skipCycleCheck bool) error {
 	metadata := dep.Metadata
 	if metadata == "" {
 		metadata = "{}"
@@ -536,8 +536,21 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	// mixed-table interior-path coverage is unchanged. Edge storage is
 	// source-routed, so same-class endpoints can still have mixed-table
 	// interior paths — the shared depTables cover both.
-	if err := issueops.CheckDependencyCycleInTx(ctx, tx, dep, wispCycleDetectionTables()); err != nil {
-		return err
+	// beads-jg2s: a self-referential edge is rejected UNCONDITIONALLY, before the
+	// skipCycleCheck gate — CheckDependencyCycleInTx carries the same guard but is
+	// skipped under `bd dep add --no-cycle-check` (beads-2f1ly), so without this a
+	// self-loop wisp edge could commit. Mirrors the issue-source seam
+	// (AddDependencyInTx) which rejects self-edges before its own SkipCycleCheck gate.
+	if dep.IssueID == dep.DependsOnID {
+		return fmt.Errorf("cannot add self-dependency: %s cannot depend on itself", dep.IssueID)
+	}
+	// beads-2f1ly: honor --no-cycle-check on the wisp-source single-edge path too
+	// (the flag was a silent no-op on every single-edge add). The caller that skips
+	// owns the whole-graph safety, matching the issue-source + bulk contract.
+	if !skipCycleCheck {
+		if err := issueops.CheckDependencyCycleInTx(ctx, tx, dep, wispCycleDetectionTables()); err != nil {
+			return err
+		}
 	}
 
 	kind := issueops.ClassifyDepTarget(ctx, tx, dep, isCrossPrefix)

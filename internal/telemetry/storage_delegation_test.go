@@ -72,6 +72,9 @@ func (r *recordingStorage) SearchIssuesWithCounts(context.Context, string, types
 func (r *recordingStorage) AddDependency(context.Context, *types.Dependency, string) error {
 	return r.rec("AddDependency")
 }
+func (r *recordingStorage) AddDependencyWithOptions(context.Context, *types.Dependency, string, storage.DependencyAddOptions) error {
+	return r.rec("AddDependencyWithOptions")
+}
 func (r *recordingStorage) LinkAndClose(context.Context, *types.Dependency, string) error {
 	return r.rec("LinkAndClose")
 }

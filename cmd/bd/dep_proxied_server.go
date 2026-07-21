@@ -140,11 +140,13 @@ func runDepBlocksProxiedServer(cmd *cobra.Command, ctx context.Context, blockerI
 		DependsOnID: blockerID,
 		Type:        types.DepBlocks,
 	}
-	if _, err := uw.DependencyUseCase().AddDependencies(ctx, []*types.Dependency{dep}, actor, domain.BulkAddDepsOpts{}); err != nil {
+	// beads-2f1ly: thread --no-cycle-check into the proxied --blocks insert too
+	// (silent no-op sibling of the proxied dep-add path).
+	noCycleCheck, _ := cmd.Flags().GetBool("no-cycle-check")
+	if _, err := uw.DependencyUseCase().AddDependencies(ctx, []*types.Dependency{dep}, actor, domain.BulkAddDepsOpts{SkipPerEdgeCycleCheck: noCycleCheck}); err != nil {
 		FatalErrorRespectJSON("%v", err)
 	}
 
-	noCycleCheck, _ := cmd.Flags().GetBool("no-cycle-check")
 	if !noCycleCheck {
 		proxiedWarnCycles(ctx, uw)
 	}
@@ -278,12 +280,15 @@ func runDepAddProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 		return
 	}
 
+	// beads-2f1ly: thread --no-cycle-check into the proxied single-edge insert
+	// too (it was read only to gate the redundant warning; the bulk --file
+	// proxied path already passed SkipPerEdgeCycleCheck). Read BEFORE the insert.
+	noCycleCheck, _ := cmd.Flags().GetBool("no-cycle-check")
 	dep := &types.Dependency{IssueID: fromID, DependsOnID: toID, Type: dt}
-	if _, err := uw.DependencyUseCase().AddDependencies(ctx, []*types.Dependency{dep}, actor, domain.BulkAddDepsOpts{}); err != nil {
+	if _, err := uw.DependencyUseCase().AddDependencies(ctx, []*types.Dependency{dep}, actor, domain.BulkAddDepsOpts{SkipPerEdgeCycleCheck: noCycleCheck}); err != nil {
 		FatalErrorRespectJSON("%v", err)
 	}
 
-	noCycleCheck, _ := cmd.Flags().GetBool("no-cycle-check")
 	if !noCycleCheck {
 		proxiedWarnCycles(ctx, uw)
 	}

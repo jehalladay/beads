@@ -54,6 +54,14 @@ type Storage interface {
 
 	// Dependencies
 	AddDependency(ctx context.Context, dep *types.Dependency, actor string) error
+	// AddDependencyWithOptions adds a dependency edge honoring DependencyAddOptions
+	// (notably SkipCycleCheck for the single-edge `bd dep add --no-cycle-check`
+	// path, beads-2f1ly — the tx-level AddDependencyWithOptions already threaded
+	// it for bulk --file, but the store-level single-edge add did not, so the
+	// documented flag was a silent no-op on single-edge adds). Self-loop
+	// rejection stays unconditional (beads-jg2s). Callers that skip the per-edge
+	// check own the whole-graph safety, matching the bulk contract.
+	AddDependencyWithOptions(ctx context.Context, dep *types.Dependency, actor string, opts DependencyAddOptions) error
 	// LinkAndClose adds a dependency edge AND closes dep.IssueID in ONE
 	// transaction, so the two cannot split into an inconsistent state (edge
 	// added while the issue stays open). Used by bd duplicate / bd supersede
