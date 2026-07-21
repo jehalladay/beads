@@ -381,6 +381,25 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string, dryRun bool) er
 		return HandleErrorRespectJSON("no issues found in markdown file")
 	}
 
+	// beads-kvq0v: reject reserved gt identity labels (gt:agent/gt:role/gt:rig)
+	// parsed from the untrusted "### Labels" section on a non-gt-internal write,
+	// mirroring single `bd create` (create.go: reservedIdentityLabelError),
+	// `bd label add`, and graph create (beads-f8fvh). These labels hide a bead
+	// from `bd ready`, so a hand-authored markdown label would silently hide
+	// real work — the write-time reservation (beads-3c4g) must apply to this
+	// authoring seam too. Runs before the dry-run branch so a --dry-run preview
+	// also rejects the spoof, matching single/graph create validating before
+	// their previews. (Distinct from JSONL `bd import`, which correctly lacks
+	// the guard because it RESTORES already-created beads incl. legit gt-stamped
+	// identity beads.)
+	for _, template := range templates {
+		for _, label := range template.Labels {
+			if msg := reservedIdentityLabelError(label); msg != "" {
+				return HandleErrorRespectJSON("issue %q: %s", template.Title, msg)
+			}
+		}
+	}
+
 	// beads-9rb6: --dry-run previews the batch (the case where a preview is most
 	// valuable — N issues + dep edges are easy to typo) and creates nothing.
 	// Mirrors the single-create dry-run and the --graph --dry-run path; requires
