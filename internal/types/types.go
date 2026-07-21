@@ -1635,6 +1635,25 @@ func (i *Issue) IsCompound() bool {
 	return len(i.BondedFrom) > 0
 }
 
+// IsAutoClosingParentType reports whether a CLOSED parent of this type
+// participates in the "a closed parent has no open children" invariant that the
+// close-guard family (beads-2hkd/b0tw/eth8/aw9x8) enforces: epics plus the
+// auto-closing molecule and ephemeral (wisp) roots. This is the single source
+// of truth for the parent-type membership shared across every guard axis
+// (close/reopen/dep-add/create), so a guard on one axis cannot silently drift
+// narrower than the auto-close side. cmd/bd's isAutoClosingParentType delegates
+// here (beads-czu1s); the graph-create post-passes (embedded + domain) call it
+// directly to add the create-axis guard the top-level-then-link path skipped
+// (beads-t39ph).
+func (i *Issue) IsAutoClosingParentType() bool {
+	if i == nil {
+		return false
+	}
+	return i.IssueType == TypeEpic ||
+		i.IssueType == TypeMolecule ||
+		i.Ephemeral
+}
+
 // GetConstituents returns the BondRefs for this compound's constituent protos.
 // Returns nil for non-compound issues.
 func (i *Issue) GetConstituents() []BondRef {

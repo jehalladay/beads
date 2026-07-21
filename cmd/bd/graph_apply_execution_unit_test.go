@@ -163,6 +163,22 @@ func (tx *graphApplyFakeTx) GetDependencyRecords(ctx context.Context, issueID st
 // nil-dereferenced inside RunInTransaction (panic) the moment a node declared a
 // parent — which TestExecuteGraphApplyUnitAllowsExplicitParentChildDuplicate does.
 // A faithful fake stores labels on the issue so the union is honestly exercised.
+// beads-t39ph: GetIssue backs the closed-parent guard in executeGraphApply,
+// which reads each parent-child node's parent to reject an open child under a
+// CLOSED auto-closing parent. graphApplyFakeTx embeds a nil storage.Transaction
+// with no GetIssue override, so the guard nil-dereferenced inside
+// RunInTransaction (panic) the moment a node declared a parent — which
+// TestExecuteGraphApplyUnitAllowsExplicitParentChildDuplicate does. Mirror the
+// store's GetIssue so the guard reads the honestly-minted parent.
+func (tx *graphApplyFakeTx) GetIssue(_ context.Context, id string) (*types.Issue, error) {
+	issue, ok := tx.store.issues[id]
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	cp := *issue
+	return &cp, nil
+}
+
 func (tx *graphApplyFakeTx) GetLabels(_ context.Context, issueID string) ([]string, error) {
 	issue, ok := tx.store.issues[issueID]
 	if !ok {

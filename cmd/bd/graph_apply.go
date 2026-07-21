@@ -60,6 +60,10 @@ type GraphApplyOptions struct {
 	// children (parity with `bd create --no-inherit-labels`). Zero value inherits,
 	// matching single create's default (beads-l8qsn).
 	NoInheritLabels bool
+	// Force, when true, overrides the closed-parent guard (beads-t39ph) so a
+	// graph child may be linked under a CLOSED auto-closing parent — parity with
+	// `bd create --parent <closed> --force`.
+	Force bool
 }
 
 func (opts GraphApplyOptions) Validate() error {
@@ -659,6 +663,25 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 			if parentDepPairs[graphApplyDepPairKey(toID, fromID)] && graphApplyCycleRelevantDependencyType(depType) {
 				return fmt.Errorf("edge %d %s->%s creates a blocking reverse of a parent-child relationship", i, fromID, toID)
 			}
+			// beads-t39ph (edge-loop seam, dogfooder cascade-coverage): an explicit
+			// parent-child EDGE ({from:child, to:closed-parent, type:parent-child})
+			// links a child under its parent via THIS loop, separate from the
+			// node.ParentID post-pass below. The post-pass guard (added below) never
+			// runs for an edge-declared parent-child that isn't also a node.ParentID
+			// pair (those are continue'd above), so a closed auto-closing parent
+			// (epic/molecule/wisp) leaked here. Mirror the same guard: refuse an OPEN
+			// child (fromID) linked under a CLOSED auto-closing parent (toID) unless
+			// --force. A closed child, or a non-auto-closing/open parent, is fine.
+			if !opts.Force && depType == types.DepParentChild {
+				parent, perr := tx.GetIssue(ctx, toID)
+				if perr == nil && parent != nil &&
+					parent.IsAutoClosingParentType() && parent.Status == types.StatusClosed {
+					child, cerr := tx.GetIssue(ctx, fromID)
+					if cerr == nil && child != nil && child.Status != types.StatusClosed {
+						return fmt.Errorf("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", toID)
+					}
+				}
+			}
 			dep := &types.Dependency{
 				IssueID:     fromID,
 				DependsOnID: toID,
@@ -680,6 +703,20 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 				parentID = keyToID[node.ParentKey]
 			}
 			if parentID != "" {
+				// beads-t39ph: graph-create mints every node top-level then links
+				// parent-child here, so the single-create closed-parent guard
+				// (create.go, gated on parentID != "") never runs for graph
+				// children — a child under a CLOSED auto-closing parent (epic OR
+				// molecule OR wisp, beads-aw9x8) landed silently. Mirror the guard
+				// at this link seam (the same top-level-then-link seam l8qsn added
+				// label inheritance to). Graph children are minted open, so any
+				// closed auto-closing parent is a violation. Honors --force.
+				if !opts.Force {
+					parent, perr := tx.GetIssue(ctx, parentID)
+					if perr == nil && parent != nil && parent.IsAutoClosingParentType() && parent.Status == types.StatusClosed {
+						return fmt.Errorf("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", parentID)
+					}
+				}
 				dep := &types.Dependency{
 					IssueID:     issues[i].ID,
 					DependsOnID: parentID,
