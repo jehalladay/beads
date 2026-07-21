@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -50,13 +49,23 @@ func runPromoteProxiedServer(ctx context.Context, id, reason string) error {
 	}
 
 	// The row now lives in the permanent issues table; record the promotion
-	// comment there. A comment failure is non-fatal, matching the direct path.
+	// comment in the SAME unit of work.
+	//
+	// beads-4hmjr: a comment-write failure must ABORT before uw.Commit so the
+	// promotion rolls back — at parity with the direct path (beads-kdvfe:
+	// PromoteFromEphemeralWithComment runs both writes in one tx and a comment
+	// failure returns an error → the whole tx rolls back, RC!=0). Previously this
+	// downgraded the comment failure to a stderr Warning and committed the
+	// promotion ANYWAY, leaving the bead promoted with the documented recording
+	// comment (and user --reason) silently dropped under RC=0 — the exact
+	// non-atomicity kdvfe fixed on the direct side. Returning here skips
+	// uw.Commit; the deferred uw.Close discards the uncommitted promotion.
 	comment := "Promoted from wisp to permanent bead"
 	if reason != "" {
 		comment += ": " + reason
 	}
 	if _, cerr := uw.CommentUseCase().AddComment(ctx, resolvedID, actor, comment); cerr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to add promotion comment to %s: %v\n", resolvedID, cerr)
+		return HandleErrorRespectJSON("record promotion comment for %s: %v", resolvedID, cerr)
 	}
 
 	if cerr := uw.Commit(ctx, "bd: promote "+resolvedID); cerr != nil && !isDoltNothingToCommit(cerr) {
