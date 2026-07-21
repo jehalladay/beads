@@ -1507,19 +1507,63 @@ func setDoltConfig(key, value string, updateConfig bool) {
 		if value == "" {
 			// Allow clearing the custom data dir (revert to default .beads/dolt)
 			cfg.DoltDataDir = ""
-		} else {
-			if !filepath.IsAbs(value) {
-				FatalErrorRespectJSON("data-dir must be an absolute path")
-			}
-			cfg.DoltDataDir = value
-			// Absolute paths are machine-specific and won't be persisted to
-			// metadata.json (which is committed to git). Use the env var for
-			// persistence across sessions. (GH#2251)
-			fmt.Fprintf(os.Stderr, "Note: absolute paths are not saved to metadata.json (it propagates via git).\n")
-			fmt.Fprintf(os.Stderr, "For persistence, add to your shell profile:\n")
-			fmt.Fprintf(os.Stderr, "  export BEADS_DOLT_DATA_DIR=%s\n", value)
+			yamlKey = "dolt.data-dir"
+			break
 		}
+		if !filepath.IsAbs(value) {
+			FatalErrorRespectJSON("data-dir must be an absolute path")
+		}
+		cfg.DoltDataDir = value
 		yamlKey = "dolt.data-dir"
+
+		// beads-9teyf: an absolute data-dir is machine-specific and is NOT
+		// persisted to metadata.json — Config.Save clears an absolute
+		// DoltDataDir (configfile.go:115) so it never lands in the git-tracked
+		// file. The generic tail below would (a) print a corrective "Note:" to
+		// stderr UNCONDITIONALLY (leaking non-JSON noise into a --json
+		// consumer's captured stderr — the mfmcf/lster stderr-leak class) and
+		// (b) emit an envelope claiming location:"metadata.json", which is
+		// FALSE for this key. Own the emit here like the shared-server case:
+		// under --json report the accurate session-only location + the
+		// persistence hint (the guidance the human Note carries), and guard the
+		// human Note itself. (GH#2251)
+		//
+		// --update-config still persists dolt.data-dir to config.yaml (which is
+		// NOT git-committed) below via the generic yamlKey path when requested;
+		// the value is session-only only for metadata.json.
+		if jsonOutput {
+			result := map[string]interface{}{
+				"key":          "data-dir",
+				"value":        value,
+				"location":     "session-only (absolute data-dir not saved to metadata.json)",
+				"persisted":    false,
+				"persist_hint": fmt.Sprintf("export BEADS_DOLT_DATA_DIR=%s", value),
+			}
+			if updateConfig {
+				if err := config.SetYamlConfig("dolt.data-dir", value); err != nil {
+					FatalErrorRespectJSON("setting data-dir in config.yaml: %v", err)
+				}
+				result["config_yaml_updated"] = true
+			}
+			logDoltConfigChange(beadsDir, "data-dir", value)
+			if err := outputJSON(result); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
+			return
+		}
+		fmt.Println("Set data-dir =", value)
+		fmt.Fprintf(os.Stderr, "Note: absolute paths are not saved to metadata.json (it propagates via git).\n")
+		fmt.Fprintf(os.Stderr, "For persistence, add to your shell profile:\n")
+		fmt.Fprintf(os.Stderr, "  export BEADS_DOLT_DATA_DIR=%s\n", value)
+		logDoltConfigChange(beadsDir, "data-dir", value)
+		if updateConfig {
+			if err := config.SetYamlConfig("dolt.data-dir", value); err != nil {
+				fmt.Printf("%s\n", ui.RenderWarn(fmt.Sprintf("Warning: failed to update config.yaml: %v", err)))
+			} else {
+				fmt.Println("Set dolt.data-dir =", value, "(in config.yaml)")
+			}
+		}
+		return
 
 	case "shared-server":
 		lower := strings.ToLower(value)
