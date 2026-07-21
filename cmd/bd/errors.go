@@ -306,7 +306,18 @@ func WarnError(format string, args ...interface{}) {
 // than stranded until the next clean exit.
 func CheckReadonly(operation string) {
 	if readonlyMode {
-		fmt.Fprintf(os.Stderr, "Error: operation '%s' is not allowed in read-only mode\n", operation)
+		// beads-rus7u: honor --json. Under --json emit the structured {error}
+		// object to STDOUT (mirroring FatalErrorRespectJSON / broz / 9fww), so a
+		// scripted --json caller in a read-only sandbox gets a parseable payload
+		// on stdout rather than bare plaintext on stderr. Non-json behavior is
+		// byte-for-byte unchanged (plaintext to stderr). One chokepoint → all
+		// ~105 write commands. metrics.CloseAndFlush() + os.Exit(1) preserved.
+		msg := fmt.Sprintf("operation '%s' is not allowed in read-only mode", operation)
+		if jsonOutput {
+			jsonStdoutError(msg, "")
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
+		}
 		metrics.CloseAndFlush()
 		os.Exit(1)
 	}
