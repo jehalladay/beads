@@ -281,7 +281,13 @@ func validateUpdateStatus(ctx context.Context, status string) {
 	}
 	uw, err := uowProvider.NewUOW(ctx)
 	if err != nil {
-		FatalError("open unit of work: %v", err)
+		// beads-a81t3: honor --json (JSON {error} on STDOUT), matching this
+		// function's sibling legs :289/:296 (FatalErrorRespectJSON) and the whole
+		// "open unit of work" family (14 FatalErrorRespectJSON + 18
+		// HandleErrorRespectJSON; this was the sole bare-FatalError outlier). The
+		// :280 uowProvider==nil leg above stays bare — it's an internal nil-invariant,
+		// not a user-input error contract. 8lqh/ag3ru residual, sibling shared builder.
+		FatalErrorRespectJSON("open unit of work: %v", err)
 	}
 	names, err := uw.ConfigUseCase().ListAllStatusNames(ctx)
 	uw.Close(ctx)
