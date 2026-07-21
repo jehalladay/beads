@@ -57,11 +57,15 @@ func (r *labelSQLRepositoryImpl) Insert(ctx context.Context, issueID, label, act
 	if affected, aerr := res.RowsAffected(); aerr == nil && affected == 0 {
 		return nil
 	}
+	// Mirror the direct path (issueops.AddLabelInTx): the label event's
+	// human-readable value goes in the comment column ("Added label: X"), not
+	// old_value/new_value, so proxied and direct crew produce the same audit row
+	// shape (beads-6p27f).
 	return r.events.Record(ctx, domain.Event{
-		IssueID:  issueID,
-		Type:     types.EventLabelAdded,
-		Actor:    actor,
-		NewValue: label,
+		IssueID: issueID,
+		Type:    types.EventLabelAdded,
+		Actor:   actor,
+		Comment: "Added label: " + label,
 	}, domain.RecordEventOpts{UseWispsTable: opts.UseWispsTable})
 }
 
@@ -90,11 +94,14 @@ func (r *labelSQLRepositoryImpl) Delete(ctx context.Context, issueID, label, act
 	if affected, aerr := res.RowsAffected(); aerr == nil && affected == 0 {
 		return nil
 	}
+	// Mirror the direct path (issueops.RemoveLabelInTx): the label event's
+	// human-readable value goes in the comment column ("Removed label: X"), not
+	// old_value/new_value (beads-6p27f).
 	return r.events.Record(ctx, domain.Event{
-		IssueID:  issueID,
-		Type:     types.EventLabelRemoved,
-		Actor:    actor,
-		OldValue: label,
+		IssueID: issueID,
+		Type:    types.EventLabelRemoved,
+		Actor:   actor,
+		Comment: "Removed label: " + label,
 	}, domain.RecordEventOpts{UseWispsTable: opts.UseWispsTable})
 }
 

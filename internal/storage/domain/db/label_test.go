@@ -1,6 +1,8 @@
 package db
 
 import (
+	"database/sql"
+
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -103,13 +105,20 @@ func (s *testSuite) labelInsertRecordsEvent() {
 	r := s.labelRepo()
 	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-evt", "perf", "alice", domain.LabelOpts{}))
 
-	var actor, newValue string
+	// beads-6p27f: the label event's human-readable value goes in the comment
+	// column ("Added label: perf"), mirroring the direct path
+	// (issueops.AddLabelInTx); old_value/new_value stay NULL/empty.
+	var actor string
+	var oldValue, newValue, comment sql.NullString
 	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
-		"SELECT actor, new_value FROM events WHERE issue_id = ? AND event_type = ?",
+		"SELECT actor, old_value, new_value, comment FROM events WHERE issue_id = ? AND event_type = ?",
 		"bd-lbl-evt", string(types.EventLabelAdded),
-	).Scan(&actor, &newValue))
+	).Scan(&actor, &oldValue, &newValue, &comment))
 	s.Equal("alice", actor)
-	s.Equal("perf", newValue, "event new_value should carry the label name")
+	s.True(comment.Valid, "label_added event should carry a comment")
+	s.Equal("Added label: perf", comment.String, "comment must match the direct path (issueops.AddLabelInTx)")
+	s.False(newValue.Valid && newValue.String != "", "label name must NOT be stored in new_value (direct parity, beads-6p27f); got %q", newValue.String)
+	s.False(oldValue.Valid && oldValue.String != "", "old_value must be empty for label_added; got %q", oldValue.String)
 }
 
 func (s *testSuite) labelInsertEmptyIssueID() {
@@ -268,13 +277,19 @@ func (s *testSuite) labelDeleteRecordsEvent() {
 	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-del-evt", "perf", "alice", domain.LabelOpts{}))
 	s.Require().NoError(r.Delete(s.Ctx(), "bd-lbl-del-evt", "perf", "bob", domain.LabelOpts{}))
 
-	var actor, oldValue string
+	// beads-6p27f: the removed-label value goes in the comment column
+	// ("Removed label: perf"), mirroring issueops.RemoveLabelInTx; old/new empty.
+	var actor string
+	var oldValue, newValue, comment sql.NullString
 	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
-		"SELECT actor, old_value FROM events WHERE issue_id = ? AND event_type = ?",
+		"SELECT actor, old_value, new_value, comment FROM events WHERE issue_id = ? AND event_type = ?",
 		"bd-lbl-del-evt", string(types.EventLabelRemoved),
-	).Scan(&actor, &oldValue))
+	).Scan(&actor, &oldValue, &newValue, &comment))
 	s.Equal("bob", actor)
-	s.Equal("perf", oldValue, "event old_value should carry the removed label name (symmetric with Insert's new_value)")
+	s.True(comment.Valid, "label_removed event should carry a comment")
+	s.Equal("Removed label: perf", comment.String, "comment must match the direct path (issueops.RemoveLabelInTx)")
+	s.False(oldValue.Valid && oldValue.String != "", "label name must NOT be stored in old_value (direct parity, beads-6p27f); got %q", oldValue.String)
+	s.False(newValue.Valid && newValue.String != "", "new_value must be empty for label_removed; got %q", newValue.String)
 }
 
 func (s *testSuite) labelDeleteMissingNoop() {

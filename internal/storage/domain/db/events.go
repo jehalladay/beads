@@ -20,16 +20,31 @@ type eventsSQLRepositoryImpl struct {
 
 var _ domain.EventsSQLRepository = (*eventsSQLRepositoryImpl)(nil)
 
+// nullComment binds an empty comment as SQL NULL so the events.comment column
+// stays NULL for events without a human-readable line, matching the direct
+// path (which simply omits comment) rather than storing an empty string.
+func nullComment(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 func (r *eventsSQLRepositoryImpl) Record(ctx context.Context, evt domain.Event, opts domain.RecordEventOpts) error {
 	table := "events"
 	if opts.UseWispsTable {
 		table = "wisp_events"
 	}
+	// Empty Comment binds as SQL NULL (nullComment) so events that carry no
+	// human-readable line (Insert/Update/Claim) keep the comment column NULL —
+	// unchanged from before this column was written — while label add/remove
+	// mirror the direct issueops path's "Added label: X"/"Removed label: X"
+	// (beads-6p27f).
 	//nolint:gosec // G201: table is one of two hardcoded constants
 	_, err := r.runner.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (id, issue_id, event_type, actor, old_value, new_value)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, table), issueops.NewEventID(), evt.IssueID, string(evt.Type), evt.Actor, evt.OldValue, evt.NewValue)
+		INSERT INTO %s (id, issue_id, event_type, actor, old_value, new_value, comment)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, table), issueops.NewEventID(), evt.IssueID, string(evt.Type), evt.Actor, evt.OldValue, evt.NewValue, nullComment(evt.Comment))
 	if err != nil {
 		return fmt.Errorf("db: record event in %s: %w", table, err)
 	}
