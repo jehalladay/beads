@@ -303,6 +303,13 @@ func squashMolecule(ctx context.Context, s storage.DoltStorage, root *types.Issu
 	// All squash operations in a single transaction for atomicity (bd-4kgbq):
 	// digest creation, child deletion, and root close
 	err := transact(ctx, s, fmt.Sprintf("bd: squash molecule %s", root.ID), func(tx storage.Transaction) error {
+		// beads-t0h3z: reset the accumulated DeletedCount at closure entry so a
+		// withRetry re-invocation (DoltStore serialization conflict / connection
+		// blip) doesn't add each attempt's deletes on top of the last —
+		// otherwise the reported Deleted count is inflated (the SQL tx itself
+		// rolls back per attempt, so only the report was wrong).
+		result.DeletedCount = 0
+
 		// Create digest issue
 		if err := tx.CreateIssue(ctx, digestIssue, actorName); err != nil {
 			return fmt.Errorf("failed to create digest issue: %w", err)

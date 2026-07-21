@@ -219,6 +219,14 @@ normal 'bd' subcommands for interactive/read operations.`,
 
 		results := make([]batchOpResult, 0, len(ops))
 		err = transact(ctx, store, commitMsg, func(tx storage.Transaction) error {
+			// beads-t0h3z: reset the accumulator at closure entry. transact →
+			// RunInTransaction → withRetry re-invokes this closure on a
+			// retryable error (serialization conflict / connection blip on the
+			// DoltStore path); without the reset a retry appends a second copy
+			// of every op, inflating any len(results)-derived count AND
+			// double-flushing the post-commit audit-file trail (c2pr1) with
+			// spurious duplicate entries that survive Dolt GC.
+			results = results[:0]
 			for _, op := range ops {
 				res, rerr := runBatchOp(ctx, tx, op, session)
 				if rerr != nil {

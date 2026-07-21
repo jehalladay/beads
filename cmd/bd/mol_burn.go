@@ -416,14 +416,22 @@ func burnWisps(ctx context.Context, s storage.DoltStorage, ids []string) (*BurnR
 		DeletedIDs: make([]string, 0, len(ids)),
 	}
 
+	// beads-t0h3z: the result accumulator must be built INSIDE the closure so a
+	// withRetry re-invocation (serialization conflict / connection blip on the
+	// DoltStore path) starts fresh each attempt. Accumulating on the outer
+	// `result` across attempts double-counts (DeletedCount inflated,
+	// DeletedIDs carrying duplicate ids). Last-successful-attempt wins because
+	// the whole closure re-runs; we only publish to `result` on success.
 	err := transact(ctx, s, "bd: burn wisps", func(tx storage.Transaction) error {
+		deletedIDs := make([]string, 0, len(ids))
 		for _, id := range ids {
 			if err := tx.DeleteIssue(ctx, id); err != nil {
 				return fmt.Errorf("failed to delete wisp %s: %w", id, err)
 			}
-			result.DeletedIDs = append(result.DeletedIDs, id)
-			result.DeletedCount++
+			deletedIDs = append(deletedIDs, id)
 		}
+		result.DeletedIDs = deletedIDs
+		result.DeletedCount = len(deletedIDs)
 		return nil
 	})
 	if err != nil {
