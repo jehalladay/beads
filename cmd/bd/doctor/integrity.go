@@ -156,37 +156,23 @@ func CheckDependencyCyclesWithStore(ss *SharedStore) DoctorCheck {
 }
 
 func checkDependencyCyclesWithStore(store *dolt.DoltStore) DoctorCheck {
-	db := store.UnderlyingDB()
-
-	// Query for cycles using simplified SQL (CONCAT for Dolt/MySQL compatibility)
-	query := `
-		WITH RECURSIVE paths AS (
-			SELECT
-				issue_id,
-				COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS depends_on_id,
-				issue_id as start_id,
-				CONCAT(issue_id, '→', COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)) as path,
-				0 as depth
-			FROM dependencies
-
-			UNION ALL
-
-			SELECT
-				d.issue_id,
-				COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) AS depends_on_id,
-				p.start_id,
-				CONCAT(p.path, '→', COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external)),
-				p.depth + 1
-			FROM dependencies d
-			JOIN paths p ON d.issue_id = p.depends_on_id
-			WHERE p.depth < 100
-			  AND p.path NOT LIKE CONCAT('%', COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external), '→%')
-		)
-		SELECT DISTINCT start_id
-		FROM paths
-		WHERE depends_on_id = start_id`
-
-	rows, err := db.Query(query)
+	// Delegate to the canonical, family-aware detector (store.DetectCycles ->
+	// issueops.DetectCyclesInTx) so doctor consumes the SAME source of truth as
+	// `bd dep cycles` / `bd graph` / `bd ready` (the Fix hint already points the
+	// operator at `bd dep cycles`, confirming they are meant to agree).
+	//
+	// This replaces a hand-rolled recursive CTE that was a universal
+	// false-negative for multi-node cycles (beads-mbog1): its path-visited guard
+	// `path NOT LIKE '%<depends_on>→%'` excluded the cycle-CLOSING edge, so the
+	// terminal `depends_on_id = start_id` predicate could only ever match a
+	// depth-0 self-loop — every 2+-node cycle was invisible. The CTE also had no
+	// type filter, so any naive fix keeping its untyped graph would have turned
+	// bidirectional relates-to links into false-positives. DetectCyclesInTx runs
+	// one DFS per cycle-audited family (blocks/conditional, parent-child,
+	// supersedes; the same set the create-time invariant enforces — beads-cjvxq),
+	// eliminating this third detector and the invariant/audit-drift class.
+	ctx := context.Background()
+	cycles, err := store.DetectCycles(ctx)
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Dependency Cycles",
@@ -195,30 +181,8 @@ func checkDependencyCyclesWithStore(store *dolt.DoltStore) DoctorCheck {
 			Detail:  err.Error(),
 		}
 	}
-	defer rows.Close()
 
-	cycleCount := 0
-	var firstCycle string
-	for rows.Next() {
-		var startID string
-		if err := rows.Scan(&startID); err != nil {
-			continue
-		}
-		cycleCount++
-		if cycleCount == 1 {
-			firstCycle = startID
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return DoctorCheck{
-			Name:    "Dependency Cycles",
-			Status:  StatusWarning,
-			Message: "Row iteration error",
-			Detail:  err.Error(),
-		}
-	}
-
-	if cycleCount == 0 {
+	if len(cycles) == 0 {
 		return DoctorCheck{
 			Name:    "Dependency Cycles",
 			Status:  StatusOK,
@@ -226,10 +190,22 @@ func checkDependencyCyclesWithStore(store *dolt.DoltStore) DoctorCheck {
 		}
 	}
 
+	// Render the first cycle's node chain for the operator (e.g. "a → b → c").
+	var firstCycle string
+	if len(cycles[0]) > 0 {
+		ids := make([]string, 0, len(cycles[0]))
+		for _, issue := range cycles[0] {
+			if issue != nil {
+				ids = append(ids, issue.ID)
+			}
+		}
+		firstCycle = strings.Join(ids, " → ")
+	}
+
 	return DoctorCheck{
 		Name:    "Dependency Cycles",
 		Status:  StatusError,
-		Message: fmt.Sprintf("Found %d circular dependency cycle(s)", cycleCount),
+		Message: fmt.Sprintf("Found %d circular dependency cycle(s)", len(cycles)),
 		Detail:  fmt.Sprintf("First cycle involves: %s", firstCycle),
 		Fix:     "Run 'bd dep cycles' to see full cycle paths, then 'bd dep remove' to break cycles",
 	}
