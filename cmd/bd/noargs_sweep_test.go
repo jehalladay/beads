@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -178,4 +179,57 @@ func TestNoArgsSweep_UsesNoArgsSemantics(t *testing.T) {
 		t.Error("orphans should reject positionals (cobra.NoArgs semantics)")
 	}
 	_ = cobra.NoArgs // referenced to document the intended validator
+}
+
+// beads-8jy7e (remaining slices): the rest of the subcommand-axis leaves that
+// read no positionals but had no Args validator, across backup/config/human/kv/
+// label/todo/swarm/graph/comments/audit/cleanup/reset/metrics/migrate/ado/
+// federation. Each command's arg-consuming siblings (e.g. repo add/remove,
+// backup restore) keep their ExactArgs validators and are not touched here.
+func TestNoArgsSweep_RemainingSubcommandsRejectPositional(t *testing.T) {
+	commands := [][]string{
+		{"backup", "status"},
+		{"backup", "sync"},
+		{"backup", "remove"},
+		{"config", "list"},
+		{"config", "show"},
+		{"human", "list"},
+		{"kv", "list"},
+		{"label", "list-all"},
+		{"todo", "list"},
+		{"swarm", "list"},
+		{"graph", "check"},
+		{"comments", "list"},
+		{"audit", "record"},
+		{"admin", "cleanup"},
+		{"admin", "reset"},
+		{"metrics", "example"},
+		{"migrate", "issues"},
+		{"ado", "sync"},
+		{"ado", "status"},
+		{"ado", "projects"},
+		{"federation", "list-peers"},
+	}
+
+	for _, path := range commands {
+		name := path[len(path)-1]
+		t.Run(strings.Join(path, "_"), func(t *testing.T) {
+			cmd, _, err := rootCmd.Find(path)
+			if err != nil {
+				t.Fatalf("rootCmd.Find(%v): %v", path, err)
+			}
+			if cmd.Name() != name {
+				t.Fatalf("resolved %q, want %q — path %v did not reach the leaf", cmd.Name(), name, path)
+			}
+			if cmd.Args == nil {
+				t.Fatalf("%v has no Args validator; a stray positional would be silently ignored", path)
+			}
+			if err := cmd.Args(cmd, []string{"stray"}); err == nil {
+				t.Errorf("%v Args validator accepted a stray positional %q, want rejection", path, "stray")
+			}
+			if err := cmd.Args(cmd, nil); err != nil {
+				t.Errorf("%v Args validator rejected the no-arg case: %v", path, err)
+			}
+		})
+	}
 }

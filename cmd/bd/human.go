@@ -110,6 +110,7 @@ SUBCOMMANDS:
 // human list command
 var humanListCmd = &cobra.Command{
 	Use:   "list",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "List all human-needed beads",
 	Long: `List all issues labeled with 'human' tag.
 

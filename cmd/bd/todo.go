@@ -116,6 +116,7 @@ var addTodoCmd = &cobra.Command{
 
 var listTodosCmd = &cobra.Command{
 	Use:           "list",
+	Args:          cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short:         "List TODO items",
 	SilenceUsage:  true,
 	SilenceErrors: true,

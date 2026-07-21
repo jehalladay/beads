@@ -194,6 +194,7 @@ Examples:
 
 var graphCheckCmd = &cobra.Command{
 	Use:   "check",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Check dependency graph integrity",
 	Long: `Check the dependency graph for cycles, orphans, and other integrity issues.
 

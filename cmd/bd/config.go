@@ -412,6 +412,7 @@ var configGetCmd = &cobra.Command{
 
 var configListCmd = &cobra.Command{
 	Use:           "list",
+	Args:          cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short:         "List all configuration",
 	SilenceUsage:  true,
 	SilenceErrors: true,

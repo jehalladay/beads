@@ -111,6 +111,7 @@ var federationRemovePeerCmd = &cobra.Command{
 
 var federationListPeersCmd = &cobra.Command{
 	Use:           "list-peers",
+	Args:          cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short:         "List configured federation peers",
 	SilenceUsage:  true,
 	SilenceErrors: true,

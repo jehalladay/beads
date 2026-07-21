@@ -14,6 +14,7 @@ import (
 
 var migrateIssuesCmd = &cobra.Command{
 	Use:   "issues",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Move issues between repositories",
 	Long: `Move issues from one source repository to another with filtering and dependency preservation.
 

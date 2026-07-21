@@ -45,6 +45,7 @@ Configuration can be set via 'bd config' or environment variables:
 // adoSyncCmd synchronizes issues between beads and Azure DevOps.
 var adoSyncCmd = &cobra.Command{
 	Use:   "sync",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Sync issues with Azure DevOps",
 	Long: `Synchronize issues between beads and Azure DevOps.
 
@@ -70,6 +71,7 @@ CLI flags override config values when both are set.`,
 // adoStatusCmd displays Azure DevOps configuration and sync status.
 var adoStatusCmd = &cobra.Command{
 	Use:           "status",
+	Args:          cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short:         "Show Azure DevOps sync status",
 	Long:          `Display current Azure DevOps configuration and sync status.`,
 	SilenceUsage:  true,
@@ -80,6 +82,7 @@ var adoStatusCmd = &cobra.Command{
 // adoProjectsCmd lists accessible Azure DevOps projects.
 var adoProjectsCmd = &cobra.Command{
 	Use:           "projects",
+	Args:          cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short:         "List accessible Azure DevOps projects",
 	Long:          `List Azure DevOps projects that the configured token has access to.`,
 	SilenceUsage:  true,

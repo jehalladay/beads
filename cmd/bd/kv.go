@@ -251,6 +251,7 @@ Examples:
 // kvListCmd lists all key-value pairs
 var kvListCmd = &cobra.Command{
 	Use:   "list",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "List all key-value pairs",
 	Long: `List all key-value pairs in the beads key-value store.
 

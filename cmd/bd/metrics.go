@@ -120,6 +120,7 @@ var metricsOffCmd = &cobra.Command{
 
 var metricsExampleCmd = &cobra.Command{
 	Use:           "example",
+	Args:          cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short:         "Show real examples of the anonymous metrics bd sends",
 	SilenceUsage:  true,
 	SilenceErrors: true,

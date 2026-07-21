@@ -40,6 +40,7 @@ Entries are append-only. Labeling creates a new "label" entry that references a 
 
 var auditRecordCmd = &cobra.Command{
 	Use:           "record",
+	Args:          cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short:         "Append an audit interaction entry",
 	SilenceUsage:  true,
 	SilenceErrors: true,

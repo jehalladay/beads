@@ -118,6 +118,7 @@ Examples:
 
 var commentsMisplacedListCmd = &cobra.Command{
 	Use:           "list",
+	Args:          cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short:         "Invalid — use bd comments <issue-id> to list comments",
 	SilenceUsage:  true,
 	SilenceErrors: true,

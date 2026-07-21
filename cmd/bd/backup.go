@@ -34,6 +34,7 @@ DoltHub is recommended for cloud backup:
 
 var backupStatusCmd = &cobra.Command{
 	Use:           "status",
+	Args:          cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short:         "Show last backup status",
 	SilenceUsage:  true,
 	SilenceErrors: true,

@@ -118,6 +118,7 @@ After adding, run 'bd backup sync' to push your data.`,
 
 var backupSyncCmd = &cobra.Command{
 	Use:   "sync",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Push database to configured Dolt backup",
 	Long: `Sync the current beads database to the configured Dolt backup destination.
 
@@ -437,6 +438,7 @@ func showDBSizeJSON() map[string]interface{} {
 
 var backupRemoveCmd = &cobra.Command{
 	Use:   "remove",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Remove the configured backup destination",
 	Long: `Remove the configured backup destination.
 

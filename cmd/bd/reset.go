@@ -16,6 +16,7 @@ import (
 
 var resetCmd = &cobra.Command{
 	Use:   "reset",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Remove all beads data and configuration",
 	Long: `Reset beads to an uninitialized state, removing all local data.
 

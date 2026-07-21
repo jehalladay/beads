@@ -546,6 +546,7 @@ var labelListCmd = &cobra.Command{
 }
 var labelListAllCmd = &cobra.Command{
 	Use:           "list-all",
+	Args:          cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short:         "List all unique labels in the database",
 	SilenceUsage:  true,
 	SilenceErrors: true,

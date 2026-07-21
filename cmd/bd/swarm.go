@@ -1086,6 +1086,7 @@ Examples:
 
 var swarmListCmd = &cobra.Command{
 	Use:   "list",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "List all swarm molecules",
 	Long: `List all swarm molecules with their status.
 

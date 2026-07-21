@@ -23,6 +23,7 @@ type configEntry struct {
 
 var configShowCmd = &cobra.Command{
 	Use:   "show",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Show all effective configuration with provenance",
 	Long: `Display a unified view of all effective configuration across all sources
 with annotations showing where each value comes from.

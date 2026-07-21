@@ -35,6 +35,7 @@ type CleanupEmptyResponse struct {
 
 var cleanupCmd = &cobra.Command{
 	Use:   "cleanup",
+	Args:  cobra.NoArgs, // beads-8jy7e: reject stray positionals with a clean usage error
 	Short: "Delete closed issues to reduce database size",
 	Long: `Delete closed issues to reduce database size.
 
