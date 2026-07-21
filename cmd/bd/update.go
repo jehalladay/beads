@@ -783,50 +783,70 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 					}
 				}
 
-				// Find and remove ALL existing parent-child dependencies. A
-				// child can accumulate multiple parents (e.g. via `bd dep add X
-				// Y --type parent-child`, which has no single-parent guard), so
-				// removing only the first (the old `break`) left stale parent
-				// edges behind and silently corrupted the tree — wrong
-				// ready-work/blocked-state/descendant traversal (beads-94ia).
-				// --parent reparents to a single parent, so every prior parent
-				// edge must go.
-				deps, err := issueStore.GetDependencyRecords(ctx, result.ResolvedID)
-				if err != nil {
-					reportUpdateItemError("Error getting dependencies for %s: %v", id, err)
+				// Find and remove ALL existing parent-child dependencies, then
+				// add the new parent — ATOMICALLY in a single transaction
+				// (beads-gkq1c). A child can accumulate multiple parents (e.g.
+				// via `bd dep add X Y --type parent-child`, which has no
+				// single-parent guard), so removing only the first (the old
+				// `break`) left stale parent edges behind and silently corrupted
+				// the tree — wrong ready-work/blocked-state/descendant traversal
+				// (beads-94ia). --parent reparents to a single parent, so every
+				// prior parent edge must go.
+				//
+				// beads-gkq1c: the removes + the add MUST be all-or-nothing. When
+				// they ran as separate autocommits, a new-parent AddDependency
+				// failure AFTER the old-parent edge(s) were removed (e.g. the add
+				// introduces a cycle C->D->C, or the parent vanished, or a storage
+				// error) ORPHANED the child — a single logical reparent silently
+				// DROPPED the existing parent instead of leaving state unchanged.
+				// Wrapping in RunInTransaction (precedent graph_apply.go
+				// executeGraphApply) rolls back the removes on any add failure, so
+				// the child keeps its original parent — matching the already-atomic
+				// proxied twin (update_proxied_server.go stages reparent on a
+				// UnitOfWork + single uw.Commit). Same multi-write-atomicity-twin
+				// class as ary2n (swarm create) / zcq86 (bd merge reparent).
+				// tx.* gives read-your-writes so GetDependencyRecords sees the
+				// enclosing transaction's own pending state.
+				reparentErr := issueStore.RunInTransaction(ctx, fmt.Sprintf("bd: reparent %s", result.ResolvedID), func(tx storage.Transaction) error {
+					deps, err := tx.GetDependencyRecords(ctx, result.ResolvedID)
+					if err != nil {
+						return fmt.Errorf("Error getting dependencies for %s: %v", id, err)
+					}
+					for _, dep := range deps {
+						if dep.Type != types.DepParentChild {
+							continue
+						}
+						// Skip the edge that already points at the desired parent
+						// so we neither drop-and-re-add it nor create a duplicate.
+						if dep.DependsOnID == newParent {
+							continue
+						}
+						if err := tx.RemoveDependency(ctx, result.ResolvedID, dep.DependsOnID, actor); err != nil {
+							return fmt.Errorf("Error removing old parent dependency: %v", err)
+						}
+					}
+
+					// Add new parent-child dependency (if not removing parent).
+					if newParent != "" {
+						newDep := &types.Dependency{
+							IssueID:     result.ResolvedID,
+							DependsOnID: newParent,
+							Type:        types.DepParentChild,
+						}
+						if err := tx.AddDependency(ctx, newDep, actor); err != nil {
+							return fmt.Errorf("Error adding parent dependency: %v", err)
+						}
+					}
+					return nil
+				})
+				if reparentErr != nil {
+					// The transaction rolled back — the child's original parent
+					// edges are intact (no orphan). Report and skip this id.
+					reportUpdateItemError("%v", reparentErr)
 					closeIfUnmutated(result)
 					continue
 				}
-				for _, dep := range deps {
-					if dep.Type != types.DepParentChild {
-						continue
-					}
-					// Skip the edge that already points at the desired parent so
-					// we neither drop-and-re-add it nor create a duplicate.
-					if dep.DependsOnID == newParent {
-						continue
-					}
-					if err := issueStore.RemoveDependency(ctx, result.ResolvedID, dep.DependsOnID, actor); err != nil {
-						reportUpdateItemError("Error removing old parent dependency: %v", err)
-					} else {
-						trackMutation(result)
-					}
-				}
-
-				// Add new parent-child dependency (if not removing parent)
-				if newParent != "" {
-					newDep := &types.Dependency{
-						IssueID:     result.ResolvedID,
-						DependsOnID: newParent,
-						Type:        types.DepParentChild,
-					}
-					if err := issueStore.AddDependency(ctx, newDep, actor); err != nil {
-						reportUpdateItemError("Error adding parent dependency: %v", err)
-						closeIfUnmutated(result)
-						continue
-					}
-					trackMutation(result)
-				}
+				trackMutation(result)
 			}
 
 			// Re-fetch for display
