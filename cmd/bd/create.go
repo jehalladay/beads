@@ -474,18 +474,21 @@ var createCmd = &cobra.Command{
 				return HandleErrorRespectJSON("failed to check parent issue: %v", err)
 			}
 
-			// beads-a8a1b: refuse to create an OPEN child under a CLOSED epic
-			// parent — that reaches the forbidden "closed epic with an open
-			// child" invariant the close-guard family (zgku/b0tw) enforces on the
-			// status-transition axes but which was WIDE OPEN on the parent-
-			// assignment axis (create only validated the parent EXISTS, not its
-			// status). Overridable with --force, matching `bd close --force`.
-			// New issues are created open, so any closed-epic parent is a
-			// violation here. (A closed non-epic parent-child is unusual but not
-			// the guarded invariant, so scope to epics like the other guards.)
-			if !forceCreate && parentIssue != nil &&
-				parentIssue.IssueType == types.TypeEpic && parentIssue.Status == types.StatusClosed {
-				return HandleErrorRespectJSON("cannot create a child under closed epic %s (its status is closed; reopen the epic first or use --force to override)", parentID)
+			// beads-a8a1b: refuse to create an OPEN child under a CLOSED
+			// auto-closing parent — that reaches the forbidden "closed parent
+			// with an open child" invariant the close-guard family (zgku/b0tw)
+			// enforces on the status-transition axes but which was WIDE OPEN on
+			// the parent-assignment axis (create only validated the parent
+			// EXISTS, not its status). Overridable with --force, matching
+			// `bd close --force`. New issues are created open, so any closed
+			// auto-closing parent is a violation here.
+			// beads-czu1s: use the shared isAutoClosingParentType (epic OR
+			// molecule OR ephemeral) — the "scope to epics like the other guards"
+			// reasoning is stale now that aw9x8/bigro/eth8/j8ekq widened the
+			// reopen/close/dep-add guards, so a closed MOLECULE/wisp root was the
+			// family straggler still creatable-under here.
+			if !forceCreate && isAutoClosingParentType(parentIssue) && parentIssue.Status == types.StatusClosed {
+				return HandleErrorRespectJSON("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", parentID)
 			}
 
 			noInheritLabels, _ := cmd.Flags().GetBool("no-inherit-labels")

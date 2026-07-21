@@ -189,9 +189,12 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 		}
 		parent, gerr := checkUW.IssueUseCase().GetIssue(ctx, in.parentID)
 		checkUW.Close(ctx)
-		if gerr == nil && parent != nil &&
-			parent.IssueType == types.TypeEpic && parent.Status == types.StatusClosed {
-			FatalErrorRespectJSON("cannot create a child under closed epic %s (its status is closed; reopen the epic first or use --force to override)", in.parentID)
+		// beads-czu1s: widen the proxied create-under-closed-parent guard
+		// (beads-65cgh) to the shared isAutoClosingParentType (epic OR molecule
+		// OR ephemeral), mirroring the direct path (create.go) — a closed
+		// MOLECULE/wisp root was previously creatable-under on the proxied path.
+		if gerr == nil && isAutoClosingParentType(parent) && parent.Status == types.StatusClosed {
+			FatalErrorRespectJSON("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", in.parentID)
 		}
 	}
 
