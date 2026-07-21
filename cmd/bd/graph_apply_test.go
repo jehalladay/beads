@@ -476,3 +476,62 @@ func TestGraphApplyParentDepPairs(t *testing.T) {
 		t.Fatal("unexpected reverse parent dep pair")
 	}
 }
+
+// beads-s13vq: `bd create --graph <file>` mints each node with its
+// user-supplied labels (GraphApplyNode.Labels -> Issue.Labels), but
+// validateGraphApplyPlan never checked them against the reserved gt identity
+// family (gt:agent/gt:role/gt:rig). The 3c4g write-reserve sweep guarded the
+// single-create seams (create.go, --file markdown kvq0v, label add, tag,
+// set-state) but missed the graph-create axis, so a graph node carrying
+// "labels":["gt:agent"] silently minted a bead HIDDEN from `bd ready` (the wqs
+// discriminator excludes that family) — the same spoof/foot-gun 3c4g closed for
+// hand-written labels. validateGraphApplyPlan is the SHARED chokepoint for both
+// the direct (createIssuesFromGraph) and proxied (create_proxied_server.go)
+// graph-apply paths, so one guard here covers both backends.
+// MUTATION-VERIFIED: removing the reservedIdentityLabelError check in
+// validateGraphApplyPlan makes the reject sub-test go RED (the plan validates).
+func TestValidateGraphApplyPlanRejectsReservedIdentityLabels_s13vq(t *testing.T) {
+	// The guard is bypassed for privileged gt-internal writes (GT_INTERNAL=1);
+	// clear it so a human/agent graph-apply is exercised deterministically.
+	t.Setenv("GT_INTERNAL", "")
+
+	for _, lbl := range []string{"gt:agent", "gt:role", "gt:rig"} {
+		plan := &GraphApplyPlan{
+			Nodes: []GraphApplyNode{
+				{Key: "root", Title: "Root", Type: "task", Labels: []string{lbl}},
+			},
+		}
+		err := validateGraphApplyPlan(plan, nil)
+		if err == nil {
+			t.Fatalf("expected graph node with reserved identity label %q to be rejected, got nil", lbl)
+		}
+		if !strings.Contains(err.Error(), lbl) || !strings.Contains(err.Error(), "reserved gt identity label") {
+			t.Fatalf("reserved-label error for %q = %q, want it to name the label and 'reserved gt identity label'", lbl, err.Error())
+		}
+		if !strings.Contains(err.Error(), "root") {
+			t.Fatalf("reserved-label error should name the offending node key %q, got %q", "root", err.Error())
+		}
+	}
+
+	// A non-reserved label validates normally (guard is scoped to the identity family).
+	okPlan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "root", Title: "Root", Type: "task", Labels: []string{"area:backend", "provides:api"}},
+		},
+	}
+	if err := validateGraphApplyPlan(okPlan, nil); err != nil {
+		t.Fatalf("expected ordinary labels to validate, got %v", err)
+	}
+
+	// GT_INTERNAL=1 (the privileged gt orchestrator write) bypasses the
+	// reservation so gt's own graph-based registration keeps working.
+	t.Setenv("GT_INTERNAL", "1")
+	internalPlan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "root", Title: "Root", Type: "task", Labels: []string{"gt:agent"}},
+		},
+	}
+	if err := validateGraphApplyPlan(internalPlan, nil); err != nil {
+		t.Fatalf("GT_INTERNAL graph-apply should bypass the reserved-label guard, got %v", err)
+	}
+}

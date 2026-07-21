@@ -384,6 +384,22 @@ func validateGraphApplyPlan(plan *GraphApplyPlan, customTypes []string) error {
 				return fmt.Errorf("node %q: invalid type %q", node.Key, node.Type)
 			}
 		}
+		// beads-s13vq: reject reserved gt identity labels (gt:agent/gt:role/gt:rig)
+		// on graph-apply nodes, matching single `bd create --label`, `--file`
+		// markdown mint (kvq0v), `bd label add`, `bd tag`, and set-state — the
+		// 3c4g write-reserve family. GraphApplyNode.Labels flows straight into the
+		// minted Issue.Labels (direct executeGraphApply and proxied
+		// buildDomainGraphPlan), so without this a node carrying "labels":
+		// ["gt:agent"] silently mints a bead HIDDEN from `bd ready` (the wqs
+		// discriminator excludes the identity family). validateGraphApplyPlan is
+		// the shared chokepoint for both backends, so one guard covers both.
+		// Gated on GT_INTERNAL like the rest of the family so gt's own graph-based
+		// registration keeps working.
+		for _, label := range node.Labels {
+			if msg := reservedIdentityLabelError(label); msg != "" {
+				return fmt.Errorf("node %q: %s", node.Key, msg)
+			}
+		}
 		// Validate MetadataRefs point to known keys.
 		for metaKey, refKey := range node.MetadataRefs {
 			if !seenKeys[refKey] {
