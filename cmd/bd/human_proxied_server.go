@@ -90,9 +90,19 @@ func runHumanDismissProxiedServer(ctx context.Context, issueID, reason string) e
 		return HandleErrorRespectJSON("closing bead: %v", err)
 	}
 
+	dismissOldStatus := string(issue.Status)
 	if cerr := uw.Commit(ctx, "bd: human dismiss "+resolvedID); cerr != nil && !isDoltNothingToCommit(cerr) {
 		return HandleErrorRespectJSON("commit dismiss: %v", cerr)
 	}
+
+	// beads-mw44m: write the GC-survivable audit-FILE trail (.beads/
+	// interactions.jsonl) for the dismiss close, at parity with the direct leg
+	// and bd close/gate-resolve/supersede (n4sn/r3m8v/1jkl5). audit.LogFieldChange
+	// writes a cwd-based file, NOT a UOW op, so it must run AFTER uw.Commit
+	// succeeds — a pre-commit emit would orphan the entry if the deferred uw.Close
+	// rolled the tx back (r3m8v proxied precedent). The already-closed guard above
+	// returned early, so reaching here is a real open→closed transition.
+	auditStatusChange(resolvedID, dismissOldStatus, "closed", actor, closeReason)
 
 	fmt.Printf("%s Bead %s dismissed.\n", ui.RenderPass("✔"), resolvedID)
 	return nil
@@ -154,9 +164,16 @@ func runHumanRespondProxiedServer(ctx context.Context, issueID, response string)
 		return HandleErrorRespectJSON("closing bead: %v", err)
 	}
 
+	respondOldStatus := string(issue.Status)
 	if cerr := uw.Commit(ctx, "bd: human respond "+resolvedID); cerr != nil && !isDoltNothingToCommit(cerr) {
 		return HandleErrorRespectJSON("commit respond: %v", cerr)
 	}
+
+	// beads-mw44m: write the GC-survivable audit-FILE trail for the respond close
+	// AFTER uw.Commit (parity with the direct leg + r3m8v proxied precedent; a
+	// pre-commit emit would orphan the cwd-file entry on a tx rollback). The
+	// already-closed guard above returned early → real open→closed transition.
+	auditStatusChange(resolvedID, respondOldStatus, "closed", actor, "Responded")
 
 	fmt.Printf("%s Bead %s closed with response.\n", ui.RenderPass("✔"), resolvedID)
 	return nil

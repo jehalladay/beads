@@ -316,9 +316,21 @@ Examples:
 			return HandleErrorRespectJSON("adding comment: %v", err)
 		}
 
+		respondOldStatus := string(issue.Status)
 		if err := targetStore.CloseIssue(ctx, resolvedID, "Responded", actor, ""); err != nil {
 			return HandleErrorRespectJSON("closing bead: %v", err)
 		}
+
+		// beads-mw44m: responding closes the human-gate bead via CloseIssue, whose
+		// DB EventClosed row survives only until a Dolt GC flatten. bd close/reopen/
+		// defer/supersede/duplicate/gate-resolve ALSO write a GC-survivable
+		// audit-FILE entry (.beads/interactions.jsonl) via auditStatusChange
+		// (n4sn/r3m8v/1jkl5) — but human respond dropped it, so after a flatten a
+		// responded bead's close vanished from the durable record while a plainly
+		// closed issue's did not. The already-closed guard above returned early, so
+		// reaching here is a real open→closed transition; CloseIssue autocommits
+		// durably, so this reflects a real change.
+		auditStatusChange(resolvedID, respondOldStatus, "closed", actor, "Responded")
 
 		fmt.Printf("%s Bead %s closed with response.\n", ui.RenderPass("✔"), resolvedID)
 		return nil
@@ -416,9 +428,18 @@ Examples:
 			closeReason = fmt.Sprintf("Dismissed: %s", reason)
 		}
 
+		dismissOldStatus := string(issue.Status)
 		if err := targetStore.CloseIssue(ctx, resolvedID, closeReason, actor, ""); err != nil {
 			return HandleErrorRespectJSON("closing bead: %v", err)
 		}
+
+		// beads-mw44m: dismissing closes the human-gate bead via CloseIssue but
+		// dropped the GC-survivable audit-FILE trail (.beads/interactions.jsonl)
+		// that bd close/gate-resolve/supersede emit via auditStatusChange
+		// (n4sn/r3m8v/1jkl5). Emit the same status field_change so a dismissed
+		// bead's close survives a Dolt GC flatten at parity with a plain close.
+		// The already-closed guard above returned early → real transition.
+		auditStatusChange(resolvedID, dismissOldStatus, "closed", actor, closeReason)
 
 		fmt.Printf("%s Bead %s dismissed.\n", ui.RenderPass("✔"), resolvedID)
 		return nil
