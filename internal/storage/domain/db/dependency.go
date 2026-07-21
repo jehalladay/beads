@@ -201,6 +201,19 @@ func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dep
 		return fmt.Errorf("db: DependencySQLRepository.Insert: %w", err)
 	}
 
+	// Record an audit event so dependency-graph mutations are visible in
+	// `bd history` (beads-1qt9). The proxied domain/db path previously recorded
+	// NO dependency event at all, while the direct path (issueops.AddDependencyInTx)
+	// does — a direct/proxied audit-parity gap (beads-c5efw). Mirror the direct
+	// INSERT exactly (comment column, routed to wisp_events when the source is a
+	// wisp) so the two legs produce identical history lines. Recorded only on a
+	// real fresh add — the same-type metadata-refresh no-op above returns early
+	// without an event, matching the direct path.
+	if err := r.recordDepEvent(ctx, opts.UseWispsTable, dep.IssueID, actor, types.EventDependencyAdded,
+		fmt.Sprintf("Added dependency: %s -> %s (%s)", dep.IssueID, dep.DependsOnID, dep.Type)); err != nil {
+		return fmt.Errorf("db: DependencySQLRepository.Insert: record event: %w", err)
+	}
+
 	// is_blocked maintenance mirrors the classic AddDependencyInTx flow
 	// (issueops/dependencies.go): the affected set expands the source by its
 	// parent-child descendants (plus, for parent-child edges, waiters on the
@@ -301,7 +314,18 @@ func (r *dependencySQLRepositoryImpl) Delete(ctx context.Context, issueID, depen
 		return domain.DepDeleteResult{}, fmt.Errorf("db: DependencySQLRepository.Delete: %s -> %s: %w", issueID, dependsOnID, err)
 	}
 
+	// Record an audit event so dependency-graph mutations are visible in
+	// `bd history` (beads-1qt9), mirroring the direct path (removeDependencyInTx)
+	// which the proxied twin previously omitted (beads-c5efw). Only reached after
+	// a matched row (the ErrNoRows lookup above returns Found:false early), so a
+	// no-op remove records nothing — consistent with the direct path and the
+	// 5vpoh no-op-event guard.
 	dt := types.DependencyType(depType)
+	if err := r.recordDepEvent(ctx, opts.UseWispsTable, issueID, actor, types.EventDependencyRemoved,
+		fmt.Sprintf("Removed dependency: %s -> %s (%s)", issueID, dependsOnID, dt)); err != nil {
+		return domain.DepDeleteResult{}, fmt.Errorf("db: DependencySQLRepository.Delete: record event: %w", err)
+	}
+
 	var affectedIssues, affectedWisps []string
 	var aerr error
 	if opts.UseWispsTable {
@@ -317,6 +341,29 @@ func (r *dependencySQLRepositoryImpl) Delete(ctx context.Context, issueID, depen
 	}
 
 	return domain.DepDeleteResult{Found: true, Type: dt, DependsOnID: dependsOnID}, nil
+}
+
+// recordDepEvent writes a dependency_added / dependency_removed audit event so
+// dependency-graph mutations show up in `bd history` (beads-1qt9). It mirrors
+// the direct path (issueops.AddDependencyInTx / removeDependencyInTx) exactly:
+// the human-readable line lives in the `comment` column (not old_value/new_value,
+// which is why the generic events repo helper is not used here), and the event
+// routes to wisp_events when the source is a wisp. Keeping this a single helper
+// stops the added/removed legs from drifting apart (the hand-mirror hazard the
+// cjvxq/5rn1c notes call out). beads-c5efw.
+func (r *dependencySQLRepositoryImpl) recordDepEvent(ctx context.Context, srcIsWisp bool, issueID, actor string, eventType types.EventType, comment string) error {
+	eventTable := "events"
+	if srcIsWisp {
+		eventTable = "wisp_events"
+	}
+	//nolint:gosec // G201: eventTable is one of two hardcoded constants
+	if _, err := r.runner.ExecContext(ctx,
+		fmt.Sprintf(`INSERT INTO %s (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)`, eventTable),
+		issueops.NewEventID(), issueID, string(eventType), actor, comment,
+	); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *dependencySQLRepositoryImpl) HasCycle(ctx context.Context, issueID, dependsOnID string) (bool, error) {
