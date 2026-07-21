@@ -56,6 +56,24 @@ Example:
 		issueType, _ := cmd.Flags().GetString("type")
 		labels, _ := cmd.Flags().GetStringSlice("labels")
 
+		// beads-m22rq: reject reserved gt identity labels (gt:agent/gt:role/gt:rig)
+		// on a non-gt-internal write, mirroring single `bd create` (create.go:200,
+		// reservedIdentityLabelError), create-form (beads-1077e), graph create
+		// (beads-s13vq), and markdown import (beads-kvq0v). `bd q`/`bd quick` takes
+		// a direct human `--labels` flag and mints an issue, but was the one
+		// authoring seam the beads-3c4g write-time reservation never reached — so
+		// `bd q "x" -l gt:agent` silently created a bead hidden from `bd ready`
+		// (the exact spoof/foot-gun 3c4g closes). The guard is CLI-layer only (not a
+		// shared CreateIssue chokepoint), so each create verb must apply it. This
+		// runs BEFORE the usesProxiedServer() split, so ONE site covers both direct
+		// and proxied modes (same as the cra1 trim + n8xi priority guards above);
+		// HandleErrorRespectJSON keeps the --json error contract.
+		for _, label := range labels {
+			if msg := reservedIdentityLabelError(label); msg != "" {
+				return HandleErrorRespectJSON("%s", msg)
+			}
+		}
+
 		priority, err := validation.ValidatePriority(priorityStr)
 		if err != nil {
 			// beads-n8xi: bd q/quick honors --json on success (outputJSON(issue)
