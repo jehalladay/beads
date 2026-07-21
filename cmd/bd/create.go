@@ -200,6 +200,15 @@ var createCmd = &cobra.Command{
 			if msg := reservedIdentityLabelError(label); msg != "" {
 				return HandleErrorRespectJSON("%s", msg)
 			}
+			// Reserve the 'provides:' capability family (beads-o70m1): a hand-set
+			// provides:<cap> at create time would mint an OPEN bead carrying a
+			// cross-project capability label, bypassing the closed-requirement and
+			// single-provider invariants that `bd ship` enforces. `bd label add`
+			// already rejects this (label.go); mirror it here so the create seam
+			// can't route around ship.
+			if msg := providesLabelError(label); msg != "" {
+				return HandleErrorRespectJSON("%s", msg)
+			}
 		}
 
 		explicitID, _ := cmd.Flags().GetString("id")

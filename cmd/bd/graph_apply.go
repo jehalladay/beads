@@ -410,6 +410,18 @@ func validateGraphApplyPlan(plan *GraphApplyPlan, customTypes []string) error {
 			if msg := reservedIdentityLabelError(label); msg != "" {
 				return fmt.Errorf("node %q: %s", node.Key, msg)
 			}
+			// beads-o70m1: reject the reserved 'provides:' capability family on
+			// graph-apply nodes, matching single `bd create --labels` and `bd label
+			// add`. A node carrying "labels": ["provides:cap"] otherwise mints an
+			// OPEN bead with a cross-project capability label at RC=0, bypassing the
+			// closed-requirement + single-provider invariants that `bd ship`
+			// enforces. validateGraphApplyPlan is the shared chokepoint for both
+			// backends, so one guard covers direct executeGraphApply and the proxied
+			// path. Not gated on GT_INTERNAL (ship stamps provides: via storage, not
+			// this seam).
+			if msg := providesLabelError(label); msg != "" {
+				return fmt.Errorf("node %q: %s", node.Key, msg)
+			}
 		}
 		// Validate MetadataRefs point to known keys.
 		for metaKey, refKey := range node.MetadataRefs {

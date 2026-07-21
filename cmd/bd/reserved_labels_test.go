@@ -72,3 +72,64 @@ func TestReservedIdentityLabelError(t *testing.T) {
 		}
 	})
 }
+
+// TestProvidesLabelError verifies the beads-o70m1 write-time reservation of the
+// 'provides:' cross-project capability family at the create authoring seams.
+// `bd ship` is the only sanctioned way to apply provides:<cap> (it enforces the
+// closed-requirement + single-provider invariants); the helper rejects a
+// hand-set provides: label so `bd create --labels`/`--graph` cannot route
+// around ship. Non-provides labels (including the gt identity family, which has
+// its own guard) are unaffected.
+//
+// MUTATION-VERIFIED: reverting the providesLabelError call in create.go /
+// graph_apply.go makes the seam tests go RED (a provides: label mints an OPEN
+// bead at RC=0).
+func TestProvidesLabelError(t *testing.T) {
+	t.Run("provides labels rejected", func(t *testing.T) {
+		for _, label := range []string{"provides:api", "provides:auth-service", "provides:x"} {
+			msg := providesLabelError(label)
+			if msg == "" {
+				t.Errorf("providesLabelError(%q) = \"\" (allowed), want a rejection", label)
+				continue
+			}
+			if !strings.Contains(msg, "provides:") || !strings.Contains(msg, "bd ship") {
+				t.Errorf("providesLabelError(%q) = %q, want it to mention 'provides:' and the 'bd ship' hint", label, msg)
+			}
+			// The hint should name the bare capability (label minus the prefix).
+			cap := strings.TrimPrefix(label, "provides:")
+			if !strings.Contains(msg, cap) {
+				t.Errorf("providesLabelError(%q) = %q, want it to name the capability %q", label, msg, cap)
+			}
+		}
+	})
+
+	t.Run("surrounding whitespace is trimmed before matching", func(t *testing.T) {
+		if msg := providesLabelError("  provides:api  "); msg == "" {
+			t.Error("padded provides: label should still be rejected (trimmed match)")
+		}
+	})
+
+	t.Run("non-provides labels always allowed", func(t *testing.T) {
+		for _, label := range []string{
+			"provides",     // no colon — not the reserved family
+			"gt:agent",     // reserved by a DIFFERENT guard, not this one
+			"area:backend", // ordinary user label
+			"priority:p0",
+			"export:api", // ship's INPUT label — must stay settable by hand
+			"",           // empty
+		} {
+			if msg := providesLabelError(label); msg != "" {
+				t.Errorf("providesLabelError(%q) = %q, want allowed (not the provides: family)", label, msg)
+			}
+		}
+	})
+
+	// NOT gated on GT_INTERNAL: ship applies provides: via the storage layer,
+	// not these CLI seams, so there is no privileged-write escape hatch to honor.
+	t.Run("GT_INTERNAL does not bypass the provides reservation", func(t *testing.T) {
+		t.Setenv(gtInternalEnv, "1")
+		if msg := providesLabelError("provides:api"); msg == "" {
+			t.Error("GT_INTERNAL must NOT bypass the provides: reservation (ship stamps it via storage, not this seam)")
+		}
+	})
+}

@@ -59,3 +59,29 @@ func reservedIdentityLabelError(label string) string {
 	}
 	return ""
 }
+
+// providesLabelError returns a non-nil error message if label is a reserved
+// 'provides:' capability label. Callers surface it via HandleErrorRespectJSON.
+// Returns "" when the label is allowed.
+//
+// Trust boundary (beads-o70m1): 'provides:<cap>' marks a cross-project
+// capability and enforces two invariants — the exporting issue must be CLOSED
+// and only one issue may carry a given capability (single-provider). `bd ship`
+// is the only sanctioned way to apply it (ship.go stamps the label via the
+// storage layer AFTER checking those invariants). `bd label add` already
+// rejects a hand-set provides: (label.go:274, label_proxied_server.go:32), but
+// the create authoring seams (`bd create --labels`, `bd create --graph`) did
+// not — a node/flag carrying provides: minted an OPEN bead with the label at
+// RC=0, bypassing both invariants. This mirrors that same reservation into the
+// authoring seams (same 3c4g write-reserve pattern as reservedIdentityLabelError).
+// NOT gated on GT_INTERNAL: ship applies the label via store.AddLabel / the
+// proxied UOW, not these CLI seams, so no privileged-write escape hatch is
+// needed here. `bd import` + bulk restore stay UNGUARDED (they restore
+// already-created legit beads), matching the f8fvh family ruling.
+func providesLabelError(label string) string {
+	trimmed := strings.TrimSpace(label)
+	if strings.HasPrefix(trimmed, "provides:") {
+		return "'provides:' labels are reserved for cross-project capabilities. Hint: use 'bd ship " + strings.TrimPrefix(trimmed, "provides:") + "' instead"
+	}
+	return ""
+}

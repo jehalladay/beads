@@ -514,9 +514,13 @@ func TestValidateGraphApplyPlanRejectsReservedIdentityLabels_s13vq(t *testing.T)
 	}
 
 	// A non-reserved label validates normally (guard is scoped to the identity family).
+	// NOTE (beads-o70m1): "provides:*" was previously used here as an "ordinary"
+	// label, but it is now reserved by providesLabelError (graph seam), so use a
+	// plainly-unreserved label instead — the provides: reservation has its own
+	// coverage in TestValidateGraphApplyPlanRejectsProvidesLabels_o70m1.
 	okPlan := &GraphApplyPlan{
 		Nodes: []GraphApplyNode{
-			{Key: "root", Title: "Root", Type: "task", Labels: []string{"area:backend", "provides:api"}},
+			{Key: "root", Title: "Root", Type: "task", Labels: []string{"area:backend", "kind:chore"}},
 		},
 	}
 	if err := validateGraphApplyPlan(okPlan, nil); err != nil {
@@ -533,5 +537,56 @@ func TestValidateGraphApplyPlanRejectsReservedIdentityLabels_s13vq(t *testing.T)
 	}
 	if err := validateGraphApplyPlan(internalPlan, nil); err != nil {
 		t.Fatalf("GT_INTERNAL graph-apply should bypass the reserved-label guard, got %v", err)
+	}
+}
+
+// TestValidateGraphApplyPlanRejectsProvidesLabels_o70m1 pins the beads-o70m1
+// reservation of the 'provides:' cross-project capability family on graph-apply
+// nodes, matching single `bd create --labels` and `bd label add`. Without it a
+// graph node carrying "labels":["provides:cap"] silently mints an OPEN bead
+// with a provides: capability at RC=0, bypassing the closed-requirement +
+// single-provider invariants that `bd ship` enforces. validateGraphApplyPlan is
+// the shared chokepoint for the direct and proxied graph-apply paths.
+// MUTATION-VERIFIED: removing the providesLabelError check in
+// validateGraphApplyPlan makes the reject sub-test go RED (the plan validates).
+func TestValidateGraphApplyPlanRejectsProvidesLabels_o70m1(t *testing.T) {
+	for _, lbl := range []string{"provides:api", "provides:auth-service"} {
+		plan := &GraphApplyPlan{
+			Nodes: []GraphApplyNode{
+				{Key: "root", Title: "Root", Type: "task", Labels: []string{lbl}},
+			},
+		}
+		err := validateGraphApplyPlan(plan, nil)
+		if err == nil {
+			t.Fatalf("expected graph node with reserved provides: label %q to be rejected, got nil", lbl)
+		}
+		if !strings.Contains(err.Error(), "provides:") || !strings.Contains(err.Error(), "bd ship") {
+			t.Fatalf("provides: error for %q = %q, want it to mention 'provides:' and the 'bd ship' hint", lbl, err.Error())
+		}
+		if !strings.Contains(err.Error(), "root") {
+			t.Fatalf("provides: error should name the offending node key %q, got %q", "root", err.Error())
+		}
+	}
+
+	// A non-provides label validates normally (guard is scoped to the family).
+	okPlan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "root", Title: "Root", Type: "task", Labels: []string{"export:api", "area:backend"}},
+		},
+	}
+	if err := validateGraphApplyPlan(okPlan, nil); err != nil {
+		t.Fatalf("expected ordinary labels (incl ship's export: input) to validate, got %v", err)
+	}
+
+	// Unlike the identity family, the provides: reservation is NOT bypassed by
+	// GT_INTERNAL (ship stamps it via storage, not this seam).
+	t.Setenv("GT_INTERNAL", "1")
+	internalPlan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "root", Title: "Root", Type: "task", Labels: []string{"provides:api"}},
+		},
+	}
+	if err := validateGraphApplyPlan(internalPlan, nil); err == nil {
+		t.Fatal("GT_INTERNAL must NOT bypass the provides: reservation on graph-apply")
 	}
 }
