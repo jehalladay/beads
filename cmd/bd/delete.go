@@ -305,6 +305,22 @@ Force: Delete and orphan dependents
 			return HandleErrorRespectJSON("deleting issue: %v", deleteErr)
 		}
 
+		// beads-au6dv: the field rewrites above tombstone id references in the 5
+		// issue text fields, but a reference an author wrote inside a COMMENT body
+		// ("see bd-abc") was never visited — so after the delete it kept the live
+		// id and became a dangling reference to a now-deleted issue, the exact
+		// gap g8qfo just closed for rename. Rewrite matching comment bodies on the
+		// connected issues too, reusing the shared rewriteCommentRefs helper +
+		// the loop-to-fixed-point tombstone rewriter. Best-effort follow pass
+		// (outside the delete tx, matching rename's non-tx comment sweep); a
+		// comment-rewrite failure must not fail the already-committed delete.
+		commentRewrite := deletedReferenceRewriter(issueID)
+		for id := range connectedIssues {
+			if err := rewriteCommentRefs(ctx, activeStore, id, commentRewrite); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+			}
+		}
+
 		commandDidWrite.Store(true)
 
 		if jsonOutput {
@@ -559,6 +575,15 @@ func updateTextReferencesInIssues(ctx context.Context, deletedIDs []string, conn
 				if v, ok := rewrite(connIssue.AcceptanceCriteria); ok {
 					updates["acceptance_criteria"] = v
 				}
+			}
+			// beads-au6dv: rewrite id references inside this connected issue's
+			// COMMENT bodies too — the field-only rewrite above left a "see
+			// bd-abc" reference in a comment as a dangling live ref to the
+			// deleted issue (delete-side twin of the g8qfo rename fix). Reuses the
+			// shared rewriteCommentRefs helper + the same tombstone rewriter.
+			// Best-effort: a comment-rewrite failure must not abort the cascade.
+			if err := rewriteCommentRefs(ctx, store, connID, rewrite); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 			}
 			if len(updates) > 0 {
 				if err := store.UpdateIssue(ctx, connID, updates, actor); err == nil {

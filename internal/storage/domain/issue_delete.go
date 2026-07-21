@@ -366,6 +366,21 @@ func (u *issueUseCaseImpl) rewriteTextReferences(
 					updates["acceptance_criteria"] = v
 				}
 			}
+			// beads-au6dv: rewrite id refs inside this connected issue's COMMENT
+			// bodies too — the field-only rewrite left a "see bd-abc" reference in
+			// a comment as a dangling live ref to the deleted issue (delete-side
+			// twin of the g8qfo rename comment-body fix). Done independently of the
+			// field updates below (a ref may live ONLY in a comment), before the
+			// no-field-updates early-continue. Best-effort: a comment-rewrite
+			// failure must not abort the delete cascade.
+			commentOpts := CommentOpts{UseWispsTable: isWisp[connID]}
+			if byIssue, cerr := u.commentRepo.ListByIssueIDs(ctx, []string{connID}, commentOpts); cerr == nil {
+				for _, c := range byIssue[connID] {
+					if v, ok := rewrite(c.Text); ok {
+						_ = u.commentRepo.UpdateCommentText(ctx, c.ID, v, commentOpts)
+					}
+				}
+			}
 			if len(updates) == 0 {
 				continue
 			}

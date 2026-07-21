@@ -36,11 +36,11 @@ import (
 // GetDependencyRecords, which this fake implements.
 type delRetryFakeStore struct {
 	storage.DoltStorage
-	attempts    int
-	target      *types.Issue
-	connected   []*types.Issue      // issues with text refs to target (dependents)
-	depRecords  []*types.Dependency // outbound dependency records of target
-	dependents  []*types.Issue      // inbound dependents of target
+	attempts   int
+	target     *types.Issue
+	connected  []*types.Issue      // issues with text refs to target (dependents)
+	depRecords []*types.Dependency // outbound dependency records of target
+	dependents []*types.Issue      // inbound dependents of target
 }
 
 func (s *delRetryFakeStore) SearchIssues(_ context.Context, _ string, filter types.IssueFilter) ([]*types.Issue, error) {
@@ -88,6 +88,18 @@ func (s *delRetryFakeStore) GetLabels(_ context.Context, _ string) ([]string, er
 
 func (s *delRetryFakeStore) GetEvents(_ context.Context, _ string, _ int) ([]*types.Event, error) {
 	return nil, nil
+}
+
+// beads-au6dv: the delete flow now rewrites id refs inside connected issues'
+// comment bodies (rewriteCommentRefs) as a post-tx follow pass. This accumulator
+// mock has no comments, so return an empty set (and a no-op update) rather than
+// nil-panic through the embedded nil DoltStorage.
+func (s *delRetryFakeStore) GetIssueComments(_ context.Context, _ string) ([]*types.Comment, error) {
+	return nil, nil
+}
+
+func (s *delRetryFakeStore) UpdateCommentText(_ context.Context, _, _, _ string) error {
+	return nil
 }
 
 func (s *delRetryFakeStore) RunInTransaction(_ context.Context, _ string, fn func(storage.Transaction) error) error {
