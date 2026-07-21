@@ -220,11 +220,11 @@ Examples:
 
 		absPath, err := filepath.Abs(checkPath)
 		if err != nil {
-			return HandleError("failed to resolve path: %v", err)
+			return HandleErrorRespectJSON("failed to resolve path: %v", err)
 		}
 
 		if doctorFix && isOrchestratorRoot(absPath) {
-			return HandleErrorWithHint(
+			return HandleErrorWithHintRespectJSON(
 				"refusing to run 'bd doctor --fix' at orchestrator workspace root",
 				"Run the orchestrator's doctor command from workspace root, or run 'bd doctor --fix' inside a specific project clone",
 			)
@@ -232,7 +232,7 @@ Examples:
 
 		if perfMode {
 			if err := doctor.RunPerformanceDiagnostics(absPath); err != nil {
-				return HandleError("performance diagnostics: %v", err)
+				return HandleErrorRespectJSON("performance diagnostics: %v", err)
 			}
 			return nil
 		}
@@ -242,18 +242,7 @@ Examples:
 		}
 
 		if doctorCheckFlag != "" {
-			switch doctorCheckFlag {
-			case "pollution":
-				return runPollutionCheck(absPath, doctorClean, doctorYes)
-			case "validate":
-				return runValidateCheck(absPath)
-			case "artifacts":
-				return runArtifactsCheck(absPath, doctorClean, doctorYes)
-			case "conventions":
-				return runConventionsCheck(absPath)
-			default:
-				return HandleErrorWithHint(fmt.Sprintf("unknown check %q", doctorCheckFlag), "Available checks: artifacts, conventions, pollution, validate")
-			}
+			return dispatchDoctorCheck(doctorCheckFlag, absPath)
 		}
 
 		if doctorDeep {
@@ -285,7 +274,7 @@ Examples:
 
 		if doctorOutput != "" {
 			if err := exportDiagnostics(result, doctorOutput); err != nil {
-				return HandleError("failed to export diagnostics: %v", err)
+				return HandleErrorRespectJSON("failed to export diagnostics: %v", err)
 			}
 			fmt.Printf("✓ Diagnostics exported to %s\n", doctorOutput)
 		}
@@ -312,6 +301,28 @@ Examples:
 		}
 		return nil
 	},
+}
+
+// dispatchDoctorCheck routes `bd doctor --check=<name>` to the specific check
+// handler. The unknown-check default is routed through
+// HandleErrorWithHintRespectJSON so that under --json a consumer piping stdout
+// gets a parseable {error,hint} object rather than plaintext/JSON on stderr with
+// an empty stdout (beads-32m5l — sibling of beads-5vist's SUBpath fix and
+// beads-jngyh's migration fix). Extracted from the doctor RunE so the error
+// contract is hermetically testable without entering the SQL-server-only RunE.
+func dispatchDoctorCheck(check, absPath string) error {
+	switch check {
+	case "pollution":
+		return runPollutionCheck(absPath, doctorClean, doctorYes)
+	case "validate":
+		return runValidateCheck(absPath)
+	case "artifacts":
+		return runArtifactsCheck(absPath, doctorClean, doctorYes)
+	case "conventions":
+		return runConventionsCheck(absPath)
+	default:
+		return HandleErrorWithHintRespectJSON(fmt.Sprintf("unknown check %q", check), "Available checks: artifacts, conventions, pollution, validate")
+	}
 }
 
 func init() {
