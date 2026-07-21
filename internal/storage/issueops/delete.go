@@ -189,13 +189,16 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 	if labelsCount, err = CountRowsForIssueIDsInTx(ctx, tx, "labels", finalRegularIDs); err != nil {
 		return nil, fmt.Errorf("count labels: %w", err)
 	}
-	// beads-g7rof: intentionally still cascadeWispIDs (NOT allWispIDs). Unlike
-	// wisp_dependencies, wisp_labels/wisp_events have no applied FK cascade and no
-	// explicit DELETE in the purge path, so a purged wisp's label/event rows are
-	// NOT removed — counting initialWispIDs here would report deletions that never
-	// happen. The resulting orphan-row leak is tracked separately (see the g7rof
-	// follow-up bead); only the wisp_dependencies count is corrected here.
-	wispLabelsCount, err := CountRowsForIssueIDsInTx(ctx, tx, "wisp_labels", cascadeWispIDs)
+	// beads-dtmj2: count over allWispIDsDedup, same as wisp_dependencies above.
+	// wisp_labels/wisp_events DO carry an ON DELETE CASCADE FK to wisps(id) — it is
+	// added by migrations/ignored/0004_add_wisp_aux_fks (the "ignored" dir is
+	// dolt_ignore data-exclusion, NOT unapplied; the migrations ARE embedded+applied
+	// and SHOW CREATE TABLE confirms the FK at runtime). So a directly-purged wisp
+	// (initialWispIDs, omitted from cascadeWispIDs) has its label/event rows
+	// FK-cascade-removed but was counted 0, understating the totals — the same class
+	// g7rof fixed for wisp_dependencies. (Embedded-backend path; the server DoltStore
+	// routes wisps through a separate deleteWispBatch.)
+	wispLabelsCount, err := CountRowsForIssueIDsInTx(ctx, tx, "wisp_labels", allWispIDsDedup)
 	if err != nil {
 		return nil, fmt.Errorf("count wisp labels: %w", err)
 	}
@@ -204,7 +207,7 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 	if eventsCount, err = CountRowsForIssueIDsInTx(ctx, tx, "events", finalRegularIDs); err != nil {
 		return nil, fmt.Errorf("count events: %w", err)
 	}
-	wispEventsCount, err := CountRowsForIssueIDsInTx(ctx, tx, "wisp_events", cascadeWispIDs)
+	wispEventsCount, err := CountRowsForIssueIDsInTx(ctx, tx, "wisp_events", allWispIDsDedup)
 	if err != nil {
 		return nil, fmt.Errorf("count wisp events: %w", err)
 	}
