@@ -168,6 +168,38 @@ func MergeMetadataInTx(ctx context.Context, tx DBTX, table, id string, incoming 
 	return nil
 }
 
+// AppendNotesInTx atomically appends text to an issue's notes column at the DB,
+// separating from any existing notes with a newline — WITHOUT a client-side
+// read-modify-write (beads-jscve, the notes twin of the beads-jibd/fnp6 metadata
+// atomic-append fix). `bd update --append-notes` previously read issue.Notes in
+// Go, concatenated, and wrote the whole blob back, so two concurrent appends both
+// based on the same snapshot lost one (last-writer-wins). Doing the concat in one
+// server-side UPDATE makes concurrent appends safe: each statement reads-and-
+// writes the current value atomically.
+//
+// CONCAT_WS('\n', NULLIF(notes,''), ?) skips the separator when notes is empty
+// (NULLIF makes ''→NULL, and CONCAT_WS drops NULL args), so the first append does
+// not get a leading blank line — matching the prior client-side "if notes != ''
+// { += \n }" behavior. A NULL notes column is likewise treated as empty. Returns
+// ErrNotFound if the id does not exist (0 rows), matching MergeMetadataInTx.
+func AppendNotesInTx(ctx context.Context, tx DBTX, table, id, text string) error {
+	res, err := tx.ExecContext(ctx,
+		fmt.Sprintf("UPDATE %s SET notes = CONCAT_WS('\n', NULLIF(notes, ''), ?), updated_at = UTC_TIMESTAMP() WHERE id = ?", table),
+		text, id)
+	if err != nil {
+		return fmt.Errorf("append notes for %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		// Some drivers don't report RowsAffected; treat as success (the UPDATE ran).
+		return nil
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: %s", storage.ErrNotFound, id)
+	}
+	return nil
+}
+
 func sortedMetadataKeys(m map[string]json.RawMessage) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

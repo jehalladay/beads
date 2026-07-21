@@ -49,6 +49,11 @@ type IssueSQLRepository interface {
 	// set is a no-op. merge (if non-nil) is applied first, then sets, then
 	// unsets, matching the client-side ordering it replaces.
 	ApplyMetadataEdits(ctx context.Context, id string, sets map[string]json.RawMessage, unsets []string, merge json.RawMessage, actor string, opts IssueTableOpts) error
+	// AppendNotes atomically appends text to the issue's notes column via a single
+	// server-side CONCAT_WS (beads-jscve), never a client-side read-modify-write,
+	// so concurrent appends don't lose an update (the notes twin of the beads-jibd
+	// metadata atomic-append). Newline-separated from any existing notes.
+	AppendNotes(ctx context.Context, id, text string, opts IssueTableOpts) error
 	Claim(ctx context.Context, id, actor string, opts IssueTableOpts) (ClaimRowResult, error)
 	Get(ctx context.Context, id string, opts IssueTableOpts) (*types.Issue, error)
 	AsOf(ctx context.Context, id, ref string) (*types.Issue, error)
@@ -273,6 +278,17 @@ type UpdateSpec struct {
 	MetadataSets   map[string]json.RawMessage
 	MetadataUnsets []string
 	MetadataMerge  json.RawMessage
+
+	// AppendNotes, when HasAppendNotes is true, is appended to the issue's notes
+	// atomically SERVER-SIDE (CONCAT_WS) inside the update transaction rather than
+	// as a client-side read (current.Notes) → concat → whole-blob write, so two
+	// concurrent proxied `bd update --append-notes` don't lose an update
+	// (beads-jscve, the notes twin of the beads-jibd metadata atomic-append). When
+	// set, ApplyUpdate routes it through the atomic notes seam instead of stuffing
+	// a combined blob into Fields["notes"]. HasAppendNotes distinguishes an
+	// explicit append of "" (guarded out upstream) from "not appending".
+	AppendNotes    string
+	HasAppendNotes bool
 }
 
 type IssueUseCase interface {
@@ -665,6 +681,15 @@ func (u *issueUseCaseImpl) ApplyUpdate(ctx context.Context, id string, spec Upda
 	if len(spec.MetadataSets) > 0 || len(spec.MetadataUnsets) > 0 || len(spec.MetadataMerge) > 0 {
 		if err := u.issueRepo.ApplyMetadataEdits(ctx, id, spec.MetadataSets, spec.MetadataUnsets, spec.MetadataMerge, actor, IssueTableOpts{UseWispsTable: useWisp, Finalize: true}); err != nil {
 			return nil, fmt.Errorf("ApplyUpdate %s: metadata edits: %w", id, err)
+		}
+	}
+
+	// Append-notes goes through the atomic server-side seam (beads-jscve), NOT a
+	// client-side combined blob in Fields["notes"] — so concurrent proxied appends
+	// don't lose an update (the notes twin of the beads-jibd metadata guarantee).
+	if spec.HasAppendNotes {
+		if err := u.issueRepo.AppendNotes(ctx, id, spec.AppendNotes, IssueTableOpts{UseWispsTable: useWisp, Finalize: true}); err != nil {
+			return nil, fmt.Errorf("ApplyUpdate %s: append notes: %w", id, err)
 		}
 	}
 

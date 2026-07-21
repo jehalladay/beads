@@ -750,6 +750,10 @@ func (s *configStore) MergeMetadataWithCAS(_ context.Context, _ string, _ json.R
 	return nil
 }
 
+func (s *configStore) AppendNotes(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
 func (s *configStore) CountIssues(_ context.Context, _ string, _ types.IssueFilter) (int64, error) {
 	return 0, nil
 }

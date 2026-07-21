@@ -115,6 +115,14 @@ type fakeIssueRepo struct {
 		wisp   bool
 	}
 
+	// AppendNotes (beads-jscve atomic notes append — the notes twin of jibd)
+	appendNotesErr   error
+	appendNotesCalls []struct {
+		id   string
+		text string
+		wisp bool
+	}
+
 	// Search / ready / descendants
 	searchPage    SearchPage
 	searchErr     error
@@ -179,6 +187,14 @@ func (f *fakeIssueRepo) ApplyMetadataEdits(_ context.Context, id string, sets ma
 		wisp   bool
 	}{id, sets, unsets, merge, opts.UseWispsTable})
 	return f.metaEditErr
+}
+func (f *fakeIssueRepo) AppendNotes(_ context.Context, id, text string, opts IssueTableOpts) error {
+	f.appendNotesCalls = append(f.appendNotesCalls, struct {
+		id   string
+		text string
+		wisp bool
+	}{id, text, opts.UseWispsTable})
+	return f.appendNotesErr
 }
 func (f *fakeIssueRepo) Claim(context.Context, string, string, IssueTableOpts) (ClaimRowResult, error) {
 	return f.claimResult, f.claimErr
