@@ -610,6 +610,23 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 		return wrapTransactionError("commit add wisp dependency", tx.Commit())
 	}
 
+	// Record an audit event so wisp-source dependency adds are visible in
+	// `bd history` (beads-k5oqp), mirroring the issue-source seam
+	// (issueops.AddDependencyInTx, beads-1qt9), the proxied path (beads-c5efw),
+	// and the wisp-source REMOVE path. This bespoke wisp-add path did its own
+	// inline INSERT and dropped ONLY the event-record block, leaving `bd dep add
+	// <wisp> <target>` the sole silent dep-write on sql-server crew. The
+	// same-type idempotent metadata-update and the rowsAffected==0 collision
+	// no-op both return before this point — matching the issue-source path,
+	// which records no event on the equivalent no-op legs. Wisp sources route to
+	// wisp_events (they live in dolt_ignored tables to avoid history bloat).
+	depAddComment := fmt.Sprintf("Added dependency: %s -> %s (%s)", dep.IssueID, dep.DependsOnID, dep.Type)
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO wisp_events (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)`,
+		issueops.NewEventID(), dep.IssueID, types.EventDependencyAdded, actor, depAddComment); err != nil {
+		return fmt.Errorf("add wisp dependency: record event: %w", err)
+	}
+
 	affectedIssues, affectedWisps, aerr := issueops.AffectedByDepChangeForWispInTx(ctx, tx, dep.IssueID, dep.DependsOnID, dep.Type)
 	if aerr != nil {
 		return fmt.Errorf("affected by add wisp dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, aerr)
