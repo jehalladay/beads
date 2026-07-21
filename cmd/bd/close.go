@@ -612,10 +612,21 @@ func autoCloseCompletedMolecule(ctx context.Context, s storage.DoltStorage, clos
 	}
 
 	// All steps complete — auto-close the molecule root
+	oldStatus := string(root.Status) // root.Status != closed (guarded above): a genuine open->closed transition
 	if err := s.CloseIssue(ctx, moleculeID, "all steps complete", actorName, session); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not auto-close completed molecule %s: %v\n", moleculeID, err)
 		return
 	}
+
+	// beads-zt47w: the root's close needs the SAME GC-survivable audit-file
+	// trail (.beads/interactions.jsonl) every explicit close writes (beads-n4sn)
+	// — s.CloseIssue records only the DB EventClosed row, which a Dolt GC flatten
+	// destroys. Without this the auto-closed root's close vanished from the
+	// durable record while the directly-closed step's did not (the same n4sn
+	// divergence r3m8v fixed for the supersede/duplicate SOURCE, one hop
+	// downstream in the cascade the source triggers). This single chokepoint
+	// covers all callers: bd close, bd mark duplicate, bd supersede/duplicate.
+	auditStatusChange(moleculeID, oldStatus, "closed", actorName, "all steps complete")
 
 	if !jsonOutput {
 		fmt.Printf("%s Auto-closed completed molecule %s\n", ui.RenderPass("✓"), formatFeedbackID(moleculeID, root.Title))
