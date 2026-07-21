@@ -33,8 +33,13 @@ func TestFlagValidationErrorJSON_EmitsStdoutErrorObject(t *testing.T) {
 		args    []string
 		wantSub string // a stable substring expected in the JSON error message
 	}{
-		// required-flag: `bd gate create X` requires --blocks (cobra ValidateRequiredFlags).
-		{"required_flag", []string{"gate", "create", "g1", "--json"}, "required flag(s)"},
+		// required-flag: `bd gate create` requires --blocks (cobra ValidateRequiredFlags).
+		// beads-2ja32: no stray positional — gate create reads only flags, and the
+		// beads-ikzq5 NoArgs guard now (correctly) rejects a stray positional with
+		// "unknown command" BEFORE required-flag validation runs. The old form
+		// `gate create g1` therefore tripped unknown-command, not required-flag; the
+		// stray-positional-on-leaf case is still covered by unknown_command_leaf_arg.
+		{"required_flag", []string{"gate", "create", "--json"}, "required flag(s)"},
 		// unknown-flag, --json AFTER the bad flag (pflag aborts parsing at --bogusflag).
 		{"unknown_flag_json_after", []string{"list", "--bogusflag", "--json"}, "unknown flag"},
 		// unknown-flag, --json BEFORE the bad flag (position-independence).

@@ -156,7 +156,32 @@ func (tx *graphApplyFakeTx) GetDependencyRecords(ctx context.Context, issueID st
 	return tx.store.GetDependencyRecords(ctx, issueID)
 }
 
-func (tx *graphApplyFakeTx) AddLabel(context.Context, string, string, string) error {
+// beads-2ja32: GetLabels/AddLabel back the beads-l8qsn parent-label-inheritance
+// post-pass in executeGraphApply, which reads parent labels and unions them onto
+// each parent-child graph node. Before this, graphApplyFakeTx embedded a nil
+// storage.Transaction with no GetLabels override, so the inheritance pass
+// nil-dereferenced inside RunInTransaction (panic) the moment a node declared a
+// parent — which TestExecuteGraphApplyUnitAllowsExplicitParentChildDuplicate does.
+// A faithful fake stores labels on the issue so the union is honestly exercised.
+func (tx *graphApplyFakeTx) GetLabels(_ context.Context, issueID string) ([]string, error) {
+	issue, ok := tx.store.issues[issueID]
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	return append([]string(nil), issue.Labels...), nil
+}
+
+func (tx *graphApplyFakeTx) AddLabel(_ context.Context, issueID, label, _ string) error {
+	issue, ok := tx.store.issues[issueID]
+	if !ok {
+		return storage.ErrNotFound
+	}
+	for _, l := range issue.Labels {
+		if l == label {
+			return nil
+		}
+	}
+	issue.Labels = append(issue.Labels, label)
 	return nil
 }
 
