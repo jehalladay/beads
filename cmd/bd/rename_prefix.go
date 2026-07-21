@@ -423,7 +423,14 @@ func renamePrefixInDB(ctx context.Context, oldPrefix, newPrefix string, issues [
 	// For production use, consider implementing a single atomic RenamePrefix() method
 	// in the storage layer that wraps all updates in one transaction.
 
-	oldPrefixPattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(oldPrefix) + `-(\d+)\b`)
+	// beads-kzj4s: the suffix must be base36 alphanumeric, not digits-only.
+	// bd IDs are base36 hashes (e.g. oldpref-16f), so a `-(\d+)` suffix silently
+	// skipped every letter-bearing ref in desc/design/notes/AC/comment bodies,
+	// leaving dangling old-prefix refs after rename-prefix. Mirror the repair
+	// path's alnum suffix (rename_prefix.go:355), keeping the oldPrefix anchor so
+	// only refs to THIS prefix are rewritten. This same pattern also drives the
+	// g8qfo comment-body rewrite below, which was inert for alnum IDs until now.
+	oldPrefixPattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(oldPrefix) + `-[a-z0-9]+\b`)
 
 	replaceFunc := func(match string) string {
 		return strings.Replace(match, oldPrefix+"-", newPrefix+"-", 1)
