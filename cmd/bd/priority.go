@@ -80,6 +80,31 @@ Examples:
 			return HandleErrorRespectJSON("%s", err)
 		}
 
+		// beads-helt4: `bd priority <id> <same-value>` is an idempotent no-op —
+		// setting the priority to the value it already has changes nothing, yet the
+		// command printed "✓ Set priority of ... to PN" with rc=0, a false success a
+		// CI/agent gate reads as proof of a state change (the xqsy assign / bwla
+		// dep-add / w2tk false-success class; `priority` was the one single-field
+		// mutation verb still missing this guard). UpdateIssue itself is idempotent
+		// (correct for programmatic callers), so — mirroring the sibling verbs — the
+		// CLI pre-checks and reports an honest "no change" (rc=0, benign no-op) rather
+		// than a fake ✓, and skips the write so no spurious audit event / commit /
+		// updated_at bump is recorded. This is the stronger skip-the-write shape of
+		// the single-field verbs, not the display-only bdy2 fix on `bd update`.
+		// Under --json the issue object is still emitted (it accurately reflects the
+		// already-desired state), preserving the array-shape JSON contract.
+		if result.Issue.Priority == priority {
+			SetLastTouchedID(result.ResolvedID)
+			if jsonOutput {
+				// beads-utby: emit an ARRAY to match the real-change path + all
+				// sibling mutation verbs, not a bare DICT.
+				return outputJSON([]*types.Issue{result.Issue})
+			}
+			fmt.Printf("%s %s already P%d (no change)\n",
+				ui.RenderInfoIcon(), formatFeedbackID(result.ResolvedID, result.Issue.Title), priority)
+			return nil
+		}
+
 		updates := map[string]interface{}{
 			"priority": priority,
 		}
