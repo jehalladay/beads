@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -36,12 +35,31 @@ func showIssueRefs(ctx context.Context, args []string, jsonOut bool) error {
 		return nil
 	}
 
-	// Process each arg via routing-aware resolution
+	// Process each arg via routing-aware resolution.
+	//
+	// beads-0rlll (yj1n2 sibling): per-item failures must honor the --json error
+	// contract the main `bd show` loop uses (beads-fg6/92tz/8lqh). Under --json a
+	// bare plain-text stderr line is not machine-parseable, and pairing an empty
+	// stdout payload with a stderr error recreates the 92tz "two objects on 2>&1"
+	// break. So under --json we DEFER per-item errors and flush them to stderr as
+	// JSON objects only on PARTIAL success (some id resolved, so stdout carries a
+	// payload); when nothing resolved, a single stdout JSON error object is the
+	// sole output and stderr stays clean. Non-JSON prints immediately (unchanged).
+	// Mirrors showIssueChildren/showIssueAsOf (show_children.go).
 	failedCount := 0
+	foundCount := 0
+	var deferredItemErrors []string
+	reportShowItemError := func(format string, a ...interface{}) {
+		if jsonOut {
+			deferredItemErrors = append(deferredItemErrors, fmt.Sprintf(format, a...))
+			return
+		}
+		reportItemError(format, a...)
+	}
 	for _, id := range args {
 		result, err := resolveAndGetIssueWithRouting(ctx, store, id)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+			reportShowItemError("Error resolving %s: %v", id, err)
 			failedCount++
 			continue
 		}
@@ -49,28 +67,41 @@ func showIssueRefs(ctx context.Context, args []string, jsonOut bool) error {
 			if result != nil {
 				result.Close()
 			}
-			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+			reportShowItemError("Issue %s not found", id)
 			failedCount++
 			continue
 		}
 		if err := processIssue(result.ResolvedID, result.Store); err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting refs for %s: %v\n", id, err)
+			reportShowItemError("Error getting refs for %s: %v", id, err)
 			failedCount++
+			result.Close()
+			continue
 		}
+		foundCount++
 		result.Close()
 	}
 
 	// Output results
 	if jsonOut {
-		if jerr := outputJSON(allRefs); jerr != nil {
-			return jerr
+		if foundCount > 0 {
+			// Partial success: stdout carries the resolved refs; flush any
+			// per-item failures to stderr as JSON objects (fg6 contract).
+			for _, msg := range deferredItemErrors {
+				reportItemError("%s", msg)
+			}
+			if jerr := outputJSON(allRefs); jerr != nil {
+				return jerr
+			}
+			// Signal non-zero so scripts don't silently proceed (beads-2svv).
+			if failedCount > 0 {
+				return &exitError{Code: 1}
+			}
+			return nil
 		}
-		// Partial/total failure: emit results (above) then signal non-zero so
-		// scripts don't silently proceed on a missing id (beads-2svv).
-		if failedCount > 0 {
-			return &exitError{Code: 1}
-		}
-		return nil
+		// Nothing resolved: the single stdout JSON error object is the sole
+		// error output; stderr stays clean so a 2>&1 consumer gets exactly one
+		// JSON object (beads-92tz).
+		return HandleErrorRespectJSON("no issues found matching the provided IDs")
 	}
 
 	// Display refs grouped by issue and relationship type
