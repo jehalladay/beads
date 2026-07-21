@@ -74,6 +74,12 @@ type SquashResult struct {
 	DeletedCount  int      `json:"deleted_count"`
 	KeptChildren  bool     `json:"kept_children"`
 	WispSquash    bool     `json:"wisp_squash,omitempty"` // True if this was a wisp→digest squash
+
+	// rootCloseReason carries the wisp-root close reason out of the transact
+	// closure so the post-commit GC-survivable audit-file emit (beads-8kixi)
+	// records the same reason tx.CloseIssue used. Unexported: internal only, not
+	// part of the --json output contract.
+	rootCloseReason string
 }
 
 func runMolSquash(cmd *cobra.Command, args []string) error {
@@ -363,6 +369,7 @@ func squashMolecule(ctx context.Context, s storage.DoltStorage, root *types.Issu
 				return fmt.Errorf("failed to clear ephemeral flag on root %s: %w", root.ID, err)
 			}
 			result.WispSquash = true
+			result.rootCloseReason = reason
 		}
 
 		return nil
@@ -370,6 +377,28 @@ func squashMolecule(ctx context.Context, s storage.DoltStorage, root *types.Issu
 
 	if err != nil {
 		return nil, err
+	}
+
+	// beads-8kixi: write the GC-survivable audit-FILE trail (.beads/
+	// interactions.jsonl) for the squash-driven wisp-root auto-close, at parity
+	// with bd close and the other CloseIssue-bypass cascade fixes (auto-close
+	// molecule root zt47w, epic close-eligible iwzua, supersede/duplicate r3m8v —
+	// all n4sn class). squashMolecule closed the root via tx.CloseIssue inside
+	// `transact` but emitted no auditStatusChange, so after a Dolt GC flatten the
+	// squashed root's close vanished from the durable record while a plain
+	// `bd close` root's did not. audit.LogFieldChange writes a cwd-based file, NOT
+	// a tx op, so it must run AFTER `transact` commits — a pre-commit emit would
+	// orphan the entry if the withRetry closure rolled the tx back (r3m8v/zt47w
+	// precedent). oldStatus is the root's pre-squash status; the WispSquash guard
+	// means the root really transitioned to closed here (an already-closed wisp
+	// root would not reach the Ephemeral auto-close, and squash rejects a
+	// non-molecule target upstream).
+	if result.WispSquash {
+		oldStatus := string(root.Status)
+		if oldStatus == "" {
+			oldStatus = "open"
+		}
+		auditStatusChange(root.ID, oldStatus, "closed", actorName, result.rootCloseReason)
 	}
 
 	return result, nil
