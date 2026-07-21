@@ -108,6 +108,7 @@ func renderOnboardInstructions(w io.Writer) error {
 
 var onboardCmd = &cobra.Command{
 	Use:     "onboard",
+	Args:    cobra.NoArgs, // beads-rlzyg: reject stray positionals with a clean usage error
 	GroupID: "setup",
 	Short:   "Display minimal snippet for agent instructions file",
 	Long: `Display a minimal snippet to add to your agent instructions file for bd integration.

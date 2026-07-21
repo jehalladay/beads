@@ -10,6 +10,7 @@ import (
 
 var quickstartCmd = &cobra.Command{
 	Use:     "quickstart",
+	Args:    cobra.NoArgs, // beads-rlzyg: reject stray positionals with a clean usage error
 	GroupID: "setup",
 	Short:   "Quick start guide for bd",
 	Long:    `Display a quick start guide showing common bd workflows and patterns.`,

@@ -49,6 +49,13 @@ func TestNoArgsSweep_RejectsPositional(t *testing.T) {
 		{"context"},
 		{"purge"},
 		{"init-safety"},
+		// beads-rlzyg: residual setup/maint info-output leaves after 7pnnd that
+		// still silently ignored stray positionals (bd prime foo, bd onboard open).
+		{"prime"},
+		{"quickstart"},
+		{"onboard"},
+		{"preflight"},
+		{"info"},
 	}
 
 	for _, path := range commands {

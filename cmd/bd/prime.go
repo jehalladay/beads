@@ -78,6 +78,7 @@ func resolveGlobalPrimePath(configDirOverride string) string {
 
 var primeCmd = &cobra.Command{
 	Use:     "prime",
+	Args:    cobra.NoArgs, // beads-rlzyg: reject stray positionals with a clean usage error
 	GroupID: "setup",
 	Short:   "Output AI-optimized workflow context",
 	Long: `Output essential Beads workflow context in AI-optimized markdown format.

@@ -28,6 +28,7 @@ func resolveInfoMode(proxied, server bool) string {
 
 var infoCmd = &cobra.Command{
 	Use:     "info",
+	Args:    cobra.NoArgs, // beads-rlzyg: reject stray positionals with a clean usage error
 	GroupID: "setup",
 	Short:   "Show database information",
 	Long: `Display information about the current database.

@@ -91,6 +91,7 @@ type PreflightResult struct {
 
 var preflightCmd = &cobra.Command{
 	Use:     "preflight",
+	Args:    cobra.NoArgs, // beads-rlzyg: reject stray positionals with a clean usage error
 	GroupID: "maint",
 	Short:   "Show PR readiness checklist",
 	Long: `Display a checklist of common pre-PR checks for contributors.
