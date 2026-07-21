@@ -799,8 +799,11 @@ Examples:
 							ui.RenderPass("✓"), r.gate.ID, formatGateCheckReason(r.reason))
 					}
 				} else {
-					// Close the gate
-					closeErr := closeGate(ctx, r.gate.ID, r.reason)
+					// Close the gate. Pass the pre-close status (r.gate is the
+					// open gate fetched by the check loop) so closeGate can write
+					// the GC-survivable audit-file trail at parity with manual
+					// resolve (beads-8ociu / beads-1jkl5).
+					closeErr := closeGate(ctx, r.gate.ID, string(r.gate.Status), r.reason)
 					if closeErr != nil {
 						fmt.Fprintf(os.Stderr, "%s %s: error closing - %v\n",
 							ui.RenderFail("✗"), r.gate.ID, closeErr)
@@ -1099,9 +1102,9 @@ func checkTimer(gate *types.Issue, now time.Time) (resolved, escalated bool, rea
 }
 
 // closeGate closes a gate issue with the given reason
-func closeGate(_ interface{}, gateID, reason string) error {
+func closeGate(_ interface{}, gateID, oldStatus, reason string) error {
 	if usesProxiedServer() {
-		if err := closeGateProxied(gateID, reason); err != nil {
+		if err := closeGateProxied(gateID, oldStatus, reason); err != nil {
 			return err
 		}
 		commandDidWrite.Store(true)
@@ -1111,6 +1114,16 @@ func closeGate(_ interface{}, gateID, reason string) error {
 		return err
 	}
 	commandDidWrite.Store(true)
+	// beads-8ociu: the gate check AUTO-RESOLVE path (timer/gh:run/gh:pr) closes
+	// the gate via store.CloseIssue but dropped the GC-survivable audit-FILE
+	// trail (.beads/interactions.jsonl) that manual `bd gate resolve` writes via
+	// auditStatusChange (beads-1jkl5) and that bd close/supersede emit (n4sn/
+	// r3m8v). So an auto-resolved gate's close vanished from the durable record
+	// after a Dolt GC flatten while a manually-resolved one's did not. Emit the
+	// same status field_change (auto-resolve sibling of 1jkl5). The check loop
+	// only reaches closeGate for a resolved OPEN gate, so this is a real
+	// open→closed transition; store.CloseIssue autocommits durably.
+	auditStatusChange(gateID, oldStatus, "closed", actor, reason)
 	return nil
 }
 

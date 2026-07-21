@@ -368,7 +368,7 @@ func runGateAddWaiterProxied(ctx context.Context, gateID, waiter string) error {
 
 // closeGateProxied closes a gate via the UOW (proxied leg of closeGate, used by
 // gate check when routing hub crew). Commits its own write.
-func closeGateProxied(gateID, reason string) error {
+func closeGateProxied(gateID, oldStatus, reason string) error {
 	ctx := rootCtx
 	uw, err := openGateProxiedUOW(ctx)
 	if err != nil {
@@ -378,7 +378,16 @@ func closeGateProxied(gateID, reason string) error {
 	if _, err := uw.IssueUseCase().CloseIssue(ctx, gateID, domain.CloseIssueParams{Reason: reason}, actor); err != nil {
 		return err
 	}
-	return uw.Commit(ctx, fmt.Sprintf("bd: gate check resolved %s", gateID))
+	if err := uw.Commit(ctx, fmt.Sprintf("bd: gate check resolved %s", gateID)); err != nil {
+		return err
+	}
+	// beads-8ociu: write the GC-survivable audit-FILE trail for the auto-resolve
+	// close AFTER uw.Commit (parity with the direct leg + the manual-resolve fix
+	// beads-1jkl5; audit.LogFieldChange writes a cwd file, not a UOW op, so a
+	// pre-commit emit would orphan the entry on a tx rollback — r3m8v precedent).
+	// The check loop only reaches here for a resolved OPEN gate → real transition.
+	auditStatusChange(gateID, oldStatus, "closed", actor, reason)
+	return nil
 }
 
 // updateGateAwaitIDProxied updates a gate's await_id via the UOW (proxied leg of
