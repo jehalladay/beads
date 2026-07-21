@@ -214,6 +214,14 @@ func runFederationSync(cmd *cobra.Command, args []string) error {
 
 	// Sync with each peer
 	var results []*storage.SyncResult
+	// beads-o35h0: track whether ANY peer sync failed. Previously the loop
+	// printed ✗ (human-only) and continued, then the function ended with an
+	// unconditional `return nil` — so `bd federation sync` returned RC=0 even
+	// when every peer merge failed. Federation sync is the multi-town data
+	// path; a false-success exit code means automation (`bd federation sync &&
+	// next` or `$?` checks) proceeds on a silent divergence. Accumulate the
+	// failure and SilentExit(1) at the end if any peer failed.
+	syncFailed := false
 	for _, peer := range peers {
 		if !jsonOutput {
 			fmt.Printf("%s Syncing with %s...\n", ui.RenderAccent("🔄"), peer)
@@ -223,6 +231,15 @@ func runFederationSync(cmd *cobra.Command, args []string) error {
 		results = append(results, result)
 
 		if err != nil {
+			syncFailed = true
+			// beads-o35h0: surface the error in the JSON result too. Error is
+			// `json:"-"` (an error type marshals to {}), so mirror it into the
+			// string ErrorMsg field the human ✗ line already shows. result may
+			// be non-nil on every failure path (both backends return the
+			// populated result), but guard defensively.
+			if result != nil && result.ErrorMsg == "" {
+				result.ErrorMsg = err.Error()
+			}
 			if !jsonOutput {
 				fmt.Printf("  %s %v\n", ui.RenderFail("✗"), err)
 			}
@@ -261,10 +278,25 @@ func runFederationSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if jsonOutput {
-		return outputJSON(map[string]interface{}{
+		// beads-o35h0: include a top-level `failed` flag so a structured
+		// consumer has an unambiguous per-invocation failure signal in addition
+		// to each result's `error` string.
+		if jerr := outputJSON(map[string]interface{}{
 			"peers":   peers,
 			"results": results,
-		})
+			"failed":  syncFailed,
+		}); jerr != nil {
+			return jerr
+		}
+		if syncFailed {
+			return SilentExit()
+		}
+		return nil
+	}
+	// beads-o35h0: non-zero exit when any peer sync failed (the per-peer ✗ line
+	// was printed above; SilentExit avoids double-printing an error).
+	if syncFailed {
+		return SilentExit()
 	}
 	return nil
 }

@@ -27,6 +27,13 @@ type SyncResult struct {
 	ConflictsResolved bool       `json:"conflicts_resolved"`
 	Error             error      `json:"-"`
 	PushError         error      `json:"-"` // Non-fatal push error
+	// ErrorMsg carries the fatal sync error as a STRING so it survives JSON
+	// marshalling. Error is `json:"-"` (beads-1ex1t: an `error` marshals to
+	// null/`{}`, carrying no useful JSON), which meant `--json` dropped the
+	// failure signal entirely — a failed sync rendered as {merged:false} with
+	// no error (beads-o35h0). The cmd layer populates this from Error.Error()
+	// so structured consumers can detect a per-peer sync failure.
+	ErrorMsg string `json:"error,omitempty"`
 }
 
 // SyncStore provides sync operations with peers.
