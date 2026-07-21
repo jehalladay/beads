@@ -429,6 +429,15 @@ func renamePrefixInDB(ctx context.Context, oldPrefix, newPrefix string, issues [
 		return strings.Replace(match, oldPrefix+"-", newPrefix+"-", 1)
 	}
 
+	// beads-g8qfo: adapt the prefix ReplaceAllStringFunc into the (string) ->
+	// (string, changed) shape rewriteCommentRefs expects, so comment bodies get
+	// the same prefix rewrite as the 5 issue fields — the comments table was
+	// never visited before, silently leaving dangling old-prefix refs.
+	prefixRewrite := func(s string) (string, bool) {
+		out := oldPrefixPattern.ReplaceAllStringFunc(s, replaceFunc)
+		return out, out != s
+	}
+
 	for _, issue := range issues {
 		oldID := issue.ID
 		numPart := strings.TrimPrefix(oldID, oldPrefix+"-")
@@ -450,6 +459,12 @@ func renamePrefixInDB(ctx context.Context, oldPrefix, newPrefix string, issues [
 
 		if err := store.UpdateIssueID(ctx, oldID, newID, issue, actor); err != nil {
 			return fmt.Errorf("failed to update issue %s: %w", oldID, err)
+		}
+
+		// Comments are re-keyed to newID by the UpdateIssueID FK cascade, so
+		// fetch by newID and rewrite any old-prefix ref in the body.
+		if err := rewriteCommentRefs(ctx, store, newID, prefixRewrite); err != nil {
+			return err
 		}
 	}
 

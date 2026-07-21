@@ -232,7 +232,34 @@ func updateReferencesInAllIssues(ctx context.Context, store storage.DoltStorage,
 				return fmt.Errorf("failed to update references in %s: %w", issue.ID, err)
 			}
 		}
+
+		// beads-g8qfo: the 5 issue fields above are not the only text the user
+		// wrote — a reference inside a COMMENT body ("see bd-abc") was never
+		// visited, so it kept the old id and became a dangling ref. Rewrite
+		// matching comment bodies too, reusing the same token-boundary rewriter.
+		if err := rewriteCommentRefs(ctx, store, issue.ID, rewrite); err != nil {
+			return err
+		}
 	}
 
+	return nil
+}
+
+// rewriteCommentRefs applies rewrite to every comment body on issueID and
+// persists the ones that changed (beads-g8qfo). Shared by the singular rename
+// (updateReferencesInAllIssues) and rename-prefix sweeps so the comment-visit
+// logic can never drift between them.
+func rewriteCommentRefs(ctx context.Context, store storage.DoltStorage, issueID string, rewrite func(string) (string, bool)) error {
+	comments, err := store.GetIssueComments(ctx, issueID)
+	if err != nil {
+		return fmt.Errorf("failed to read comments for %s: %w", issueID, err)
+	}
+	for _, c := range comments {
+		if v, ok := rewrite(c.Text); ok {
+			if err := store.UpdateCommentText(ctx, issueID, c.ID, v); err != nil {
+				return fmt.Errorf("failed to update comment reference in %s: %w", issueID, err)
+			}
+		}
+	}
 	return nil
 }

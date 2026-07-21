@@ -98,6 +98,11 @@ type Storage interface {
 	// Comments and events
 	AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error)
 	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
+	// UpdateCommentText overwrites a single comment's body text (beads-g8qfo).
+	// issueID routes comments vs wisp_comments; commentID identifies the row.
+	// Used by the rename/rename-prefix sweep to rewrite id references that live
+	// inside comment bodies.
+	UpdateCommentText(ctx context.Context, issueID, commentID, newText string) error
 	GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error)
 	GetAllEventsSince(ctx context.Context, since time.Time) ([]*types.Event, error)
 

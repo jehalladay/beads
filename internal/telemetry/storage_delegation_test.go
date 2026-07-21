@@ -140,6 +140,9 @@ func (r *recordingStorage) AddIssueComment(context.Context, string, string, stri
 func (r *recordingStorage) GetIssueComments(context.Context, string) ([]*types.Comment, error) {
 	return nil, r.rec("GetIssueComments")
 }
+func (r *recordingStorage) UpdateCommentText(context.Context, string, string, string) error {
+	return r.rec("UpdateCommentText")
+}
 func (r *recordingStorage) GetEvents(context.Context, string, int) ([]*types.Event, error) {
 	return nil, r.rec("GetEvents")
 }
@@ -338,6 +341,7 @@ func TestInstrumentedStorageDelegationMatrix(t *testing.T) {
 
 		{"AddIssueComment", func(s storage.Storage) error { _, e := s.AddIssueComment(ctx, "x", "a", "t"); return e }},
 		{"GetIssueComments", func(s storage.Storage) error { _, e := s.GetIssueComments(ctx, "x"); return e }},
+		{"UpdateCommentText", func(s storage.Storage) error { return s.UpdateCommentText(ctx, "x", "c", "t") }},
 		{"GetEvents", func(s storage.Storage) error { _, e := s.GetEvents(ctx, "x", 10); return e }},
 		{"GetAllEventsSince", func(s storage.Storage) error { _, e := s.GetAllEventsSince(ctx, time.Unix(0, 0)); return e }},
 

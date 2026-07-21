@@ -411,6 +411,14 @@ func (s *InstrumentedStorage) GetIssueComments(ctx context.Context, issueID stri
 	return v, err
 }
 
+func (s *InstrumentedStorage) UpdateCommentText(ctx context.Context, issueID, commentID, newText string) error {
+	attrs := []attribute.KeyValue{attribute.String("bd.issue.id", issueID)}
+	ctx, span, t := s.op(ctx, "UpdateCommentText", attrs...)
+	err := s.inner.UpdateCommentText(ctx, issueID, commentID, newText)
+	s.done(ctx, span, t, err, attrs...)
+	return err
+}
+
 func (s *InstrumentedStorage) GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error) {
 	attrs := []attribute.KeyValue{attribute.String("bd.issue.id", issueID)}
 	ctx, span, t := s.op(ctx, "GetEvents", attrs...)

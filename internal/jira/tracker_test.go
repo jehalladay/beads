@@ -712,6 +712,9 @@ func (s *configStore) AddIssueComment(_ context.Context, _, _, _ string) (*types
 func (s *configStore) GetIssueComments(_ context.Context, _ string) ([]*types.Comment, error) {
 	return nil, nil
 }
+func (s *configStore) UpdateCommentText(_ context.Context, _, _, _ string) error {
+	return nil
+}
 func (s *configStore) GetEvents(_ context.Context, _ string, _ int) ([]*types.Event, error) {
 	return nil, nil
 }
