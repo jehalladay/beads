@@ -88,6 +88,15 @@ func CreateIssueInTxWithResult(ctx context.Context, tx *sql.Tx, bc *BatchContext
 		return result, err
 	}
 
+	// Backfill creation provenance at the shared seam so every create stack
+	// (direct/proxied/batch/child-mint) stamps the resolving actor when the
+	// caller left CreatedBy empty — the batch leg (cmd/bd/batch.go) builds an
+	// issue with no CreatedBy, so it would otherwise land created_by='' while
+	// bd create stamps getActorWithGit() (beads-81bfd). Empty-only, mirroring
+	// dependencyCreatedBy: an import/restore-supplied CreatedBy is preserved,
+	// never overwritten by the importing actor.
+	issue.CreatedBy = createdByOrActor(issue, actor)
+
 	issueTable, eventTable := TableRouting(issue)
 
 	if issue.ID == "" {
@@ -924,6 +933,18 @@ func PersistDependenciesWithOptionsResult(ctx context.Context, tx *sql.Tx, issue
 		}
 	}
 	return result, nil
+}
+
+// createdByOrActor returns the author stamped on an issue's created_by column.
+// Import/restore paths populate issue.CreatedBy from JSONL; interactive/batch
+// creation leaves it empty and falls back to the current actor (beads-81bfd).
+// Mirrors dependencyCreatedBy: empty-only, so an import-supplied CreatedBy is
+// preserved rather than overwritten by the importing actor.
+func createdByOrActor(issue *types.Issue, actor string) string {
+	if issue != nil && issue.CreatedBy != "" {
+		return issue.CreatedBy
+	}
+	return actor
 }
 
 // dependencyCreatedBy returns the author stamped on a dependency edge.
