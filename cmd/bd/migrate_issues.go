@@ -301,8 +301,22 @@ func findCandidateIssues(ctx context.Context, s storage.DoltStorage, p migrateIs
 
 	// Filter by status
 	if p.status != "" && p.status != "all" {
-		status := types.Status(p.status)
-		filter.Status = &status
+		// beads-3hmym: the validate path (validateMigrateIssuesFilters, ev8m)
+		// Normalize()s before checking, but this apply path used a raw cast —
+		// so --status OPEN passed validation then applied `status = 'OPEN'`
+		// (matching nothing → a silent zero-migration read as success on a
+		// mutating command), and --status blocked applied the unsatisfiable
+		// `status = 'blocked'` predicate ("blocked" is the derived is_blocked
+		// pseudo-status, beads-7f3g, never a stored value). Normalize here and
+		// route the blocked pseudo-status to filter.Blocked, mirroring
+		// count.go:154-160 / bd list / bd lint (pbelp) / bd stale (h40fl).
+		status := types.Status(p.status).Normalize()
+		if status == types.StatusBlocked {
+			blocked := true
+			filter.Blocked = &blocked
+		} else {
+			filter.Status = &status
+		}
 	}
 
 	// Filter by priority
