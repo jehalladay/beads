@@ -244,6 +244,25 @@ normal 'bd' subcommands for interactive/read operations.`,
 
 		commandDidWrite.Store(true)
 
+		// beads-8cxe6: run the auto-close-completed-molecule cascade for each
+		// step closed by this batch, mirroring bd close (close.go:214, also a
+		// post-CloseIssue best-effort call against the store). batch dispatches
+		// below the CLI handler that owns this cascade (runBatchOp talks straight
+		// to storage.Transaction), so without this a batch that closes a
+		// molecule's FINAL step left the root stuck OPEN — a workflow-semantic
+		// divergence from the `bd close` loop that batch is a drop-in for
+		// (batch-parity class, beads-1d08 precedent). Run post-commit like bd
+		// close's own loop: the steps are already durably committed, and
+		// autoCloseCompletedMolecule is the SAME function bd close calls, so
+		// completion detection and the which-roots-auto-close policy
+		// (shouldAutoCloseCompletedRoot: molecule/ephemeral/template-epic yes,
+		// plain epic no) can never drift from the single-invocation path.
+		for _, r := range results {
+			if r.closedID != "" {
+				autoCloseCompletedMolecule(ctx, store, r.closedID, getActor(), "")
+			}
+		}
+
 		if jsonOutput {
 			if err := outputJSON(map[string]interface{}{
 				"operations": len(results),
@@ -307,6 +326,12 @@ type batchOpResult struct {
 
 	auditOldIssue *types.Issue           `json:"-"`
 	auditUpdates  map[string]interface{} `json:"-"`
+
+	// closedID is the id closed by this op (the close leg, or an update leg
+	// that transitions to status=closed). Used post-commit to run the
+	// auto-close-completed-molecule cascade (beads-8cxe6). Unexported so it is
+	// never emitted in --json output.
+	closedID string
 }
 
 // parseBatchScript reads the whole input and tokenizes each non-empty,
@@ -454,6 +479,9 @@ func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp, session
 		result.auditOldStatus = oldStatus
 		result.auditNewStatus = string(types.StatusClosed)
 		result.auditReason = reason
+		// beads-8cxe6: mark this id closed so the post-commit cascade can
+		// auto-close a completed molecule root (parity with bd close).
+		result.closedID = id
 		return result, nil
 
 	case "update":
@@ -465,12 +493,14 @@ func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp, session
 		if err != nil {
 			return result, err
 		}
+		s, _ := updates["status"].(string)
+		closesIssue := types.Status(s) == types.StatusClosed
 		// beads-szy1h: when this op closes the issue, stamp closed_by_session
 		// from the resolved session, mirroring `bd update --status closed`
 		// (update.go:106-114). tx.UpdateIssue has no session parameter, so — as
 		// on the single-invocation path — the value is injected into the updates
 		// map. Only when a session is present (matching update.go:111-113).
-		if s, ok := updates["status"].(string); ok && types.Status(s) == types.StatusClosed && session != "" {
+		if closesIssue && session != "" {
 			updates["closed_by_session"] = session
 		}
 		// beads-c2pr1/beads-qeb2p: capture the pre-image issue + updates map
@@ -489,6 +519,13 @@ func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp, session
 			return result, err
 		}
 		result.Target = id
+		// beads-8cxe6: an update that transitions to closed is a molecule-step
+		// close too — mark it for the post-commit auto-close cascade, so a
+		// `update <last-step> status=closed` batch leg auto-closes the root,
+		// mirroring `bd update --status closed`.
+		if closesIssue {
+			result.closedID = id
+		}
 		return result, nil
 
 	case "create":
