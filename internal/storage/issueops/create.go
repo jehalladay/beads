@@ -425,6 +425,21 @@ func issueLabel(issue *types.Issue) string {
 
 // PrepareIssueForInsert normalizes timestamps, validates, and computes the content hash.
 func PrepareIssueForInsert(issue *types.Issue, customStatuses, customTypes []string) error {
+	// Trim the title at the shared seam so every create stack matches
+	// `bd create`. TrimSpace is applied only at the cmd RunE
+	// (cmd/bd/create.go) and the batch legs (beads-fo5l1); the seam itself
+	// never trimmed, so create paths that bypass the cmd layer — import
+	// (importIssuesCore → CreateIssuesInTxWithResult) and the domain/proxied
+	// create — stored a padded title verbatim, which is unsearchable by exact
+	// match and breaks the markdown "### Title" round-trip (beads-cm94s, the
+	// shared-write-path normalizer-parity class: dc0rt label / u4rks metadata /
+	// 82pv3 timestamps / 81bfd created_by all landed at this same seam). This
+	// runs before mint in the caller (CreateIssueInTxWithResult), so a padded
+	// title hashes to the same ID as its trimmed form — matching single-create.
+	// Empty-after-trim still trips the len==0 guard in ValidateWithCustom below,
+	// exactly as create.go trims then guards empty.
+	issue.Title = strings.TrimSpace(issue.Title)
+
 	// Reject control characters in metadata before storing — a raw control byte
 	// in the Dolt JSON column re-emits unreadable JSON on readback and bricks
 	// every subsequent list/show/export repo-wide (beads-nc639). Unconditional,

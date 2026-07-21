@@ -822,6 +822,16 @@ func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams,
 	}
 	issue := params.Issue
 
+	// Trim the title so the domain/proxied create matches `bd create`, which
+	// trims at the cmd RunE (cmd/bd/create.go). The domain path does its own
+	// inline validation instead of PrepareIssueForInsert, so it must mirror the
+	// seam trim (beads-cm94s) just as it mirrors label/metadata validation
+	// (dc0rt/u4rks). Before the mint path below — GenerateHashID hashes the
+	// title, so a padded title must trim first to hash to the same ID as its
+	// trimmed form. Empty-after-trim still trips the len==0 guard in
+	// ValidateWithCustom.
+	issue.Title = strings.TrimSpace(issue.Title)
+
 	if issue.Status == "" {
 		issue.Status = types.StatusOpen
 	}
