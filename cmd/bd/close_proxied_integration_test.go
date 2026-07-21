@@ -692,6 +692,30 @@ func TestProxiedServerClose(t *testing.T) {
 		}
 	})
 
+	// beads-jcrp4: the auto-closed molecule ROOT must get the SAME GC-survivable
+	// audit-file trail (.beads/interactions.jsonl) as any explicit close — the
+	// proxied twin of beads-zt47w. Before the fix autoCloseProxiedCompletedMolecule
+	// closed the root in the DB but emitted no field_change, so the root's close
+	// vanished from the durable file (destroyed by a Dolt GC flatten) while the
+	// step's did not. MUTATION-VERIFIED: drop the post-commit auditStatusChange in
+	// runCloseProxiedServer → this subtest goes RED.
+	t.Run("auto_closed_molecule_root_writes_audit_trail_jcrp4", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "acat")
+		root := bdProxiedCreate(t, bd, p.dir, "Molecule root", "-t", "epic", "--labels", "template")
+		s1 := bdProxiedCreate(t, bd, p.dir, "Step 1", "--parent", root.ID)
+		s2 := bdProxiedCreate(t, bd, p.dir, "Step 2", "--parent", root.ID)
+		// Close the final step → cascade auto-closes the root.
+		bdProxiedClose(t, bd, p.dir, s1.ID, s2.ID)
+
+		db := openProxiedDB(t, p)
+		if got := readStatus(t, db, root.ID); got != types.StatusClosed {
+			t.Fatalf("root %s should have auto-closed, got %q", root.ID, got)
+		}
+		if n := countProxiedStatusCloseAudit(t, p.beadsDir, root.ID); n < 1 {
+			t.Errorf("auto-closed molecule root %s has NO GC-survivable audit field_change to status=closed (beads-jcrp4) — the proxied cascade close is invisible after a Dolt GC flatten while a step's close is not", root.ID)
+		}
+	})
+
 	t.Run("hooks_fire_on_close", func(t *testing.T) {
 		marker := filepath.Join(t.TempDir(), "on_close_marker")
 		script := "#!/bin/sh\nprintf '%s\\n' \"$1\" > " + shellQuote(marker) + "\n"
@@ -790,6 +814,42 @@ func TestProxiedServerClose(t *testing.T) {
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// countProxiedStatusCloseAudit counts the status open→closed field_change audit
+// entries for issueID in .beads/interactions.jsonl (beads-jcrp4). Returns 0 if
+// the file is absent. Mirrors the parse in the close_already_closed_is_honest_noop
+// subtest.
+func countProxiedStatusCloseAudit(t *testing.T, beadsDir, issueID string) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(beadsDir, "interactions.jsonl"))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var e struct {
+			Kind    string         `json:"kind"`
+			IssueID string         `json:"issue_id"`
+			Extra   map[string]any `json:"extra"`
+		}
+		if json.Unmarshal([]byte(line), &e) != nil {
+			continue
+		}
+		if e.Kind != "field_change" || e.IssueID != issueID {
+			continue
+		}
+		if f, _ := e.Extra["field"].(string); f != "status" {
+			continue
+		}
+		if nv, _ := e.Extra["new_value"].(string); nv == "closed" {
+			n++
+		}
+	}
+	return n
 }
 
 func TestProxiedServerCloseConcurrent(t *testing.T) {

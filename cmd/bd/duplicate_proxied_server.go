@@ -32,15 +32,15 @@ import (
 // closes it, atomically, over a single proxied UOW.
 func runDuplicateProxiedServer(ctx context.Context, duplicateArg, canonicalArg string) error {
 	return runLinkAndCloseProxied(ctx, linkAndCloseProxiedInput{
-		fromArg:    duplicateArg,
-		toArg:      canonicalArg,
-		toMissing:  "canonical issue not found: %s",
-		selfErr:    "cannot mark an issue as duplicate of itself",
-		depType:    types.DepDuplicates,
-		commitMsg:  "duplicate",
-		successFmt: "%s Marked %s as duplicate of %s (closed)\n",
-		jsonFrom:   "duplicate",
-		jsonTo:     "canonical",
+		fromArg:          duplicateArg,
+		toArg:            canonicalArg,
+		toMissing:        "canonical issue not found: %s",
+		selfErr:          "cannot mark an issue as duplicate of itself",
+		depType:          types.DepDuplicates,
+		commitMsg:        "duplicate",
+		successFmt:       "%s Marked %s as duplicate of %s (closed)\n",
+		jsonFrom:         "duplicate",
+		jsonTo:           "canonical",
 		noChangeFmt:      "%s %s is already a duplicate of %s (no change)\n",
 		alreadyLinkedErr: "%s is already a duplicate of %s — remove the existing duplicates link or reopen %s first (a second canonical would leave %s a duplicate of multiple live issues)",
 	})
@@ -50,15 +50,15 @@ func runDuplicateProxiedServer(ctx context.Context, duplicateArg, canonicalArg s
 // closes it, atomically, over a single proxied UOW.
 func runSupersedeProxiedServer(ctx context.Context, oldArg, newArg string) error {
 	return runLinkAndCloseProxied(ctx, linkAndCloseProxiedInput{
-		fromArg:    oldArg,
-		toArg:      newArg,
-		toMissing:  "replacement issue not found: %s",
-		selfErr:    "cannot mark an issue as superseded by itself",
-		depType:    types.DepSupersedes,
-		commitMsg:  "supersede",
-		successFmt: "%s Marked %s as superseded by %s (closed)\n",
-		jsonFrom:   "superseded",
-		jsonTo:     "replacement",
+		fromArg:          oldArg,
+		toArg:            newArg,
+		toMissing:        "replacement issue not found: %s",
+		selfErr:          "cannot mark an issue as superseded by itself",
+		depType:          types.DepSupersedes,
+		commitMsg:        "supersede",
+		successFmt:       "%s Marked %s as superseded by %s (closed)\n",
+		jsonFrom:         "superseded",
+		jsonTo:           "replacement",
 		noChangeFmt:      "%s %s is already superseded by %s (no change)\n",
 		alreadyLinkedErr: "%s is already superseded by %s — remove the existing supersedes link or reopen %s first (a second replacement would leave %s with multiple live successors)",
 	})
@@ -248,7 +248,7 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 	// call would stage the root-close on a UOW that then gets rolled back by the
 	// deferred Close, silently dropping it). session="" (system action, matching
 	// the direct legs).
-	autoCloseProxiedCompletedMolecule(ctx, uw, fromID, actor, "", isJSONOutput())
+	autoClosedRoot := autoCloseProxiedCompletedMolecule(ctx, uw, fromID, actor, "", isJSONOutput())
 
 	// beads-r3m8v: capture the source's pre-close status for the GC-survivable
 	// audit-file entry emitted after the commit. fromIssue was loaded before the
@@ -276,6 +276,15 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 	// idempotent same-target no-op returned early above, so reaching here always
 	// means a real open→closed transition.
 	auditStatusChange(fromID, fromOldStatus, "closed", actor, fmt.Sprintf("%s of %s", in.commitMsg, toID))
+
+	// beads-jcrp4: same GC-survivable audit-file trail for a molecule/wisp root
+	// the cascade auto-closed (autoCloseProxiedCompletedMolecule above), emitted
+	// AFTER uw.Commit at parity with the source-close audit and the direct
+	// autoCloseCompletedMolecule (beads-zt47w). The root was open (helper guards
+	// Status != closed).
+	if autoClosedRoot != "" {
+		auditStatusChange(autoClosedRoot, "open", "closed", actor, "all steps complete")
+	}
 
 	if isJSONOutput() {
 		return outputJSON(map[string]interface{}{
