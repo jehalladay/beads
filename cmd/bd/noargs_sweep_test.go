@@ -66,6 +66,12 @@ func TestNoArgsSweep_RejectsPositional(t *testing.T) {
 		// discards args), so a query-style typo (bd ready open, bd ready P1) was
 		// silently ignored, printing ALL ready work with rc=0.
 		{"ready"},
+		// beads-lgey3: two more leaves the axis missed. "init" reads its prefix
+		// from --prefix (RunE is func(cmd, _ []string)), so "bd init foo" silently
+		// swallowed foo. "mol ready --gated" (Name()=="ready" under the mol parent)
+		// discovers gate-ready molecules and ignores args entirely.
+		{"init"},
+		{"mol", "ready"},
 	}
 
 	for _, path := range commands {

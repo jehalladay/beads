@@ -34,6 +34,7 @@ import (
 var initCmd = &cobra.Command{
 	Use:           "init",
 	GroupID:       "setup",
+	Args:          cobra.NoArgs, // beads-lgey3: reject stray positionals (prefix is --prefix flag, not positional)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	Short:         "Initialize bd in the current directory",

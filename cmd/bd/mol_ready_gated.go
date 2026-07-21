@@ -28,6 +28,7 @@ type GatedReadyOutput struct {
 
 var molReadyGatedCmd = &cobra.Command{
 	Use:   "ready --gated",
+	Args:  cobra.NoArgs, // beads-lgey3: reject stray positionals (gate discovery takes no positional args)
 	Short: "Find molecules ready for gate-resume dispatch",
 	Long: `Find molecules where a gate has closed and the workflow is ready to resume.
 
