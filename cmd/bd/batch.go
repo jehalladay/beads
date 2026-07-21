@@ -192,6 +192,18 @@ normal 'bd' subcommands for interactive/read operations.`,
 			return HandleErrorRespectJSON("%v", err)
 		}
 
+		// Enforce the child-reopen close-guard (beads-b0tw) for every op in this
+		// batch that reopens a closed issue whose parent epic is closed. The
+		// single-update path guards this at update.go (and `bd reopen`), but
+		// `bd batch update <id> status=open` writes straight to tx.UpdateIssue
+		// below the CLI guard layer, silently recreating the
+		// closed-epic-with-open-child state the close-guard family prevents
+		// (beads-nf1k1, the batch sibling of beads-b0tw). Same read-only,
+		// abort-before-write posture as guardBatchCloses.
+		if err := guardBatchReopens(ctx, store, ops, force); err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
+
 		results := make([]batchOpResult, 0, len(ops))
 		err = transact(ctx, store, commitMsg, func(tx storage.Transaction) error {
 			for _, op := range ops {
@@ -585,6 +597,88 @@ func batchClosesID(op batchOp) (id string, closes bool) {
 		}
 	}
 	return "", false
+}
+
+// batchReopensID reports whether op transitions an issue to open (the only
+// batch verb that can do so is `update <id> status=open`; `bd reopen` is not a
+// batch op) and returns the target id. The single-close `close` verb never
+// reopens. Mirrors batchClosesID for the reopen side (beads-nf1k1).
+func batchReopensID(op batchOp) (id string, reopens bool) {
+	if op.cmd != "update" || len(op.args) < 2 {
+		return "", false
+	}
+	updates, err := parseUpdateKVs(op.args[1:])
+	if err != nil {
+		return "", false
+	}
+	if s, ok := updates["status"].(string); ok && types.Status(s) == types.StatusOpen {
+		return op.args[0], true
+	}
+	return "", false
+}
+
+// guardBatchReopens enforces the child-reopen close-guard (beads-b0tw) for every
+// op in the batch that reopens (status->open) a currently-closed issue whose
+// parent epic is itself closed — mirroring the single-update guard at
+// update.go and the `bd reopen` guard. Reopening such a child recreates the
+// closed-epic-with-open-child state the close-guard family prevents; batch wrote
+// straight to tx.UpdateIssue below the CLI guard layer, dropping it
+// (beads-nf1k1). Same read-only, abort-before-write, order-independent posture
+// as guardBatchCloses.
+//
+// It is batch-aware: an epic parent that is ALSO being reopened in the same
+// batch no longer counts as a blocking closed parent (parity with the willClose
+// exclusion on the close side — reopening child+epic together is consistent).
+//
+// force==true skips the check (the --force override, matching
+// `bd update --status open --force`).
+func guardBatchReopens(ctx context.Context, s storage.DoltStorage, ops []batchOp, force bool) error {
+	if force || s == nil {
+		return nil
+	}
+
+	// Set of ids this batch will transition to open (order-independent), so a
+	// parent epic reopened in the same batch is not treated as still-closed.
+	willReopen := make(map[string]bool)
+	reopenOps := make([]batchOp, 0, len(ops))
+	for _, op := range ops {
+		if id, reopens := batchReopensID(op); reopens {
+			willReopen[id] = true
+			reopenOps = append(reopenOps, op)
+		}
+	}
+	if len(reopenOps) == 0 {
+		return nil
+	}
+
+	for _, op := range reopenOps {
+		id, _ := batchReopensID(op)
+		issue, err := s.GetIssue(ctx, id)
+		if err != nil {
+			// Not found / lookup error: let runBatchOp surface the authoritative
+			// error against the tx. Skip guarding an id we can't read.
+			continue
+		}
+		if issue == nil || issue.Status != types.StatusClosed {
+			// Only a real closed->open transition triggers the guard (matches
+			// the single-update path: issue was closed, new status is open).
+			continue
+		}
+
+		closedEpics := closedEpicParents(ctx, s, id)
+		remaining := make([]string, 0, len(closedEpics))
+		for _, ep := range closedEpics {
+			// An epic parent being reopened in this same batch is no longer a
+			// closed parent by the time the batch commits.
+			if !willReopen[ep] {
+				remaining = append(remaining, ep)
+			}
+		}
+		if len(remaining) > 0 {
+			return fmt.Errorf("line %d (%s): cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override", op.line, op.raw, id, remaining)
+		}
+	}
+	return nil
 }
 
 // guardBatchCloses enforces the close-time integrity guards (blocked-by-open,
