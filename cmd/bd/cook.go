@@ -316,20 +316,46 @@ func outputCookEphemeral(resolved *formula.Formula, runtimeMode bool, inputVars 
 func persistCookFormula(ctx context.Context, resolved *formula.Formula, protoID string, force bool, vars, bondPoints []string) error {
 	// Check if proto already exists
 	existingProto, err := store.GetIssue(ctx, protoID)
-	if err == nil && existingProto != nil {
-		if !force {
-			return fmt.Errorf("proto %s already exists (use --force to replace)", protoID)
-		}
-		// Delete existing proto and its children
-		if err := deleteProtoSubgraph(ctx, store, protoID); err != nil {
-			return fmt.Errorf("deleting existing proto: %w", err)
-		}
+	replacing := err == nil && existingProto != nil
+	if replacing && !force {
+		return fmt.Errorf("proto %s already exists (use --force to replace)", protoID)
 	}
 
-	// Create the proto bead from the formula
-	result, err := cookFormula(ctx, store, resolved, protoID)
-	if err != nil {
-		return fmt.Errorf("cooking formula: %w", err)
+	var result *cookFormulaResult
+	if replacing {
+		// beads-xpnnf: --force replace is a destructive delete-then-recreate. It
+		// previously ran deleteProtoSubgraph and cookFormula as TWO independent
+		// transactions — the delete COMMITTED first, so any DB fault inside the
+		// recreate (CreateIssues/label/dep writes) left the old proto subgraph
+		// permanently GONE with nothing recreated (a data-loss window; the
+		// formula-validation errors are caught earlier in loadAndResolveFormula,
+		// but a mid-write fault is not). Run the delete + recreate in ONE outer
+		// transaction (the ary2n/a8d14/uorhi MULTI-WRITE-ATOMICITY pattern) so a
+		// recreate failure rolls the delete back and the old proto survives. All
+		// reads (loadTemplateSubgraph, collectCookPlan) run BEFORE the tx.
+		subgraph, lerr := loadTemplateSubgraph(ctx, store, protoID)
+		if lerr != nil {
+			return fmt.Errorf("load existing proto: %w", lerr)
+		}
+		plan := collectCookPlan(resolved, protoID)
+		if terr := transact(ctx, store, fmt.Sprintf("bd: recook proto %s", protoID), func(tx storage.Transaction) error {
+			if derr := deleteProtoSubgraphTx(ctx, tx, subgraph); derr != nil {
+				return fmt.Errorf("deleting existing proto: %w", derr)
+			}
+			if cerr := cookPlanTx(ctx, tx, plan); cerr != nil {
+				return fmt.Errorf("cooking formula: %w", cerr)
+			}
+			return nil
+		}); terr != nil {
+			return terr
+		}
+		result = &cookFormulaResult{ProtoID: protoID, Created: len(plan.issues)}
+	} else {
+		// Fresh create (no existing proto): the standalone cookFormula transact.
+		result, err = cookFormula(ctx, store, resolved, protoID)
+		if err != nil {
+			return fmt.Errorf("cooking formula: %w", err)
+		}
 	}
 
 	if jsonOutput {
@@ -814,20 +840,24 @@ func cookFormulaToSubgraphWithVars(f *formula.Formula, protoID string, vars map[
 	return subgraph, nil
 }
 
-// cookFormula creates a proto bead from a resolved formula.
-// protoID is the final ID for the proto (may include a prefix).
-func cookFormula(ctx context.Context, s storage.DoltStorage, f *formula.Formula, protoID string) (*cookFormulaResult, error) {
-	if s == nil {
-		return nil, fmt.Errorf("no database connection")
-	}
+// cookPlan holds the issues/labels/deps collected from a resolved formula,
+// ready to be written to the DB. Collecting them (pure, no DB writes) is split
+// from the write step so `cook --persist --force` can run the collect outside a
+// transaction and the writes inside the SAME transaction as the proto delete
+// (beads-xpnnf atomic delete-then-recreate).
+type cookPlan struct {
+	issues []*types.Issue
+	deps   []*types.Dependency
+	labels []struct{ issueID, label string }
+}
+
+// collectCookPlan builds the full issue/label/dependency set for a resolved
+// formula (pure — no DB access), so the writes can be replayed on any tx.
+func collectCookPlan(f *formula.Formula, protoID string) *cookPlan {
+	plan := &cookPlan{}
 
 	// Map step ID -> created issue ID
 	idMapping := make(map[string]string)
-
-	// Collect all issues and dependencies
-	var issues []*types.Issue
-	var deps []*types.Dependency
-	var labels []struct{ issueID, label string }
 
 	// Determine root title: use {{title}} placeholder if the variable is defined,
 	// otherwise fall back to formula name (GH#852)
@@ -855,43 +885,62 @@ func cookFormula(ctx context.Context, s storage.DoltStorage, f *formula.Formula,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
-	issues = append(issues, rootIssue)
-	labels = append(labels, struct{ issueID, label string }{protoID, MoleculeLabel})
+	plan.issues = append(plan.issues, rootIssue)
+	plan.labels = append(plan.labels, struct{ issueID, label string }{protoID, MoleculeLabel})
 
 	// Collect issues for each step (use protoID as parent for step IDs)
 	// Use labelHandler to extract labels for separate DB storage
-	collectSteps(f.Steps, protoID, idMapping, nil, &issues, &deps, func(issueID, label string) {
-		labels = append(labels, struct{ issueID, label string }{issueID, label})
+	collectSteps(f.Steps, protoID, idMapping, nil, &plan.issues, &plan.deps, func(issueID, label string) {
+		plan.labels = append(plan.labels, struct{ issueID, label string }{issueID, label})
 	})
 
 	// Collect dependencies from depends_on
 	for _, step := range f.Steps {
-		collectDependencies(step, idMapping, &deps)
+		collectDependencies(step, idMapping, &plan.deps)
 	}
+
+	return plan
+}
+
+// cookPlanTx writes a collected cookPlan (issues + labels + deps) on an existing
+// transaction. Shared by cookFormula's own transact and the atomic force path in
+// persistCookFormula (beads-xpnnf).
+func cookPlanTx(ctx context.Context, tx storage.Transaction, plan *cookPlan) error {
+	// Create all issues
+	if err := tx.CreateIssues(ctx, plan.issues, actor); err != nil {
+		return fmt.Errorf("failed to create issues: %w", err)
+	}
+
+	// Add labels
+	for _, l := range plan.labels {
+		if err := tx.AddLabel(ctx, l.issueID, l.label, actor); err != nil {
+			return fmt.Errorf("failed to add label %s to %s: %w", l.label, l.issueID, err)
+		}
+	}
+
+	// Add dependencies
+	for _, dep := range plan.deps {
+		if err := tx.AddDependency(ctx, dep, actor); err != nil {
+			return fmt.Errorf("failed to create dependency: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// cookFormula creates a proto bead from a resolved formula.
+// protoID is the final ID for the proto (may include a prefix).
+func cookFormula(ctx context.Context, s storage.DoltStorage, f *formula.Formula, protoID string) (*cookFormulaResult, error) {
+	if s == nil {
+		return nil, fmt.Errorf("no database connection")
+	}
+
+	plan := collectCookPlan(f, protoID)
 
 	// Create issues, labels, and dependencies in a single atomic transaction.
 	// This prevents orphaned issues if label/dependency creation fails.
 	err := transact(ctx, s, fmt.Sprintf("bd: cook formula %s", protoID), func(tx storage.Transaction) error {
-		// Create all issues
-		if err := tx.CreateIssues(ctx, issues, actor); err != nil {
-			return fmt.Errorf("failed to create issues: %w", err)
-		}
-
-		// Add labels
-		for _, l := range labels {
-			if err := tx.AddLabel(ctx, l.issueID, l.label, actor); err != nil {
-				return fmt.Errorf("failed to add label %s to %s: %w", l.label, l.issueID, err)
-			}
-		}
-
-		// Add dependencies
-		for _, dep := range deps {
-			if err := tx.AddDependency(ctx, dep, actor); err != nil {
-				return fmt.Errorf("failed to create dependency: %w", err)
-			}
-		}
-
-		return nil
+		return cookPlanTx(ctx, tx, plan)
 	})
 
 	if err != nil {
@@ -900,7 +949,7 @@ func cookFormula(ctx context.Context, s storage.DoltStorage, f *formula.Formula,
 
 	return &cookFormulaResult{
 		ProtoID: protoID,
-		Created: len(issues),
+		Created: len(plan.issues),
 	}, nil
 }
 
@@ -983,14 +1032,24 @@ func deleteProtoSubgraph(ctx context.Context, s storage.DoltStorage, protoID str
 
 	// Delete in reverse order (children first)
 	return transact(ctx, s, fmt.Sprintf("bd: delete proto subgraph %s", protoID), func(tx storage.Transaction) error {
-		for i := len(subgraph.Issues) - 1; i >= 0; i-- {
-			issue := subgraph.Issues[i]
-			if err := tx.DeleteIssue(ctx, issue.ID); err != nil {
-				return fmt.Errorf("delete %s: %w", issue.ID, err)
-			}
-		}
-		return nil
+		return deleteProtoSubgraphTx(ctx, tx, subgraph)
 	})
+}
+
+// deleteProtoSubgraphTx runs the delete writes of an already-loaded proto
+// subgraph on an existing transaction (beads-xpnnf). Splitting the tx-body out
+// lets `cook --persist --force` run the delete + the recreate in ONE outer
+// transaction (persistCookFormula) so a recreate failure rolls the destructive
+// delete back — the standalone deleteProtoSubgraph wrapper (loadTemplateSubgraph
+// read + its own transact) is kept for any other caller.
+func deleteProtoSubgraphTx(ctx context.Context, tx storage.Transaction, subgraph *TemplateSubgraph) error {
+	for i := len(subgraph.Issues) - 1; i >= 0; i-- {
+		issue := subgraph.Issues[i]
+		if err := tx.DeleteIssue(ctx, issue.ID); err != nil {
+			return fmt.Errorf("delete %s: %w", issue.ID, err)
+		}
+	}
+	return nil
 }
 
 // printFormulaSteps prints steps in a tree format.
