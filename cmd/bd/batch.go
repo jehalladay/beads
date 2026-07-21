@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -281,6 +282,31 @@ normal 'bd' subcommands for interactive/read operations.`,
 		for _, r := range results {
 			if r.closedID != "" {
 				autoCloseCompletedMolecule(ctx, store, r.closedID, getActor(), "")
+			}
+		}
+
+		// on_close hook parity (beads-7o4av): a batch `update <id>
+		// status=closed` leg reaches the SAME terminal closed state as `bd
+		// close` and the single `bd update --status closed` path (beads-vn7dl),
+		// both of which fire on_close. But the batch update leg dispatches
+		// through tx.UpdateIssue (runBatchOp "update" case) →
+		// hookTrackingTransaction.UpdateIssue, which records ONLY EventUpdate
+		// (hook_decorator.go) — so on_close automation (notifications,
+		// downstream sync, GC/archival) silently did not run for a
+		// close-via-batch-update. Fire the missing EventClose here, mirroring
+		// the single-invocation path (update.go:790-800). Scope to the "update"
+		// op only: the batch "close" op goes through tx.CloseIssue, which the
+		// tracking tx already records as EventClose (no double-fire). Guard on a
+		// real open→closed transition (pre-image not already closed) so a no-op
+		// re-close leg does not spuriously fire, at parity with the single path.
+		if runner := getHookRunner(); runner != nil {
+			for _, r := range results {
+				if r.Op == "update" && r.closedID != "" &&
+					r.auditOldIssue != nil && r.auditOldIssue.Status != types.StatusClosed {
+					if after, err := store.GetIssue(ctx, r.closedID); err == nil && after != nil {
+						_ = runner.RunSync(hooks.EventClose, after)
+					}
+				}
 			}
 		}
 
