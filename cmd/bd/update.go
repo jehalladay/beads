@@ -586,7 +586,7 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 			if newStatus, ok := updates["status"].(string); ok && !forceFlag &&
 				types.Status(newStatus) == types.StatusOpen && issue.Status == types.StatusClosed {
 				if closedEpics := closedEpicParents(ctx, issueStore, result.ResolvedID); len(closedEpics) > 0 {
-					reportItemError("cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override", id, closedEpics)
+					reportItemError("cannot reopen %s: its parent %v is closed; reopen the parent first or use --force to override", id, closedEpics)
 					closeIfUnmutated(result)
 					continue
 				}

@@ -367,8 +367,8 @@ func TestProxiedServerReopen(t *testing.T) {
 		bdProxiedClose(t, bd, p.dir, child.ID)
 		bdProxiedClose(t, bd, p.dir, epic.ID) // last child closed → epic closes clean
 		out := bdProxiedReopenFail(t, bd, p.dir, child.ID)
-		if !strings.Contains(out, "its parent epic") || !strings.Contains(out, "is closed") {
-			t.Errorf("expected closed-epic-parent guard error, got: %s", out)
+		if !strings.Contains(out, "its parent") || !strings.Contains(out, "is closed") {
+			t.Errorf("expected closed-parent guard error, got: %s", out)
 		}
 		db := openProxiedDB(t, p)
 		if got := readStatus(t, db, child.ID); got != types.StatusClosed {

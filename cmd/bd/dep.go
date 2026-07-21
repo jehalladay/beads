@@ -431,24 +431,29 @@ Examples:
 			Type:        dt,
 		}
 
-		// Closed-epic-parent guard (beads-eth8): attaching an OPEN child to an
-		// already-CLOSED epic via a parent-child edge silently creates the
-		// closed-epic-with-open-child inconsistency the close-guard family
-		// prevents ("a closed epic has no open children" is enforced at
-		// epic-close, but never re-checked when a new parent-child edge is added
-		// afterwards). Here `bd dep add <child> <epic> --type parent-child` maps
-		// child->fromID (IssueID) and epic->toID (DependsOnID). Refuse unless
+		// Closed-parent guard (beads-eth8): attaching an OPEN child to an
+		// already-CLOSED parent via a parent-child edge silently creates the
+		// closed-parent-with-open-child inconsistency the close-guard family
+		// prevents ("a closed parent has no open children" is enforced at
+		// close, but never re-checked when a new parent-child edge is added
+		// afterwards). Here `bd dep add <child> <parent> --type parent-child` maps
+		// child->fromID (IssueID) and parent->toID (DependsOnID). Refuse unless
 		// --force, mirroring `bd close --force`. Best-effort: only guards when
 		// both endpoints resolve in fromStore (same-store, non-external); a
 		// cross-rig/external parent is left to the normal path.
+		//
+		// beads-aw9x8: the parent-type test uses the shared isAutoClosingParentType
+		// (epic OR molecule OR ephemeral), not a bare TypeEpic check, so an open
+		// child can't be attached to a closed molecule/wisp root either — the same
+		// widening applied to the reopen guard (closedEpicParents).
 		depForce, _ := cmd.Flags().GetBool("force")
 		if !depForce && dt == types.DepParentChild && !isExternalRef {
 			parent, perr := fromStore.GetIssue(ctx, toID)
 			child, cerr := fromStore.GetIssue(ctx, fromID)
 			if perr == nil && cerr == nil && parent != nil && child != nil &&
-				parent.IssueType == types.TypeEpic && parent.Status == types.StatusClosed &&
+				isAutoClosingParentType(parent) && parent.Status == types.StatusClosed &&
 				child.Status != types.StatusClosed {
-				return HandleErrorRespectJSON("cannot add %s as a child of closed epic %s: it would leave the closed epic with an open child; reopen the epic, close the child first, or use --force to override", fromID, toID)
+				return HandleErrorRespectJSON("cannot add %s as a child of closed parent %s: it would leave the closed parent with an open child; reopen the parent, close the child first, or use --force to override", fromID, toID)
 			}
 		}
 

@@ -178,7 +178,7 @@ func reopenProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string,
 	// (cmd/bd/reopen.go); the proxied handler skipped it. Overridable with --force.
 	if !force {
 		if closedEpics := proxiedClosedEpicParents(ctx, uw, id, isWisp); len(closedEpics) > 0 {
-			reportItemErr("cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override", id, closedEpics)
+			reportItemErr("cannot reopen %s: its parent %v is closed; reopen the parent first or use --force to override", id, closedEpics)
 			return reopenProxiedOutcome{}, false
 		}
 		// Superseded-issue guard (beads-8sjb3), mirrored on the proxied path

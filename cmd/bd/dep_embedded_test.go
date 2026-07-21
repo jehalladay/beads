@@ -794,8 +794,8 @@ func TestEmbeddedDepAddClosedEpicParentGuard(t *testing.T) {
 		epic := newClosedEpic(t, "cr")
 		child := bdCreate(t, bd, dir, "cr child", "--type", "task") // open
 		out := bdDepAddFail(t, bd, dir, child.ID, epic, "--type", "parent-child")
-		if !strings.Contains(out, "closed epic") {
-			t.Errorf("expected closed-epic-parent dep-add guard message, got:\n%s", out)
+		if !strings.Contains(out, "closed parent") {
+			t.Errorf("expected closed-parent dep-add guard message, got:\n%s", out)
 		}
 		// The edge must not have been added (guard fired before AddDependency).
 		deps := showDeps(t, bd, dir, child.ID)

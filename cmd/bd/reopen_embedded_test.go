@@ -331,8 +331,8 @@ func TestEmbeddedReopenClosedEpicParentGuard(t *testing.T) {
 	t.Run("reopen_verb_closed_epic_parent_refuses", func(t *testing.T) {
 		epic, child := seedClosedEpicClosedChild(t, "rv")
 		out := bdReopenFail(t, bd, dir, child.ID)
-		if !strings.Contains(out, "parent epic") || !strings.Contains(out, "is closed") {
-			t.Errorf("expected closed-epic-parent guard message, got:\n%s", out)
+		if !strings.Contains(out, "its parent") || !strings.Contains(out, "is closed") {
+			t.Errorf("expected closed-parent guard message, got:\n%s", out)
 		}
 		// Child must stay closed (guard refused + no mutation).
 		if got := bdShow(t, bd, dir, child.ID); got.Status != types.StatusClosed {
@@ -345,8 +345,8 @@ func TestEmbeddedReopenClosedEpicParentGuard(t *testing.T) {
 	t.Run("update_status_open_closed_epic_parent_refuses", func(t *testing.T) {
 		_, child := seedClosedEpicClosedChild(t, "uv")
 		out := bdUpdateFail(t, bd, dir, child.ID, "--status", "open")
-		if !strings.Contains(out, "parent epic") || !strings.Contains(out, "is closed") {
-			t.Errorf("expected closed-epic-parent guard message on update path, got:\n%s", out)
+		if !strings.Contains(out, "its parent") || !strings.Contains(out, "is closed") {
+			t.Errorf("expected closed-parent guard message on update path, got:\n%s", out)
 		}
 		if got := bdShow(t, bd, dir, child.ID); got.Status != types.StatusClosed {
 			t.Errorf("child should remain closed after refused update --status open, got %s", got.Status)

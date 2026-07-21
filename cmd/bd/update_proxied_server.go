@@ -331,7 +331,7 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 	if newStatus, ok := fields["status"].(string); ok &&
 		types.Status(newStatus) == types.StatusOpen && current.Status == types.StatusClosed {
 		if closedEpics := proxiedClosedEpicParents(ctx, uw, id, isWisp); len(closedEpics) > 0 {
-			return fmt.Errorf("cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override", id, closedEpics)
+			return fmt.Errorf("cannot reopen %s: its parent %v is closed; reopen the parent first or use --force to override", id, closedEpics)
 		}
 	}
 
@@ -352,8 +352,11 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 	return nil
 }
 
-// proxiedClosedEpicParents returns the IDs of the issue's parent epics that are
-// themselves closed, mirroring cmd/bd/close.go closedEpicParents over the UOW.
+// proxiedClosedEpicParents returns the IDs of the issue's parents that are
+// themselves closed auto-closing roots (epic/molecule/wisp), mirroring
+// cmd/bd/close.go closedEpicParents over the UOW. beads-aw9x8: uses the shared
+// isAutoClosingParentType so the proxied reopen/update guards fire for a closed
+// molecule/ephemeral root too, in lockstep with the direct path.
 func proxiedClosedEpicParents(ctx context.Context, uw uow.UnitOfWork, id string, isWisp bool) []string {
 	deps, err := proxiedListDeps(ctx, uw, id, isWisp, domain.DepListFilter{Direction: domain.DepDirectionOut})
 	if err != nil {
@@ -362,7 +365,7 @@ func proxiedClosedEpicParents(ctx context.Context, uw uow.UnitOfWork, id string,
 	var parents []string
 	for _, dep := range deps {
 		if dep.DependencyType == types.DepParentChild &&
-			dep.Issue.IssueType == types.TypeEpic &&
+			isAutoClosingParentType(&dep.Issue) &&
 			dep.Issue.Status == types.StatusClosed {
 			parents = append(parents, dep.Issue.ID)
 		}

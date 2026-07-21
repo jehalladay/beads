@@ -613,6 +613,32 @@ func autoCloseCompletedMolecule(ctx context.Context, s storage.DoltStorage, clos
 	}
 }
 
+// isAutoClosingParentType reports whether a CLOSED parent of this type
+// participates in the "a closed parent has no open children" invariant that the
+// close-guard family (beads-2hkd/b0tw/eth8) enforces. It matches every type that
+// can END UP a closed parent while a child stays open: epics (closed manually,
+// or auto-closed when template-labeled) plus the auto-closing molecule and
+// ephemeral (wisp) roots that shouldAutoCloseCompletedRoot closes on last-step
+// close.
+//
+// This is the SINGLE source of truth for the parent-type membership shared by
+// the close/auto-close side (shouldAutoCloseCompletedRoot, which consumes it as
+// a precondition) and the reopen/dep-add guard side (closedEpicParents /
+// dep.go's parent-child guard). The two sides drifted in beads-aw9x8: the guards
+// filtered TypeEpic only, so closing a molecule/wisp root's final step
+// auto-closed the root and a later child reopen sailed past the guard, silently
+// recreating the closed-root-with-open-child state the family exists to prevent.
+// Keeping both sides on this helper makes the guard side unable to drift
+// narrower than the auto-close side again.
+func isAutoClosingParentType(issue *types.Issue) bool {
+	if issue == nil {
+		return false
+	}
+	return issue.IssueType == types.TypeEpic ||
+		issue.IssueType == types.TypeMolecule ||
+		issue.Ephemeral
+}
+
 // shouldAutoCloseCompletedRoot returns true for molecule roots that should
 // auto-close when their final step closes. Regular epics stay open and become
 // explicit close-eligible work, while ephemeral wisps, template-driven
@@ -622,14 +648,20 @@ func shouldAutoCloseCompletedRoot(root *types.Issue) bool {
 		return false
 	}
 
+	// Only the closed-parent-invariant participant types are auto-close
+	// candidates; anything else stays open. Sharing isAutoClosingParentType with
+	// the guard side ties the two together (beads-aw9x8).
+	if !isAutoClosingParentType(root) {
+		return false
+	}
+
 	if root.IssueType == types.TypeMolecule || root.Ephemeral {
 		return true
 	}
 
-	if root.IssueType != types.TypeEpic {
-		return false
-	}
-
+	// Remaining candidate is an epic: auto-close only when template-driven; a
+	// plain epic stays open (still guarded on reopen because the guard uses the
+	// full isAutoClosingParentType membership, not this label-gated predicate).
 	for _, label := range root.Labels {
 		if label == BeadsTemplateLabel {
 			return true
@@ -753,16 +785,22 @@ func countEpicOpenChildren(ctx context.Context, s storage.DoltStorage, epicID st
 	return count
 }
 
-// closedEpicParents returns the IDs of any CLOSED epic parents of childID (its
-// parent-child dependencies whose parent is an epic in the closed state). It is
-// the child-side mirror of countEpicOpenChildren: the "a closed epic has no open
-// children" invariant is enforced at epic-close time, but a child transitioning
-// back to open (via `bd reopen` or `bd update --status open`) would silently
-// recreate a closed-epic-with-open-child state. Callers use this to refuse such a
-// reopen unless --force (beads-b0tw, the child-reopen sibling of the beads-2hkd
-// close-guard family). Best-effort: a lookup error yields no parents (fail-open
-// to the normal reopen rather than blocking on a transient query error), matching
-// countEpicOpenChildren's error posture.
+// closedEpicParents returns the IDs of any CLOSED auto-closing parents of childID
+// (its parent-child dependencies whose parent is a closed epic/molecule/wisp
+// root). It is the child-side mirror of countEpicOpenChildren: the "a closed
+// parent has no open children" invariant is enforced at parent-close time, but a
+// child transitioning back to open (via `bd reopen` or `bd update --status open`)
+// would silently recreate a closed-parent-with-open-child state. Callers use this
+// to refuse such a reopen unless --force (beads-b0tw, the child-reopen sibling of
+// the beads-2hkd close-guard family). Best-effort: a lookup error yields no
+// parents (fail-open to the normal reopen rather than blocking on a transient
+// query error), matching countEpicOpenChildren's error posture.
+//
+// beads-aw9x8: the type test uses the shared isAutoClosingParentType, not a bare
+// TypeEpic check, so it also fires for the molecule/ephemeral roots that
+// auto-close on last-step close — otherwise reopening a step of an auto-closed
+// molecule/wisp root bypasses the guard. (Name kept for its many callers; the
+// error text says "parent" not "parent epic".)
 func closedEpicParents(ctx context.Context, s storage.DoltStorage, childID string) []string {
 	deps, err := s.GetDependenciesWithMetadata(ctx, childID)
 	if err != nil {
@@ -771,7 +809,7 @@ func closedEpicParents(ctx context.Context, s storage.DoltStorage, childID strin
 	var parents []string
 	for _, dep := range deps {
 		if dep.DependencyType == types.DepParentChild &&
-			dep.Issue.IssueType == types.TypeEpic &&
+			isAutoClosingParentType(&dep.Issue) &&
 			dep.Issue.Status == types.StatusClosed {
 			parents = append(parents, dep.Issue.ID)
 		}

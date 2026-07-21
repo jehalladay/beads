@@ -132,7 +132,7 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 			// guard above returned for every non-closed status).
 			if !forceFlag {
 				if closedEpics := closedEpicParents(ctx, issueStore, fullID); len(closedEpics) > 0 {
-					reportReopenItemError("cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override", fullID, closedEpics)
+					reportReopenItemError("cannot reopen %s: its parent %v is closed; reopen the parent first or use --force to override", fullID, closedEpics)
 					hasError = true
 					result.Close()
 					continue
