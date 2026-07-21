@@ -217,27 +217,38 @@ func CreateIssueFromFormValues(ctx context.Context, s storage.DoltStorage, fv *c
 		}
 	}
 
-	if err := s.CreateIssue(ctx, issue, actor); err != nil {
-		return nil, fmt.Errorf("failed to create issue: %w", err)
+	// beads-14m3s: the create-FORM sibling of the a8d14 create atomicity fix.
+	// Previously CreateIssue self-committed the issue and then each parent/deps
+	// edge was best-effort (Warning + continue), so a create whose issue
+	// succeeded but whose edge write failed left a durable issue MISSING its
+	// declared edges — while the atomic proxied create twin buffers the same
+	// writes on one UOW. Parse+validate ALL edges up-front (no writes — an
+	// invalid dep-type / format is still surfaced before anything is created),
+	// then wrap CreateIssue + every AddDependency in ONE transaction so an edge
+	// failure rolls the issue back too. Mirrors create.go's transactHonoring-
+	// AutoCommit wrap exactly (same commit semantics the old shouldCommitCreate-
+	// PostWrites gate produced: version commit in server + embedded-autocommit-on,
+	// SQL-only otherwise).
+	//
+	// beads-1gvh4: for an AUTO-GENERATED id (a form create with --deps but no
+	// --parent), issue.ID is EMPTY here — it is only minted inside tx.CreateIssue.
+	// So capture only the edge target+type up-front and build the actual
+	// types.Dependency (which needs issue.ID) INSIDE the closure, after the id is
+	// minted; capturing issue.ID now would store an edge with an empty endpoint.
+	type pendingEdge struct {
+		dependsOnID string
+		depType     types.DependencyType
 	}
+	var pendingEdges []pendingEdge
 
-	// Track whether any post-create writes occurred. In embedded mode,
-	// CreateIssue writes the SQL working set and the caller must commit it.
-	// Subsequent AddDependency calls also need a follow-up Dolt commit.
-	postCreateWrites := false
-
-	// If parent was specified, add parent-child dependency (GH#1983)
+	// If parent was specified, add parent-child dependency (GH#1983). (With a
+	// parent, issue.ID is already the reserved child id, but keep the same
+	// build-inside-tx shape for all edges.)
 	if fv.ParentID != "" {
-		dep := &types.Dependency{
-			IssueID:     issue.ID,
-			DependsOnID: fv.ParentID,
-			Type:        types.DepParentChild,
-		}
-		if err := s.AddDependency(ctx, dep, actor); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to add parent-child dependency %s -> %s: %v\n", issue.ID, fv.ParentID, err)
-		} else {
-			postCreateWrites = true
-		}
+		pendingEdges = append(pendingEdges, pendingEdge{
+			dependsOnID: fv.ParentID,
+			depType:     types.DepParentChild,
+		})
 	}
 
 	// Add dependencies if specified
@@ -268,32 +279,41 @@ func CreateIssueFromFormValues(ctx context.Context, s storage.DoltStorage, fv *c
 			continue
 		}
 
-		dep := &types.Dependency{
-			IssueID:     issue.ID,
-			DependsOnID: dependsOnID,
-			Type:        depType,
-		}
-		if err := s.AddDependency(ctx, dep, actor); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s: %v\n", issue.ID, dependsOnID, err)
-		} else {
-			postCreateWrites = true
-		}
+		pendingEdges = append(pendingEdges, pendingEdge{
+			dependsOnID: dependsOnID,
+			depType:     depType,
+		})
 	}
 
-	// Match bd create: server-mode writes version themselves, while embedded
-	// create commits pending writes only when auto-commit is on.
-	shouldCommit, err := shouldCommitCreatePostWrites(issue, postCreateWrites)
-	if err != nil {
-		return nil, fmt.Errorf("dolt auto-commit: %w", err)
+	// beads-1gvh4: transactHonoringAutoCommit needs a non-empty commit msg (an
+	// empty msg makes StageAndCommit skip the version commit). For an auto-gen id
+	// issue.ID is still empty here, so fall back to the title.
+	idOrTitle := issue.ID
+	if idOrTitle == "" {
+		idOrTitle = fmt.Sprintf("%q", issue.Title)
 	}
-	if shouldCommit {
-		commitMsg := fmt.Sprintf("bd: create %s", issue.ID)
-		if postCreateWrites {
-			commitMsg = fmt.Sprintf("bd: create %s (metadata)", issue.ID)
+	commitMsg := fmt.Sprintf("bd: create %s", idOrTitle)
+	if len(pendingEdges) > 0 {
+		commitMsg = fmt.Sprintf("bd: create %s (metadata)", idOrTitle)
+	}
+	if err := transactHonoringAutoCommit(ctx, s, commitMsg, func(tx storage.Transaction) error {
+		if err := tx.CreateIssue(ctx, issue, actor); err != nil {
+			return fmt.Errorf("failed to create issue: %w", err)
 		}
-		if err := s.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
-			WarnError("failed to commit post-create metadata: %v", err)
+		// issue.ID is now minted by tx.CreateIssue — build each edge with it.
+		for _, e := range pendingEdges {
+			dep := &types.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: e.dependsOnID,
+				Type:        e.depType,
+			}
+			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+				return fmt.Errorf("failed to add dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
+			}
 		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	return issue, nil
