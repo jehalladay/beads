@@ -652,6 +652,7 @@ var rulesAuditCmd = &cobra.Command{
 var rulesCompactCmd = &cobra.Command{
 	Use:           "compact",
 	Short:         "Merge related rules into composites",
+	Args:          cobra.NoArgs, // beads-zrp4s: reject stray positionals (compact takes no positional args, only flags)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runRulesCompact,

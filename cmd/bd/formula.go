@@ -56,6 +56,7 @@ Examples:
   bd formula list --json
   bd formula list --type workflow
   bd formula list --type convoy`,
+	Args:          cobra.NoArgs, // beads-zrp4s: reject stray positionals (list takes no positional args, only flags; sibling formulaShowCmd uses ExactArgs(1))
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runFormulaList,

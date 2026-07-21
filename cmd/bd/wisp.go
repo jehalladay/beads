@@ -589,6 +589,7 @@ Examples:
   bd mol wisp gc --closed --dry-run                 # Explicit dry-run (same as no --force)
   bd mol wisp gc --exclude-type agent,rig           # Protect agent and rig wisps from GC
   bd mol wisp gc --closed --force --exclude-type mol # Delete closed wisps except mol type`,
+	Args:          cobra.NoArgs, // beads-zrp4s: reject stray positionals (gc takes no positional args, only flags)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runWispGC,

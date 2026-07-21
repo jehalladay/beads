@@ -60,6 +60,7 @@ any user-supplied text.
 var metricsOnCmd = &cobra.Command{
 	Use:           "on",
 	Short:         "Turn anonymous usage metrics on",
+	Args:          cobra.NoArgs, // beads-zrp4s: reject stray positionals (sibling metricsExampleCmd already guarded by 8jy7e)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -89,6 +90,7 @@ var metricsOnCmd = &cobra.Command{
 var metricsOffCmd = &cobra.Command{
 	Use:           "off",
 	Short:         "Turn anonymous usage metrics off",
+	Args:          cobra.NoArgs, // beads-zrp4s: reject stray positionals (sibling metricsExampleCmd already guarded by 8jy7e)
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
