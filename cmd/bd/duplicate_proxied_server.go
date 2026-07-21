@@ -97,15 +97,44 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 	// Resolve both issues on the UOW. GetIssue accepts a full ID; the proxied
 	// resolve helper also falls back to wisp lookup, matching the direct path's
 	// ResolvePartialID+GetIssue which resolves either.
-	fromIssue, _ := proxiedResolveIssueOrWisp(ctx, uw, in.fromArg)
+	// beads-pm1kh: capture the isWisp bool from BOTH resolutions. pega7 fixed the
+	// DIRECT store.LinkAndClose to auto-detect wisp-source routing; this proxied
+	// twin previously DISCARDED the bool (`fromIssue, _ := ...`) and then routed
+	// every source-side operation (guard-list, AddDependency, CloseIssue) to the
+	// permanent issues/dependencies tables unconditionally — so a wisp-source
+	// duplicate/supersede on a hub-connected crew failed with "issue <wisp> not
+	// found" (the edge INSERT SELECTs issue_type FROM issues WHERE id=<wisp>).
+	// The domain UOW splits every table-routed op into an issue and a wisp
+	// variant, so the CLI handler must pick per resolved kind — mirroring the
+	// direct store's isActiveWisp auto-detect.
+	fromIssue, fromIsWisp := proxiedResolveIssueOrWisp(ctx, uw, in.fromArg)
 	if fromIssue == nil {
 		return HandleErrorRespectJSON("failed to resolve %s: not found", in.fromArg)
 	}
-	toIssue, _ := proxiedResolveIssueOrWisp(ctx, uw, in.toArg)
+	toIssue, toIsWisp := proxiedResolveIssueOrWisp(ctx, uw, in.toArg)
 	if toIssue == nil {
 		return HandleErrorRespectJSON(in.toMissing, in.toArg)
 	}
 	fromID, toID := fromIssue.ID, toIssue.ID
+
+	// depsFor / addDep / closeFrom route to the wisp-backed tables when the
+	// relevant endpoint resolved as a wisp, so the guards actually see the
+	// stored edges and the write lands in wisp_dependencies (not the empty
+	// issues side). Guard queries key off the endpoint being inspected; the
+	// edge write + close key off the SOURCE (fromID) — matching how the direct
+	// store routes by dep.IssueID.
+	depsForFrom := func(ctx context.Context) ([]*types.IssueWithDependencyMetadata, error) {
+		if fromIsWisp {
+			return uw.DependencyUseCase().ListWispWithIssueMetadata(ctx, fromID, domain.DepListFilter{})
+		}
+		return uw.DependencyUseCase().ListWithIssueMetadata(ctx, fromID, domain.DepListFilter{})
+	}
+	depsForTo := func(ctx context.Context) ([]*types.IssueWithDependencyMetadata, error) {
+		if toIsWisp {
+			return uw.DependencyUseCase().ListWispWithIssueMetadata(ctx, toID, domain.DepListFilter{})
+		}
+		return uw.DependencyUseCase().ListWithIssueMetadata(ctx, toID, domain.DepListFilter{})
+	}
 
 	if fromID == toID {
 		return HandleErrorRespectJSON("%s", in.selfErr)
@@ -117,7 +146,7 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 	// duplicate.go guard; supersede is a distinct case the bead did not cover).
 	// Tell: canonical is closed AND has an outgoing "duplicates" edge.
 	if in.depType == types.DepDuplicates && toIssue.Status == types.StatusClosed {
-		canonicalDeps, derr := uw.DependencyUseCase().ListWithIssueMetadata(ctx, toID, domain.DepListFilter{})
+		canonicalDeps, derr := depsForTo(ctx)
 		if derr != nil {
 			return HandleErrorRespectJSON("checking canonical %s: %v", toID, derr)
 		}
@@ -136,7 +165,7 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 	// cycleCheckTypesFor; an acyclic version chain v1→v2→v3 stays legal (v3 has no
 	// back-edge to v2). Tell: the replacement (toID) already supersedes fromID.
 	if in.depType == types.DepSupersedes {
-		toDeps, derr := uw.DependencyUseCase().ListWithIssueMetadata(ctx, toID, domain.DepListFilter{})
+		toDeps, derr := depsForTo(ctx)
 		if derr != nil {
 			return HandleErrorRespectJSON("checking replacement %s: %v", toID, derr)
 		}
@@ -157,7 +186,7 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 	// is not a bypass — dfzre lesson). Same-target → idempotent no-op (rc0, reflect
 	// the stored target); different-target → reject. Mirrors the direct
 	// duplicate.go/runSupersede guards so the hub-connected path is not a bypass.
-	fromDeps, derr := uw.DependencyUseCase().ListWithIssueMetadata(ctx, fromID, domain.DepListFilter{})
+	fromDeps, derr := depsForFrom(ctx)
 	if derr != nil {
 		return HandleErrorRespectJSON("checking %s: %v", fromID, derr)
 	}
@@ -186,11 +215,25 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 		DependsOnID: toID,
 		Type:        in.depType,
 	}
-	if err := uw.DependencyUseCase().AddDependency(ctx, dep, actor); err != nil {
-		return HandleErrorRespectJSON("failed to add %s dependency: %v", in.depType, err)
-	}
-	if _, err := uw.IssueUseCase().CloseIssue(ctx, fromID, domain.CloseIssueParams{}, actor); err != nil {
-		return HandleErrorRespectJSON("failed to close %s: %v", fromID, err)
+	// Route the edge write + close by the SOURCE kind (beads-pm1kh). A wisp
+	// source's edge belongs in wisp_dependencies and its close on the wisps
+	// table; AddDependency/CloseIssue (issues side) would SELECT the wisp from
+	// the issues table and fail "not found". Mirrors the direct store, which
+	// auto-detects via isActiveWisp(dep.IssueID).
+	if fromIsWisp {
+		if err := uw.DependencyUseCase().AddWispDependency(ctx, dep, actor); err != nil {
+			return HandleErrorRespectJSON("failed to add %s dependency: %v", in.depType, err)
+		}
+		if _, err := uw.IssueUseCase().CloseWisp(ctx, fromID, domain.CloseIssueParams{}, actor); err != nil {
+			return HandleErrorRespectJSON("failed to close %s: %v", fromID, err)
+		}
+	} else {
+		if err := uw.DependencyUseCase().AddDependency(ctx, dep, actor); err != nil {
+			return HandleErrorRespectJSON("failed to add %s dependency: %v", in.depType, err)
+		}
+		if _, err := uw.IssueUseCase().CloseIssue(ctx, fromID, domain.CloseIssueParams{}, actor); err != nil {
+			return HandleErrorRespectJSON("failed to close %s: %v", fromID, err)
+		}
 	}
 	// Single commit: edge + close land together or not at all (njnw atomicity).
 	if err := uw.Commit(ctx, in.commitMsg); err != nil && !isDoltNothingToCommit(err) {
