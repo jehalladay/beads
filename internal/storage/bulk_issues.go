@@ -15,5 +15,12 @@ type BulkIssueStore interface {
 	ClaimIssue(ctx context.Context, id string, actor string) error
 	ClaimReadyIssue(ctx context.Context, filter types.WorkFilter, actor string) (*types.Issue, error)
 	PromoteFromEphemeral(ctx context.Context, id string, actor string) error
+	// PromoteFromEphemeralWithComment promotes a wisp AND records the promotion
+	// comment in a SINGLE transaction, so a comment-write failure rolls back the
+	// promotion instead of leaving the bead promoted with the audit comment
+	// silently dropped (beads-kdvfe). The direct path historically ran promote +
+	// AddIssueComment as two independent commits; the proxied UOW path is already
+	// atomic (one uw.Commit), and this brings the direct path to parity.
+	PromoteFromEphemeralWithComment(ctx context.Context, id, actor, comment string) (*types.Comment, error)
 	GetNextChildID(ctx context.Context, parentID string) (string, error)
 }

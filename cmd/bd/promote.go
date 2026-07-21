@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
@@ -79,24 +78,25 @@ Examples:
 			return HandleErrorRespectJSON("%s is not a wisp (already persistent)", fullID)
 		}
 
-		if err := store.PromoteFromEphemeral(ctx, fullID, actor); err != nil {
-			return HandleErrorRespectJSON("promoting %s: %v", fullID, err)
-		}
-
 		comment := "Promoted from wisp to permanent bead"
 		if reason != "" {
 			comment += ": " + reason
 		}
-		// beads-9l1it: write the promotion record (and user --reason) to the
-		// COMMENTS table via AddIssueComment, NOT the events table via
-		// AddComment. bd show / bd comments read GetIssueComments (comments
-		// table); AddComment lands an EventCommented row that no read surface
-		// surfaces, so the documented "A comment is added recording the
-		// promotion and optional reason." was silently invisible. This mirrors
-		// the already-correct proxied path (runPromoteProxiedServer →
-		// CommentUseCase().AddComment → AddIssueCommentInTx).
-		if _, err := store.AddIssueComment(ctx, fullID, actor, comment); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to add promotion comment to %s: %v\n", fullID, err)
+		// beads-9l1it: record the promotion (and user --reason) in the COMMENTS
+		// table, NOT the events table — bd show / bd comments read
+		// GetIssueComments (comments table); an EventCommented row no read surface
+		// surfaces would leave the documented "A comment is added recording the
+		// promotion and optional reason." silently invisible.
+		//
+		// beads-kdvfe: promote AND its recording comment run in ONE transaction
+		// (PromoteFromEphemeralWithComment) so a comment-write failure rolls back
+		// the promotion instead of leaving the bead promoted with the audit comment
+		// silently dropped under a success (RC=0) exit. This was two independent
+		// commits (PromoteFromEphemeral then AddIssueComment, the latter downgraded
+		// to a stderr Warning); the proxied path (runPromoteProxiedServer) was
+		// already atomic via a single uw.Commit — this brings direct to parity.
+		if _, err := store.PromoteFromEphemeralWithComment(ctx, fullID, actor, comment); err != nil {
+			return HandleErrorRespectJSON("promoting %s: %v", fullID, err)
 		}
 
 		commandDidWrite.Store(true)

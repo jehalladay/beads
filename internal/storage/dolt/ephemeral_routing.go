@@ -194,6 +194,32 @@ func (s *DoltStore) PromoteFromEphemeral(ctx context.Context, id string, actor s
 	return nil
 }
 
+// PromoteFromEphemeralWithComment runs the promotion AND its recording comment
+// in ONE transaction (beads-kdvfe). Both the wisp->issues move and the comment
+// INSERT execute on the same *sql.Tx, then a single DOLT_COMMIT lands them
+// atomically — so if the comment write fails, the whole unit rolls back and the
+// wisp stays a wisp (no silently-dropped promotion comment on a promoted bead).
+// The comment routes to the permanent comments table because
+// PromoteFromEphemeralInTx has already deleted the wisp row by the time
+// AddIssueCommentInTx runs its IsActiveWispInTx routing check.
+func (s *DoltStore) PromoteFromEphemeralWithComment(ctx context.Context, id, actor, comment string) (*types.Comment, error) {
+	var result *types.Comment
+	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
+		if err := issueops.PromoteFromEphemeralInTx(ctx, tx, id, actor); err != nil {
+			return err
+		}
+		c, err := issueops.AddIssueCommentInTx(ctx, tx, id, actor, comment)
+		if err != nil {
+			return fmt.Errorf("record promotion comment for %s: %w", id, err)
+		}
+		result = c
+		return s.doltAddAndCommitInTx(ctx, tx, permanentIssueAuxTables, fmt.Sprintf("bd: promote %s", id))
+	}); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // DemoteToWisp moves an issue from the issues table to the wisps table.
 // This is the inverse of PromoteFromEphemeral. It applies any provided updates
 // (e.g., setting no_history or ephemeral) without recording an intermediate

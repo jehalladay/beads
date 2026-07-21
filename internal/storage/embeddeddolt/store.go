@@ -729,6 +729,30 @@ func (s *EmbeddedDoltStore) PromoteFromEphemeral(ctx context.Context, id string,
 	})
 }
 
+// PromoteFromEphemeralWithComment runs the promotion AND its recording comment
+// on the same connection/transaction so they commit atomically (beads-kdvfe) —
+// a comment failure rolls back the promotion. The comment routes to the
+// permanent comments table because the wisp row is already deleted by
+// PromoteFromEphemeralInTx before AddIssueCommentInTx checks wisp routing.
+func (s *EmbeddedDoltStore) PromoteFromEphemeralWithComment(ctx context.Context, id, actor, comment string) (*types.Comment, error) {
+	var result *types.Comment
+	err := s.withConn(ctx, true, func(tx *sql.Tx) error {
+		if err := issueops.PromoteFromEphemeralInTx(ctx, tx, id, actor); err != nil {
+			return err
+		}
+		c, cerr := issueops.AddIssueCommentInTx(ctx, tx, id, actor, comment)
+		if cerr != nil {
+			return fmt.Errorf("record promotion comment for %s: %w", id, cerr)
+		}
+		result = c
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // GetNextChildID is implemented in child_id.go.
 
 // ---------------------------------------------------------------------------
