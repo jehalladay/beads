@@ -207,6 +207,18 @@ Force: Delete and orphan dependents
 		updatedIssueCount := 0
 		totalDepsRemoved := 0
 		deleteErr := transactHonoringAutoCommit(ctx, activeStore, fmt.Sprintf("bd: delete %s", issueID), func(tx storage.Transaction) error {
+			// beads-if01i: reset the accumulators at closure entry.
+			// transactHonoringAutoCommit → RunInTransaction → withRetry
+			// re-invokes this closure on a retryable error (serialization
+			// conflict 1213/1205, pre-commit connection blip) from a
+			// rolled-back state; without the reset a retry adds each attempt's
+			// increments on top of the last, inflating the reported
+			// "Removed N dependency link(s)" / "Updated text references in N
+			// issue(s)" (human + --json). The SQL tx itself rolls back per
+			// attempt, so only the report drifted. Same class as t0h3z
+			// (burn/squash/batch); the single-delete leg was out of its scope.
+			updatedIssueCount = 0
+			totalDepsRemoved = 0
 			for id, connIssue := range connectedIssues {
 				updates := make(map[string]interface{})
 				// beads-lj36j: rewrite the title too, matching the domain
