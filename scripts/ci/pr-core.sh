@@ -19,6 +19,12 @@ beads_test_env_enter
 
 GO_TEST_PKG_PARALLEL="${GO_TEST_PKG_PARALLEL:-4}"
 GO_TEST_PARALLEL="${GO_TEST_PARALLEL:-4}"
+# beads-2hfxw7: the -race -short gate has no explicit -timeout, so it inherits
+# Go's 10m default. Under shared-runner / high-contention load the full -race
+# suite runs past 10m and the gate fails as a false timeout, throttling the
+# merge queue. Raise the ceiling to 20m (overridable) to match the regression
+# gate's REGRESSION_TIMEOUT default.
+PR_CORE_TEST_TIMEOUT="${PR_CORE_TEST_TIMEOUT:-20m}"
 
 ci_time "pr-core go test" -- \
-    go test -p "$GO_TEST_PKG_PARALLEL" -parallel "$GO_TEST_PARALLEL" -race -short -skip '^TestEmbedded' ./...
+    go test -p "$GO_TEST_PKG_PARALLEL" -parallel "$GO_TEST_PARALLEL" -race -short -timeout "$PR_CORE_TEST_TIMEOUT" -skip '^TestEmbedded' ./...
