@@ -259,6 +259,22 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, forc
 		}
 	}
 
+	// beads-9y2f3: on a genuine open->closed transition, run the completed-molecule
+	// auto-close cascade — the PROXIED twin of the direct fix (beads-zzp26). The
+	// direct `bd update --status closed` (update.go) and the proxied CLOSE path
+	// (close_proxied_server.go) both auto-close a molecule/wisp root when its FINAL
+	// step closes; only the proxied UPDATE path dropped it, so closing a molecule's
+	// last step via `bd update --status closed` on a hub-connected crew left the
+	// root stuck OPEN. Reuses the SAME helper the proxied close path uses, and runs
+	// BEFORE uw.Commit so the staged root-close lands in this same commit (a
+	// post-commit call would be rolled back by the deferred uw.Close — same
+	// ordering constraint as the proxied supersede/duplicate leg, beads-26gea).
+	// session="" (system action). Guarded to the real open->closed transition,
+	// matching checkProxiedUpdateCloseGuards' condition.
+	if updated != nil && updated.Status == types.StatusClosed && current.Status != types.StatusClosed {
+		autoCloseProxiedCompletedMolecule(ctx, uw, id, actor, "", isJSONOutput())
+	}
+
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: update %s", id)); err != nil && !isDoltNothingToCommit(err) {
 		reportItemError("Error committing %s: %v", id, err)
 		return nil, false
