@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -229,11 +230,15 @@ The --reason flag provides context for the event bead (recommended).`,
 			eventDesc += "\n\nReason: " + reason
 		}
 
-		var eventID string
+		// GetNextChildID is a READ and is NOT on the Transaction interface, so
+		// resolve childID BEFORE opening the tx (mirrors beads-ary2n, where the
+		// swarm reads stayed outside RunInTransaction because Transaction lacked
+		// GetDependents).
 		childID, err := store.GetNextChildID(ctx, fullID)
 		if err != nil {
 			return HandleErrorRespectJSON("generating child ID: %v", err)
 		}
+		eventID := childID
 
 		event := &types.Issue{
 			ID:          childID,
@@ -244,37 +249,58 @@ The --reason flag provides context for the event bead (recommended).`,
 			IssueType:   types.TypeEvent,
 			CreatedBy:   getActorWithGit(),
 		}
-		if err := store.CreateIssue(ctx, event, actor); err != nil {
-			return HandleErrorRespectJSON("creating event: %v", err)
-		}
 
-		dep := &types.Dependency{
-			IssueID:     childID,
-			DependsOnID: fullID,
-			Type:        types.DepParentChild,
-		}
-		if err := store.AddDependency(ctx, dep, actor); err != nil {
-			WarnError("failed to add parent-child dependency: %v", err)
-		}
-
-		eventID = childID
-
-		// beads-brk7c: remove every existing label for this dimension (including
-		// stale siblings), not just the first match.
-		for _, oldLabel := range oldLabels {
-			if oldLabel == newLabel {
-				continue // will be (re)added below; skip a redundant remove/add churn
+		// beads-pdzyv: wrap the create-event + parent-child link + label churn in
+		// a single transaction so the sequence is all-or-nothing, mirroring the
+		// atomic PROXIED twin (runSetStateProxiedServer buffers the same writes on
+		// one UnitOfWork + a single uw.Commit) and the graph_apply.go
+		// RunInTransaction precedent. Without the tx, store.CreateIssue autocommits
+		// the event internally (GH#2009) while the link/label writes only touch the
+		// working set — a hard failure on AddLabel (or a crash before the deferred
+		// maybeAutoCommit flush) left the event durably committed but unlinked and
+		// unlabeled: an orphan invisible to `bd state list` (label-driven) and to
+		// child traversal, with each retry minting a fresh childID (duplicate-on-retry).
+		if err := store.RunInTransaction(ctx, fmt.Sprintf("bd: set-state %s %s=%s", fullID, dimension, newValue), func(tx storage.Transaction) error {
+			if err := tx.CreateIssue(ctx, event, actor); err != nil {
+				return fmt.Errorf("creating event: %w", err)
 			}
-			if err := store.RemoveLabel(ctx, fullID, oldLabel, actor); err != nil {
-				WarnError("failed to remove old label %s: %v", oldLabel, err)
-			}
-		}
 
-		if err := store.AddLabel(ctx, fullID, newLabel, actor); err != nil {
-			return HandleErrorRespectJSON("adding label: %v", err)
+			dep := &types.Dependency{
+				IssueID:     childID,
+				DependsOnID: fullID,
+				Type:        types.DepParentChild,
+			}
+			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+				// Preserve the pre-pdzyv non-fatal semantics for the link, but now
+				// inside the tx so a genuine failure does not silently strand the
+				// event: warn and continue (a warned-but-committed link is fine;
+				// the all-or-nothing boundary is what prevents the orphan).
+				WarnError("failed to add parent-child dependency: %v", err)
+			}
+
+			// beads-brk7c: remove every existing label for this dimension (including
+			// stale siblings), not just the first match.
+			for _, oldLabel := range oldLabels {
+				if oldLabel == newLabel {
+					continue // will be (re)added below; skip a redundant remove/add churn
+				}
+				if err := tx.RemoveLabel(ctx, fullID, oldLabel, actor); err != nil {
+					WarnError("failed to remove old label %s: %v", oldLabel, err)
+				}
+			}
+
+			if err := tx.AddLabel(ctx, fullID, newLabel, actor); err != nil {
+				return fmt.Errorf("adding label: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		commandDidWrite.Store(true)
+		// RunInTransaction commits atomically; skip the deferred maybeAutoCommit
+		// double-commit (mirrors the swarm/gate atomic-twin fixes).
+		commandDidExplicitDoltCommit = true
 
 		if jsonOutput {
 			result := map[string]interface{}{
