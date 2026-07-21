@@ -193,8 +193,16 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 					args = append(args, "Closed")
 				}
 			case newStatus != types.StatusClosed && oldStatus == types.StatusClosed:
-				setClauses = append(setClauses, "closed_at = ?")
-				args = append(args, nil)
+				// beads-9gp5d: clear close_reason and closed_by_session alongside
+				// closed_at on reopen, mirroring the direct shared seam
+				// (issueops.ManageClosedAt reopen branch, beads-ni2ph, which
+				// appends all three unconditionally). Clearing only closed_at left
+				// a stale close_reason/closed_by_session on the proxied
+				// `bd update --status open` path — a contradictory
+				// "open but closed by session X" row (the exact state ni2ph fixed
+				// on the direct path).
+				setClauses = append(setClauses, "closed_at = ?", "close_reason = ?", "closed_by_session = ?")
+				args = append(args, nil, "", "")
 			}
 		}
 
