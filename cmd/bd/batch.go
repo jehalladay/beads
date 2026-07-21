@@ -829,6 +829,26 @@ func guardBatchReopens(ctx context.Context, s storage.DoltStorage, ops []batchOp
 		if len(remaining) > 0 {
 			return fmt.Errorf("line %d (%s): cannot reopen %s: its parent epic %v is closed; reopen the epic first or use --force to override", op.line, op.raw, id, remaining)
 		}
+
+		// beads-62kkf: `bd batch update <id> status=open` reaches the SAME
+		// closed->open terminal state as `bd reopen` and `bd update --status
+		// open`, but this guard originally wired ONLY the closed-epic-parent
+		// check above (beads-nf1k1, the batch twin of beads-b0tw). It dropped the
+		// supersede (beads-8sjb3) and duplicate (beads-8nugc) reopen guards that
+		// the single reopen path (reopen.go:146-167) and `bd update --status
+		// open` (beads-50dto) both enforce. Since supersedes/duplicates are
+		// NON-blocking edges, reopening a superseded/duplicate issue via batch
+		// recreated the contradictory "open but superseded/duplicate" state AND
+		// made the issue REAPPEAR in `bd ready` as actionable work — exactly the
+		// harm those guards prevent. Mirror both here (same messages/hints, same
+		// --force override) so the closed->open legs don't diverge across the
+		// single/batch entry points.
+		if supersedes := supersededByTargets(ctx, s, id); len(supersedes) > 0 {
+			return fmt.Errorf("line %d (%s): cannot reopen %s: it is superseded by %v; remove the supersedes link (bd dep remove %s <target> --type supersedes) or use --force to override", op.line, op.raw, id, supersedes, id)
+		}
+		if dups := duplicatesTargets(ctx, s, id); len(dups) > 0 {
+			return fmt.Errorf("line %d (%s): cannot reopen %s: it is a duplicate of %v; remove the duplicates link (bd dep remove %s <target> --type duplicates) or use --force to override", op.line, op.raw, id, dups, id)
+		}
 	}
 	return nil
 }
