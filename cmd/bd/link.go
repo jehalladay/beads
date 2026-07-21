@@ -43,8 +43,8 @@ Examples:
 
 		// beads-8csa: hub-connected (proxied-server) crew have a nil `store`;
 		// route through the UOW instead of fromStore.AddDependency. Mirrors the
-		// direct path's validation exactly (IsValid only — NOT the IsWellKnown
-		// gate; see runLinkProxiedServer).
+		// direct path's validation (IsValid + IsWellKnown, beads-tsu3m restored
+		// the gate parity; see runLinkProxiedServer).
 		if usesProxiedServer() {
 			return runLinkProxiedServer(ctx, id1, id2, depType)
 		}

@@ -49,12 +49,10 @@ func TestProxiedServerLink(t *testing.T) {
 		}
 	})
 
-	// beads-8csa is routing-ONLY: it must preserve the direct link path's exact
-	// validation (dt.IsValid(), NOT the IsWellKnown gate). An arbitrary type that
-	// passes IsValid must be ACCEPTED on the proxied path just as it is directly
-	// — otherwise we'd trade the nil-store bug for the OPPOSITE asymmetry (whether
-	// link should reject unknown types is beads-9v0d, owned elsewhere).
-	t.Run("arbitrary_valid_type_accepted_like_direct", func(t *testing.T) {
+	// beads-tsu3m: the proxied link path now gates unknown types on IsWellKnown,
+	// matching the DIRECT link path (beads-9v0d landed that gate AFTER beads-8csa
+	// created this handler). A well-known-but-non-default type is still ACCEPTED.
+	t.Run("wellknown_nondefault_type_accepted", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "lnk3")
 		a := bdProxiedCreate(t, bd, p.dir, "Arb A", "--type", "task")
 		b := bdProxiedCreate(t, bd, p.dir, "Arb B", "--type", "task")
@@ -63,7 +61,31 @@ func TestProxiedServerLink(t *testing.T) {
 			t.Fatalf("proxied bd link --type discovered-from failed: %v\n%s", err, out)
 		}
 		if !strings.Contains(string(out), "Linked") {
-			t.Errorf("expected valid type accepted: %s", out)
+			t.Errorf("expected well-known type accepted: %s", out)
+		}
+	})
+
+	// beads-tsu3m (the bug): an UNKNOWN dependency type (typo like "blockd") must
+	// be REJECTED on the proxied path just as the direct path rejects it (9v0d).
+	// Before the fix the proxied handler was IsValid()-only, so this typo'd edge
+	// was silently PERSISTED rc=0 as a non-gating custom edge and the dependent
+	// stayed ready — a silent-gate-drift false-success. Mutation-verify: assert
+	// both the non-zero exit AND that no edge persisted.
+	t.Run("unknown_type_rejected_and_not_persisted", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "lnk5")
+		a := bdProxiedCreate(t, bd, p.dir, "Typo A", "--type", "task")
+		b := bdProxiedCreate(t, bd, p.dir, "Typo B", "--type", "task")
+		out, err := bdProxiedRun(t, bd, p.dir, "link", a.ID, b.ID, "--type", "blockd")
+		if err == nil {
+			t.Fatalf("proxied bd link --type blockd must be rejected (unknown type), but succeeded:\n%s", out)
+		}
+		if !strings.Contains(string(out), "unknown dependency type") {
+			t.Errorf("expected 'unknown dependency type' rejection, got: %s", out)
+		}
+		// The false-success bug persisted the bad edge; verify it did NOT.
+		list := bdProxiedRunOrFail(t, bd, p.dir, "dep", "list", a.ID)
+		if strings.Contains(list, b.ID) {
+			t.Errorf("rejected link must not persist an edge (tsu3m false-success): %s", list)
 		}
 	})
 

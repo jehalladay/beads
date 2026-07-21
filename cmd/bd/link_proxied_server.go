@@ -16,13 +16,13 @@ import (
 // uowProvider is set, before store init) → 'storage is nil' for hub-connected
 // crew. Route it through the UOW instead.
 //
-// IMPORTANT: this mirrors the DIRECT link path's validation EXACTLY — dt.IsValid()
-// only, NOT the IsWellKnown gate that runDepAddProxiedServer applies (beads-qfka).
-// Delegating to runDepAddProxiedServer would make proxied `bd link` REJECT unknown
-// types the direct path accepts, i.e. trade one direct-vs-proxied asymmetry for
-// the opposite one. Whether `bd link` should reject unknown types at all is a
-// separate question tracked by beads-9v0d (owned elsewhere); this fix is
-// routing-only and must not change link's accept/reject behavior.
+// This mirrors the DIRECT link path's validation (link.go): dt.IsValid() then
+// dt.IsWellKnown(). beads-9v0d landed the IsWellKnown gate on the direct path
+// (parity with `bd dep add`/qfka and `bd create --deps`) AFTER beads-8csa
+// created this handler, so the earlier "IsValid-only, do not gate" note here
+// went stale — leaving the proxied twin ungated meant hub-connected crew could
+// silently persist a typo'd non-gating edge (e.g. "blockd") rc=0 while direct
+// crew got rejected. beads-tsu3m restores parity by applying the same gate.
 func runLinkProxiedServer(ctx context.Context, id1, id2, depType string) error {
 	if isChildOf(id1, id2) {
 		return HandleErrorRespectJSON("cannot add dependency: %s is already a child of %s. Children inherit dependency on parent completion via hierarchy. Adding an explicit dependency would create a deadlock", id1, id2)
@@ -31,6 +31,14 @@ func runLinkProxiedServer(ctx context.Context, id1, id2, depType string) error {
 	dt := types.DependencyType(depType)
 	if !dt.IsValid() {
 		return HandleErrorRespectJSON("invalid dependency type %q: must be non-empty and at most 32 characters", depType)
+	}
+	// beads-tsu3m: reject unknown types for parity with the DIRECT link path
+	// (beads-9v0d), `bd dep add` (qfka / runDepAddProxiedServer), and
+	// `bd create --deps` — all gate on IsWellKnown. Without this, a typo'd
+	// blocking type was silently stored as a non-gating custom edge and the
+	// dependent stayed ready.
+	if !dt.IsWellKnown() {
+		return HandleErrorRespectJSON("unknown dependency type %q; valid types: %s", depType, createDepsAcceptedTypeList())
 	}
 
 	uw := openDepProxiedUOW(ctx)
