@@ -481,8 +481,8 @@ func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp, session
 		if err != nil {
 			return result, fmt.Errorf("create: %w", err)
 		}
-		title := strings.Join(op.args[2:], " ")
-		if strings.TrimSpace(title) == "" {
+		title := strings.TrimSpace(strings.Join(op.args[2:], " "))
+		if title == "" {
 			return result, fmt.Errorf("create: title cannot be empty")
 		}
 		issue := &types.Issue{
@@ -716,7 +716,13 @@ func parseUpdateKVs(kvs []string) (map[string]interface{}, error) {
 			}
 			updates["priority"] = p
 		case "title":
-			if strings.TrimSpace(value) == "" {
+			// beads-fo5l1: trim before storing, mirroring `bd update --title`
+			// (update.go:119) and `bd create` (create.go:119). Storing the raw
+			// padded value made `bd batch update title="  x  "` unsearchable /
+			// mis-sorted vs its intended value — a loop→batch parity regression,
+			// sibling of the assignee fix (beads-5k1y6) in this same switch.
+			value = strings.TrimSpace(value)
+			if value == "" {
 				return nil, fmt.Errorf("update: title cannot be empty")
 			}
 			updates["title"] = value

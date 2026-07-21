@@ -215,6 +215,15 @@ func TestParseUpdateKVs(t *testing.T) {
 			want: map[string]interface{}{"title": "new title"},
 		},
 		{
+			// beads-fo5l1: batch update title must be trimmed before storage,
+			// mirroring `bd update --title` (update.go:119) and `bd create`
+			// (create.go:119). A raw padded title is unsearchable/mis-sorted —
+			// same class as the assignee sibling (beads-5k1y6) in this switch.
+			name: "title padded value trimmed",
+			in:   []string{"title=  hello world  "},
+			want: map[string]interface{}{"title": "hello world"},
+		},
+		{
 			name: "assignee blank allowed (unassign)",
 			in:   []string{"assignee="},
 			want: map[string]interface{}{"assignee": ""},
@@ -281,6 +290,13 @@ func TestParseUpdateKVs(t *testing.T) {
 		{
 			name:    "empty title",
 			in:      []string{"title="},
+			wantErr: true,
+		},
+		{
+			// beads-fo5l1: whitespace-only title rejected after trimming,
+			// matching the single-command paths.
+			name:    "whitespace-only title rejected",
+			in:      []string{"title=   "},
 			wantErr: true,
 		},
 		{
