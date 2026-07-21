@@ -271,7 +271,7 @@ func runADOPush(cmd *cobra.Command, args []string) error {
 
 	engine := tracker.NewEngine(at, store, actor)
 	engine.OnMessage = func(msg string) { fmt.Println("  " + msg) }
-	engine.OnWarning = func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
+	engine.OnWarning = func(msg string) { emitSyncWarningStderr(os.Stderr, msg) } // beads-exw0r: json-guard (envelope-backed via outputSyncResult)
 
 	result, err := engine.Sync(ctx, tracker.SyncOptions{
 		Push:     true,
@@ -319,7 +319,7 @@ func runADOPull(cmd *cobra.Command, args []string) error {
 	engine := tracker.NewEngine(at, store, actor)
 	engine.PullHooks = buildADOPullHooks(ctx, at, false, false, new(int), engine.OnWarning)
 	engine.OnMessage = func(msg string) { fmt.Println("  " + msg) }
-	engine.OnWarning = func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
+	engine.OnWarning = func(msg string) { emitSyncWarningStderr(os.Stderr, msg) } // beads-exw0r: json-guard (envelope-backed via outputSyncResult)
 
 	result, err := engine.Sync(ctx, tracker.SyncOptions{
 		Pull:     true,
@@ -367,7 +367,7 @@ func runJiraPush(cmd *cobra.Command, args []string) error {
 
 	engine := tracker.NewEngine(jt, store, actor)
 	engine.OnMessage = func(msg string) { fmt.Println("  " + msg) }
-	engine.OnWarning = func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
+	engine.OnWarning = func(msg string) { emitSyncWarningStderr(os.Stderr, msg) } // beads-exw0r: json-guard (envelope-backed via outputSyncResult)
 	engine.PushHooks = buildJiraPushHooks(ctx)
 
 	result, err := engine.Sync(ctx, tracker.SyncOptions{
@@ -414,7 +414,7 @@ func runJiraPull(cmd *cobra.Command, args []string) error {
 
 	engine := tracker.NewEngine(jt, store, actor)
 	engine.OnMessage = func(msg string) { fmt.Println("  " + msg) }
-	engine.OnWarning = func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
+	engine.OnWarning = func(msg string) { emitSyncWarningStderr(os.Stderr, msg) } // beads-exw0r: json-guard (envelope-backed via outputSyncResult)
 
 	result, err := engine.Sync(ctx, tracker.SyncOptions{
 		Pull:     true,
@@ -483,7 +483,7 @@ func runLinearPush(cmd *cobra.Command, args []string) error {
 
 	engine := tracker.NewEngine(lt, store, actor)
 	engine.OnMessage = func(msg string) { fmt.Println("  " + msg) }
-	engine.OnWarning = func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
+	engine.OnWarning = func(msg string) { emitSyncWarningStderr(os.Stderr, msg) } // beads-exw0r: json-guard (envelope-backed via outputSyncResult)
 	engine.PushHooks = buildLinearPushHooks(ctx, lt, len(args) > 0)
 
 	result, err := engine.Sync(ctx, tracker.SyncOptions{
@@ -547,7 +547,7 @@ func runLinearPull(cmd *cobra.Command, args []string) error {
 
 	engine := tracker.NewEngine(lt, store, actor)
 	engine.OnMessage = func(msg string) { fmt.Println("  " + msg) }
-	engine.OnWarning = func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
+	engine.OnWarning = func(msg string) { emitSyncWarningStderr(os.Stderr, msg) } // beads-exw0r: json-guard (envelope-backed via outputSyncResult)
 	engine.PullHooks = buildLinearPullHooks(ctx, linearPullHookOptions{
 		DryRun: dryRun,
 		Actor:  actor,
@@ -601,7 +601,7 @@ func runGitHubPush(cmd *cobra.Command, args []string) error {
 
 	engine := tracker.NewEngine(gt, store, actor)
 	engine.OnMessage = func(msg string) { fmt.Println("  " + msg) }
-	engine.OnWarning = func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
+	engine.OnWarning = func(msg string) { emitSyncWarningStderr(os.Stderr, msg) } // beads-exw0r: json-guard (envelope-backed via outputSyncResult)
 
 	result, err := engine.Sync(ctx, tracker.SyncOptions{
 		Push:     true,
@@ -649,7 +649,7 @@ func runGitHubPull(cmd *cobra.Command, args []string) error {
 	engine := tracker.NewEngine(gt, store, actor)
 	engine.PullHooks = buildGitHubPullHooks(ctx)
 	engine.OnMessage = func(msg string) { fmt.Println("  " + msg) }
-	engine.OnWarning = func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
+	engine.OnWarning = func(msg string) { emitSyncWarningStderr(os.Stderr, msg) } // beads-exw0r: json-guard (envelope-backed via outputSyncResult)
 
 	result, err := engine.Sync(ctx, tracker.SyncOptions{
 		Pull:     true,
@@ -698,7 +698,7 @@ func runGitLabPush(cmd *cobra.Command, args []string) error {
 
 	engine := tracker.NewEngine(gt, store, actor)
 	engine.OnMessage = func(msg string) { fmt.Println("  " + msg) }
-	engine.OnWarning = func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
+	engine.OnWarning = func(msg string) { emitSyncWarningStderr(os.Stderr, msg) } // beads-exw0r: json-guard (envelope-backed via outputSyncResult)
 
 	result, err := engine.Sync(ctx, tracker.SyncOptions{
 		Push:     true,
@@ -746,7 +746,7 @@ func runGitLabPull(cmd *cobra.Command, args []string) error {
 	engine := tracker.NewEngine(gt, store, actor)
 	engine.PullHooks = buildGitLabPullHooks(ctx)
 	engine.OnMessage = func(msg string) { fmt.Println("  " + msg) }
-	engine.OnWarning = func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
+	engine.OnWarning = func(msg string) { emitSyncWarningStderr(os.Stderr, msg) } // beads-exw0r: json-guard (envelope-backed via outputSyncResult)
 
 	result, err := engine.Sync(ctx, tracker.SyncOptions{
 		Pull:     true,
@@ -801,7 +801,7 @@ func runNotionPush(cmd *cobra.Command, args []string) error {
 	unsupportedStats := newNotionUnsupportedPushStats()
 	engine.PushHooks = buildNotionPushHooks(ctx, nt, unsupportedStats)
 	engine.OnMessage = func(msg string) { fmt.Println("  " + msg) }
-	engine.OnWarning = func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
+	engine.OnWarning = func(msg string) { emitSyncWarningStderr(os.Stderr, msg) } // beads-exw0r: json-guard (envelope-backed via outputSyncResult)
 
 	result, syncErr := engine.Sync(ctx, tracker.SyncOptions{
 		Push:             true,
@@ -854,7 +854,7 @@ func runNotionPull(cmd *cobra.Command, args []string) error {
 	engine := tracker.NewEngine(nt, store, actor)
 	engine.PullHooks = buildNotionPullHooks(ctx)
 	engine.OnMessage = func(msg string) { fmt.Println("  " + msg) }
-	engine.OnWarning = func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
+	engine.OnWarning = func(msg string) { emitSyncWarningStderr(os.Stderr, msg) } // beads-exw0r: json-guard (envelope-backed via outputSyncResult)
 
 	result, syncErr := engine.Sync(ctx, tracker.SyncOptions{
 		Pull:     true,
