@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -319,12 +318,15 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 		for _, mf := range metadataFieldFlags {
 			k, v, ok := strings.Cut(mf, "=")
 			if !ok || k == "" {
-				fmt.Fprintf(os.Stderr, "Error: invalid --metadata-field: expected key=value, got %q\n", mf)
-				os.Exit(1)
+				// beads-7cnyb: honor --json (JSON {error} on STDOUT), parity with
+				// the direct ready.go:299 HandleErrorRespectJSON twin. Sibling of
+				// beads-ag3ru, which fixed the other 4 legs in this same function
+				// but left these 3 metadata legs on bare fmt.Fprintf+os.Exit.
+				FatalErrorRespectJSON("invalid --metadata-field: expected key=value, got %q", mf)
 			}
 			if err := storage.ValidateMetadataKey(k); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: invalid --metadata-field key: %v\n", err)
-				os.Exit(1)
+				// beads-7cnyb: parity with direct ready.go:302.
+				FatalErrorRespectJSON("invalid --metadata-field key: %v", err)
 			}
 			in.filter.MetadataFields[k] = v
 		}
@@ -332,8 +334,8 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 	hasMetadataKey, _ := cmd.Flags().GetString("has-metadata-key")
 	if hasMetadataKey != "" {
 		if err := storage.ValidateMetadataKey(hasMetadataKey); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: invalid --has-metadata-key: %v\n", err)
-			os.Exit(1)
+			// beads-7cnyb: parity with direct ready.go:310.
+			FatalErrorRespectJSON("invalid --has-metadata-key: %v", err)
 		}
 		in.filter.HasMetadataKey = hasMetadataKey
 	}
