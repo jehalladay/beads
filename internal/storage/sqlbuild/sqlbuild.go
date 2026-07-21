@@ -39,6 +39,7 @@ const IssueSelectColumns = `id, content_hash, title, description, design, accept
 	       status, priority, issue_type, assignee, estimated_minutes,
 	       created_at, created_by, owner, updated_at, started_at, closed_at, external_ref, spec_id,
 	       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+	       closed_by_session,
 	       sender, ephemeral, no_history, wisp_type, pinned, is_template,
 	       await_type, await_id, timeout_ns, waiters,
 	       mol_type,

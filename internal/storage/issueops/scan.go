@@ -33,7 +33,7 @@ func ScanIssueFrom(s IssueScanner, extra ...any) (*types.Issue, error) {
 	var estimatedMinutes, originalSize, timeoutNs sql.NullInt64
 	var createdBy sql.NullString
 	var assignee, externalRef, specID, compactedAtCommit, owner sql.NullString
-	var contentHash, sourceRepo, closeReason sql.NullString
+	var contentHash, sourceRepo, closeReason, closedBySession sql.NullString
 	var workType, sourceSystem sql.NullString
 	var sender, wispType, molType, eventKind, actor, target, payload sql.NullString
 	var awaitType, awaitID, waiters sql.NullString
@@ -46,6 +46,7 @@ func ScanIssueFrom(s IssueScanner, extra ...any) (*types.Issue, error) {
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&createdAtStr, &createdBy, &owner, &updatedAtStr, &startedAt, &closedAt, &externalRef, &specID,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
+		&closedBySession,
 		&sender, &ephemeral, &noHistory, &wispType, &pinned, &isTemplate,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&molType,
@@ -109,6 +110,9 @@ func ScanIssueFrom(s IssueScanner, extra ...any) (*types.Issue, error) {
 	}
 	if closeReason.Valid {
 		issue.CloseReason = closeReason.String
+	}
+	if closedBySession.Valid {
+		issue.ClosedBySession = closedBySession.String
 	}
 	if sender.Valid {
 		issue.Sender = sender.String

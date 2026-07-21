@@ -166,16 +166,19 @@ func TestManageClosedAt(t *testing.T) {
 		}
 	})
 
-	t.Run("reopening a closed issue clears closed_at and reason", func(t *testing.T) {
+	t.Run("reopening a closed issue clears closed_at, reason, and session", func(t *testing.T) {
 		t.Parallel()
 		old := &types.Issue{Status: types.StatusClosed}
 		updates := map[string]interface{}{"status": string(types.StatusOpen)}
 		clauses, args := ManageClosedAt(old, updates, nil, nil)
-		if len(clauses) != 2 || clauses[0] != "closed_at = ?" || clauses[1] != "close_reason = ?" {
-			t.Fatalf("expected [closed_at = ?, close_reason = ?], got %v", clauses)
+		// beads-ni2ph: closed_by_session is cleared alongside closed_at/close_reason
+		// (all three are set together by bd close); the read fix made a stale
+		// post-reopen session observable.
+		if len(clauses) != 3 || clauses[0] != "closed_at = ?" || clauses[1] != "close_reason = ?" || clauses[2] != "closed_by_session = ?" {
+			t.Fatalf("expected [closed_at = ?, close_reason = ?, closed_by_session = ?], got %v", clauses)
 		}
-		if len(args) != 2 || args[0] != nil || args[1] != "" {
-			t.Fatalf("expected [nil, \"\"], got %v", args)
+		if len(args) != 3 || args[0] != nil || args[1] != "" || args[2] != "" {
+			t.Fatalf("expected [nil, \"\", \"\"], got %v", args)
 		}
 	})
 

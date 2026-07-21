@@ -253,8 +253,16 @@ func ManageClosedAt(oldIssue *types.Issue, updates map[string]interface{}, setCl
 			}
 		}
 	} else if oldIssue.Status == types.StatusClosed {
-		setClauses = append(setClauses, "closed_at = ?", "close_reason = ?")
-		args = append(args, nil, "")
+		// beads-ni2ph: clear closed_by_session alongside closed_at/close_reason
+		// on reopen. The three are written together by `bd close` (close.go's
+		// SET clause), so a reopen that clears only two leaves a stale
+		// closed_by_session provenance value — invisible until ni2ph fixed the
+		// read hydration, now observable and contradictory ("open but closed by
+		// session X"). issueops/reopen.go already clears all three in its
+		// explicit reopen SQL; this is the status-update reopen path (bd update
+		// --status open, DoltStore.ReopenIssue) reaching the same invariant.
+		setClauses = append(setClauses, "closed_at = ?", "close_reason = ?", "closed_by_session = ?")
+		args = append(args, nil, "", "")
 	}
 
 	return setClauses, args
