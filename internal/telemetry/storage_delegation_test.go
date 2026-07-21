@@ -256,6 +256,10 @@ func (r *recordingStorage) MergeMetadataWithCAS(context.Context, string, json.Ra
 	return r.rec("MergeMetadataWithCAS")
 }
 
+func (r *recordingStorage) AppendNotes(context.Context, string, string, string) error {
+	return r.rec("AppendNotes")
+}
+
 // ── Lifecycle ──
 func (r *recordingStorage) Close() error {
 	return r.rec("Close")

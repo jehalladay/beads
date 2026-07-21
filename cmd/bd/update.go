@@ -668,14 +668,20 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 				}
 				metaSets, metaUnsets = s, u
 			}
-			// Handle append_notes: combine existing notes with new content
+			// Handle append_notes ATOMICALLY at the DB (beads-jscve): call
+			// issueStore.AppendNotes (a single server-side CONCAT_WS) instead of the
+			// old client-side read (issue.Notes) → concat → whole-blob write, which
+			// lost an update when two appends raced on the same snapshot. Applied as
+			// its own write here rather than folded into regularUpdates["notes"] so
+			// the append can't clobber a concurrent append via UpdateIssue's full-row
+			// write. The append is tracked as a mutation so commit/audit fire.
 			if appendNotes, ok := updates["append_notes"].(string); ok {
-				combined := issue.Notes
-				if combined != "" {
-					combined += "\n"
+				if err := issueStore.AppendNotes(ctx, result.ResolvedID, appendNotes, actor); err != nil {
+					reportUpdateItemError("Error appending notes for %s: %v", id, err)
+					closeIfUnmutated(result)
+					continue
 				}
-				combined += appendNotes
-				regularUpdates["notes"] = combined
+				trackMutation(result)
 			}
 			// beads-absq1: a scalar-only update whose every set field already
 			// equals the issue's current value is a genuine no-op — SKIP the

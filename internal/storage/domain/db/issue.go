@@ -373,6 +373,27 @@ func (r *issueSQLRepositoryImpl) ApplyMetadataEdits(ctx context.Context, id stri
 	return nil
 }
 
+// AppendNotes atomically appends text to the issue's notes at the DB via a
+// single server-side CONCAT_WS (beads-jscve), so a concurrent proxied
+// `bd update --append-notes` can't lose an update via a client-side
+// read-modify-write. Wisp-aware via opts.UseWispsTable, mirroring
+// ApplyMetadataEdits.
+func (r *issueSQLRepositoryImpl) AppendNotes(ctx context.Context, id, text string, opts domain.IssueTableOpts) error {
+	if id == "" {
+		return errors.New("db: AppendNotes: id must not be empty")
+	}
+	table := pickIssueTable(opts.UseWispsTable)
+	if err := issueops.AppendNotesInTx(ctx, r.runner, table, id, text); err != nil {
+		return fmt.Errorf("db: AppendNotes %s: %w", id, err)
+	}
+	if opts.Finalize {
+		if err := issueops.FinalizeUpdatedIssueInTx(ctx, r.runner, table, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func coerceStatus(v any) types.Status {
 	switch s := v.(type) {
 	case string:

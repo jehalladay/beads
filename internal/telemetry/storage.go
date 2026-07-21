@@ -677,6 +677,13 @@ func (s *InstrumentedStorage) MergeMetadataWithCAS(ctx context.Context, issueID 
 	return err
 }
 
+func (s *InstrumentedStorage) AppendNotes(ctx context.Context, issueID, text, actor string) error {
+	ctx, span, t := s.op(ctx, "AppendNotes")
+	err := s.inner.AppendNotes(ctx, issueID, text, actor)
+	s.done(ctx, span, t, err)
+	return err
+}
+
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
 func (s *InstrumentedStorage) Close() error {

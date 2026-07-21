@@ -190,6 +190,13 @@ type Storage interface {
 	// charset), matching --metadata's prior permissiveness.
 	MergeMetadataWithCAS(ctx context.Context, issueID string, incoming json.RawMessage, actor string) error
 
+	// AppendNotes atomically appends `text` to the issue's notes column at the DB
+	// (newline-separated from any existing notes) in one transaction, WITHOUT a
+	// client-side read-modify-write, so two concurrent `bd update --append-notes`
+	// don't lose an update via last-writer-wins (beads-jscve, the notes twin of
+	// the beads-jibd/fnp6 metadata atomic-append fix).
+	AppendNotes(ctx context.Context, issueID, text, actor string) error
+
 	// Lifecycle
 	Close() error
 }

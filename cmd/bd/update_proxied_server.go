@@ -422,14 +422,11 @@ func buildUpdateSpecForIssue(current *types.Issue, in *updateInput) (domain.Upda
 	if in.clearDeferStatus && current.Status == types.StatusDeferred {
 		fields["status"] = string(types.StatusOpen)
 	}
-	if in.hasAppendNotes {
-		combined := current.Notes
-		if combined != "" {
-			combined += "\n"
-		}
-		combined += in.appendNotes
-		fields["notes"] = combined
-	}
+	// beads-jscve: carry the append as an atomic server-side op on the spec
+	// (ApplyUpdate → issueRepo.AppendNotes, a single CONCAT_WS) instead of the old
+	// client-side read (current.Notes) → concat → whole-blob write into
+	// fields["notes"], which lost an update when two proxied appends raced on the
+	// same snapshot. Mirrors the MetadataMerge atomic seam below.
 	// Metadata edits carry as per-key slots on the spec so ApplyUpdate applies
 	// them atomically SERVER-SIDE (JSON_SET) instead of the old client-side
 	// whole-blob read-modify-write that clobbered concurrent edits (beads-jibd).
@@ -456,6 +453,8 @@ func buildUpdateSpecForIssue(current *types.Issue, in *updateInput) (domain.Upda
 		MetadataSets:   metaSets,
 		MetadataUnsets: metaUnsets,
 		MetadataMerge:  in.mergeMetadataIn,
+		AppendNotes:    in.appendNotes,
+		HasAppendNotes: in.hasAppendNotes,
 	}
 	return spec, nil
 }

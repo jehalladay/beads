@@ -96,3 +96,15 @@ func (s *EmbeddedDoltStore) MergeMetadataWithCAS(ctx context.Context, issueID st
 		return issueops.MergeMetadataInTx(ctx, tx, issueTable, issueID, incoming)
 	})
 }
+
+// AppendNotes atomically appends text to an issue's notes at the DB in one
+// transaction, so concurrent `bd update --append-notes` don't lose an update via
+// a client-side read-modify-write (beads-jscve, notes twin of beads-jibd). Wisp-
+// aware (routes to the wisps table for an active wisp).
+func (s *EmbeddedDoltStore) AppendNotes(ctx context.Context, issueID, text, actor string) error {
+	return s.withConn(ctx, true, func(tx *sql.Tx) error {
+		isWisp := issueops.IsActiveWispInTx(ctx, tx, issueID)
+		issueTable, _, _, _ := issueops.WispTableRouting(isWisp)
+		return issueops.AppendNotesInTx(ctx, tx, issueTable, issueID, text)
+	})
+}
