@@ -57,7 +57,8 @@ func (s *testSuite) TestDependencyDetectCycles() {
 	s.Run("AcyclicReturnsEmpty", s.cyclesAcyclic)
 	s.Run("TwoNodeCycleDetected", s.cyclesTwoNode)
 	s.Run("ThreeNodeCycleDetected", s.cyclesThreeNode)
-	s.Run("IgnoresNonBlockingDepTypes", s.cyclesIgnoresParentChild)
+	s.Run("ParentChildFormsCycle", s.cyclesParentChildFormsCycle)
+	s.Run("IgnoresNonAuditedDepTypes", s.cyclesIgnoresNonAuditedFamily)
 	s.Run("ConditionalBlocksFormsCycle", s.cyclesConditionalBlocks)
 }
 
@@ -494,14 +495,22 @@ func (s *testSuite) cyclesThreeNode() {
 	}
 }
 
-func (s *testSuite) cyclesIgnoresParentChild() {
+// cyclesParentChildFormsCycle: parent-child IS a cycle-audited family
+// (issueops.cycleAuditedFamilies returns {blocks,conditional-blocks},
+// {parent-child}, {supersedes}), so a p↔q parent-child cycle MUST be detected.
+// This replaces the stale beads-w822z assertion that predated the family-aware
+// consolidation (beads-cjvxq/7a6n/mbog1) and wrongly claimed parent-child was
+// excluded — DetectCycles delegates to the family-aware DetectCyclesInTx, which
+// correctly flags it (mbog1's TestDoctorCycles_ParentChildCycle asserts the same
+// invariant). Class: gate-landing-invalidates-old-behavior-test.
+func (s *testSuite) cyclesParentChildFormsCycle() {
 	s.resetDB()
 	r := s.issueRepo()
 	dr := s.depRepo()
 	for _, id := range []string{"bd-cypc-a", "bd-cypc-b"} {
 		s.Require().NoError(r.Insert(s.Ctx(), newTestIssue(id, id), "tester", domain.InsertIssueOpts{}))
 	}
-	// Parent-child is not a blocking dep type — must not register as a cycle.
+	// Parent-child is a cycle-audited family: a p↔q parent-child cycle must be flagged.
 	s.Require().NoError(dr.Insert(s.Ctx(),
 		newDep("bd-cypc-a", "bd-cypc-b", types.DepParentChild), "tester", domain.DepInsertOpts{}))
 	s.Require().NoError(dr.Insert(s.Ctx(),
@@ -509,7 +518,30 @@ func (s *testSuite) cyclesIgnoresParentChild() {
 
 	out, err := dr.DetectCycles(s.Ctx())
 	s.Require().NoError(err)
-	s.Empty(out, "parent-child edges must be excluded from cycle detection")
+	s.Require().GreaterOrEqual(len(out), 1, "parent-child cycles must be detected (parent-child is a cycle-audited family)")
+}
+
+// cyclesIgnoresNonAuditedFamily: a dep type OUTSIDE every cycle-audited family
+// (e.g. `related` — a loose, non-blocking, non-hierarchy edge) must NOT register
+// as a cycle. This preserves the original "loose edges are ignored" intent that
+// the stale parent-child test was reaching for, but points it at a type that is
+// genuinely non-cycle-audited.
+func (s *testSuite) cyclesIgnoresNonAuditedFamily() {
+	s.resetDB()
+	r := s.issueRepo()
+	dr := s.depRepo()
+	for _, id := range []string{"bd-cyrel-a", "bd-cyrel-b"} {
+		s.Require().NoError(r.Insert(s.Ctx(), newTestIssue(id, id), "tester", domain.InsertIssueOpts{}))
+	}
+	// `related` is not in any cycle-audited family — a mutual related edge is not a cycle.
+	s.Require().NoError(dr.Insert(s.Ctx(),
+		newDep("bd-cyrel-a", "bd-cyrel-b", types.DepRelated), "tester", domain.DepInsertOpts{}))
+	s.Require().NoError(dr.Insert(s.Ctx(),
+		newDep("bd-cyrel-b", "bd-cyrel-a", types.DepRelated), "tester", domain.DepInsertOpts{}))
+
+	out, err := dr.DetectCycles(s.Ctx())
+	s.Require().NoError(err)
+	s.Empty(out, "non-audited dep families (e.g. related) must be excluded from cycle detection")
 }
 
 func (s *testSuite) cyclesConditionalBlocks() {
