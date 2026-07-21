@@ -979,16 +979,23 @@ Examples:
 			// buffers CreateIssue + AddDependency on one UOW and commits once. This
 			// is the a8d14 DIRECT-create-atomicity defect (single-create wrapped by
 			// transactHonoringAutoCommit) for the `bd swarm` wrapper-epic seam.
-			epicDep := &types.Dependency{
-				IssueID:     issue.ID,
-				DependsOnID: wrapperEpic.ID,
-				Type:        types.DepParentChild,
-				CreatedBy:   actor,
-			}
 			epicCommitMsg := fmt.Sprintf("bd: swarm wrap epic for %s", issue.ID)
 			if err := transactHonoringAutoCommit(ctx, store, epicCommitMsg, func(tx storage.Transaction) error {
 				if err := tx.CreateIssue(ctx, wrapperEpic, actor); err != nil {
 					return fmt.Errorf("failed to create wrapper epic: %w", err)
+				}
+				// beads-hqz5l: build the parent-child edge INSIDE the closure,
+				// AFTER tx.CreateIssue mints wrapperEpic.ID. The struct literal
+				// above has no explicit ID, so the id is auto-generated (written
+				// back onto wrapperEpic inside tx.CreateIssue via
+				// GenerateIssueIDInTable). Capturing wrapperEpic.ID before the
+				// create stored DependsOnID="" — a dangling/corrupt edge at RC=0
+				// (the swarm twin of the beads-1gvh4 regression in create.go).
+				epicDep := &types.Dependency{
+					IssueID:     issue.ID,
+					DependsOnID: wrapperEpic.ID,
+					Type:        types.DepParentChild,
+					CreatedBy:   actor,
 				}
 				if err := tx.AddDependency(ctx, epicDep, actor); err != nil {
 					return fmt.Errorf("failed to link issue to epic: %w", err)
@@ -1069,16 +1076,21 @@ Examples:
 		// failure after the molecule self-committed left an orphan swarm molecule
 		// with no edge to its epic at rc!=0 (same a8d14-class defect as the
 		// wrapper-epic seam above).
-		molDep := &types.Dependency{
-			IssueID:     swarmMol.ID,
-			DependsOnID: epicID,
-			Type:        types.DepRelatesTo,
-			CreatedBy:   actor,
-		}
-		molCommitMsg := fmt.Sprintf("bd: create swarm %s for epic %s", swarmMol.ID, epicID)
+		// beads-hqz5l: swarmMol.ID is auto-generated (no explicit ID above) and is
+		// only minted inside tx.CreateIssue, so the commit message and the edge
+		// must both be built AFTER the create — capturing swarmMol.ID here stored
+		// the relates-to edge with IssueID="" (dangling/corrupt at RC=0, the swarm
+		// twin of beads-1gvh4).
+		molCommitMsg := fmt.Sprintf("bd: create swarm molecule for epic %s", epicID)
 		if err := transactHonoringAutoCommit(ctx, store, molCommitMsg, func(tx storage.Transaction) error {
 			if err := tx.CreateIssue(ctx, swarmMol, actor); err != nil {
 				return fmt.Errorf("failed to create swarm molecule: %w", err)
+			}
+			molDep := &types.Dependency{
+				IssueID:     swarmMol.ID,
+				DependsOnID: epicID,
+				Type:        types.DepRelatesTo,
+				CreatedBy:   actor,
 			}
 			if err := tx.AddDependency(ctx, molDep, actor); err != nil {
 				return fmt.Errorf("failed to link swarm to epic: %w", err)
