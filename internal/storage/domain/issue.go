@@ -217,6 +217,10 @@ type GraphPlan struct {
 	// children (parity with `bd create --no-inherit-labels`). Zero value inherits,
 	// matching single create's default (beads-l8qsn).
 	NoInheritLabels bool
+	// Force, when true, overrides the closed-parent guard (beads-t39ph) so a
+	// graph child may be linked under a CLOSED auto-closing parent — parity with
+	// `bd create --parent <closed> --force`.
+	Force bool
 }
 
 type GraphNode struct {
@@ -1172,6 +1176,23 @@ func (u *issueUseCaseImpl) applyGraph(ctx context.Context, plan GraphPlan, actor
 			continue
 		}
 		childID := keyToID[node.Key]
+		// beads-t39ph: graph-create mints nodes top-level (Pass 1, no ParentID)
+		// then links parent-child here, so the single-create closed-parent guard
+		// never runs for graph children — a child under a CLOSED auto-closing
+		// parent (epic OR molecule OR wisp, beads-aw9x8) landed silently over the
+		// proxied path too. Mirror the guard at this link seam (the domain twin of
+		// the embedded executeGraphApply guard). Graph children are minted open,
+		// so any closed auto-closing parent is a violation. Honors plan.Force.
+		if !plan.Force {
+			// Read the parent from the same table the graph writes to (wisp graphs
+			// mint wisp parents), matching the Pass 4.5 label read's UseWispsTable
+			// choice. A miss (perr != nil) fails open to the normal link — an
+			// existing cross-table parent is best-effort, like the single path.
+			parent, perr := u.get(ctx, parentID, useWisp)
+			if perr == nil && parent.IsAutoClosingParentType() && parent.Status == types.StatusClosed {
+				return GraphApplyResult{}, fmt.Errorf("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", parentID)
+			}
+		}
 		dep := &types.Dependency{
 			IssueID:     childID,
 			DependsOnID: parentID,

@@ -640,12 +640,10 @@ func autoCloseCompletedMolecule(ctx context.Context, s storage.DoltStorage, clos
 // Keeping both sides on this helper makes the guard side unable to drift
 // narrower than the auto-close side again.
 func isAutoClosingParentType(issue *types.Issue) bool {
-	if issue == nil {
-		return false
-	}
-	return issue.IssueType == types.TypeEpic ||
-		issue.IssueType == types.TypeMolecule ||
-		issue.Ephemeral
+	// beads-czu1s: delegate to the shared types-level predicate so the graph-
+	// create post-passes (which live in the domain package and can't see this
+	// main-package helper) enforce the SAME membership — single source of truth.
+	return issue.IsAutoClosingParentType()
 }
 
 // shouldAutoCloseCompletedRoot returns true for molecule roots that should
