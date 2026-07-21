@@ -209,15 +209,24 @@ normal 'bd' subcommands for interactive/read operations.`,
 			return HandleErrorRespectJSON("%v", err)
 		}
 
-		// beads-c2pr1: the tx committed — now flush the GC-survivable audit-file
-		// trail for every status transition, mirroring the single-invocation
-		// paths (close.go:204-208, update.go:706). This runs AFTER commit so a
-		// mid-batch rollback leaves no orphan audit entries, and at the cmd layer
-		// because audit.LogFieldChange writes a cwd-based file (a client concern
-		// the shared tx core deliberately does not touch — audit_field_changes.go).
+		// beads-c2pr1/beads-qeb2p: the tx committed — now flush the GC-survivable
+		// audit-file trail for every field mutation, mirroring the single-
+		// invocation paths (close.go:204-208, update.go:706). This runs AFTER
+		// commit so a mid-batch rollback leaves no orphan audit entries, and at
+		// the cmd layer because audit.LogFieldChange writes a cwd-based file (a
+		// client concern the shared tx core deliberately does not touch —
+		// audit_field_changes.go).
+		actor := getActor()
 		for _, r := range results {
-			if r.auditID != "" && r.auditOldStatus != r.auditNewStatus {
-				auditStatusChange(r.auditID, r.auditOldStatus, r.auditNewStatus, getActor(), r.auditReason)
+			switch {
+			case r.auditOldIssue != nil:
+				// update leg: auditIssueUpdate diffs the updates map against the
+				// pre-image and emits a field_change per audited field
+				// (status/assignee/priority), at parity with `bd update`.
+				auditIssueUpdate(r.auditID, r.auditOldIssue, r.auditUpdates, actor, "")
+			case r.auditID != "" && r.auditOldStatus != r.auditNewStatus:
+				// close leg: synthetic status→closed transition (no updates map).
+				auditStatusChange(r.auditID, r.auditOldStatus, r.auditNewStatus, actor, r.auditReason)
 			}
 		}
 
@@ -266,16 +275,26 @@ type batchOpResult struct {
 	Op     string `json:"op"`
 	Target string `json:"target,omitempty"`
 
-	// beads-c2pr1: a status transition performed by this op, captured inside the
-	// tx (read-your-writes oldStatus) so the caller can flush the GC-survivable
-	// audit-file entry AFTER the tx commits — mirroring close.go/update.go, which
-	// emit auditStatusChange/auditIssueUpdate only after the mutation succeeds.
-	// Flushing inside the tx loop would orphan the audit file on a later-op
-	// rollback (the whole batch is one tx). Not serialized to JSON (internal).
+	// beads-c2pr1/beads-qeb2p: a field mutation performed by this op, captured
+	// inside the tx (read-your-writes pre-image) so the caller can flush the
+	// GC-survivable audit-file entry AFTER the tx commits — mirroring
+	// close.go/update.go, which emit auditStatusChange/auditIssueUpdate only
+	// after the mutation succeeds. Flushing inside the tx loop would orphan the
+	// audit file on a later-op rollback (the whole batch is one tx). Not
+	// serialized to JSON (internal).
+	//
+	// The close leg (synthetic status→closed transition, no updates map) uses
+	// auditID/auditOldStatus/auditNewStatus/auditReason. The update leg captures
+	// the full pre-image issue + updates map so the flush can call
+	// auditIssueUpdate — which audits status/assignee/priority at parity with
+	// `bd update` (update.go:706), not just status (beads-qeb2p).
 	auditID        string `json:"-"`
 	auditOldStatus string `json:"-"`
 	auditNewStatus string `json:"-"`
 	auditReason    string `json:"-"`
+
+	auditOldIssue *types.Issue           `json:"-"`
+	auditUpdates  map[string]interface{} `json:"-"`
 }
 
 // parseBatchScript reads the whole input and tokenizes each non-empty,
@@ -442,17 +461,17 @@ func runBatchOp(ctx context.Context, tx storage.Transaction, op batchOp, session
 		if s, ok := updates["status"].(string); ok && types.Status(s) == types.StatusClosed && session != "" {
 			updates["closed_by_session"] = session
 		}
-		// beads-c2pr1: capture a status transition BEFORE the mutation so the
-		// caller can write the GC-survivable audit-file entry after the tx
-		// commits, at parity with bd update --status (update.go:706 auditIssueUpdate).
-		if s, ok := updates["status"].(string); ok && s != "" {
-			oldStatus := ""
-			if pre, gerr := tx.GetIssue(ctx, id); gerr == nil && pre != nil {
-				oldStatus = string(pre.Status)
-			}
+		// beads-c2pr1/beads-qeb2p: capture the pre-image issue + updates map
+		// BEFORE the mutation (read-your-writes within the tx) so the caller can
+		// write the GC-survivable audit-file entries after the tx commits, at
+		// parity with `bd update` (update.go:706 auditIssueUpdate) — which audits
+		// status, assignee AND priority. c2pr1 originally captured status only;
+		// qeb2p generalizes to the full auditIssueUpdate field set so batch
+		// update assignee=/priority= no longer drop their durable audit trail.
+		if pre, gerr := tx.GetIssue(ctx, id); gerr == nil && pre != nil {
 			result.auditID = id
-			result.auditOldStatus = oldStatus
-			result.auditNewStatus = s
+			result.auditOldIssue = pre
+			result.auditUpdates = updates
 		}
 		if err := tx.UpdateIssue(ctx, id, updates, actorName); err != nil {
 			return result, err
