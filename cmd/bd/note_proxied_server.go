@@ -44,13 +44,13 @@ func runNoteProxiedServer(ctx context.Context, id, noteText string) {
 		FatalErrorRespectJSON("%s", verr)
 	}
 
-	combined := current.Notes
-	if combined != "" {
-		combined += "\n"
-	}
-	combined += noteText
-
-	spec := domain.UpdateSpec{Fields: map[string]any{"notes": combined}}
+	// beads-99zdz: carry the append as an atomic server-side op on the spec
+	// (ApplyUpdate → issueRepo.AppendNotes, a single CONCAT_WS) instead of the old
+	// client-side read (current.Notes) → concat → whole-blob write into
+	// Fields["notes"], which lost an update when two proxied `bd note` appends
+	// raced on the same snapshot. Mirrors bd update --append-notes (beads-jscve,
+	// buildUpdateSpecForIssue) and the direct path (note.go).
+	spec := domain.UpdateSpec{AppendNotes: noteText, HasAppendNotes: true}
 	updated, err := issueUC.ApplyUpdate(ctx, id, spec, actor)
 	if err != nil {
 		FatalErrorRespectJSON("updating %s: %v", id, err)

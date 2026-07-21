@@ -101,16 +101,13 @@ Examples:
 			return HandleErrorRespectJSON("%s", err)
 		}
 
-		combined := issue.Notes
-		if combined != "" {
-			combined += "\n"
-		}
-		combined += noteText
-
-		updates := map[string]interface{}{
-			"notes": combined,
-		}
-		if err := issueStore.UpdateIssue(ctx, result.ResolvedID, updates, actor); err != nil {
+		// beads-99zdz: append ATOMICALLY at the DB via issueStore.AppendNotes (a
+		// single server-side CONCAT_WS, wisp-aware) — NOT the old client-side read
+		// (issue.Notes) → concat → whole-blob UpdateIssue, which lost an update when
+		// two `bd note` appends raced on the same snapshot (last-writer-wins). This
+		// reuses the atomic seam bd update --append-notes landed (beads-jscve); the
+		// notes twin of the beads-jibd metadata guarantee.
+		if err := issueStore.AppendNotes(ctx, result.ResolvedID, noteText, actor); err != nil {
 			return HandleErrorRespectJSON("updating %s: %v", id, err)
 		}
 		if err := commitPendingIfEmbedded(ctx, issueStore, actor, doltAutoCommitParams{
