@@ -354,48 +354,69 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 	// Pattern to match any issue ID reference in text (both hash and sequential IDs)
 	oldPrefixPattern := regexp.MustCompile(`\b[a-z][a-z0-9-]*-[a-z0-9]+\b`)
 
-	// Rename each issue
-	for _, is := range incorrectIssues {
-		oldID := is.issue.ID
-		newID := renameMap[oldID]
-
-		// Apply text replacements in all issue fields
-		issue := is.issue
-		issue.ID = newID
-
-		// Replace all issue IDs in text fields using the rename map
-		replaceFunc := func(match string) string {
-			if newID, ok := renameMap[match]; ok {
-				return newID
-			}
-			return match
+	// Replace all issue IDs in text fields using the rename map
+	replaceFunc := func(match string) string {
+		if newID, ok := renameMap[match]; ok {
+			return newID
 		}
-
-		issue.Title = oldPrefixPattern.ReplaceAllStringFunc(issue.Title, replaceFunc)
-		issue.Description = oldPrefixPattern.ReplaceAllStringFunc(issue.Description, replaceFunc)
-		if issue.Design != "" {
-			issue.Design = oldPrefixPattern.ReplaceAllStringFunc(issue.Design, replaceFunc)
-		}
-		if issue.AcceptanceCriteria != "" {
-			issue.AcceptanceCriteria = oldPrefixPattern.ReplaceAllStringFunc(issue.AcceptanceCriteria, replaceFunc)
-		}
-		if issue.Notes != "" {
-			issue.Notes = oldPrefixPattern.ReplaceAllStringFunc(issue.Notes, replaceFunc)
-		}
-
-		// Update the issue in the database
-		if err := st.UpdateIssueID(ctx, oldID, newID, issue, actorName); err != nil {
-			return fmt.Errorf("failed to update issue %s -> %s: %w", oldID, newID, err)
-		}
-
-		if !jsonOutput {
-			fmt.Printf("  Renamed %s -> %s\n", ui.RenderWarn(oldID), ui.RenderAccent(newID))
-		}
+		return match
 	}
 
-	// Set the new prefix in config
-	if err := st.SetConfig(ctx, "issue_prefix", targetPrefix); err != nil {
-		return fmt.Errorf("failed to update config: %w", err)
+	// beads-xu7q9: consolidate every incorrect-prefix issue + the prefix config
+	// update in ONE transaction. --repair exists to CURE a corrupted
+	// multi-prefix DB; running each UpdateIssueID as its own self-committing
+	// write meant a mid-loop fault left the DB PARTIALLY renamed — strictly
+	// worse than the state --repair was invoked to fix. Rendering the human
+	// "Renamed" lines is deferred to after a clean commit so a rolled-back
+	// rename is never reported as done. Capture the old→new pairs BEFORE the
+	// closure since it mutates is.issue.ID.
+	type renamePair struct{ oldID, newID string }
+	renamed := make([]renamePair, 0, len(incorrectIssues))
+	for _, is := range incorrectIssues {
+		renamed = append(renamed, renamePair{oldID: is.issue.ID, newID: renameMap[is.issue.ID]})
+	}
+
+	err := st.RunInTransaction(ctx, fmt.Sprintf("bd: repair prefixes -> %s", targetPrefix), func(tx storage.Transaction) error {
+		for _, is := range incorrectIssues {
+			oldID := is.issue.ID
+			newID := renameMap[oldID]
+
+			// Apply text replacements in all issue fields
+			issue := is.issue
+			issue.ID = newID
+
+			issue.Title = oldPrefixPattern.ReplaceAllStringFunc(issue.Title, replaceFunc)
+			issue.Description = oldPrefixPattern.ReplaceAllStringFunc(issue.Description, replaceFunc)
+			if issue.Design != "" {
+				issue.Design = oldPrefixPattern.ReplaceAllStringFunc(issue.Design, replaceFunc)
+			}
+			if issue.AcceptanceCriteria != "" {
+				issue.AcceptanceCriteria = oldPrefixPattern.ReplaceAllStringFunc(issue.AcceptanceCriteria, replaceFunc)
+			}
+			if issue.Notes != "" {
+				issue.Notes = oldPrefixPattern.ReplaceAllStringFunc(issue.Notes, replaceFunc)
+			}
+
+			// Update the issue in the database
+			if err := tx.UpdateIssueID(ctx, oldID, newID, issue, actorName); err != nil {
+				return fmt.Errorf("failed to update issue %s -> %s: %w", oldID, newID, err)
+			}
+		}
+
+		// Set the new prefix in config
+		if err := tx.SetConfig(ctx, "issue_prefix", targetPrefix); err != nil {
+			return fmt.Errorf("failed to update config: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	if !jsonOutput {
+		for _, r := range renamed {
+			fmt.Printf("  Renamed %s -> %s\n", ui.RenderWarn(r.oldID), ui.RenderAccent(r.newID))
+		}
 	}
 
 	if !jsonOutput {
@@ -418,10 +439,12 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 }
 
 func renamePrefixInDB(ctx context.Context, oldPrefix, newPrefix string, issues []*types.Issue) error {
-	// NOTE: Each issue is updated in its own transaction. A failure mid-way could leave
-	// the database in a mixed state with some issues renamed and others not.
-	// For production use, consider implementing a single atomic RenamePrefix() method
-	// in the storage layer that wraps all updates in one transaction.
+	// beads-xu7q9: rename every issue + rewrite its comment refs + update the
+	// prefix config in ONE transaction, so a mid-loop DB fault rolls the whole
+	// rename back instead of leaving a half-renamed mixed-prefix DB (which was
+	// the pre-fix hazard the old NOTE here flagged). store.UpdateIssueID /
+	// UpdateCommentText / SetConfig each self-commit outside a tx, so the loop
+	// below runs against the tx handle instead of the store.
 
 	// beads-kzj4s: the suffix must be base36 alphanumeric, not digits-only.
 	// bd IDs are base36 hashes (e.g. oldpref-16f), so a `-(\d+)` suffix silently
@@ -445,41 +468,43 @@ func renamePrefixInDB(ctx context.Context, oldPrefix, newPrefix string, issues [
 		return out, out != s
 	}
 
-	for _, issue := range issues {
-		oldID := issue.ID
-		numPart := strings.TrimPrefix(oldID, oldPrefix+"-")
-		newID := fmt.Sprintf("%s-%s", newPrefix, numPart)
+	commitMsg := fmt.Sprintf("bd: rename prefix %s -> %s", oldPrefix, newPrefix)
+	return store.RunInTransaction(ctx, commitMsg, func(tx storage.Transaction) error {
+		for _, issue := range issues {
+			oldID := issue.ID
+			numPart := strings.TrimPrefix(oldID, oldPrefix+"-")
+			newID := fmt.Sprintf("%s-%s", newPrefix, numPart)
 
-		issue.ID = newID
+			issue.ID = newID
 
-		issue.Title = oldPrefixPattern.ReplaceAllStringFunc(issue.Title, replaceFunc)
-		issue.Description = oldPrefixPattern.ReplaceAllStringFunc(issue.Description, replaceFunc)
-		if issue.Design != "" {
-			issue.Design = oldPrefixPattern.ReplaceAllStringFunc(issue.Design, replaceFunc)
+			issue.Title = oldPrefixPattern.ReplaceAllStringFunc(issue.Title, replaceFunc)
+			issue.Description = oldPrefixPattern.ReplaceAllStringFunc(issue.Description, replaceFunc)
+			if issue.Design != "" {
+				issue.Design = oldPrefixPattern.ReplaceAllStringFunc(issue.Design, replaceFunc)
+			}
+			if issue.AcceptanceCriteria != "" {
+				issue.AcceptanceCriteria = oldPrefixPattern.ReplaceAllStringFunc(issue.AcceptanceCriteria, replaceFunc)
+			}
+			if issue.Notes != "" {
+				issue.Notes = oldPrefixPattern.ReplaceAllStringFunc(issue.Notes, replaceFunc)
+			}
+
+			if err := tx.UpdateIssueID(ctx, oldID, newID, issue, actor); err != nil {
+				return fmt.Errorf("failed to update issue %s: %w", oldID, err)
+			}
+
+			// Comments are re-keyed to newID by the UpdateIssueID FK cascade, so
+			// fetch by newID and rewrite any old-prefix ref in the body.
+			if err := rewriteCommentRefsInTx(ctx, tx, newID, prefixRewrite); err != nil {
+				return err
+			}
 		}
-		if issue.AcceptanceCriteria != "" {
-			issue.AcceptanceCriteria = oldPrefixPattern.ReplaceAllStringFunc(issue.AcceptanceCriteria, replaceFunc)
-		}
-		if issue.Notes != "" {
-			issue.Notes = oldPrefixPattern.ReplaceAllStringFunc(issue.Notes, replaceFunc)
-		}
 
-		if err := store.UpdateIssueID(ctx, oldID, newID, issue, actor); err != nil {
-			return fmt.Errorf("failed to update issue %s: %w", oldID, err)
+		if err := tx.SetConfig(ctx, "issue_prefix", newPrefix); err != nil {
+			return fmt.Errorf("failed to update config: %w", err)
 		}
-
-		// Comments are re-keyed to newID by the UpdateIssueID FK cascade, so
-		// fetch by newID and rewrite any old-prefix ref in the body.
-		if err := rewriteCommentRefs(ctx, store, newID, prefixRewrite); err != nil {
-			return err
-		}
-	}
-
-	if err := store.SetConfig(ctx, "issue_prefix", newPrefix); err != nil {
-		return fmt.Errorf("failed to update config: %w", err)
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // generateRepairHashID generates a hash-based ID for an issue during repair.

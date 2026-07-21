@@ -263,3 +263,23 @@ func rewriteCommentRefs(ctx context.Context, store storage.DoltStorage, issueID 
 	}
 	return nil
 }
+
+// rewriteCommentRefsInTx is the transactional twin of rewriteCommentRefs: it
+// reads + rewrites comment bodies against a storage.Transaction so the rewrites
+// commit atomically with the enclosing rename (beads-xu7q9). Kept beside
+// rewriteCommentRefs so the comment-visit logic stays identical between the
+// tx and non-tx paths.
+func rewriteCommentRefsInTx(ctx context.Context, tx storage.Transaction, issueID string, rewrite func(string) (string, bool)) error {
+	comments, err := tx.GetIssueComments(ctx, issueID)
+	if err != nil {
+		return fmt.Errorf("failed to read comments for %s: %w", issueID, err)
+	}
+	for _, c := range comments {
+		if v, ok := rewrite(c.Text); ok {
+			if err := tx.UpdateCommentText(ctx, issueID, c.ID, v); err != nil {
+				return fmt.Errorf("failed to update comment reference in %s: %w", issueID, err)
+			}
+		}
+	}
+	return nil
+}

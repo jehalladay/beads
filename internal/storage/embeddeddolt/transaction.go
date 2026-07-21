@@ -205,7 +205,30 @@ func (t *embeddedTransaction) ImportIssueComment(ctx context.Context, issueID, a
 }
 
 func (t *embeddedTransaction) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
-	return nil, fmt.Errorf("embeddedTransaction: GetIssueComments not implemented")
+	return issueops.GetIssueCommentsInTx(ctx, t.tx, issueID)
+}
+
+// UpdateIssueID renames an issue/wisp within the transaction, re-keying its
+// dependencies/comments/events. Lets bulk rename paths rename in one tx
+// (beads-xu7q9). Dirty-tracks the same tables UpdateIssueIDInTx touches so the
+// commit versions them.
+func (t *embeddedTransaction) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
+	t.dirty.MarkDirty("issues")
+	t.dirty.MarkDirty("wisps")
+	t.dirty.MarkDirty("dependencies")
+	t.dirty.MarkDirty("comments")
+	t.dirty.MarkDirty("wisp_comments")
+	t.dirty.MarkDirty("events")
+	t.dirty.MarkDirty("wisp_events")
+	return issueops.UpdateIssueIDInTx(ctx, t.tx, oldID, newID, issue, actor)
+}
+
+// UpdateCommentText overwrites a single comment body within the transaction
+// (beads-xu7q9).
+func (t *embeddedTransaction) UpdateCommentText(ctx context.Context, issueID, commentID, newText string) error {
+	t.dirty.MarkDirty("comments")
+	t.dirty.MarkDirty("wisp_comments")
+	return issueops.UpdateCommentTextInTx(ctx, t.tx, issueID, commentID, newText)
 }
 
 func (t *embeddedTransaction) CreateIssueImport(ctx context.Context, issue *types.Issue, actor string, skipPrefixValidation bool) error {

@@ -362,6 +362,12 @@ type Transaction interface {
 	UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error
 	CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error
 	DeleteIssue(ctx context.Context, id string) error
+	// UpdateIssueID renames an issue/wisp (oldID→newID) within the transaction,
+	// re-keying its dependencies/comments/events. Lets bulk rename paths
+	// (rename-prefix, --repair) rename every issue in ONE transaction so a
+	// mid-loop failure rolls back the whole rename instead of leaving a
+	// half-renamed mixed-prefix DB (beads-xu7q9).
+	UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error
 	GetIssue(ctx context.Context, id string) (*types.Issue, error)                                    // For read-your-writes within transaction
 	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) // For read-your-writes within transaction
 
@@ -402,6 +408,10 @@ type Transaction interface {
 	AddComment(ctx context.Context, issueID, actor, comment string) error
 	ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error)
 	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
+	// UpdateCommentText overwrites a single comment body within the transaction.
+	// Used by the rename-prefix reference sweep so comment-body rewrites commit
+	// atomically with the issue rename (beads-xu7q9).
+	UpdateCommentText(ctx context.Context, issueID, commentID, newText string) error
 }
 
 // DependencyAddOptions controls transaction-scoped dependency insertion.

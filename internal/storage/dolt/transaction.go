@@ -333,6 +333,51 @@ func (t *doltTransaction) DeleteIssue(ctx context.Context, id string) error {
 	return nil
 }
 
+// UpdateIssueID renames an issue/wisp within the transaction, re-keying its
+// dependencies/comments/events. Lets bulk rename paths (rename-prefix,
+// --repair) rename every issue in ONE transaction so a mid-loop failure rolls
+// back the whole rename instead of leaving a half-renamed mixed-prefix DB
+// (beads-xu7q9). Routes to the ignored tx for wisps so dolt-ignored tables are
+// not staged with the versioned commit, mirroring txFor's split.
+func (t *doltTransaction) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
+	table := "issues"
+	if t.isActiveWisp(ctx, oldID) {
+		table = "wisps"
+	}
+	if err := issueops.UpdateIssueIDInTx(ctx, t.txFor(table), oldID, newID, issue, actor); err != nil {
+		return wrapExecError("update issue ID in tx", err)
+	}
+	// UpdateIssueIDInTx re-keys the issue/wisp row plus its dependencies,
+	// comments and events (or the wisp_* twins). MarkDirty skips the
+	// dolt-ignored wisp_* tables internally.
+	if table == "wisps" {
+		t.dirty.MarkDirty("wisps")
+		t.dirty.MarkDirty("wisp_dependencies")
+		t.dirty.MarkDirty("wisp_comments")
+		t.dirty.MarkDirty("wisp_events")
+	} else {
+		t.dirty.MarkDirty("issues")
+		t.dirty.MarkDirty("dependencies")
+		t.dirty.MarkDirty("comments")
+		t.dirty.MarkDirty("events")
+	}
+	return nil
+}
+
+// UpdateCommentText overwrites a single comment body within the transaction
+// (beads-xu7q9).
+func (t *doltTransaction) UpdateCommentText(ctx context.Context, issueID, commentID, newText string) error {
+	table := "comments"
+	if t.isActiveWisp(ctx, issueID) {
+		table = "wisp_comments"
+	}
+	if err := issueops.UpdateCommentTextInTx(ctx, t.txFor(table), issueID, commentID, newText); err != nil {
+		return wrapExecError("update comment text in tx", err)
+	}
+	t.dirty.MarkDirty(table)
+	return nil
+}
+
 // AddDependency adds a dependency within the transaction.
 // Checks for existing pairs to prevent silent type overwrites.
 func (t *doltTransaction) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
