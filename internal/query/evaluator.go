@@ -247,6 +247,19 @@ func (e *Evaluator) applyStatusFilter(comp *ComparisonNode, filter *types.IssueF
 	if !status.IsValid() {
 		return fmt.Errorf("invalid status: %s", comp.Value)
 	}
+	// beads-uakf2: "blocked" is a DERIVED pseudo-status (the denormalized
+	// is_blocked column), not a stored status value, so routing it to the
+	// status column (`status = 'blocked'` / ExcludeStatus) is unsatisfiable and
+	// silently matches nothing (rc=0). Route to filter.Blocked so the query DSL
+	// agrees with `bd blocked` / `bd list --status blocked`, mirroring the
+	// beads-3x0e4/7f3g cobra-flag fix (this evaluator is the separate DSL path
+	// 3x0e4 did not touch). status=blocked -> only-blocked; status!=blocked ->
+	// only-unblocked.
+	if status == types.StatusBlocked {
+		b := comp.Op == OpEquals
+		filter.Blocked = &b
+		return nil
+	}
 	if comp.Op == OpEquals {
 		filter.Status = &status
 	} else {
@@ -753,6 +766,17 @@ func (e *Evaluator) applyNot(not *NotNode, filter *types.IssueFilter) error {
 		if !status.IsValid() {
 			return fmt.Errorf("invalid status: %s", comp.Value)
 		}
+		// beads-uakf2: NOT status=blocked means exclude the derived-blocked
+		// cohort. "blocked" is the is_blocked pseudo-status, not a stored value,
+		// so appending it to ExcludeStatus (an unsatisfiable `status <> 'blocked'`
+		// that every row trivially satisfies) is a no-op — it excludes nothing.
+		// Route to filter.Blocked=false (only-unblocked), the negation of the
+		// applyStatusFilter leg above.
+		if status == types.StatusBlocked {
+			b := false
+			filter.Blocked = &b
+			return nil
+		}
 		filter.ExcludeStatus = append(filter.ExcludeStatus, status)
 		return nil
 	case "type":
@@ -943,6 +967,17 @@ func (e *Evaluator) buildStatusPredicate(comp *ComparisonNode) (func(*types.Issu
 	if !status.IsValid() {
 		return nil, fmt.Errorf("invalid status: %s", comp.Value)
 	}
+	// beads-uakf2 NOTE: the filter path (applyStatusFilter/applyNot) routes the
+	// derived "blocked" pseudo-status to filter.Blocked (the SQL is_blocked
+	// column), which is what a bare `status=blocked` uses (filter-only fast
+	// path). This in-memory predicate leg (reached only for OR / complex-NOT
+	// queries) cannot: is_blocked is NOT hydrated onto types.Issue, so it can
+	// only match a LITERAL stored status=="blocked" — which never occurs in
+	// production data (blocked issues keep status open/in_progress). Matching
+	// blocked in an OR context is therefore a known no-op leg; a real fix needs
+	// is_blocked hydrated onto Issue (tracked separately). Left as literal-match
+	// to preserve the existing OR/predicate contract rather than silently change
+	// it here.
 	switch comp.Op {
 	case OpEquals:
 		return func(i *types.Issue) bool { return i.Status == status }, nil
