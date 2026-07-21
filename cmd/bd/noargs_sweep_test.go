@@ -35,6 +35,13 @@ func TestNoArgsSweep_RejectsPositional(t *testing.T) {
 		{"status"},
 		{"bootstrap"},
 		{"recompute-blocked"},
+		// beads-7pnnd: root-level info/reader leaves that still silently ignored
+		// stray positionals (bd version 1.2, bd statuses open) with rc=0.
+		{"version"},
+		{"statuses"},
+		{"types"},
+		{"where"},
+		{"ping"},
 	}
 
 	for _, path := range commands {

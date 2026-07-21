@@ -28,6 +28,7 @@ type WhereResult struct {
 
 var whereCmd = &cobra.Command{
 	Use:     "where",
+	Args:    cobra.NoArgs, // beads-7pnnd: reject stray positionals with a clean usage error
 	GroupID: "setup",
 	Short:   "Show active beads location",
 	Long: `Show the active beads database location, including redirect information.

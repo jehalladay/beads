@@ -27,6 +27,7 @@ var coreWorkTypes = []struct {
 
 var typesCmd = &cobra.Command{
 	Use:     "types",
+	Args:    cobra.NoArgs, // beads-7pnnd: reject stray positionals with a clean usage error
 	GroupID: "views",
 	Short:   "List valid issue types",
 	Long: `List all valid issue types that can be used with bd create --type.

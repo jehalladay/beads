@@ -15,6 +15,7 @@ import (
 
 var pingCmd = &cobra.Command{
 	Use:     "ping",
+	Args:    cobra.NoArgs, // beads-7pnnd: reject stray positionals with a clean usage error
 	GroupID: "maint",
 	Short:   "Check database connectivity",
 	Long: `Lightweight health check that confirms bd can reach its database.

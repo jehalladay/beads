@@ -26,6 +26,7 @@ var (
 
 var versionCmd = &cobra.Command{
 	Use:           "version",
+	Args:          cobra.NoArgs, // beads-7pnnd: reject stray positionals with a clean usage error
 	Short:         "Print version information",
 	SilenceUsage:  true,
 	SilenceErrors: true,

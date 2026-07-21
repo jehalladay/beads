@@ -27,6 +27,7 @@ var builtInStatuses = []struct {
 
 var statusesCmd = &cobra.Command{
 	Use:     "statuses",
+	Args:    cobra.NoArgs, // beads-7pnnd: reject stray positionals with a clean usage error
 	GroupID: "views",
 	Short:   "List valid issue statuses",
 	Long: `List all valid issue statuses and their categories.
