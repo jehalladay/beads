@@ -971,18 +971,31 @@ Examples:
 				CreatedBy:   actor,
 			}
 
-			if err := store.CreateIssue(ctx, wrapperEpic, actor); err != nil {
-				return HandleErrorRespectJSON("failed to create wrapper epic: %v", err)
-			}
-
-			dep := &types.Dependency{
+			// beads-mtvlf: create the wrapper epic + its parent-child link
+			// atomically. Previously store.CreateIssue self-committed the epic,
+			// then store.AddDependency ran separately — an AddDependency failure
+			// left a durable orphan epic MISSING its child link at rc!=0, while the
+			// atomic PROXIED twin (swarm_proxied_server.go runSwarmCreateProxied)
+			// buffers CreateIssue + AddDependency on one UOW and commits once. This
+			// is the a8d14 DIRECT-create-atomicity defect (single-create wrapped by
+			// transactHonoringAutoCommit) for the `bd swarm` wrapper-epic seam.
+			epicDep := &types.Dependency{
 				IssueID:     issue.ID,
 				DependsOnID: wrapperEpic.ID,
 				Type:        types.DepParentChild,
 				CreatedBy:   actor,
 			}
-			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				return HandleErrorRespectJSON("failed to link issue to epic: %v", err)
+			epicCommitMsg := fmt.Sprintf("bd: swarm wrap epic for %s", issue.ID)
+			if err := transactHonoringAutoCommit(ctx, store, epicCommitMsg, func(tx storage.Transaction) error {
+				if err := tx.CreateIssue(ctx, wrapperEpic, actor); err != nil {
+					return fmt.Errorf("failed to create wrapper epic: %w", err)
+				}
+				if err := tx.AddDependency(ctx, epicDep, actor); err != nil {
+					return fmt.Errorf("failed to link issue to epic: %w", err)
+				}
+				return nil
+			}); err != nil {
+				return HandleErrorRespectJSON("%v", err)
 			}
 
 			epicID = wrapperEpic.ID
@@ -1051,18 +1064,28 @@ Examples:
 			CreatedBy:   actor,
 		}
 
-		if err := store.CreateIssue(ctx, swarmMol, actor); err != nil {
-			return HandleErrorRespectJSON("failed to create swarm molecule: %v", err)
-		}
-
-		dep := &types.Dependency{
+		// beads-mtvlf: create the swarm molecule + its relates-to link to the epic
+		// atomically, at parity with the atomic proxied twin. Previously a link
+		// failure after the molecule self-committed left an orphan swarm molecule
+		// with no edge to its epic at rc!=0 (same a8d14-class defect as the
+		// wrapper-epic seam above).
+		molDep := &types.Dependency{
 			IssueID:     swarmMol.ID,
 			DependsOnID: epicID,
 			Type:        types.DepRelatesTo,
 			CreatedBy:   actor,
 		}
-		if err := store.AddDependency(ctx, dep, actor); err != nil {
-			return HandleErrorRespectJSON("failed to link swarm to epic: %v", err)
+		molCommitMsg := fmt.Sprintf("bd: create swarm %s for epic %s", swarmMol.ID, epicID)
+		if err := transactHonoringAutoCommit(ctx, store, molCommitMsg, func(tx storage.Transaction) error {
+			if err := tx.CreateIssue(ctx, swarmMol, actor); err != nil {
+				return fmt.Errorf("failed to create swarm molecule: %w", err)
+			}
+			if err := tx.AddDependency(ctx, molDep, actor); err != nil {
+				return fmt.Errorf("failed to link swarm to epic: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		commandDidWrite.Store(true)
