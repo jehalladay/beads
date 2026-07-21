@@ -240,13 +240,16 @@ func SilentExit() error {
 // HandleError and friends instead. Because FatalError calls os.Exit it bypasses
 // the per-command deferred metrics CloseEventAndAdd and main()'s
 // metrics.Global().Close()/MaybeSpawnFlusher, so a command that exits through a
-// proxied-server FatalError* path records no usage event. That telemetry gap is
-// latent today: proxied-server mode cannot be entered ("bd init --proxied-server"
-// is rejected as "not yet implemented", see init.go), so usesProxiedServer() is
-// never true and these paths never run (verified by
-// TestInitProxiedServerRejectedKeepsMetricsGapLatent). When proxied-server mode
-// is completed, convert these helpers to return errors up through RunE — like
-// HandleError — so the deferred metrics close/flush is preserved.
+// proxied-server FatalError* path records no usage event. Proxied-server mode
+// is now enterable (beads-iu9f un-gated "bd init --proxied-server", replacing
+// the old TestInitProxiedServerRejectedKeepsMetricsGapLatent with
+// TestInitProxiedServerSucceedsAndRecordsProxiedMode), so usesProxiedServer()
+// CAN be true and these paths DO run — the telemetry gap is live, not latent.
+// The live TODO is to convert these helpers to return errors up through RunE —
+// like HandleError — so the deferred metrics close/flush is preserved. NOTE:
+// for the --json contract itself, prefer FatalErrorRespectJSON (structured
+// {error} on STDOUT) over bare FatalError (STDERR) at any reachable proxied
+// validation leg (beads-ag3ru/broz/9fww).
 func FatalError(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	if jsonOutput {

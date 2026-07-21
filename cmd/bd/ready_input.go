@@ -71,12 +71,12 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 	// builders apply filter.Limit only when >0). Mirrors the --offset guard below
 	// and bd list (uh4i). FatalError matches the offset guard's exit style.
 	if cmd.Flags().Changed("limit") && in.limit < 0 {
-		FatalError("--limit must be >= 0")
+		FatalErrorRespectJSON("--limit must be >= 0")
 	}
 	if cmd.Flags().Changed("offset") {
 		offset, _ := cmd.Flags().GetInt("offset")
 		if offset < 0 {
-			FatalError("--offset must be >= 0")
+			FatalErrorRespectJSON("--offset must be >= 0")
 		}
 		in.offset = offset
 	}
@@ -119,7 +119,7 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 	if molTypeStr != "" {
 		mt := types.MolType(molTypeStr)
 		if !mt.IsValid() {
-			FatalError("invalid mol-type %q (must be swarm, patrol, or work)", molTypeStr)
+			FatalErrorRespectJSON("invalid mol-type %q (must be swarm, patrol, or work)", molTypeStr)
 		}
 		molType = &mt
 	}
@@ -339,7 +339,7 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 	}
 
 	if !in.filter.SortPolicy.IsValid() {
-		FatalError("invalid sort policy '%s'. Valid values: hybrid, priority, oldest", sortPolicy)
+		FatalErrorRespectJSON("invalid sort policy '%s'. Valid values: hybrid, priority, oldest", sortPolicy)
 	}
 
 	return in
