@@ -227,11 +227,21 @@ func runMergeSlotCheck(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Printf("%s Merge slot held: %s\n", ui.RenderAccent("○"), status.SlotID)
 		fmt.Printf("  Holder: %s\n", status.Holder)
-		if len(status.Waiters) > 0 {
-			fmt.Printf("  Waiters: %d\n", len(status.Waiters))
-			for i, w := range status.Waiters {
-				fmt.Printf("    %d. %s\n", i+1, w)
-			}
+	}
+	// beads-zobaf: render queued waiters in BOTH branches, not only the held
+	// branch. MergeSlotCheckImpl computes Available (status==Open) and Waiters
+	// (meta.Waiters) as INDEPENDENT fields, and release prunes only the HOLDER
+	// from Waiters (beads-vmwzn), so "available:true WITH a non-empty waiters
+	// queue" is a normal reachable state after any release with ≥1 non-holder
+	// waiter. The --json leg above always emits Waiters; the human leg dropped
+	// them when available — a human-vs-JSON parity gap on load-bearing FIFO
+	// coordination state (a merge driver polling the human check saw a bare
+	// "available" and could barge in ahead of already-queued waiters). Mirror
+	// the same waiters render regardless of the available/held branch.
+	if len(status.Waiters) > 0 {
+		fmt.Printf("  Waiters: %d\n", len(status.Waiters))
+		for i, w := range status.Waiters {
+			fmt.Printf("    %d. %s\n", i+1, w)
 		}
 	}
 
