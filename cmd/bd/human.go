@@ -332,6 +332,16 @@ Examples:
 		// durably, so this reflects a real change.
 		auditStatusChange(resolvedID, respondOldStatus, "closed", actor, "Responded")
 
+		// beads-rbqo8 (CLOSE-PARITY-MATRIX cascade leg): responding to a human-gate
+		// bead closes it via CloseIssue, but — unlike bd close (close.go:223) / todo
+		// done (todo.go) / duplicate — the respond leg never fired the auto-close
+		// cascade. So a molecule whose FINAL open step is a human-gate bead was left
+		// stranded OPEN after `bd human respond` (all steps closed, root never closed).
+		// Fire the SAME cascade bd close runs, against the store the step was closed
+		// in, so the parent molecule closes at parity. mw44m already gave this leg the
+		// GC-survivable audit trail — this is a PURE cascade gap.
+		autoCloseCompletedMolecule(ctx, targetStore, resolvedID, actor, "")
+
 		fmt.Printf("%s Bead %s closed with response.\n", ui.RenderPass("✔"), resolvedID)
 		return nil
 	},
@@ -440,6 +450,13 @@ Examples:
 		// bead's close survives a Dolt GC flatten at parity with a plain close.
 		// The already-closed guard above returned early → real transition.
 		auditStatusChange(resolvedID, dismissOldStatus, "closed", actor, closeReason)
+
+		// beads-rbqo8 (CLOSE-PARITY-MATRIX cascade leg): dismissing a human-gate bead
+		// closes it via CloseIssue but skipped the auto-close cascade bd close runs,
+		// so a molecule whose final open step is a human-gate bead stayed OPEN after
+		// `bd human dismiss`. Fire the same cascade against the step's store; mw44m
+		// already covers the audit trail — this is a pure cascade-parity gap.
+		autoCloseCompletedMolecule(ctx, targetStore, resolvedID, actor, "")
 
 		fmt.Printf("%s Bead %s dismissed.\n", ui.RenderPass("✔"), resolvedID)
 		return nil
