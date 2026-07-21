@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -30,6 +31,9 @@ func (s *testSuite) TestIssueSQLRepository() {
 		s.Run("NormalizesStatusType", s.issueUpdateStatusType)
 		s.Run("NormalizesTimestampToUTC", s.issueUpdateNormalizesTimestamp)
 		s.Run("MissingIDWithStatusChangeReturnsErrNoRows", s.issueUpdateMissingIDWithStatus)
+	})
+	s.Run("ApplyMetadataEdits", func() {
+		s.Run("RecordsNoEvent_ht3em", s.issueApplyMetadataEditsRecordsNoEvent)
 	})
 	s.Run("Claim", func() {
 		s.Run("FreshOpenSetsAssigneeAndStartedAt", s.issueClaimFresh)
@@ -250,6 +254,55 @@ func (s *testSuite) issueUpdateEmpty() {
 	r := s.issueRepo()
 	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue("bd-upd-empty", "x"), "tester", domain.InsertIssueOpts{}))
 	s.Require().NoError(r.Update(s.Ctx(), "bd-upd-empty", nil, "tester", domain.IssueTableOpts{}))
+}
+
+// issueApplyMetadataEditsRecordsNoEvent verifies beads-ht3em: a metadata-only
+// edit through the proxied ApplyMetadataEdits path records NO audit event,
+// matching the direct/embedded backend (whose shared metadata seam and cmd-layer
+// chokepoint record none). Previously it recorded a bare, empty-valued
+// EventUpdated — a backend-asymmetric phantom of the 5vpoh/64nbj class.
+//
+// MUTATION-VERIFY: restore the r.events.Record(EventUpdated,...) call in
+// ApplyMetadataEdits and this test FAILS with an event count of 1.
+func (s *testSuite) issueApplyMetadataEditsRecordsNoEvent() {
+	r := s.issueRepo()
+	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue("bd-meta-evt", "metadata event check"), "tester", domain.InsertIssueOpts{}))
+
+	// Baseline: the Insert recorded exactly one created event; no updated event.
+	var updatedBefore int
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT COUNT(*) FROM events WHERE issue_id = ? AND event_type = ?",
+		"bd-meta-evt", string(types.EventUpdated),
+	).Scan(&updatedBefore))
+	s.Equal(0, updatedBefore, "no updated event before the metadata edit")
+
+	// A metadata-only edit (set + unset + merge) must record NO audit event.
+	s.Require().NoError(r.ApplyMetadataEdits(s.Ctx(), "bd-meta-evt",
+		map[string]json.RawMessage{"team": json.RawMessage(`"platform"`)},
+		[]string{"stale"},
+		json.RawMessage(`{"tier":"gold"}`),
+		"tester", domain.IssueTableOpts{Finalize: true}))
+
+	var updatedAfter int
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT COUNT(*) FROM events WHERE issue_id = ? AND event_type = ?",
+		"bd-meta-evt", string(types.EventUpdated),
+	).Scan(&updatedAfter))
+	s.Equal(0, updatedAfter, "metadata-only edit must record no audit event (beads-ht3em); direct/embedded records none")
+
+	// Total event count must be unchanged from the single created event.
+	var total int
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT COUNT(*) FROM events WHERE issue_id = ?", "bd-meta-evt",
+	).Scan(&total))
+	s.Equal(1, total, "only the created event should exist after a metadata-only edit")
+
+	// The edit itself must have applied (parity is about the audit trail, not
+	// dropping the write).
+	out, err := r.Get(s.Ctx(), "bd-meta-evt", domain.IssueTableOpts{})
+	s.Require().NoError(err)
+	s.Contains(string(out.Metadata), "platform", "metadata set must have applied")
+	s.Contains(string(out.Metadata), "gold", "metadata merge must have applied")
 }
 
 func (s *testSuite) issueUpdateStatusType() {

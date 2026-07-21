@@ -326,7 +326,8 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 // Ordering matches the client-side path it replaces: merge first, then sets,
 // then unsets. On Finalize it re-runs the shared finalize (metadata-object
 // validation + content_hash recompute) in the same tx, so a bad write rolls
-// back. Records a single update event.
+// back. Records NO audit event for the metadata-only edit, matching the
+// direct/embedded backend (beads-ht3em).
 func (r *issueSQLRepositoryImpl) ApplyMetadataEdits(ctx context.Context, id string, sets map[string]json.RawMessage, unsets []string, merge json.RawMessage, actor string, opts domain.IssueTableOpts) error {
 	if id == "" {
 		return errors.New("db: ApplyMetadataEdits: id must not be empty")
@@ -348,13 +349,19 @@ func (r *issueSQLRepositoryImpl) ApplyMetadataEdits(ctx context.Context, id stri
 		}
 	}
 
-	if err := r.events.Record(ctx, domain.Event{
-		IssueID: id,
-		Type:    types.EventUpdated,
-		Actor:   actor,
-	}, domain.RecordEventOpts{UseWispsTable: opts.UseWispsTable}); err != nil {
-		return err
-	}
+	// beads-ht3em: do NOT record an audit event for a metadata-only edit. The
+	// direct/embedded backend records NONE — the shared metadata seam
+	// (issueops.ApplyMetadataKeyEditsInTx / MergeMetadataInTx) has no
+	// events.Record, and the direct cmd chokepoint (cmd/bd/update.go
+	// auditIssueUpdate) fires only inside the regularUpdates block, never for
+	// the UpdateMetadataFields metadata leg. This path previously recorded a
+	// bare, empty-valued EventUpdated, so `bd update --set-metadata` wrote 1
+	// audit event on a hub-connected/proxied crew and 0 on an embedded crew — a
+	// backend-asymmetric phantom event of the same class as the proxied
+	// no-op/phantom events dropped in beads-5vpoh (label no-op) and beads-64nbj
+	// (ODKU phantom EventCreated). Status/field changes still record their
+	// events through the Update path (RecordUpdateEventInTable, beads-ssuvz);
+	// only the pure-metadata leg is silent, matching the direct twin.
 
 	// Re-run the shared finalize (metadata-object validation + content_hash
 	// recompute) in this same tx, matching the Update path (beads-lsbu/rzx8).
