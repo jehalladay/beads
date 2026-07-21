@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -643,30 +644,7 @@ func runADOSync(cmd *cobra.Command, _ []string) error {
 					} else {
 						reconcileResult = rr
 						// Close local issues whose ADO work items were deleted.
-						for _, idStr := range rr.Deleted {
-							adoID, err := strconv.Atoi(idStr)
-							if err != nil {
-								continue
-							}
-							localID, ok := adoIDMap[adoID]
-							if !ok {
-								continue
-							}
-							reason := fmt.Sprintf("ADO work item %s deleted", idStr)
-							if cerr := store.CloseIssue(ctx, localID, reason, actor, ""); cerr != nil {
-								msg := fmt.Sprintf("Failed to close %s for deleted ADO #%s: %v", localID, idStr, cerr)
-								warnings = append(warnings, msg)
-								if !jsonOutput {
-									_, _ = fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
-								}
-							} else {
-								msg := fmt.Sprintf("Closed %s: ADO work item %s deleted", localID, idStr)
-								warnings = append(warnings, msg)
-								if !jsonOutput {
-									_, _ = fmt.Fprintf(out, "  %s\n", msg)
-								}
-							}
-						}
+						closeReconciledDeletedIssues(ctx, store, actor, rr.Deleted, adoIDMap, out, &warnings)
 						for _, id := range rr.Denied {
 							msg := fmt.Sprintf("ADO work item %s access denied (403)", id)
 							warnings = append(warnings, msg)
@@ -774,6 +752,57 @@ func collectADOWorkItemMap(ctx context.Context, at *ado.Tracker) map[int]string 
 		}
 	}
 	return m
+}
+
+// closeReconciledDeletedIssues closes each local issue whose ADO work item was
+// confirmed deleted (404) during reconciliation, emitting the GC-survivable
+// audit-file trail for each close.
+//
+// beads-sxgz3: the reconcile-driven close must write the same
+// .beads/interactions.jsonl field_change entry (beads-n4sn, "survives Dolt GC
+// flatten") that the canonical `bd close` writes at close.go:217 via
+// auditStatusChange. Before this, a reconcile close recorded only the DB
+// EventClosed row and vanished from the durable record after a Dolt GC flatten,
+// unlike an explicit `bd close` of the same issue — the CloseIssue-bypass
+// audit-trail parity gap (r3m8v supersede/dup, 1jkl5 gate-resolve, 8ociu
+// gate-check, 58kg8 todo-done class). Factored into its own function so the
+// emit is unit-testable directly against a store + the audit file, without the
+// full multi-endpoint `bd ado sync` mock harness.
+func closeReconciledDeletedIssues(ctx context.Context, st storage.Storage, actor string, deleted []string, adoIDMap map[int]string, out io.Writer, warnings *[]string) {
+	for _, idStr := range deleted {
+		adoID, err := strconv.Atoi(idStr)
+		if err != nil {
+			continue
+		}
+		localID, ok := adoIDMap[adoID]
+		if !ok {
+			continue
+		}
+		reason := fmt.Sprintf("ADO work item %s deleted", idStr)
+		// Capture oldStatus before the close so the audit trail records the
+		// real prior status. Best-effort read; default "open" on a resolve
+		// error, mirroring bd close (close.go:217).
+		oldStatus := "open"
+		if existing, gerr := st.GetIssue(ctx, localID); gerr == nil && existing != nil {
+			oldStatus = string(existing.Status)
+		}
+		if cerr := st.CloseIssue(ctx, localID, reason, actor, ""); cerr != nil {
+			msg := fmt.Sprintf("Failed to close %s for deleted ADO #%s: %v", localID, idStr, cerr)
+			*warnings = append(*warnings, msg)
+			if !jsonOutput {
+				_, _ = fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+			}
+			continue
+		}
+		// Emit the GC-survivable audit-file trail via the shared cmd-layer
+		// chokepoint, at parity with the canonical close verb (beads-n4sn).
+		auditStatusChange(localID, oldStatus, "closed", actor, reason)
+		msg := fmt.Sprintf("Closed %s: ADO work item %s deleted", localID, idStr)
+		*warnings = append(*warnings, msg)
+		if !jsonOutput {
+			_, _ = fmt.Fprintf(out, "  %s\n", msg)
+		}
+	}
 }
 
 // pushADOLinks syncs beads dependencies to ADO work item relations for all
