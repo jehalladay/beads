@@ -170,6 +170,34 @@ func requireDirectFederation(op string) error {
 	return nil
 }
 
+// populateSyncResultErrorMsgs mirrors a SyncResult's error-typed fields into
+// their JSON-visible string twins so `bd federation sync --json` carries the
+// failure signal. Both SyncResult.Error and SyncResult.PushError are `json:"-"`
+// (an `error` marshals to null/`{}`, carrying no useful JSON), so without this
+// the --json payload silently drops them.
+//
+//   - fatalErr (the error returned alongside the result) → ErrorMsg
+//     (`json:"error"`): the FATAL per-peer sync failure (beads-o35h0). Pass nil
+//     when Sync returned no error.
+//   - result.PushError → PushErrorMsg (`json:"push_error"`): the NON-fatal push
+//     failure (beads-00oy4) — a peer merge that succeeded but whose follow-up
+//     push was rejected. The human path shows "○ Push skipped: <err>"; this
+//     restores the same signal for structured consumers. It does NOT affect the
+//     exit code (a push failure is non-fatal by design; RC stays 0).
+//
+// Existing non-empty *Msg values are preserved (a backend may populate them).
+func populateSyncResultErrorMsgs(result *storage.SyncResult, fatalErr error) {
+	if result == nil {
+		return
+	}
+	if fatalErr != nil && result.ErrorMsg == "" {
+		result.ErrorMsg = fatalErr.Error()
+	}
+	if result.PushError != nil && result.PushErrorMsg == "" {
+		result.PushErrorMsg = result.PushError.Error()
+	}
+}
+
 func runFederationSync(cmd *cobra.Command, args []string) error {
 	evt := metrics.NewCommandEvent("federation-sync")
 	defer func() {
@@ -237,14 +265,18 @@ func runFederationSync(cmd *cobra.Command, args []string) error {
 			// string ErrorMsg field the human ✗ line already shows. result may
 			// be non-nil on every failure path (both backends return the
 			// populated result), but guard defensively.
-			if result != nil && result.ErrorMsg == "" {
-				result.ErrorMsg = err.Error()
-			}
+			populateSyncResultErrorMsgs(result, err)
 			if !jsonOutput {
 				fmt.Printf("  %s %v\n", ui.RenderFail("✗"), err)
 			}
 			continue
 		}
+
+		// beads-00oy4: mirror a NON-fatal push error into the JSON-visible
+		// PushErrorMsg (see populateSyncResultErrorMsgs). No fatal err here, so
+		// pass nil — this must NOT set syncFailed (a push failure is non-fatal;
+		// RC stays 0), it only restores the --json signal.
+		populateSyncResultErrorMsgs(result, nil)
 
 		if !jsonOutput {
 			if result.Fetched {

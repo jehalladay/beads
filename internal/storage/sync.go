@@ -34,6 +34,16 @@ type SyncResult struct {
 	// no error (beads-o35h0). The cmd layer populates this from Error.Error()
 	// so structured consumers can detect a per-peer sync failure.
 	ErrorMsg string `json:"error,omitempty"`
+	// PushErrorMsg carries the NON-fatal push error as a STRING so it survives
+	// JSON marshalling. PushError is `json:"-"` (same error-marshals-to-{}
+	// problem as Error), so before beads-00oy4 a merge that succeeded but whose
+	// push failed rendered as {merged:true, pushed:false} with NO push_error —
+	// the human path shows "○ Push skipped: <err>" but --json dropped it, the
+	// same error-less-JSON asymmetry o35h0 fixed for the fatal Error. The cmd
+	// layer populates this from PushError.Error(); it does NOT flip the failure
+	// exit (a push failure is non-fatal by design), it only restores visibility
+	// so a structured consumer can detect a silently-diverging peer push.
+	PushErrorMsg string `json:"push_error,omitempty"`
 }
 
 // SyncStore provides sync operations with peers.
