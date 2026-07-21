@@ -81,17 +81,44 @@ func parseCreateFormInput(raw *createFormRawInput) *createFormValues {
 	}
 
 	return &createFormValues{
-		Title:              raw.Title,
+		// beads-1077e: trim the title and normalize the assignee here, matching
+		// single `bd create` (create.go: strings.TrimSpace(title) +
+		// normalizeAssignee). Without this a padded form title was stored
+		// unsearchable and a padded/"none" assignee orphaned the work from
+		// `bd ready --assignee`. The empty-after-trim + reserved-label checks
+		// run in validateCreateFormValues (they need to return an error).
+		Title:              strings.TrimSpace(raw.Title),
 		Description:        raw.Description,
 		IssueType:          raw.IssueType,
 		Priority:           priority,
-		Assignee:           raw.Assignee,
+		Assignee:           normalizeAssignee(raw.Assignee),
 		Labels:             labels,
 		Design:             raw.Design,
 		AcceptanceCriteria: raw.Acceptance,
 		ExternalRef:        raw.ExternalRef,
 		Dependencies:       deps,
 	}
+}
+
+// validateCreateFormValues enforces the input guards single `bd create`
+// applies that a parsed form value can violate: a non-empty (after-trim) title
+// and no reserved gt identity label on a non-gt-internal write (beads-1077e).
+// parseCreateFormInput already trims the title and normalizes the assignee, so
+// this validates the results and returns an error the RunE surfaces via
+// HandleErrorRespectJSON — matching single create rejecting an empty title
+// ("title cannot be empty") and a reserved identity label (create.go:200,
+// reservedIdentityLabelError, the beads-3c4g spoof-vector reservation shared
+// with label add / graph create f8fvh / markdown --file kvq0v).
+func validateCreateFormValues(fv *createFormValues) error {
+	if strings.TrimSpace(fv.Title) == "" {
+		return fmt.Errorf("title cannot be empty")
+	}
+	for _, label := range fv.Labels {
+		if msg := reservedIdentityLabelError(label); msg != "" {
+			return fmt.Errorf("%s", msg)
+		}
+	}
+	return nil
 }
 
 // CreateIssueFromFormValues creates an issue from the given form values.
@@ -455,6 +482,12 @@ func runCreateForm(cmd *cobra.Command) error {
 	fv := parseCreateFormInput(raw)
 	fv.ParentID = parentID
 	fv.Force, _ = cmd.Flags().GetBool("force")
+
+	// beads-1077e: enforce the empty-title + reserved-identity-label guards
+	// single `bd create` applies, before minting the issue.
+	if err := validateCreateFormValues(fv); err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
 
 	issue, err := CreateIssueFromFormValues(rootCtx, store, fv, actor)
 	if err != nil {
