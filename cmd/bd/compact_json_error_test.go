@@ -52,3 +52,45 @@ func TestCompactJSONError_EmitsStdoutObject(t *testing.T) {
 		t.Errorf("expected an \"error\" field in compact --json error stdout, got: %s", out)
 	}
 }
+
+// TestCompactJSONError_RequireServerModeEmitsStdoutObject is the teeth for the
+// requireServerMode leg of `bd admin compact --json` (beads-t2ebq). This is the
+// ONE straggler compact error path that stayed on a bare stderr FatalError
+// after the 9fww sweep converted the other ~30 compact paths and broz fixed the
+// sibling `bd admin reset`. In embedded mode a mutating compact
+// (--force --id x, not --stats/--analyze/--dry-run) hits requireServerMode
+// ("'bd admin compact' is not yet supported in embedded mode"). Before the fix
+// that used FatalError → JSON went to stderr with EMPTY stdout under --json;
+// after, FatalErrorRespectJSON puts the {error} object on STDOUT. Mirror of
+// TestResetJSONError_RequireServerModeEmitsStdoutObject.
+func TestCompactJSONError_RequireServerModeEmitsStdoutObject(t *testing.T) {
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd)
+
+	cmd := exec.Command(bd, "admin", "compact", "--force", "--id", "beads-x", "--json")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err == nil {
+		t.Fatalf("expected non-zero exit for `compact --force --id x --json` in embedded mode, got success\nstdout:\n%s\nstderr:\n%s",
+			stdout.String(), stderr.String())
+	}
+
+	out := strings.TrimSpace(stdout.String())
+	if out == "" {
+		t.Fatalf("stdout is EMPTY on compact --json requireServerMode error — must emit a JSON error object on stdout (json-error-contract beads-t2ebq)\nstderr:\n%s",
+			stderr.String())
+	}
+
+	var obj map[string]interface{}
+	if jerr := json.Unmarshal([]byte(out), &obj); jerr != nil {
+		t.Fatalf("stdout is not a JSON object on compact --json requireServerMode error: %v\nstdout:\n%s", jerr, out)
+	}
+	msg, ok := obj["error"]
+	if !ok {
+		t.Fatalf("expected an \"error\" field in compact requireServerMode --json stdout, got: %s", out)
+	}
+	if s, _ := msg.(string); !strings.Contains(s, "embedded mode") {
+		t.Errorf("expected the error to name the embedded-mode limitation, got %q", s)
+	}
+}

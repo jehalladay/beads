@@ -155,7 +155,13 @@ Examples:
 		// Block mutating operations in embedded mode; allow --stats, --analyze, --dry-run read-only paths.
 		if !compactStats && !compactAnalyze && !compactDryRun {
 			if err := requireServerMode("compact"); err != nil {
-				FatalError("%v", err)
+				// beads-t2ebq: the ONE straggler compact error path still on a
+				// bare stderr FatalError — convert to FatalErrorRespectJSON so
+				// the requireServerMode/embedded-mode guard emits the {error}
+				// object on STDOUT under --json, matching sibling bd admin reset
+				// (broz) + the other ~30 compact.go paths already on *RespectJSON.
+				// Non-json behavior (plaintext stderr + os.Exit(1)) unchanged.
+				FatalErrorRespectJSON("%v", err)
 			}
 		}
 		// Compact modifies data unless --stats or --analyze or --dry-run or --dolt with --dry-run
