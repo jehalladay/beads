@@ -52,15 +52,16 @@ func TestProxiedServerCreate(t *testing.T) {
 	})
 
 	// beads-a8a1b: refuse creating an OPEN child under a CLOSED epic over the
-	// PROXIED server (parent-assignment axis of the closed-epic-with-open-child
-	// invariant), mirroring the direct create.go guard.
+	// PROXIED server (parent-assignment axis of the closed-parent-with-open-child
+	// invariant), mirroring the direct create.go guard. beads-czu1s generalized
+	// the error text "closed epic" -> "closed parent".
 	t.Run("child_under_closed_epic_refused", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "cce")
 		epic := bdProxiedCreate(t, bd, p.dir, "Closed epic", "-t", "epic")
 		bdProxiedUpdateOne(t, bd, p.dir, epic.ID, "-s", "closed") // no children yet
 		out := bdProxiedCreateFail(t, bd, p.dir, "orphan child", "--parent", epic.ID)
-		if !strings.Contains(out, "closed epic") {
-			t.Errorf("expected a 'closed epic' guard error on proxied create, got: %s", out)
+		if !strings.Contains(out, "closed parent") {
+			t.Errorf("expected a 'closed parent' guard error on proxied create, got: %s", out)
 		}
 	})
 
@@ -71,6 +72,29 @@ func TestProxiedServerCreate(t *testing.T) {
 		child := bdProxiedCreate(t, bd, p.dir, "forced child", "--parent", epic.ID, "--force")
 		if child.ID == "" {
 			t.Errorf("--force should allow creating a child under a closed epic (proxied)")
+		}
+	})
+
+	// beads-czu1s: the proxied create guard (beads-65cgh) was bare TypeEpic too —
+	// a closed MOLECULE/wisp root was creatable-under on the proxied path. Widen
+	// to isAutoClosingParentType. Mutation: reverting create_proxied_server.go's
+	// predicate to bare TypeEpic turns this RED (child created, rc=0).
+	t.Run("child_under_closed_molecule_refused", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "ccm")
+		mol := bdProxiedCreate(t, bd, p.dir, "Closed molecule", "-t", "molecule")
+		bdProxiedUpdateOne(t, bd, p.dir, mol.ID, "-s", "closed") // no children yet
+		out := bdProxiedCreateFail(t, bd, p.dir, "mol orphan child", "--parent", mol.ID)
+		if !strings.Contains(out, "closed parent") {
+			t.Errorf("expected a 'closed parent' guard error on proxied create under a closed molecule, got: %s", out)
+		}
+	})
+
+	t.Run("child_under_open_molecule_still_allowed", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "com")
+		mol := bdProxiedCreate(t, bd, p.dir, "Open molecule", "-t", "molecule")
+		child := bdProxiedCreate(t, bd, p.dir, "child under open molecule", "--parent", mol.ID)
+		if child.ID == "" {
+			t.Errorf("creating a child under an OPEN molecule should succeed (proxied)")
 		}
 	})
 
