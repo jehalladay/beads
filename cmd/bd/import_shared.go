@@ -37,6 +37,19 @@ type ImportOptions struct {
 	// guard otherwise silently no-ops per row (bd-6dnrw.9). Only settable
 	// via explicit `bd import --allow-stale`; auto-import paths never set it.
 	AllowStale bool
+	// PresentFieldsByID maps an incoming issue ID to the set of JSON field
+	// names that were literally present on its source JSONL line (beads-w258p).
+	// It is the per-line presence signal the parsed *types.Issue can no longer
+	// carry: SetDefaults() has already run, so an absent non-omitempty field
+	// (e.g. priority, a plain int) is indistinguishable from an explicit zero
+	// in the struct. When this map has an entry for an issue that ALSO exists
+	// locally, restoreAbsentFieldsFromLocal carries the local value forward for
+	// every rewritten column the line omitted — making scalars/priority match
+	// the preserve-on-absent behavior labels already have. A nil map (or a nil
+	// per-issue entry) means "presence unknown" → full replace, unchanged
+	// legacy behavior for callers that do not track it (bootstrap/init/auto-
+	// import all operate on full-fidelity exports where nothing is absent).
+	PresentFieldsByID map[string]map[string]bool
 }
 
 // ImportResult describes what an import operation did.
@@ -140,6 +153,24 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 				Skipped:            len(invalidMetadataIDs),
 				InvalidMetadataIDs: invalidMetadataIDs,
 			}, nil
+		}
+	}
+
+	// Presence-aware upsert (beads-w258p): before anything reads the incoming
+	// rows (change summary, stale compare, batch write), restore every
+	// rewritten column the incoming JSONL line OMITTED from the local value,
+	// so an update-over-existing carries forward absent fields instead of
+	// clearing scalars or resetting priority to 0/P0. This makes scalars +
+	// priority match labels, which already preserve-on-absent on the same
+	// upsert. It runs BEFORE filterStaleImportIssues so the change summary
+	// does not report a spurious "description cleared" for a field the import
+	// is actually preserving. Genuinely-new issues (no local row) are
+	// untouched. Callers that do not supply PresentFieldsByID keep full-replace
+	// semantics — full-fidelity export lines have no absent fields, so this is
+	// a no-op for bootstrap/init/auto-import.
+	if len(opts.PresentFieldsByID) > 0 {
+		if err := restoreAbsentFieldsFromLocal(ctx, store, issues, opts.PresentFieldsByID); err != nil {
+			return nil, err
 		}
 	}
 
@@ -254,6 +285,119 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		UpdatedIssues:       updatedIssues,
 		TieKeptLocalIDs:     changePlan.TieKeptLocal,
 	}, nil
+}
+
+// restoreAbsentFieldsFromLocal implements preserve-on-absent for the import
+// upsert (beads-w258p). For each incoming issue that already exists locally,
+// any rewritten column whose JSON field name was NOT present on the source
+// JSONL line is reset to the local value, so an update carries the stored
+// field forward instead of clearing it. This closes two defects: (1) an
+// absent `priority` (a non-omitempty int) decoded to 0 and silently escalated
+// P2/P3 → P0-critical; (2) absent scalar columns (description/notes/design/
+// assignee/…) were cleared while labels were preserved — an inconsistent
+// absent-field policy in the SAME upsert. presentByID carries the per-line
+// presence the parsed struct can no longer express (SetDefaults has run).
+//
+// An explicit "priority":0 on the line still sets P0 — presence, not value,
+// gates the restore, so the documented export|import round-trip (every field
+// present) is byte-identical. Genuinely-new issues (no local row) are left
+// exactly as parsed.
+func restoreAbsentFieldsFromLocal(ctx context.Context, store storage.DoltStorage, issues []*types.Issue, presentByID map[string]map[string]bool) error {
+	ids := make([]string, 0, len(issues))
+	seen := make(map[string]struct{}, len(issues))
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" {
+			continue
+		}
+		if _, tracked := presentByID[issue.ID]; !tracked {
+			continue
+		}
+		if _, ok := seen[issue.ID]; ok {
+			continue
+		}
+		seen[issue.ID] = struct{}{}
+		ids = append(ids, issue.ID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	localIssues, err := store.GetIssuesByIDs(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("load local issues for preserve-on-absent import: %w", err)
+	}
+	localByID := make(map[string]*types.Issue, len(localIssues))
+	for _, local := range localIssues {
+		if local != nil && local.ID != "" {
+			localByID[local.ID] = local
+		}
+	}
+	if len(localByID) == 0 {
+		return nil
+	}
+
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" {
+			continue
+		}
+		local, ok := localByID[issue.ID]
+		if !ok {
+			continue // genuinely new — nothing to preserve
+		}
+		present := presentByID[issue.ID]
+		absent := func(field string) bool { return !present[field] }
+
+		// Content
+		if absent("description") {
+			issue.Description = local.Description
+		}
+		if absent("design") {
+			issue.Design = local.Design
+		}
+		if absent("acceptance_criteria") {
+			issue.AcceptanceCriteria = local.AcceptanceCriteria
+		}
+		if absent("notes") {
+			issue.Notes = local.Notes
+		}
+		// Status & workflow. priority is the sharp edge: non-omitempty int,
+		// so absent == explicit 0 in the struct — presence is the only signal.
+		if absent("priority") {
+			issue.Priority = local.Priority
+		}
+		if absent("status") {
+			issue.Status = local.Status
+		}
+		if absent("issue_type") {
+			issue.IssueType = local.IssueType
+		}
+		// Assignment
+		if absent("assignee") {
+			issue.Assignee = local.Assignee
+		}
+		if absent("owner") {
+			issue.Owner = local.Owner
+		}
+		if absent("estimated_minutes") {
+			issue.EstimatedMinutes = local.EstimatedMinutes
+		}
+		// Close bookkeeping
+		if absent("close_reason") {
+			issue.CloseReason = local.CloseReason
+		}
+		// External integration
+		if absent("external_ref") {
+			issue.ExternalRef = local.ExternalRef
+		}
+		if absent("source_system") {
+			issue.SourceSystem = local.SourceSystem
+		}
+		// Custom metadata
+		if absent("metadata") {
+			issue.Metadata = local.Metadata
+		}
+	}
+	return nil
 }
 
 // importChangePlan reports how the import batch relates to existing local

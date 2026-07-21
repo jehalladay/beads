@@ -202,6 +202,14 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 	var issues []*types.Issue
 	var memories []memoryRecord
 
+	// beads-w258p: record which JSON fields were literally present on each
+	// issue's source line. SetDefaults() (below) erases this distinction —
+	// an absent non-omitempty priority becomes 0, indistinguishable from an
+	// explicit 0 — so the presence must be captured from the peek map before
+	// the struct decode. importIssuesCore uses it to preserve-on-absent for
+	// existing rows (scalars + priority), matching labels.
+	presentFieldsByID := make(map[string]map[string]bool)
+
 	// beads-ovc4: track the 1-based input line so a parse error names WHICH
 	// line is bad. On a large export/migration JSONL an unlocated
 	// "failed to parse" forces the operator to bisect the file by hand.
@@ -247,6 +255,17 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		}
 		issue.SetDefaults()
 		issues = append(issues, &issue)
+		// beads-w258p: stash the set of field names present on this line, keyed
+		// by ID, so importIssuesCore can preserve absent fields on an update.
+		// Keyed by ID (not line) because the core works on *types.Issue; an
+		// empty ID cannot be matched to a local row, so skip it.
+		if issue.ID != "" {
+			present := make(map[string]bool, len(peek))
+			for field := range peek {
+				present[field] = true
+			}
+			presentFieldsByID[issue.ID] = present
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("failed to scan JSONL: %w", err)
@@ -296,7 +315,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 
 	// Import issues
 	if len(issues) > 0 {
-		opts := ImportOptions{SkipPrefixValidation: true, AllowStale: importAllowStale}
+		opts := ImportOptions{SkipPrefixValidation: true, AllowStale: importAllowStale, PresentFieldsByID: presentFieldsByID}
 		importResult, err := importIssuesCore(ctx, "", store, issues, opts)
 		if err != nil {
 			return fmt.Errorf("import failed: %w", err)
