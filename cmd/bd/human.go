@@ -306,7 +306,12 @@ Examples:
 			}
 		}
 
-		if !hasHumanLabel {
+		if !hasHumanLabel && !jsonOutput {
+			// beads-3xp23: guard the label warning behind !jsonOutput — an
+			// unconditional raw stderr write leaks a non-JSON line into a --json
+			// consumer's captured stderr (the stderr-warn-under-json class:
+			// cxq3c/lster/mfmcf/9teyf). It carries no data a script needs, so
+			// suppress it entirely under --json (human mode still gets it).
 			fmt.Fprintf(os.Stderr, "Warning: Issue %s does not have 'human' label\n", resolvedID)
 		}
 
@@ -341,6 +346,19 @@ Examples:
 		// in, so the parent molecule closes at parity. mw44m already gave this leg the
 		// GC-survivable audit trail — this is a PURE cascade gap.
 		autoCloseCompletedMolecule(ctx, targetStore, resolvedID, actor, "")
+
+		// beads-3xp23: honor --json on success — the sibling human verbs (list=erw5,
+		// stats=vath) already do, but respond printed only the plaintext ✔ line, so
+		// `bd human respond X --json` emitted unparseable text with rc=0 to a --json
+		// consumer. Emit a stable {id,status,action,reason} envelope via outputJSON.
+		if jsonOutput {
+			return outputJSON(map[string]interface{}{
+				"id":     resolvedID,
+				"status": "closed",
+				"action": "responded",
+				"reason": "Responded",
+			})
+		}
 
 		fmt.Printf("%s Bead %s closed with response.\n", ui.RenderPass("✔"), resolvedID)
 		return nil
@@ -429,7 +447,9 @@ Examples:
 			}
 		}
 
-		if !hasHumanLabel {
+		if !hasHumanLabel && !jsonOutput {
+			// beads-3xp23: suppress the raw label warning under --json (stderr-leak
+			// class); human mode still gets it.
 			fmt.Fprintf(os.Stderr, "Warning: Issue %s does not have 'human' label\n", resolvedID)
 		}
 
@@ -457,6 +477,16 @@ Examples:
 		// `bd human dismiss`. Fire the same cascade against the step's store; mw44m
 		// already covers the audit trail — this is a pure cascade-parity gap.
 		autoCloseCompletedMolecule(ctx, targetStore, resolvedID, actor, "")
+
+		// beads-3xp23: honor --json on success (parity with list=erw5/stats=vath).
+		if jsonOutput {
+			return outputJSON(map[string]interface{}{
+				"id":     resolvedID,
+				"status": "closed",
+				"action": "dismissed",
+				"reason": closeReason,
+			})
+		}
 
 		fmt.Printf("%s Bead %s dismissed.\n", ui.RenderPass("✔"), resolvedID)
 		return nil

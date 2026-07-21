@@ -70,7 +70,9 @@ func runHumanDismissProxiedServer(ctx context.Context, issueID, reason string) e
 				break
 			}
 		}
-		if !hasHumanLabel {
+		if !hasHumanLabel && !jsonOutput {
+			// beads-3xp23: guard behind !jsonOutput (stderr-warn-under-json class),
+			// at parity with the direct dismiss leg.
 			fmt.Fprintf(os.Stderr, "Warning: Issue %s does not have 'human' label\n", resolvedID)
 		}
 	}
@@ -119,6 +121,16 @@ func runHumanDismissProxiedServer(ctx context.Context, issueID, reason string) e
 	// returned early, so reaching here is a real open→closed transition.
 	auditStatusChange(resolvedID, dismissOldStatus, "closed", actor, closeReason)
 
+	// beads-3xp23: honor --json on success at parity with the direct leg.
+	if jsonOutput {
+		return outputJSON(map[string]interface{}{
+			"id":     resolvedID,
+			"status": "closed",
+			"action": "dismissed",
+			"reason": closeReason,
+		})
+	}
+
 	fmt.Printf("%s Bead %s dismissed.\n", ui.RenderPass("✔"), resolvedID)
 	return nil
 }
@@ -159,7 +171,9 @@ func runHumanRespondProxiedServer(ctx context.Context, issueID, response string)
 				break
 			}
 		}
-		if !hasHumanLabel {
+		if !hasHumanLabel && !jsonOutput {
+			// beads-3xp23: guard behind !jsonOutput (stderr-warn-under-json class),
+			// at parity with the direct respond leg.
 			fmt.Fprintf(os.Stderr, "Warning: Issue %s does not have 'human' label\n", resolvedID)
 		}
 	}
@@ -202,6 +216,16 @@ func runHumanRespondProxiedServer(ctx context.Context, issueID, response string)
 	// pre-commit emit would orphan the cwd-file entry on a tx rollback). The
 	// already-closed guard above returned early → real open→closed transition.
 	auditStatusChange(resolvedID, respondOldStatus, "closed", actor, "Responded")
+
+	// beads-3xp23: honor --json on success at parity with the direct leg.
+	if jsonOutput {
+		return outputJSON(map[string]interface{}{
+			"id":     resolvedID,
+			"status": "closed",
+			"action": "responded",
+			"reason": "Responded",
+		})
+	}
 
 	fmt.Printf("%s Bead %s closed with response.\n", ui.RenderPass("✔"), resolvedID)
 	return nil
