@@ -335,7 +335,10 @@ func runLinearSync(cmd *cobra.Command, args []string) error {
 
 	engine := tracker.NewEngine(lt, store, actor)
 	engine.OnMessage = func(msg string) { fmt.Println("  " + msg) }
-	engine.OnWarning = func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
+	// beads-lster: the warning already travels in result.Warnings (emitted under
+	// --json); guard the raw stderr echo so it doesn't double-report as non-JSON
+	// noise in --json mode. Human mode unchanged.
+	engine.OnWarning = func(msg string) { emitSyncWarningStderr(os.Stderr, msg) }
 
 	engine.PullHooks = buildLinearPullHooks(ctx, linearPullHookOptions{
 		Milestones: milestones,

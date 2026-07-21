@@ -483,7 +483,10 @@ func runNotionSync(cmd *cobra.Command, _ []string) error {
 	} else {
 		engine.OnMessage = func(msg string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+msg) }
 	}
-	engine.OnWarning = func(msg string) { _, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", msg) }
+	// beads-lster: the warning already travels in result.Warnings (emitted under
+	// --json via writeNotionJSON); guard the raw stderr echo so it doesn't
+	// double-report as non-JSON noise in --json mode. Human mode unchanged.
+	engine.OnWarning = func(msg string) { emitSyncWarningStderr(cmd.ErrOrStderr(), msg) }
 
 	pull := true
 	push := true
