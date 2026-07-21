@@ -316,7 +316,7 @@ func DetermineEventType(oldIssue *types.Issue, updates map[string]interface{}) t
 	if newStatus == string(types.StatusClosed) {
 		return types.EventClosed
 	}
-	if oldIssue.Status == types.StatusClosed {
+	if oldIssue != nil && oldIssue.Status == types.StatusClosed {
 		return types.EventReopened
 	}
 	return types.EventStatusChanged
@@ -472,11 +472,7 @@ func updateIssueInTx(ctx context.Context, tx DBTX, id string, updates map[string
 	}
 
 	if recordEvent {
-		oldData, _ := json.Marshal(oldIssue)
-		newData, _ := json.Marshal(updates)
-		eventType := DetermineEventType(oldIssue, updates)
-
-		if err := RecordFullEventInTable(ctx, tx, eventTable, id, eventType, actor, string(oldData), string(newData)); err != nil {
+		if err := RecordUpdateEventInTable(ctx, tx, eventTable, id, oldIssue, updates, actor); err != nil {
 			return nil, fmt.Errorf("failed to record event: %w", err)
 		}
 	}
@@ -523,4 +519,27 @@ func RecordFullEventInTable(ctx context.Context, tx DBTX, table, issueID string,
 		return fmt.Errorf("record event in %s: %w", table, err)
 	}
 	return nil
+}
+
+// RecordUpdateEventInTable records the audit event for a single-issue update,
+// deriving the event TYPE from the status transition (via DetermineEventType:
+// EventClosed / EventReopened / EventStatusChanged / EventUpdated) and
+// populating OldValue=json(oldIssue) / NewValue=json(updates). This is the
+// single source of truth for update-event emission shared by the direct
+// UpdateIssueInTx path and the proxied domain/db issueSQLRepository.Update path
+// — keeping the two in parity so a status change / close / reopen over the
+// proxied server records the same specific event type + value diff the direct
+// path does, instead of a generic "updated" with no values (beads-ssuvz, a twin
+// of the c5efw/64nbj audit-emission parity class). oldIssue may be nil, in which
+// case OldValue is left empty (DetermineEventType only reads oldIssue.Status on
+// a status change, so callers changing status must supply it).
+func RecordUpdateEventInTable(ctx context.Context, tx DBTX, table, issueID string, oldIssue *types.Issue, updates map[string]interface{}, actor string) error {
+	var oldValue string
+	if oldIssue != nil {
+		oldData, _ := json.Marshal(oldIssue)
+		oldValue = string(oldData)
+	}
+	newData, _ := json.Marshal(updates)
+	eventType := DetermineEventType(oldIssue, updates)
+	return RecordFullEventInTable(ctx, tx, table, issueID, eventType, actor, oldValue, string(newData))
 }

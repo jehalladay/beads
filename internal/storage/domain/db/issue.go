@@ -124,22 +124,32 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 
 	table := pickIssueTable(opts.UseWispsTable)
 
-	// Read the prior status (plus started_at and pinned) up-front when the caller
-	// is changing the status: needed for the closed_at/started_at/pinned
-	// management below and the is_blocked recompute at the end.
+	// Read the prior issue up-front when the caller is changing the status:
+	// needed for the closed_at/started_at/pinned management below, the is_blocked
+	// recompute at the end, AND the audit event's OldValue + DetermineEventType
+	// (beads-ssuvz — the direct path reads oldIssue for exactly this). A full
+	// read (vs the old status/started_at/pinned-only SELECT) keeps the proxied
+	// update event in parity with the direct twin (issueops.updateIssueInTx),
+	// which records the specific event type (closed/reopened/status_changed) with
+	// the old/new value diff instead of a generic "updated".
+	var oldIssue *types.Issue
 	var oldStatus types.Status
 	var oldStartedAt sql.NullTime
 	var oldPinned bool
 	_, statusChanging := updates["status"]
 	if statusChanging {
-		//nolint:gosec // G201: table is one of two hardcoded constants
-		if err := r.runner.QueryRowContext(ctx,
-			fmt.Sprintf("SELECT status, started_at, pinned FROM %s WHERE id = ?", table), id,
-		).Scan(&oldStatus, &oldStartedAt, &oldPinned); err != nil {
+		got, err := r.Get(ctx, id, opts)
+		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("db: Update %s: %w", id, sql.ErrNoRows)
 			}
-			return fmt.Errorf("db: Update %s: read old status: %w", id, err)
+			return fmt.Errorf("db: Update %s: read old issue: %w", id, err)
+		}
+		oldIssue = got
+		oldStatus = got.Status
+		oldPinned = got.Pinned
+		if got.StartedAt != nil {
+			oldStartedAt = sql.NullTime{Time: *got.StartedAt, Valid: true}
 		}
 	}
 
@@ -255,12 +265,21 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 		// recorded (matches the direct path's behavior of always succeeding).
 	}
 
-	if err := r.events.Record(ctx, domain.Event{
-		IssueID: id,
-		Type:    types.EventUpdated,
-		Actor:   actor,
-	}, domain.RecordEventOpts{UseWispsTable: opts.UseWispsTable}); err != nil {
-		return err
+	// Record the audit event through the shared issueops helper so the proxied
+	// path emits the SAME event type + old/new value diff as the direct twin
+	// (beads-ssuvz): a status change records status_changed/closed/reopened (not
+	// a generic "updated"), with OldValue=json(oldIssue) / NewValue=json(updates).
+	// oldIssue is non-nil only when statusChanging (a non-status update keeps
+	// EventUpdated with an empty OldValue, matching the direct path where
+	// DetermineEventType returns EventUpdated for a no-status update). r.runner
+	// satisfies issueops.DBTX, and the event table is picked from UseWispsTable —
+	// identical to r.events.Record's routing.
+	eventTable := "events"
+	if opts.UseWispsTable {
+		eventTable = "wisp_events"
+	}
+	if err := issueops.RecordUpdateEventInTable(ctx, r.runner, eventTable, id, oldIssue, updates, actor); err != nil {
+		return fmt.Errorf("db: Update %s: record event: %w", id, err)
 	}
 
 	// beads-iu9f Phase B / 25k6 / lsbu / rzx8: on the update path (Finalize),
