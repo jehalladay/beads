@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strings"
@@ -96,15 +97,47 @@ func findMailDelegate() string {
 		return delegate
 	}
 
-	// Check bd config (requires database)
-	// This works even without a database connection since we use direct mode
+	// Check bd config. In direct mode this reads the global store; for
+	// hub-connected (proxiedServerMode) crew the global store is nil (main.go
+	// wires uowProvider and returns before store init), so route through a
+	// read UOW instead — otherwise a hub crew's `bd config set mail.delegate`
+	// (which persists fine via runConfigSetProxiedServer) would be silently
+	// ignored here and `bd mail` would fail "no mail delegate configured"
+	// while direct crew with identical config work (beads-ufnyb). Fail-soft:
+	// any error yields "" (unchanged contract for callers).
 	if store != nil {
 		if delegate, err := store.GetConfig(rootCtx, "mail.delegate"); err == nil && delegate != "" {
+			return delegate
+		}
+	} else if usesProxiedServer() && uowProvider != nil {
+		if delegate := mailDelegateFromProxiedConfig(rootCtx); delegate != "" {
 			return delegate
 		}
 	}
 
 	return ""
+}
+
+// mailDelegateFromProxiedConfig reads the mail.delegate config for a
+// hub-connected (proxiedServerMode) crew via a read UOW. It is deliberately
+// fail-soft — findMailDelegate treats an empty return as "no delegate
+// configured" — so any provider/UOW error yields "" rather than aborting the
+// process (unlike openConfigProxiedUOW, which is Fatal). beads-ufnyb.
+func mailDelegateFromProxiedConfig(ctx context.Context) string {
+	if uowProvider == nil {
+		return ""
+	}
+	uw, err := uowProvider.NewUOW(ctx)
+	if err != nil {
+		return ""
+	}
+	defer uw.Close(ctx)
+
+	delegate, err := uw.ConfigUseCase().GetConfig(ctx, "mail.delegate")
+	if err != nil {
+		return ""
+	}
+	return delegate
 }
 
 func init() {
