@@ -507,6 +507,17 @@ var blockedCmd = &cobra.Command{
 			}
 			blockedFilter.ParentID = &parentID
 		}
+		// beads-x5c76: filter-parity with bd ready / bd list, which both accept
+		// --assignee. Without it "what of MINE is blocked?" is unexpressable — the
+		// only blocked filter was --parent. Trim the read-side value to match the
+		// write-side trim + case-insensitive compare convention (beads-sabd/llzt);
+		// applied as a post-query set filter in GetBlockedIssuesInTx, mirroring the
+		// ParentID handling (no new SQL — the loaded issue objects already carry
+		// Assignee).
+		if assignee, _ := cmd.Flags().GetString("assignee"); strings.TrimSpace(assignee) != "" {
+			a := strings.TrimSpace(assignee)
+			blockedFilter.Assignee = &a
+		}
 		blocked, err := store.GetBlockedIssues(ctx, blockedFilter)
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
@@ -968,5 +979,6 @@ func init() {
 	readyCmd.Flags().String("has-metadata-key", "", "Filter issues that have this metadata key set")
 	rootCmd.AddCommand(readyCmd)
 	blockedCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
+	blockedCmd.Flags().StringP("assignee", "a", "", "Filter blocked issues by assignee") // beads-x5c76: parity with bd ready/list
 	rootCmd.AddCommand(blockedCmd)
 }

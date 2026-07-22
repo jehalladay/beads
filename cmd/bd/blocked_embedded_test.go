@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestEmbeddedBlocked(t *testing.T) {
@@ -165,5 +167,91 @@ func TestEmbeddedBlockedParentExistenceCheck(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("bd blocked --parent %s (valid childless): expected success, got %v:\n%s", epic.ID, err, out)
+	}
+}
+
+// TestEmbeddedBlockedAssigneeFilter is the beads-x5c76 teeth: bd blocked --assignee
+// must filter blocked issues by assignee, at parity with bd ready --assignee and
+// bd list --assignee. Before the fix bd blocked had no --assignee flag, so
+// "what of MINE is blocked?" was unexpressable. Asserts (1) --assignee alice
+// returns ONLY alice's blocked issue and excludes bob's, (2) case-insensitive
+// match (mirrors the ready LOWER(assignee)=LOWER(?) convention), (3) --json
+// carries the same filtered set.
+func TestEmbeddedBlockedAssigneeFilter(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "baf")
+
+	blocker := bdCreate(t, bd, dir, "shared blocker", "--type", "task")
+	blockedAlice := bdCreate(t, bd, dir, "alice blocked", "--type", "task", "--assignee", "alice")
+	blockedBob := bdCreate(t, bd, dir, "bob blocked", "--type", "task", "--assignee", "bob")
+
+	for _, dep := range [][]string{
+		{"dep", "add", blockedAlice.ID, blocker.ID},
+		{"dep", "add", blockedBob.ID, blocker.ID},
+	} {
+		cmd := exec.Command(bd, dep...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("dep add %v failed: %v\n%s", dep, err, out)
+		}
+	}
+
+	// --assignee alice: alice's blocked issue present, bob's absent.
+	cmd := exec.Command(bd, "blocked", "--assignee", "alice")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd blocked --assignee alice failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), blockedAlice.ID) {
+		t.Errorf("expected alice's blocked %s in --assignee alice output:\n%s", blockedAlice.ID, stdout.String())
+	}
+	if strings.Contains(stdout.String(), blockedBob.ID) {
+		t.Errorf("bob's blocked %s leaked into --assignee alice output:\n%s", blockedBob.ID, stdout.String())
+	}
+
+	// Case-insensitive: --assignee ALICE still matches (LOWER=LOWER convention).
+	cmd = exec.Command(bd, "blocked", "--assignee", "ALICE")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err = runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd blocked --assignee ALICE failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), blockedAlice.ID) {
+		t.Errorf("case-insensitive --assignee ALICE should match alice; got:\n%s", stdout.String())
+	}
+
+	// --json carries the same filtered set: exactly alice's, not bob's.
+	cmd = exec.Command(bd, "blocked", "--assignee", "alice", "--json")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err = runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd blocked --assignee alice --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	s := strings.TrimSpace(stdout.String())
+	start := strings.IndexAny(s, "[{")
+	if start < 0 {
+		t.Fatalf("no JSON in blocked --assignee --json output: %s", s)
+	}
+	var blocked []*types.BlockedIssue
+	if jerr := json.Unmarshal([]byte(s[start:]), &blocked); jerr != nil {
+		t.Fatalf("invalid JSON: %v\n%s", jerr, s[start:])
+	}
+	for _, b := range blocked {
+		if b.ID == blockedBob.ID {
+			t.Errorf("bob's blocked %s leaked into --assignee alice --json", blockedBob.ID)
+		}
+		if !strings.EqualFold(b.Assignee, "alice") {
+			t.Errorf("non-alice issue %s (assignee=%q) in --assignee alice --json", b.ID, b.Assignee)
+		}
 	}
 }

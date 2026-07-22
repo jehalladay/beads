@@ -89,6 +89,13 @@ func runBlockedProxiedServer(cmd *cobra.Command, ctx context.Context) {
 		}
 		filter.ParentID = &parentID
 	}
+	// beads-x5c76: --assignee filter parity (proxied twin of the direct path in
+	// ready.go). Trim to match the write-side trim + case-insensitive compare
+	// convention (beads-sabd/llzt); applied in GetBlockedIssuesInTx.
+	if assignee, _ := cmd.Flags().GetString("assignee"); strings.TrimSpace(assignee) != "" {
+		a := strings.TrimSpace(assignee)
+		filter.Assignee = &a
+	}
 
 	blocked, err := uw.IssueUseCase().GetBlockedIssues(ctx, filter)
 	if err != nil {

@@ -123,6 +123,29 @@ func TestProxiedServerBlocked(t *testing.T) {
 		}
 	})
 
+	// beads-x5c76: bd blocked --assignee filters by assignee, at parity with bd
+	// ready --assignee / bd list --assignee. Proxied twin of the direct-path
+	// TestEmbeddedBlockedAssigneeFilter — exercises runBlockedProxiedServer's
+	// flag read into filter.Assignee.
+	t.Run("assignee_filter", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "bk5")
+		blocker := bdProxiedCreate(t, bd, p.dir, "Shared blocker")
+		alice := bdProxiedCreate(t, bd, p.dir, "Alice blocked", "--assignee", "alice", "--deps", "depends-on:"+blocker.ID)
+		bob := bdProxiedCreate(t, bd, p.dir, "Bob blocked", "--assignee", "bob", "--deps", "depends-on:"+blocker.ID)
+
+		got := bdProxiedBlockedJSON(t, bd, p, "--assignee", "alice")
+		ids := map[string]bool{}
+		for _, bi := range got {
+			ids[bi.ID] = true
+		}
+		if !ids[alice.ID] {
+			t.Errorf("expected alice's blocked %s in --assignee alice result", alice.ID)
+		}
+		if ids[bob.ID] {
+			t.Errorf("bob's blocked %s leaked into --assignee alice result", bob.ID)
+		}
+	})
+
 	// beads-wu0u: bd blocked --parent <nonexistent> must error (exit != 0) with a
 	// parseable JSON error under --json — not silently return [] exit 0. Proxied
 	// twin of the direct-path check (beads-d5jg) / bd list --parent (beads-n8lv):

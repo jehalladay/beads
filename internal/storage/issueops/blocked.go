@@ -377,6 +377,19 @@ func GetBlockedIssuesInTx(ctx context.Context, tx DBTX, filter types.WorkFilter)
 		}
 	}
 
+	// beads-x5c76: --assignee filter parity with bd ready / bd list. Applied as a
+	// post-query set filter here (not new SQL) because the blocked-id set is
+	// derived from the is_blocked recompute across issues+wisps and the full
+	// issue objects (with Assignee) are already loaded into issueMap. Match
+	// case-insensitively to mirror the ready SQL LOWER(assignee)=LOWER(?)
+	// convention (sqlbuild/ready.go); the caller already TrimSpace'd the value.
+	var assigneeFilter string
+	haveAssigneeFilter := false
+	if filter.Assignee != nil {
+		assigneeFilter = strings.ToLower(*filter.Assignee)
+		haveAssigneeFilter = true
+	}
+
 	var results []*types.BlockedIssue
 	for id, blockerIDs := range blockerMap {
 		if parentChildSet != nil && !parentChildSet[id] {
@@ -384,6 +397,9 @@ func GetBlockedIssuesInTx(ctx context.Context, tx DBTX, filter types.WorkFilter)
 		}
 		issue, ok := issueMap[id]
 		if !ok || issue == nil {
+			continue
+		}
+		if haveAssigneeFilter && strings.ToLower(issue.Assignee) != assigneeFilter {
 			continue
 		}
 		results = append(results, &types.BlockedIssue{
