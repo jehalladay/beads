@@ -85,52 +85,41 @@ Examples:
 			"mode":          mode,
 		}
 
-		// Get issue count from direct store
-		if store != nil {
-			ctx := rootCtx
-
-			filter := types.IssueFilter{}
-			issues, err := store.SearchIssues(ctx, "", filter)
-			if err == nil {
-				info["issue_count"] = len(issues)
-			}
+		// Get issue count. beads-6pjl6: route through the proxied UOW when
+		// hub-connected — the global `store` is nil in proxiedServerMode, so
+		// this previously reported nothing for hub crew despite a populated DB.
+		ctx := rootCtx
+		if issues, ok := infoSearchIssues(ctx, types.IssueFilter{}); ok {
+			info["issue_count"] = len(issues)
 		}
 
-		// Add config to info output
-		if store != nil {
-			ctx := rootCtx
-			configMap, err := store.GetAllConfig(ctx)
-			if err == nil && len(configMap) > 0 {
-				info["config"] = configMap
-			}
+		// Add config to info output (proxied-aware, beads-6pjl6).
+		if configMap, ok := infoAllConfig(ctx); ok && len(configMap) > 0 {
+			info["config"] = configMap
 		}
 
 		// Add schema information if requested
-		if schemaFlag && store != nil {
-			ctx := rootCtx
-
-			// Get schema version
-			schemaVersion, err := store.GetLocalMetadata(ctx, "bd_version")
-			if err != nil {
-				schemaVersion = "unknown"
-			}
+		if schemaFlag {
+			// Get schema version (proxied crew degrade to "unknown" — the
+			// bd_version metadata lives on the direct-store local-metadata
+			// surface, not the UOW layer; beads-6pjl6).
+			schemaVersion := infoSchemaVersion(ctx)
 
 			// Get tables
 			tables := []string{"issues", "dependencies", "labels", "config", "metadata"}
 
 			// Get config
 			configMap := make(map[string]string)
-			prefix, _ := store.GetConfig(ctx, "issue_prefix") // Best effort: empty prefix is valid
+			prefix := infoConfigValue(ctx, "issue_prefix") // Best effort: empty prefix is valid
 			if prefix != "" {
 				configMap["issue_prefix"] = prefix
 			}
 
 			// Get sample issue IDs
-			filter := types.IssueFilter{}
-			issues, err := store.SearchIssues(ctx, "", filter)
+			issues, ok := infoSearchIssues(ctx, types.IssueFilter{})
 			sampleIDs := []string{}
 			detectedPrefix := ""
-			if err == nil && len(issues) > 0 {
+			if ok && len(issues) > 0 {
 				// Get first 3 issue IDs as samples
 				maxSamples := 3
 				if len(issues) < maxSamples {
