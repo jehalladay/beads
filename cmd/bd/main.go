@@ -424,7 +424,12 @@ func refreshBoundCommandConfig(cmd *cobra.Command) {
 		actor = config.GetString("actor")
 	}
 	if !root.PersistentFlags().Changed("dolt-auto-commit") {
+		// beads-m83zh: config-sourced value → getDoltAutoCommitMode degrades a
+		// bad value rather than bricking; only an explicit flag hard-fails.
+		doltAutoCommitFromFlag = false
 		doltAutoCommit = config.GetString("dolt.auto-commit")
+	} else {
+		doltAutoCommitFromFlag = true
 	}
 }
 
@@ -758,6 +763,10 @@ var rootCmd = &cobra.Command{
 				WasSet bool
 			}{actor, true}
 		}
+		// beads-m83zh: record whether the auto-commit value is flag- or
+		// config-sourced so getDoltAutoCommitMode can hard-fail a bad flag but
+		// degrade a bad persisted config value to the safe default (never brick).
+		doltAutoCommitFromFlag = cmd.Root().PersistentFlags().Changed("dolt-auto-commit")
 		if !cmd.Root().PersistentFlags().Changed("dolt-auto-commit") && strings.TrimSpace(doltAutoCommit) == "" {
 			doltAutoCommit = config.GetString("dolt.auto-commit")
 		} else if cmd.Root().PersistentFlags().Changed("dolt-auto-commit") {

@@ -41,7 +41,14 @@ func TestIsDoltNothingToCommit(t *testing.T) {
 
 func TestGetDoltAutoCommitMode_Batch(t *testing.T) {
 	old := doltAutoCommit
-	defer func() { doltAutoCommit = old }()
+	oldFromFlag := doltAutoCommitFromFlag
+	defer func() {
+		doltAutoCommit = old
+		doltAutoCommitFromFlag = oldFromFlag
+	}()
+
+	// The valid modes resolve without error regardless of source.
+	doltAutoCommitFromFlag = false
 
 	doltAutoCommit = "batch"
 	mode, err := getDoltAutoCommitMode()
@@ -71,10 +78,25 @@ func TestGetDoltAutoCommitMode_Batch(t *testing.T) {
 		t.Fatalf("expected off, got %q", mode)
 	}
 
-	// Invalid mode
+	// beads-m83zh: an out-of-domain value sourced from PERSISTED config (flag
+	// NOT explicitly set) must DEGRADE to the safe default 'off' with no error,
+	// so a bad config value can never brick the workspace at load time.
+	doltAutoCommitFromFlag = false
 	doltAutoCommit = "invalid"
-	_, err = getDoltAutoCommitMode()
-	if err == nil {
-		t.Fatal("expected error for invalid mode")
+	mode, err = getDoltAutoCommitMode()
+	if err != nil {
+		t.Fatalf("bad persisted value should degrade, not error: %v", err)
+	}
+	if mode != doltAutoCommitOff {
+		t.Fatalf("bad persisted value should degrade to off, got %q", mode)
+	}
+
+	// beads-m83zh: the same out-of-domain value supplied via an explicit
+	// --dolt-auto-commit flag is user-supplied per-invocation and must HARD-FAIL
+	// loudly (the fix is to re-run without the bad flag).
+	doltAutoCommitFromFlag = true
+	doltAutoCommit = "invalid"
+	if _, err = getDoltAutoCommitMode(); err == nil {
+		t.Fatal("expected error for invalid mode supplied via explicit flag")
 	}
 }

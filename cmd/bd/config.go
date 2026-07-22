@@ -1085,10 +1085,25 @@ var intConfigKeys = map[string]bool{
 	"compact_parallel_workers": true,
 }
 
+// enumConfigKeys names config keys whose values are constrained to a fixed
+// set, mapped to their allowed values. `bd config set` validates an
+// out-of-domain value against these at set-time so a valid-looking write does
+// not persist a value that the read-path rejects. (beads-m83zh)
+//
+// This matters because a persisted-but-invalid enum is validated LATE, on the
+// read side: dolt.auto-commit is consumed by getDoltAutoCommitMode() from
+// PersistentPreRunE on EVERY command, so an out-of-domain value persisted here
+// would brick the whole workspace (every command errors before its RunE) until
+// hand-edited. Rejecting up-front (nothing written) mirrors the bool/int leg.
+var enumConfigKeys = map[string][]string{
+	"dolt.auto-commit": {"off", "on", "batch"},
+}
+
 // validateConfigValueType rejects a value that does not parse as the key's
 // declared type. Returns nil for untyped keys or valid values. Bool parsing
 // matches viper's cast.ToBool (strconv.ParseBool: 1/t/T/TRUE/true/0/f/F/FALSE/
-// false, etc.); int parsing matches a base-10 integer. (beads-8fp)
+// false, etc.); int parsing matches a base-10 integer. (beads-8fp) Enum keys
+// are checked against their fixed allowed set. (beads-m83zh)
 func validateConfigValueType(key, value string) error {
 	if boolConfigKeys[key] {
 		if _, err := strconv.ParseBool(value); err != nil {
@@ -1098,6 +1113,18 @@ func validateConfigValueType(key, value string) error {
 	if intConfigKeys[key] {
 		if _, err := strconv.Atoi(value); err != nil {
 			return fmt.Errorf("invalid value %q for integer key %q (expected a whole number)", value, key)
+		}
+	}
+	if allowed, ok := enumConfigKeys[key]; ok {
+		valid := false
+		for _, a := range allowed {
+			if value == a {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("invalid value %q for key %q (valid: %s)", value, key, strings.Join(allowed, ", "))
 		}
 	}
 	return nil
