@@ -46,25 +46,21 @@ func (s *EmbeddedDoltStore) CreateIssuesWithFullOptions(ctx context.Context, iss
 		return nil
 	}
 
-	// All-wisps fast path: create each wisp/no-history issue individually within
-	// its own transaction, threading opts through so that callers'
-	// SkipPrefixValidation / OrphanHandling settings are respected.
+	// All-wisps fast path: one SQL transaction, no Dolt versioning. Covers both
+	// ephemeral issues and no-history issues (both skip DOLT_COMMIT). Mirrors
+	// DoltStore.CreateIssuesWithFullOptions: the whole batch must land in a
+	// single transaction so a mid-batch failure rolls back every wisp, honoring
+	// the atomic CreateIssues contract (beads-29mmy). A per-wisp
+	// withConn-in-loop committed 0..k-1 wisps before a later failure.
 	if issueops.AllWisps(issues) {
 		for _, issue := range issues {
 			if !issue.NoHistory {
 				issue.Ephemeral = true
 			}
-			if err := s.withConn(ctx, true, func(tx *sql.Tx) error {
-				bc, err := issueops.NewBatchContext(ctx, tx, opts)
-				if err != nil {
-					return err
-				}
-				return issueops.CreateIssueInTx(ctx, tx, bc, issue, actor)
-			}); err != nil {
-				return err
-			}
 		}
-		return nil
+		return s.withConn(ctx, true, func(tx *sql.Tx) error {
+			return issueops.CreateIssuesInTx(ctx, tx, issues, actor, opts)
+		})
 	}
 
 	return s.withConn(ctx, true, func(tx *sql.Tx) error {
