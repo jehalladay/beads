@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -99,12 +98,22 @@ Examples:
 			for _, id := range args {
 				issue, err := backend.getIssue(ctx, id)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error getting %s: %v\n", id, err)
+					// beads-iwy1k: lint ALWAYS emits its results
+					// envelope on stdout under --json (below), so a per-id
+					// resolve failure must NOT leak plaintext to stderr — that
+					// pollutes `bd lint $IDS --json 2>&1 | jq`. Route through the
+					// json-aware reportItemError (errors.go:250): a JSON error
+					// object to stderr under --json, the plain line otherwise.
+					// This is the clean-stderr per-item contract the fg6/92tz/
+					// en28/n96g family established for show/update/label/reopen/
+					// undefer/close — lint's args loop (beads-p3y5) was the
+					// odd-one-out still writing raw stderr.
+					reportItemError("Error getting %s: %v", id, err)
 					failedCount++
 					continue
 				}
 				if issue == nil {
-					fmt.Fprintf(os.Stderr, "Issue not found: %s\n", id)
+					reportItemError("Issue not found: %s", id)
 					failedCount++
 					continue
 				}
