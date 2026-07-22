@@ -66,6 +66,18 @@ func (s *DoltStore) initCredentialKey(ctx context.Context) error {
 	key, err := os.ReadFile(keyPath) //nolint:gosec // G304: keyPath is derived from trusted beadsDir, not user input
 	if err == nil && len(key) == 32 {
 		s.credentialKey = key
+		// beads-39acy: complete any legacy→random-key migration that a crash
+		// interrupted after the key was persisted (see the fresh-key path below).
+		// migrateCredentialKeys is idempotent — rows already under this key fail
+		// the legacy-key decrypt and are skipped — so this is a cheap no-op once
+		// the migration has fully landed, and it recovers rows still stranded
+		// under the derivable legacy key otherwise. Best-effort: the loaded key is
+		// valid regardless, and any row left under the legacy key stays recoverable
+		// (the legacy key is derivable) and surfaces at decrypt-time, so a transient
+		// self-heal hiccup must not block store initialization.
+		if err := s.migrateCredentialKeys(ctx, key); err != nil {
+			log.Printf("warning: credential key self-heal migration failed (credentials remain recoverable, will retry on next open): %v", err)
+		}
 		return nil
 	}
 
@@ -79,6 +91,10 @@ func (s *DoltStore) initCredentialKey(ctx context.Context) error {
 				_ = os.Remove(oldKeyPath)
 			}
 			s.credentialKey = oldKey
+			// beads-39acy: same best-effort self-heal as the new-location load path.
+			if err := s.migrateCredentialKeys(ctx, oldKey); err != nil {
+				log.Printf("warning: credential key self-heal migration failed (credentials remain recoverable, will retry on next open): %v", err)
+			}
 			return nil
 		}
 	}
@@ -89,19 +105,33 @@ func (s *DoltStore) initCredentialKey(ctx context.Context) error {
 		return fmt.Errorf("failed to generate credential encryption key: %w", err)
 	}
 
-	// Migrate existing credentials from old dbPath-derived key to new random key
-	if err := s.migrateCredentialKeys(ctx, key); err != nil {
-		return fmt.Errorf("failed to migrate credential keys: %w", err)
-	}
-
-	// Write key file with owner-only permissions (0600).
-	// Ensure the directory exists first — when connecting to an external
-	// server without having run `bd init`, .beads/ may not exist yet (GH#2641).
+	// beads-39acy: PERSIST THE KEY TO DISK BEFORE re-encrypting any credential
+	// under it. migrateCredentialKeys commits ciphertext encrypted with `key`;
+	// if the key were written afterward (the old order), a crash — or a
+	// MkdirAll/WriteFile error — between the commit and the write would leave
+	// committed ciphertext that no on-disk key can decrypt (next startup
+	// generates a *different* random key), silently and permanently losing every
+	// federation credential. Writing the key first guarantees the on-disk key
+	// always covers any ciphertext committed under it; a crash mid-migrate then
+	// only leaves rows still under the derivable legacy key, which the load-path
+	// self-heal above recovers.
+	//
+	// Ensure the directory exists first — when connecting to an external server
+	// without having run `bd init`, .beads/ may not exist yet (GH#2641).
 	if err := os.MkdirAll(s.beadsDir, 0700); err != nil {
 		return fmt.Errorf("failed to create beads directory %s: %w", s.beadsDir, err)
 	}
 	if err := os.WriteFile(keyPath, key, 0600); err != nil {
 		return fmt.Errorf("failed to write credential key file: %w", err)
+	}
+
+	// Migrate existing credentials from old dbPath-derived key to new random key.
+	// Deliberately BEFORE setting s.credentialKey: if this fails, credentialKey
+	// stays nil so the next ensureCredentialKey re-enters initCredentialKey via
+	// the load path (the key is now on disk) and re-attempts the idempotent
+	// migration, rather than leaving a half-migrated store that never retries.
+	if err := s.migrateCredentialKeys(ctx, key); err != nil {
+		return fmt.Errorf("failed to migrate credential keys: %w", err)
 	}
 
 	s.credentialKey = key
@@ -185,19 +215,45 @@ func (s *DoltStore) migrateCredentialKeys(ctx context.Context, newKey []byte) er
 		return fmt.Errorf("failed to iterate peers for migration: %w", err)
 	}
 
-	// Re-encrypt each password with the new key
-	for _, entry := range toMigrate {
-		encrypted, err := encryptWithKey(entry.plaintext, newKey)
-		if err != nil {
-			return fmt.Errorf("failed to re-encrypt password for peer %s: %w", entry.name, err)
-		}
-		if _, err := s.execContextNoLock(ctx, `
-			UPDATE federation_peers SET password_encrypted = ? WHERE name = ?
-		`, encrypted, entry.name); err != nil {
-			return fmt.Errorf("failed to update encrypted password for peer %s: %w", entry.name, err)
-		}
+	if len(toMigrate) == 0 {
+		return nil
 	}
 
+	// beads-39acy: re-encrypt every password in ONE transaction. Previously each
+	// UPDATE went through s.execContext (self-contained BeginTx→Exec→Commit), so a
+	// failure partway through the loop left SOME peers committed under newKey and
+	// the REST still under oldKey while the store holds exactly one key — the
+	// mismatched subset then decrypts to garbage with no rollback. Batching all the
+	// UPDATEs into a single tx makes the re-encrypt all-or-nothing: a mid-loop
+	// failure rolls the whole batch back, leaving every row under the recoverable
+	// legacy key.
+	//
+	// This MUST open the transaction directly (BeginTx) and MUST NOT route through
+	// withRetryTx/withWriteTx: those call rlockOpen() (s.mu.RLock()), but this
+	// function runs with s.mu.Lock() already held (initCredentialKey via
+	// ensureCredentialKey), and sync.RWMutex is not re-entrant — re-taking the read
+	// lock would deadlock forever (beads-ti3ks). It is the single-tx analogue of
+	// execContextNoLock: lock-free, but one BeginTx spanning all rows.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin credential re-encrypt tx: %w", err)
+	}
+	for _, entry := range toMigrate {
+		encrypted, encErr := encryptWithKey(entry.plaintext, newKey)
+		if encErr != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("failed to re-encrypt password for peer %s: %w", entry.name, encErr)
+		}
+		if _, execErr := tx.ExecContext(ctx, `
+			UPDATE federation_peers SET password_encrypted = ? WHERE name = ?
+		`, encrypted, entry.name); execErr != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("failed to update encrypted password for peer %s: %w", entry.name, execErr)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit credential re-encrypt tx: %w", err)
+	}
 	return nil
 }
 
