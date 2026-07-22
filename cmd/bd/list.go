@@ -515,10 +515,10 @@ var listCmd = &cobra.Command{
 		}
 		for _, arg := range args {
 			if hint, ok := knownListFlags[arg]; ok {
-				return fmt.Errorf("unknown argument %q; did you mean %q or 'bd %s'?", arg, hint, arg)
+				return argValidationError(cmd, "unknown argument %q; did you mean %q or 'bd %s'?", arg, hint, arg)
 			}
 		}
-		return fmt.Errorf("bd list does not accept positional arguments; use flags instead (see bd list --help)")
+		return argValidationError(cmd, "bd list does not accept positional arguments; use flags instead (see bd list --help)")
 	},
 	SilenceUsage:  true,
 	SilenceErrors: true,

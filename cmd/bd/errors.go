@@ -188,6 +188,27 @@ func HandleErrorRespectJSON(format string, args ...interface{}) error {
 	return HandleError(format, args...)
 }
 
+// argValidationError is the --json-aware error for a custom cobra Args:
+// validator (beads-540er, generalizing the beads-t1lx maintNoArgs pattern).
+// Args-validators run inside rootCmd.ExecuteC() AFTER flag-parse but BEFORE a
+// command's RunE and before the global jsonOutput is bound, so a bare
+// fmt.Errorf here never reaches a --json-aware handler: the central main.go
+// rescue only recognizes arg-count (isArgCountError) and cobra/pflag literals
+// (isCobraExecuteCValidationError), so a custom flag-combo / stray-positional
+// message falls through to the SilenceErrors plaintext-stderr branch with an
+// empty stdout — breaking the --json contract. Read --json off the command
+// directly; under --json emit a parseable JSON error object on stdout and
+// return an *exitError (main consumes that via exitCodeFromError before its
+// plaintext print). Otherwise preserve the plaintext error unchanged.
+func argValidationError(cmd *cobra.Command, format string, args ...interface{}) error {
+	msg := fmt.Sprintf(format, args...)
+	if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
+		jsonStdoutError(msg, "")
+		return &exitError{Code: 1}
+	}
+	return fmt.Errorf("%s", msg)
+}
+
 func HandleErrorWithHint(message, hint string) error {
 	if jsonOutput {
 		jsonStderrError(message, hint)

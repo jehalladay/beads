@@ -311,10 +311,10 @@ Examples:
 
 		if file != "" {
 			if len(args) != 0 {
-				return fmt.Errorf("--file cannot be used with positional issue IDs")
+				return argValidationError(cmd, "--file cannot be used with positional issue IDs")
 			}
 			if hasFlag {
-				return fmt.Errorf("--file cannot be used with --blocked-by or --depends-on")
+				return argValidationError(cmd, "--file cannot be used with --blocked-by or --depends-on")
 			}
 			return nil
 		}
@@ -325,7 +325,7 @@ Examples:
 				return fmt.Errorf("requires at least 1 arg(s), only received %d", len(args))
 			}
 			if len(args) > 1 {
-				return fmt.Errorf("cannot use both positional depends-on-id and --blocked-by/--depends-on flag")
+				return argValidationError(cmd, "cannot use both positional depends-on-id and --blocked-by/--depends-on flag")
 			}
 			return nil
 		}
