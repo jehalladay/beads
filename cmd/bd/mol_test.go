@@ -250,8 +250,13 @@ func TestBondProtoProto(t *testing.T) {
 		t.Fatalf("Failed to create protoB: %v", err)
 	}
 
-	// Test sequential bond
-	result, err := bondProtoProto(ctx, store, protoA, protoB, types.BondTypeSequential, "", "test")
+	// Test sequential bond. beads-dvkc5: bondProtoProto now takes subgraphs +
+	// cooked flags; these are DB-resident protos (cooked=false), so each is
+	// wrapped as a single-root subgraph exactly like resolveOrCookToSubgraph
+	// does for a DB proto, and no materialization runs.
+	sgA := &TemplateSubgraph{Root: protoA, Issues: []*types.Issue{protoA}, IssueMap: map[string]*types.Issue{protoA.ID: protoA}}
+	sgB := &TemplateSubgraph{Root: protoB, Issues: []*types.Issue{protoB}, IssueMap: map[string]*types.Issue{protoB.ID: protoB}}
+	result, err := bondProtoProto(ctx, store, sgA, sgB, false, false, types.BondTypeSequential, "", "test")
 	if err != nil {
 		t.Fatalf("bondProtoProto failed: %v", err)
 	}

@@ -181,9 +181,12 @@ func runMolBond(cmd *cobra.Command, args []string) error {
 	var result *BondResult
 	switch {
 	case aIsProto && bIsProto:
-		// Compound protos are templates - always persistent
-		// Note: Proto+proto bonding from formulas is a DB operation, not in-memory
-		result, err = bondProtoProto(ctx, store, issueA, issueB, bondType, customTitle, actor)
+		// Compound protos are templates - always persistent.
+		// beads-dvkc5: pass the subgraphs + cooked flags so a formula-COOKED
+		// operand (an in-memory subgraph never written to the DB) is materialized
+		// into the DB before the compound is FK-linked to its root. A DB-resident
+		// proto operand (cookedX=false) is linked as before.
+		result, err = bondProtoProto(ctx, store, subgraphA, subgraphB, cookedA, cookedB, bondType, customTitle, actor)
 	case aIsProto && !bIsProto:
 		// Pass subgraph directly if cooked from formula
 		if cookedA {
@@ -319,8 +322,68 @@ func customTitleProvided(customTitle string) bool {
 	return strings.TrimSpace(customTitle) != ""
 }
 
-// bondProtoProto bonds two protos to create a compound proto
-func bondProtoProto(ctx context.Context, s storage.DoltStorage, protoA, protoB *types.Issue, bondType, customTitle, actorName string) (*BondResult, error) {
+// materializeCookedProtoTx persists a formula-COOKED in-memory subgraph as a
+// DB-resident proto within an existing transaction, so a compound can be
+// FK-linked to its root. beads-dvkc5: a formula operand is cooked to an
+// in-memory *TemplateSubgraph (gt-4v1eo: "no DB storage") whose root was never
+// CreateIssue'd, so bondProtoProto's AddDependency(compound → root.ID) used to
+// FK-fail ("issue mol-deploy not found"). This mirrors cook's persist path
+// (cookPlanTx): create the issues, stamp the root's template label, recreate
+// deps — with the SAME reserved-label guard (beads-1zq73/o70m1) since a
+// formula's step labels flow verbatim from author-controlled TOML and storage
+// AddLabel carries no guard.
+func materializeCookedProtoTx(ctx context.Context, tx storage.Transaction, subgraph *TemplateSubgraph, actorName string) error {
+	for _, issue := range subgraph.Issues {
+		for _, label := range issue.Labels {
+			if msg := reservedIdentityLabelError(label); msg != "" {
+				return fmt.Errorf("%s", msg)
+			}
+			if msg := providesLabelError(label); msg != "" {
+				return fmt.Errorf("%s", msg)
+			}
+		}
+	}
+	// Create all issues; inline step labels persist via PersistLabels.
+	if err := tx.CreateIssues(ctx, subgraph.Issues, actorName); err != nil {
+		return fmt.Errorf("materializing proto %s: %w", subgraph.Root.ID, err)
+	}
+	// The cooked root carries IsTemplate=true but NOT the molecule LABEL inline
+	// (cook adds it separately in collectCookPlan) — add it so the materialized
+	// proto matches a cook-persisted proto and isProto() recognizes it.
+	if err := tx.AddLabel(ctx, subgraph.Root.ID, MoleculeLabel, actorName); err != nil {
+		return fmt.Errorf("adding template label to %s: %w", subgraph.Root.ID, err)
+	}
+	// Recreate dependencies with the (verbatim) cooked IDs.
+	for _, dep := range subgraph.Dependencies {
+		if err := tx.AddDependency(ctx, dep, actorName); err != nil {
+			return fmt.Errorf("linking proto %s deps: %w", subgraph.Root.ID, err)
+		}
+	}
+	return nil
+}
+
+// bondProtoProto bonds two protos to create a compound proto.
+// A formula-COOKED operand (cookedX=true) is an in-memory subgraph that is
+// materialized into the DB inside the bond transaction before FK-linking; a
+// DB-resident proto operand (cookedX=false) is linked as-is (beads-dvkc5).
+func bondProtoProto(ctx context.Context, s storage.DoltStorage, subgraphA, subgraphB *TemplateSubgraph, cookedA, cookedB bool, bondType, customTitle, actorName string) (*BondResult, error) {
+	protoA := subgraphA.Root
+	protoB := subgraphB.Root
+
+	// Register any non-built-in issue types (e.g. formula "gate" beads) used by
+	// a cooked subgraph BEFORE opening the transaction — SetConfig may commit
+	// on its own, matching cloneSubgraph (GH#3213). No-op for DB-resident protos.
+	if cookedA {
+		if err := ensureSubgraphCustomTypes(ctx, s, subgraphA); err != nil {
+			return nil, fmt.Errorf("registering custom types for %s: %w", protoA.ID, err)
+		}
+	}
+	if cookedB {
+		if err := ensureSubgraphCustomTypes(ctx, s, subgraphB); err != nil {
+			return nil, fmt.Errorf("registering custom types for %s: %w", protoB.ID, err)
+		}
+	}
+
 	// Create compound proto: a new root that references both protos as children
 	// The compound root will be a new issue that ties them together
 	compoundTitle := fmt.Sprintf("Compound: %s + %s", protoA.Title, protoB.Title)
@@ -328,8 +391,24 @@ func bondProtoProto(ctx context.Context, s storage.DoltStorage, protoA, protoB *
 		compoundTitle = customTitle
 	}
 
+	spawned := 0
 	var compoundID string
 	err := transact(ctx, s, fmt.Sprintf("bd: bond protos %s + %s", protoA.ID, protoB.ID), func(tx storage.Transaction) error {
+		// Materialize any formula-cooked operand into the DB first, so the
+		// compound's parent-child dependencies below reference real rows.
+		if cookedA {
+			if err := materializeCookedProtoTx(ctx, tx, subgraphA, actorName); err != nil {
+				return err
+			}
+			spawned += len(subgraphA.Issues)
+		}
+		if cookedB {
+			if err := materializeCookedProtoTx(ctx, tx, subgraphB, actorName); err != nil {
+				return err
+			}
+			spawned += len(subgraphB.Issues)
+		}
+
 		// Create compound root issue
 		compound := &types.Issue{
 			Title:       compoundTitle,
@@ -400,7 +479,9 @@ func bondProtoProto(ctx context.Context, s storage.DoltStorage, protoA, protoB *
 		ResultID:   compoundID,
 		ResultType: "compound_proto",
 		BondType:   bondType,
-		Spawned:    0,
+		// Spawned counts issues materialized into the DB from formula-cooked
+		// operands (0 for two DB-resident protos, preserving prior behavior).
+		Spawned: spawned,
 	}, nil
 }
 
@@ -613,12 +694,14 @@ func resolveOrDescribe(ctx context.Context, s storage.DoltStorage, operand strin
 		}
 	}
 
-	// Not found as issue - check if it looks like a formula name
-	if !looksLikeFormulaName(operand) {
-		return nil, "", fmt.Errorf("'%s' not found (not an issue ID or formula name)", operand)
-	}
-
-	// Try to load the formula (but don't cook it)
+	// Not found as an issue — try to load it as a formula UNCONDITIONALLY,
+	// matching `bd mol pour`'s resolveAndCookFormulaWithVars (pour.go:~154).
+	// beads-dvkc5: the old looksLikeFormulaName pre-gate (mol-/.formula//\ only)
+	// rejected plain distilled formula names (e.g. `deploy-proto`) that pour
+	// cooks fine — a pour/bond formula-resolution twin-divergence. Let the
+	// formula loader be the authority on what is a valid formula name; a name
+	// that is neither an issue nor a loadable formula still yields the same
+	// not-found error below.
 	parser := formula.NewParser()
 	f, err := parser.LoadByName(operand)
 	if err != nil {
@@ -657,12 +740,13 @@ func resolveOrCookToSubgraph(ctx context.Context, s storage.DoltStorage, operand
 		}
 	}
 
-	// Not found as issue - check if it looks like a formula name
-	if !looksLikeFormulaName(operand) {
-		return nil, false, fmt.Errorf("'%s' not found (not an issue ID or formula name)", operand)
-	}
-
-	// Try to cook formula inline to in-memory subgraph
+	// Not found as an issue — cook it as a formula UNCONDITIONALLY, matching
+	// `bd mol pour` (pour.go:~154: "This works for any valid formula name, not
+	// just 'mol-' prefixed ones"). beads-dvkc5: the old looksLikeFormulaName
+	// pre-gate rejected plain distilled formula names that pour cooks fine
+	// (pour/bond twin-divergence). resolveAndCookFormulaWithVars is the
+	// authority — a name that is neither an issue nor a valid formula returns
+	// the same not-found error.
 	// Pass vars for step condition filtering (bd-7zka.1)
 	subgraph, err := resolveAndCookFormulaWithVars(operand, nil, vars)
 	if err != nil {
@@ -670,24 +754,6 @@ func resolveOrCookToSubgraph(ctx context.Context, s storage.DoltStorage, operand
 	}
 
 	return subgraph, true, nil
-}
-
-// looksLikeFormulaName checks if an operand looks like a formula name.
-// Formula names typically start with "mol-" or contain ".formula" patterns.
-func looksLikeFormulaName(operand string) bool {
-	// Common formula prefixes
-	if strings.HasPrefix(operand, "mol-") {
-		return true
-	}
-	// Formula file references
-	if strings.Contains(operand, ".formula") {
-		return true
-	}
-	// If it contains a path separator, might be a formula path
-	if strings.Contains(operand, "/") || strings.Contains(operand, "\\") {
-		return true
-	}
-	return false
 }
 
 func init() {
