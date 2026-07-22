@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -134,6 +135,128 @@ func runLabelPropagateProxiedServer(ctx context.Context, parentArg, label string
 	if okCount < len(children) {
 		return SilentExit()
 	}
+	return nil
+}
+
+// runLabelListProxiedServer implements `bd label list <id>` under proxied-server
+// mode (beads-awxmx). The direct path resolves via ResolvePartialID(store,...)
+// then store.GetLabels — both deref the nil global store for hub-connected crew
+// → "storage is nil". It's an aocj sweep-miss READ sibling of the label
+// mutations (add/remove routed by beads-aocj, propagate by beads-ouxlo). Resolve
+// the id (issue or wisp) + read its labels through a short-lived read UOW,
+// mirroring the direct output exactly (JSON slice, "has no labels", the
+// xsmon-sanitized bullet list).
+func runLabelListProxiedServer(ctx context.Context, idArg string) error {
+	uw, err := uowProvider.NewUOW(ctx)
+	if err != nil {
+		return HandleErrorRespectJSON("opening unit of work: %v", err)
+	}
+	defer uw.Close(ctx)
+
+	issue, isWisp, err := proxiedGetIssueOrWisp(ctx, uw, idArg)
+	if err != nil {
+		return HandleErrorRespectJSON("resolving %s: %v", idArg, err)
+	}
+	if issue == nil {
+		return HandleErrorRespectJSON("resolving %s: not found", idArg)
+	}
+	issueID := issue.ID
+	var labels []string
+	if isWisp {
+		labels, err = uw.LabelUseCase().GetWispLabels(ctx, issueID)
+	} else {
+		labels, err = uw.LabelUseCase().GetLabels(ctx, issueID)
+	}
+	if err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
+
+	if jsonOutput {
+		if labels == nil {
+			labels = []string{}
+		}
+		return outputJSON(labels)
+	}
+	if len(labels) == 0 {
+		fmt.Printf("\n%s has no labels\n", issueID)
+		return nil
+	}
+	fmt.Printf("\n%s Labels for %s:\n", ui.RenderAccent("🏷"), issueID)
+	for _, label := range labels {
+		// Sanitize at the display site (beads-xsmon); the stored value is untouched.
+		fmt.Printf("  - %s\n", ui.SanitizeForTerminal(label))
+	}
+	fmt.Println()
+	return nil
+}
+
+// runLabelListAllProxiedServer implements `bd label list-all` under
+// proxied-server mode (beads-awxmx). The direct path calls store.SearchIssues +
+// store.GetLabels on the nil global store — SearchIssues on a nil interface is a
+// PANIC (worse than a fail-loud), and it lacks even a resolve guard. Aggregate
+// unique labels across every issue via the UOW, mirroring the direct output
+// (JSON []{label,count}, "No labels found", the xsmon-sanitized aligned list).
+func runLabelListAllProxiedServer(ctx context.Context) error {
+	uw, err := uowProvider.NewUOW(ctx)
+	if err != nil {
+		return HandleErrorRespectJSON("opening unit of work: %v", err)
+	}
+	defer uw.Close(ctx)
+
+	page, err := uw.IssueUseCase().SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
+	labelCounts := make(map[string]int)
+	for _, issue := range page.Items {
+		labels, err := uw.LabelUseCase().GetLabels(ctx, issue.ID)
+		if err != nil {
+			return HandleErrorRespectJSON("getting labels for %s: %v", issue.ID, err)
+		}
+		for _, label := range labels {
+			labelCounts[label]++
+		}
+	}
+	type labelInfo struct {
+		Label string `json:"label"`
+		Count int    `json:"count"`
+	}
+	if len(labelCounts) == 0 {
+		if jsonOutput {
+			return outputJSON([]labelInfo{})
+		}
+		fmt.Println("\nNo labels found in database")
+		return nil
+	}
+	labels := make([]string, 0, len(labelCounts))
+	for label := range labelCounts {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+	if jsonOutput {
+		result := make([]labelInfo, 0, len(labels))
+		for _, label := range labels {
+			result = append(result, labelInfo{Label: label, Count: labelCounts[label]})
+		}
+		return outputJSON(result)
+	}
+	fmt.Printf("\n%s All labels (%d unique):\n", ui.RenderAccent("🏷"), len(labels))
+	// Sanitize each label for display (beads-xsmon); list-all aggregates across
+	// every issue, so one poisoned import would inject into every terminal.
+	displayLabels := make([]string, len(labels))
+	maxLen := 0
+	for i, label := range labels {
+		displayLabels[i] = ui.SanitizeForTerminal(label)
+		if len(displayLabels[i]) > maxLen {
+			maxLen = len(displayLabels[i])
+		}
+	}
+	for i, label := range labels {
+		disp := displayLabels[i]
+		padding := strings.Repeat(" ", maxLen-len(disp))
+		fmt.Printf("  %s%s  (%d issues)\n", disp, padding, labelCounts[label])
+	}
+	fmt.Println()
 	return nil
 }
 

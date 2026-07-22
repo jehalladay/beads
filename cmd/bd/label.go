@@ -509,6 +509,12 @@ var labelListCmd = &cobra.Command{
 		}()
 
 		ctx := rootCtx
+		// beads-awxmx: route to the proxied read handler in proxied-server mode.
+		// Without this, list resolves+reads via the nil global store → "storage is
+		// nil" for hub crew — the READ sibling of the aocj/ouxlo label sweep-misses.
+		if usesProxiedServer() {
+			return runLabelListProxiedServer(rootCtx, args[0])
+		}
 		var issueID string
 		var err error
 		issueID, err = utils.ResolvePartialID(ctx, store, args[0])
@@ -559,6 +565,12 @@ var labelListAllCmd = &cobra.Command{
 		}()
 
 		ctx := rootCtx
+		// beads-awxmx: route to the proxied handler in proxied-server mode. Without
+		// this, list-all calls SearchIssues on the nil global store — a nil-interface
+		// method call = PANIC for hub crew (no resolve guard even fires first).
+		if usesProxiedServer() {
+			return runLabelListAllProxiedServer(rootCtx)
+		}
 		var issues []*types.Issue
 		var err error
 		issues, err = store.SearchIssues(ctx, "", types.IssueFilter{})
