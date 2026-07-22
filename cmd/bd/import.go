@@ -184,6 +184,7 @@ type importResultJSON struct {
 	Memories            int            `json:"memories,omitempty"`
 	IDs                 []string       `json:"ids,omitempty"`
 	UpdatedIssues       []ImportChange `json:"updated_issues,omitempty"`
+	UnchangedIDs        []string       `json:"unchanged_ids,omitempty"`
 	TieKeptLocalIDs     []string       `json:"tie_kept_local_ids,omitempty"`
 	StaleSkippedIDs     []string       `json:"stale_skipped_ids,omitempty"`
 	InvalidMetadataIDs  []string       `json:"invalid_metadata_ids,omitempty"`
@@ -327,6 +328,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		result.SkippedDependencies = append(result.SkippedDependencies, importResult.SkippedDependencies...)
 		result.IDs = append(result.IDs, importResult.ImportedIDs...)
 		result.UpdatedIssues = append(result.UpdatedIssues, importResult.UpdatedIssues...)
+		result.UnchangedIDs = append(result.UnchangedIDs, importResult.Unchanged...)
 		result.TieKeptLocalIDs = append(result.TieKeptLocalIDs, importResult.TieKeptLocalIDs...)
 		result.StaleSkippedIDs = append(result.StaleSkippedIDs, importResult.StaleSkippedIDs...)
 		result.InvalidMetadataIDs = append(result.InvalidMetadataIDs, importResult.InvalidMetadataIDs...)
@@ -372,6 +374,10 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		for _, change := range result.UpdatedIssues {
 			fmt.Fprintf(os.Stderr, "  %s: %s\n", change.ID, change.Changes)
 		}
+	}
+	if len(result.UnchangedIDs) > 0 {
+		fmt.Fprintf(os.Stderr, "Unchanged (already up to date) %d issue(s): %s\n",
+			len(result.UnchangedIDs), strings.Join(result.UnchangedIDs, ", "))
 	}
 	if len(result.TieKeptLocalIDs) > 0 {
 		fmt.Fprintf(os.Stderr, "Kept local state for %d issue(s) with the same updated_at but different content (use --allow-stale to overwrite): %s\n",

@@ -60,9 +60,13 @@ type ImportResult struct {
 	// "how many rows did this import touch" count that human output and the
 	// importFromLocalJSONL return value use; Created is the strict newly-created
 	// subset (beads-y2y8). Keep them separate — created ⊆ processed.
-	Processed           int
-	Updated             int
-	Unchanged           int
+	Processed int
+	Updated   int
+	// Unchanged lists existing local issues whose incoming row was byte-for-byte
+	// identical (a no-op re-import): the upsert landed them but nothing changed,
+	// so they are excluded from Created to keep the created/updated/tie_kept/
+	// skipped partition honest (beads-fkzvk).
+	Unchanged           []string
 	Skipped             int
 	Deleted             int
 	Collisions          int
@@ -258,13 +262,20 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		nonCreated[change.ID] = struct{}{}
 	}
 	// Created must be a TRUE partition alongside Updated / TieKept / Skipped:
-	// importedIDs is every distinct landed row (updated + tie-kept + genuinely
-	// new), so counting len(importedIDs) as Created double-counts the updated
-	// and tie-kept ids (which also appear in Updated / TieKeptLocalIDs). Exclude
-	// them so created + updated + tie_kept + skipped partitions the batch
-	// without overlap (beads-y2y8). Set-exclusion (not arithmetic subtraction)
-	// keeps this correct if an id is somehow in both update and tie-kept lists.
+	// importedIDs is every distinct landed row (updated + tie-kept + unchanged
+	// + genuinely new), so counting len(importedIDs) as Created double-counts
+	// the updated, tie-kept, and unchanged ids (which also appear in Updated /
+	// TieKeptLocalIDs / Unchanged). Exclude them so created + updated + tie_kept
+	// + skipped partitions the batch without overlap (beads-y2y8; the unchanged
+	// no-op re-import bucket is beads-fkzvk). Set-exclusion (not arithmetic
+	// subtraction) keeps this correct if an id is somehow in more than one list.
 	for _, id := range changePlan.TieKeptLocal {
+		nonCreated[id] = struct{}{}
+	}
+	// Unchanged existing rows (identical no-op re-imports) also land but are
+	// not creations — exclude them from Created so the partition stays honest
+	// (beads-fkzvk).
+	for _, id := range changePlan.Unchanged {
 		nonCreated[id] = struct{}{}
 	}
 	createdCount := 0
@@ -277,6 +288,7 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		Created:             createdCount,
 		Processed:           len(importedIDs),
 		Updated:             updatedCount,
+		Unchanged:           changePlan.Unchanged,
 		Skipped:             len(staleSkippedIDs) + len(invalidMetadataIDs),
 		ImportedIDs:         importedIDs,
 		StaleSkippedIDs:     staleSkippedIDs,
@@ -533,6 +545,14 @@ type importChangePlan struct {
 	// every stored column for these (second-granularity timestamp tie),
 	// while their aux data still merges.
 	TieKeptLocal []string
+	// Unchanged lists incoming rows that already exist locally with IDENTICAL
+	// row content (empty change summary): a no-op re-import. The idempotent
+	// upsert still lands them, but they are neither creations nor updates, so
+	// they must be excluded from Created to keep the created/updated/tie_kept/
+	// skipped partition honest (beads-fkzvk). Without this, a round-trip
+	// export→import of unchanged data reports "created N" while ground truth is
+	// unchanged.
+	Unchanged []string
 }
 
 func filterStaleImportIssues(ctx context.Context, store storage.DoltStorage, issues []*types.Issue) ([]*types.Issue, []string, importChangePlan, error) {
@@ -594,6 +614,14 @@ func filterStaleImportIssues(ctx context.Context, store storage.DoltStorage, iss
 			} else {
 				plan.Updates = append(plan.Updates, ImportChange{ID: issue.ID, Changes: summary})
 			}
+		} else {
+			// A local row exists and its content is IDENTICAL to the incoming
+			// one: the upsert is a no-op. It is neither a creation nor an
+			// update/tie-conflict, so record it explicitly (beads-fkzvk). This
+			// keeps it out of Created — without it an idempotent re-import (the
+			// common backup-restore / configured import.path sync case) reports
+			// the unchanged row as created, breaking the y2y8 partition.
+			plan.Unchanged = append(plan.Unchanged, issue.ID)
 		}
 		filtered = append(filtered, issue)
 	}
