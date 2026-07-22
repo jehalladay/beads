@@ -272,6 +272,24 @@ func analyzeEpicForSwarm(ctx context.Context, s SwarmStorage, epic *types.Issue)
 		if issue.Status == types.StatusClosed {
 			analysis.ClosedIssues++
 		}
+
+		// beads-sq19v: getEpicChildren returns only DIRECT parent-child
+		// dependents (one level), so a child that is itself an epic or
+		// molecule is placed into the graph as a single leaf worker-session
+		// and its own children (grandchildren of the root) never enter the
+		// plan. With no warning, analysis.Swarmable stays true (len(Errors)==0)
+		// → false confidence that a subtree hiding unplanned work is ready to
+		// swarm, and a worker that grabs this leaf gets an epic, not
+		// executable work. Warn so the swarmable verdict isn't silently
+		// wrong about the real actionable-work set (sibling invariant to
+		// beads-j75r, which fixed the childless-epic direction). This
+		// preserves the one-level design; transitive expansion is a separate
+		// design choice.
+		if issue.IssueType == types.TypeEpic || issue.IssueType == types.TypeMolecule {
+			analysis.Warnings = append(analysis.Warnings,
+				fmt.Sprintf("%s is a child %s; its children are not expanded into this swarm (nested work is unplanned)",
+					issue.ID, issue.IssueType))
+		}
 	}
 
 	// Build dependency relationships (only within the epic's children)
