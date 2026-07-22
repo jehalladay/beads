@@ -77,7 +77,14 @@ Examples:
 
 		var issues []*types.Issue
 
-		if store == nil {
+		// beads-hquo8: route all reads through a backend that uses the proxied UOW
+		// for hub (proxiedServerMode) crew — where the global `store` is nil — and
+		// the direct store otherwise. Before this, lint hard-failed "database not
+		// initialized" for hub crew, breaking `bd lint $IDS || fail` as a CI gate
+		// (read-divergence sibling of info/6pjl6, orphans/ktlo, count, show).
+		backend := newLintBackend(ctx)
+		defer backend.close()
+		if backend.uw == nil && store == nil {
 			return HandleErrorWithHint("database not initialized", diagHint())
 		}
 
@@ -90,7 +97,7 @@ Examples:
 		failedCount := 0
 		if len(args) > 0 {
 			for _, id := range args {
-				issue, err := store.GetIssue(ctx, id)
+				issue, err := backend.getIssue(ctx, id)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error getting %s: %v\n", id, err)
 					failedCount++
@@ -111,8 +118,8 @@ Examples:
 			// (rc!=0) instead of silently linting 0 issues (a false-clean pass
 			// a typo'd CI/agent lint gate would read as success). Custom sets
 			// come from store config so custom statuses + infra types pass.
-			// (store is guaranteed non-nil by the guard above.)
-			lintFilterCfg, lintCfgErr := loadDirectListFilterConfig(ctx, store)
+			// (backend is guaranteed initialized by the guard above.)
+			lintFilterCfg, lintCfgErr := backend.loadFilterConfig(ctx)
 			if lintCfgErr != nil {
 				// beads-21xi: runs before the `if jsonOutput` block below, so under
 				// `bd lint --json` a plain HandleError left stdout empty + stderr text
@@ -159,7 +166,7 @@ Examples:
 			}
 
 			var err error
-			issues, err = store.SearchIssues(ctx, "", filter)
+			issues, err = backend.searchIssues(ctx, filter)
 			if err != nil {
 				// beads-21xi: honor the --json error contract on this store-error
 				// path too (empty stdout + stderr text under `bd lint --json`).
@@ -171,7 +178,7 @@ Examples:
 		// warnings below. When explicit IDs were given, only those are checked;
 		// otherwise scan every closed epic (not just the default open template set).
 		inconsistencies := scanClosedEpicsWithOpenChildren(ctx,
-			store, closedEpicsToScan(ctx, store, issues, len(args) > 0))
+			backend, closedEpicsToScan(ctx, backend, issues, len(args) > 0))
 
 		var results []LintResult
 		totalWarnings := 0
@@ -326,13 +333,13 @@ func openChildIDsOfEpic(ctx context.Context, s storage.DoltStorage, epicID strin
 // checked; otherwise the lint command scans ALL closed epics (independent of the
 // template --status/--type filter, since a closed epic is invisible under the
 // default --status=open scan). Returns one InconsistencyResult per offending epic.
-func scanClosedEpicsWithOpenChildren(ctx context.Context, s storage.DoltStorage, issues []*types.Issue) []InconsistencyResult {
+func scanClosedEpicsWithOpenChildren(ctx context.Context, b *lintBackend, issues []*types.Issue) []InconsistencyResult {
 	var results []InconsistencyResult
 	for _, issue := range issues {
 		if issue.IssueType != types.TypeEpic || issue.Status != types.StatusClosed {
 			continue
 		}
-		openChildren := openChildIDsOfEpic(ctx, s, issue.ID)
+		openChildren := b.openChildIDsOfEpic(ctx, issue.ID)
 		if len(openChildren) == 0 {
 			continue
 		}
@@ -352,13 +359,13 @@ func scanClosedEpicsWithOpenChildren(ctx context.Context, s storage.DoltStorage,
 // lint's --status/--type filter — a closed epic never appears under the default
 // --status=open scan, so relying on the template issue set would make beads-4u7d
 // silently no-op in the common case.
-func closedEpicsToScan(ctx context.Context, s storage.DoltStorage, explicitIssues []*types.Issue, hadArgs bool) []*types.Issue {
+func closedEpicsToScan(ctx context.Context, b *lintBackend, explicitIssues []*types.Issue, hadArgs bool) []*types.Issue {
 	if hadArgs {
 		return explicitIssues
 	}
 	closed := types.StatusClosed
 	epic := types.TypeEpic
-	closedEpics, err := s.SearchIssues(ctx, "", types.IssueFilter{Status: &closed, IssueType: &epic})
+	closedEpics, err := b.searchIssues(ctx, types.IssueFilter{Status: &closed, IssueType: &epic})
 	if err != nil {
 		return nil
 	}
