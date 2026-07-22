@@ -318,7 +318,10 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 	// beads-v8e8). Case-insensitive LIKE (glob translated by globToLike) and SQL
 	// REGEXP, mirroring BuildLabelDrivenSearch, in the ready path's id-IN style.
 	if pattern := strings.TrimSpace(filter.LabelPattern); pattern != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) LIKE LOWER(?))", tables.Labels))
+		// ESCAPE '\\' so globToLike's backslash-escapes for a literal '%'/'_'/'\'
+		// match literally — go-mysql-server has no default LIKE escape char
+		// (beads-k3xye; parity with the bd-list label clause + beads-b9ova).
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) LIKE LOWER(?) ESCAPE '\\\\')", tables.Labels))
 		args = append(args, globToLike(pattern))
 	}
 	if regex := strings.TrimSpace(filter.LabelRegex); regex != "" {

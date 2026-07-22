@@ -84,7 +84,13 @@ func BuildLabelDrivenSearch(filter types.IssueFilter, tables FilterTables) Label
 	if pattern != "" {
 		alias := "label_filter_pattern"
 		joins = append(joins, fmt.Sprintf("JOIN %s %s ON %s.issue_id = %s.id", tables.Labels, alias, alias, tables.Main))
-		where = append(where, fmt.Sprintf("LOWER(%s.label) LIKE LOWER(?)", alias))
+		// ESCAPE '\\' so the backslash-escapes globToLike emits for literal
+		// '%'/'_'/'\' actually match literally — go-mysql-server has NO default
+		// LIKE escape char, so without this a literal '_' or '%' in a pattern is
+		// silently treated as a wildcard (beads-k3xye; mirrors beads-b9ova which
+		// added ESCAPE to the free-text title/description/notes clauses but
+		// missed the two label-pattern clauses).
+		where = append(where, fmt.Sprintf("LOWER(%s.label) LIKE LOWER(?) ESCAPE '\\\\'", alias))
 		args = append(args, globToLike(pattern))
 	}
 
@@ -109,8 +115,11 @@ func BuildLabelDrivenSearch(filter types.IssueFilter, tables FilterTables) Label
 // globToLike converts a shell-style glob (as accepted by --label-pattern) into
 // a SQL LIKE pattern: '*' -> '%' (any run) and '?' -> '_' (any single char).
 // Literal SQL LIKE wildcards ('%', '_') and the escape char ('\') in the input
-// are backslash-escaped so they match literally (the JOIN uses the default
-// LIKE ESCAPE '\'). beads-v5i7.
+// are backslash-escaped so they match literally. This REQUIRES the consuming
+// LIKE clause to carry an explicit ESCAPE '\' — go-mysql-server has NO default
+// LIKE escape char, so without it the backslashes match literally and the
+// intended metachar still acts as a wildcard (beads-v5i7; escape wired into the
+// label clauses by beads-k3xye).
 func globToLike(glob string) string {
 	var b strings.Builder
 	for _, r := range glob {
