@@ -107,9 +107,17 @@ type ImportChange struct {
 // importIssuesCore imports issues into the Dolt store.
 // This is a bridge function that delegates to the Dolt store's batch creation.
 func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, issues []*types.Issue, opts ImportOptions) (*ImportResult, error) {
-	if opts.DryRun || len(issues) == 0 {
+	if len(issues) == 0 {
 		return &ImportResult{Skipped: len(issues)}, nil
 	}
+	// beads-x7946: DryRun must NOT bail before classification — the old early
+	// return here reported a useless all-Skipped result, and the `bd import
+	// --dry-run` CLI branch never even set opts.DryRun (it counted every row as
+	// a creation). We now run every read-only step (ID/metadata validation, the
+	// stale filter / allow-stale plan, absent-field restore) exactly as a real
+	// import, and skip ONLY the batch write below (guarded by !opts.DryRun), so
+	// the preview returns the true created/updated/tie_kept/unchanged/skipped
+	// partition instead of over-reporting created.
 
 	// Reject malformed explicit IDs before the batch write (beads-a2jv).
 	// `bd import` accepts arbitrary/hand-edited JSONL, and the storage write
@@ -223,26 +231,36 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 	// (local update committed between the pre-filter read and the batch
 	// write). The transaction may retry, so dedup by ID.
 	staleRejectedSet := make(map[string]struct{})
-	err := store.CreateIssuesWithFullOptions(ctx, issues, getActorWithGit(), storage.BatchCreateOptions{
-		OrphanHandling:                 storage.OrphanAllow,
-		SkipPrefixValidation:           opts.SkipPrefixValidation,
-		ConflictSkip:                   opts.ConflictSkip,
-		RejectStaleUpserts:             !opts.AllowStale,
-		SkipDependencyValidationErrors: true,
-		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
-			skipped := fmt.Sprintf("%s -> %s: %s", issueID, dependsOnID, reason)
-			if _, ok := skippedDependencySet[skipped]; ok {
-				return
-			}
-			skippedDependencySet[skipped] = struct{}{}
-			skippedDependencies = append(skippedDependencies, skipped)
-		},
-		OnStaleRejected: func(issueID string) {
-			staleRejectedSet[issueID] = struct{}{}
-		},
-	})
-	if err != nil {
-		return nil, err
+	// beads-x7946: skip ONLY the write on a dry run. Everything above (the
+	// stale filter / allow-stale plan, absent-field restore, validation) is
+	// read-only and already ran, so the partition below is computed from the
+	// same classified changePlan a real import would apply. staleRejectedSet
+	// stays empty on a preview — the in-txn stale reject is a live-write race
+	// artifact the guarded path handles at write time, not something a preview
+	// can (or should) predict; the pre-filter already accounts for known-stale
+	// rows in staleSkippedIDs.
+	if !opts.DryRun {
+		err := store.CreateIssuesWithFullOptions(ctx, issues, getActorWithGit(), storage.BatchCreateOptions{
+			OrphanHandling:                 storage.OrphanAllow,
+			SkipPrefixValidation:           opts.SkipPrefixValidation,
+			ConflictSkip:                   opts.ConflictSkip,
+			RejectStaleUpserts:             !opts.AllowStale,
+			SkipDependencyValidationErrors: true,
+			OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+				skipped := fmt.Sprintf("%s -> %s: %s", issueID, dependsOnID, reason)
+				if _, ok := skippedDependencySet[skipped]; ok {
+					return
+				}
+				skippedDependencySet[skipped] = struct{}{}
+				skippedDependencies = append(skippedDependencies, skipped)
+			},
+			OnStaleRejected: func(issueID string) {
+				staleRejectedSet[issueID] = struct{}{}
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Count DISTINCT ids: the batch upsert collapses intra-batch duplicate ids

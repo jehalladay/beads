@@ -285,17 +285,68 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 	}
 
 	if importDryRun {
-		result.Created = len(issues)
 		result.Memories = len(memories)
-		result.Skipped = dedupHits
+		// beads-x7946: run the SAME read-only classifier a real import uses so
+		// the preview reports the true created/updated/tie_kept/unchanged/skipped
+		// partition, instead of miscounting every row as a creation. DryRun:true
+		// runs everything except the batch write (import_shared.go).
+		if len(issues) > 0 {
+			opts := ImportOptions{DryRun: true, SkipPrefixValidation: true, AllowStale: importAllowStale, PresentFieldsByID: presentFieldsByID}
+			previewResult, err := importIssuesCore(ctx, "", store, issues, opts)
+			if err != nil {
+				return fmt.Errorf("dry-run import failed: %w", err)
+			}
+			result.Created = previewResult.Created
+			result.Updated = previewResult.Updated
+			result.Skipped = dedupHits + previewResult.Skipped
+			result.IDs = append(result.IDs, previewResult.ImportedIDs...)
+			result.UpdatedIssues = append(result.UpdatedIssues, previewResult.UpdatedIssues...)
+			result.UnchangedIDs = append(result.UnchangedIDs, previewResult.Unchanged...)
+			result.TieKeptLocalIDs = append(result.TieKeptLocalIDs, previewResult.TieKeptLocalIDs...)
+			result.StaleSkippedIDs = append(result.StaleSkippedIDs, previewResult.StaleSkippedIDs...)
+			result.InvalidMetadataIDs = append(result.InvalidMetadataIDs, previewResult.InvalidMetadataIDs...)
+		} else {
+			result.Skipped = dedupHits
+		}
 		if jsonOutput {
 			return outputJSON(result)
 		}
-		fmt.Fprintf(os.Stderr, "Would import %d issues and %d memories from %s", len(issues), len(memories), source)
+		// processed = distinct rows a real import would land (created + updated
+		// + tie-kept + unchanged), matching the non-dry-run "Imported N" line.
+		processed := result.Created + result.Updated + len(result.TieKeptLocalIDs) + len(result.UnchangedIDs)
+		fmt.Fprintf(os.Stderr, "Would import %d issues (%d new, %d updated) and %d memories from %s",
+			processed, result.Created, result.Updated, len(memories), source)
 		if dedupHits > 0 {
 			fmt.Fprintf(os.Stderr, " (%d duplicates skipped)", dedupHits)
 		}
+		// beads-x7946: mirror the non-dry stale-skip / invalid-metadata inline
+		// hints so a preview surfaces the same "some rows won't land, use
+		// --allow-stale" advisory the real import prints — omitting them made the
+		// preview claim "Would import N" while silently dropping stale/invalid rows.
+		if staleSkipped := staleSkippedHintCount(result, dedupHits); staleSkipped > 0 {
+			fmt.Fprintf(os.Stderr, " (%d stale skipped; use --allow-stale to restore older rows)", staleSkipped)
+		}
+		if n := len(result.InvalidMetadataIDs); n > 0 {
+			fmt.Fprintf(os.Stderr, " (%d skipped: metadata is not a JSON object: %s)", n, strings.Join(result.InvalidMetadataIDs, ", "))
+		}
 		fmt.Fprintln(os.Stderr)
+		if len(result.UpdatedIssues) > 0 {
+			fmt.Fprintf(os.Stderr, "Would update %d existing issue(s):\n", len(result.UpdatedIssues))
+			for _, change := range result.UpdatedIssues {
+				fmt.Fprintf(os.Stderr, "  %s: %s\n", change.ID, change.Changes)
+			}
+		}
+		if len(result.UnchangedIDs) > 0 {
+			fmt.Fprintf(os.Stderr, "Unchanged (already up to date) %d issue(s): %s\n",
+				len(result.UnchangedIDs), strings.Join(result.UnchangedIDs, ", "))
+		}
+		// beads-x7946: tie-kept rows (same updated_at, different content) keep
+		// local state on a real import; the preview must say so too, matching the
+		// non-dry "Kept local state for ..." block.
+		if len(result.TieKeptLocalIDs) > 0 {
+			fmt.Fprintf(os.Stderr, "Would keep local state for %d issue(s) with the same updated_at but different content (use --allow-stale to overwrite): %s\n",
+				len(result.TieKeptLocalIDs), strings.Join(result.TieKeptLocalIDs, ", "))
+		}
 		return nil
 	}
 
