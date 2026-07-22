@@ -284,6 +284,70 @@ func outputCookDryRun(resolved *formula.Formula, protoID string, runtimeMode boo
 	}
 }
 
+// outputCookDryRunJSON emits the `bd cook --dry-run --json` preview as a
+// parseable JSON envelope (beads-cook-dryrun-json), mirroring the fields of
+// outputCookDryRun so a scripted caller gets machine output on the safe preview
+// path instead of plaintext that breaks `| jq`. Sibling of the beads-51w8c mol
+// pour/bond/squash/distill dry-run JSON fix. Step titles are sanitized via
+// displayTitle for the same untrusted-formula reason as the plaintext path
+// (7n9y / beads-q5d15 sink-class in printFormulaSteps).
+func outputCookDryRunJSON(resolved *formula.Formula, protoID string, runtimeMode bool, inputVars map[string]string, vars, bondPoints []string) error {
+	modeLabel := "compile-time"
+	if runtimeMode {
+		modeLabel = "runtime"
+		// Apply defaults for runtime mode, mirroring outputCookDryRun's plaintext
+		// path so the preview reflects the values that would actually be cooked.
+		for name, def := range resolved.Vars {
+			if _, provided := inputVars[name]; !provided && def.Default != nil {
+				inputVars[name] = *def.Default
+			}
+		}
+		// In runtime mode the plaintext preview shows substituted steps.
+		substituteFormulaVars(resolved, inputVars)
+	}
+
+	type dryRunStep struct {
+		ID       string       `json:"id"`
+		Title    string       `json:"title"`
+		Type     string       `json:"type,omitempty"`
+		Children []dryRunStep `json:"children,omitempty"`
+	}
+	var flatten func(steps []*formula.Step) []dryRunStep
+	flatten = func(steps []*formula.Step) []dryRunStep {
+		out := make([]dryRunStep, 0, len(steps))
+		for _, s := range steps {
+			ds := dryRunStep{
+				ID:    s.ID,
+				Title: displayTitle(s.Title),
+				Type:  s.Type,
+			}
+			if len(s.Children) > 0 {
+				ds.Children = flatten(s.Children)
+			}
+			out = append(out, ds)
+		}
+		return out
+	}
+
+	out := map[string]interface{}{
+		"dry_run":  true,
+		"formula":  resolved.Formula,
+		"proto_id": protoID,
+		"mode":     modeLabel,
+		"steps":    flatten(resolved.Steps),
+	}
+	if len(vars) > 0 {
+		out["variables"] = vars
+	}
+	if runtimeMode && len(inputVars) > 0 {
+		out["variable_values"] = inputVars
+	}
+	if len(bondPoints) > 0 {
+		out["bond_points"] = bondPoints
+	}
+	return outputJSON(out)
+}
+
 // outputCookEphemeral outputs the resolved formula as JSON (ephemeral mode)
 func outputCookEphemeral(resolved *formula.Formula, runtimeMode bool, inputVars map[string]string, vars []string) error {
 	if runtimeMode {
@@ -431,6 +495,17 @@ func runCook(cmd *cobra.Command, args []string) error {
 	}
 
 	if flags.dryRun {
+		// beads-cook-dryrun-json (8lqh --json-contract family, the formula-compile
+		// sibling of the beads-51w8c mol pour/bond/squash/distill dry-run fix):
+		// --dry-run is the SAFE preview path scripts/agents run before a real
+		// `cook --persist`, so it is exactly where --json consumers live.
+		// outputCookDryRun writes plaintext via fmt.Printf, so `cook --dry-run
+		// --json` leaked human text with rc=0 and broke `| jq`. Under --json emit
+		// a parseable preview envelope (dry_run:true + the same fields as the
+		// plaintext preview); the plaintext path is unchanged.
+		if jsonOutput {
+			return outputCookDryRunJSON(resolved, protoID, flags.runtimeMode, flags.inputVars, vars, bondPoints)
+		}
 		outputCookDryRun(resolved, protoID, flags.runtimeMode, flags.inputVars, vars, bondPoints)
 		return nil
 	}
