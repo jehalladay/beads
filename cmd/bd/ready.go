@@ -810,7 +810,14 @@ func runMoleculeReady(_ *cobra.Command, molIDArg string) error {
 	analysis := analyzeMoleculeParallel(subgraph)
 
 	// Collect ready steps
-	var readySteps []*MoleculeReadyStep
+	// beads-1hibk: init non-nil so a molecule with no ready steps (all closed,
+	// or all open steps blocked) emits "steps":[] not null under --json.
+	// MoleculeReadyOutput.Steps has no omitempty, so a nil slice marshals to
+	// null while the sibling ParallelGroups (make(map...) in
+	// analyzeMoleculeParallel) always emits {} — the 2llrj/1sq7f/guib nil-slice
+	// json-ARRAY contract. Kept in sync with the proxied twin in
+	// ready_proxied_server.go.
+	readySteps := []*MoleculeReadyStep{}
 	for _, issue := range subgraph.Issues {
 		info := analysis.Steps[issue.ID]
 		if info != nil && info.IsReady {

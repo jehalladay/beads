@@ -375,7 +375,10 @@ func runReadyProxiedMolecule(ctx context.Context, uw uow.UnitOfWork, in readyInp
 
 	analysis := analyzeMoleculeParallel(subgraph)
 
-	var readySteps []*MoleculeReadyStep
+	// beads-1hibk: init non-nil so a molecule with no ready steps emits
+	// "steps":[] not null under --json (no omitempty; sibling ParallelGroups
+	// always emits {}). Twin of the direct path in ready.go.
+	readySteps := []*MoleculeReadyStep{}
 	for _, issue := range subgraph.Issues {
 		info := analysis.Steps[issue.ID]
 		if info != nil && info.IsReady {
