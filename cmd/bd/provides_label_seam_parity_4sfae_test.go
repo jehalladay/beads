@@ -84,7 +84,7 @@ func TestCreateIssuesFromMarkdown_RejectsProvidesLabel_4sfae(t *testing.T) {
 	// only come from the providesLabelError guard (mutation-verified: remove the
 	// guard → err becomes nil → RED). The message text ("provides:"/"bd ship") is
 	// verified against the shared providesLabelError via the create-form leg above.
-	err := createIssuesFromMarkdown(nil, mdPath, true)
+	err := createIssuesFromMarkdown(nil, mdPath, true, false)
 	if err == nil {
 		t.Fatal("beads-4sfae: createIssuesFromMarkdown must reject a hand-set 'provides:' label (markdown-create parity), got nil")
 	}
@@ -98,7 +98,7 @@ func TestCreateIssuesFromMarkdown_NonProvidesLabelUnaffected_4sfae(t *testing.T)
 	if err := os.WriteFile(mdPath, []byte(md), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := createIssuesFromMarkdown(nil, mdPath, true); err != nil {
+	if err := createIssuesFromMarkdown(nil, mdPath, true, false); err != nil {
 		t.Errorf("beads-4sfae: ordinary markdown labels must pass; got %v", err)
 	}
 }

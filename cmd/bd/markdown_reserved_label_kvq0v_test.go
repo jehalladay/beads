@@ -30,7 +30,7 @@ func TestCreateIssuesFromMarkdown_RejectsReservedIdentityLabel(t *testing.T) {
 		// label named in the captured stderr message.
 		var err error
 		stderr := captureHookStderr(t, func() {
-			err = createIssuesFromMarkdown(nil, mdPath, true)
+			err = createIssuesFromMarkdown(nil, mdPath, true, false)
 		})
 		if err == nil {
 			t.Errorf("createIssuesFromMarkdown should reject reserved identity label %q (spoof vector), got nil", label)
@@ -54,7 +54,7 @@ func TestCreateIssuesFromMarkdown_ReservedLabelAllowedWithGTInternal(t *testing.
 		t.Fatal(err)
 	}
 	// Dry-run so no store is required; the reserved-label guard must NOT fire.
-	if err := createIssuesFromMarkdown(nil, mdPath, true); err != nil {
+	if err := createIssuesFromMarkdown(nil, mdPath, true, false); err != nil {
 		t.Errorf("createIssuesFromMarkdown with GT_INTERNAL set should allow reserved identity labels, got %v", err)
 	}
 }
@@ -69,7 +69,7 @@ func TestCreateIssuesFromMarkdown_NonReservedLabelsUnaffected(t *testing.T) {
 	if err := os.WriteFile(mdPath, []byte(md), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := createIssuesFromMarkdown(nil, mdPath, true); err != nil {
+	if err := createIssuesFromMarkdown(nil, mdPath, true, false); err != nil {
 		t.Errorf("createIssuesFromMarkdown should accept non-reserved labels, got %v", err)
 	}
 }

@@ -70,7 +70,8 @@ var createCmd = &cobra.Command{
 				return HandleErrorRespectJSON("cannot specify both title and --file flag")
 			}
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
-			return createIssuesFromMarkdown(cmd, file, dryRun)
+			mdForce, _ := cmd.Flags().GetBool("force")
+			return createIssuesFromMarkdown(cmd, file, dryRun, mdForce)
 		}
 
 		if graphFile != "" {

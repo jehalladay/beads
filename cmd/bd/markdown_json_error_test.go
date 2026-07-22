@@ -59,7 +59,7 @@ func TestMarkdownCreateJSONErrorContract_1z1l(t *testing.T) {
 	t.Run("parse_error_json_error", func(t *testing.T) {
 		mdPath := writeMD(t, "just some prose, no ## heading anywhere\n")
 		out, err := captureStdoutExpectErr(t, func() error {
-			return createIssuesFromMarkdown(nil, mdPath, false)
+			return createIssuesFromMarkdown(nil, mdPath, false, false)
 		})
 		assertJSONError(t, "parse error", out, err)
 	})

@@ -4,6 +4,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -99,6 +100,68 @@ func TestEmbeddedCreateDepsParentChildClosedParentGuard(t *testing.T) {
 		child := bdCreate(t, bd, dir, "deps blocks child", "--deps", "blocks:"+blocker.ID)
 		if child.ID == "" {
 			t.Errorf("a blocks: edge to a closed issue must not trip the closed-parent guard, got empty id")
+		}
+	})
+
+	// --- MARKDOWN axis (beads-p1p9n names --from-markdown explicitly) ---
+	// The direct markdown path (createIssuesFromMarkdown → CreateIssuesWithFullOptions
+	// → issueops.CreateIssuesInTx) is a SEPARATE seam from both the flag edgeSpecs
+	// loop and the domain create() loop — and its storage callee is shared with
+	// JSONL import, so the guard lives at the markdown authoring seam (markdown.go).
+	// Dependencies are authored in a "### Dependencies" section (markdown.go
+	// processIssueSection); the depType:id colon form is parsed in the loop at
+	// create-from-markdown time. A bare bullet under the title is NOT a dep.
+	writeMD := func(t *testing.T, dir, title, dep string) string {
+		t.Helper()
+		body := "## " + title + "\n\nBody.\n\n### Dependencies\n" + dep + "\n"
+		p := filepath.Join(dir, "batch-"+title+".md")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatalf("write markdown: %v", err)
+		}
+		return p
+	}
+
+	// (6) markdown `- parent-child:<closed EPIC>` is refused.
+	t.Run("markdown_parent_child_under_closed_epic_refused", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "cme")
+		epic := makeClosedParent(t, dir, "closed epic md", "epic")
+		md := writeMD(t, dir, "mdchild", "parent-child:"+epic)
+		out := bdCreateFail(t, bd, dir, "--file", md)
+		if !strings.Contains(out, "closed parent") {
+			t.Errorf("expected closed-parent guard on markdown create parent-child under closed epic, got:\n%s", out)
+		}
+	})
+
+	// (7) MOLECULE parent on the markdown axis.
+	t.Run("markdown_parent_child_under_closed_molecule_refused", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "cmm")
+		mol := makeClosedParent(t, dir, "closed mol md", "molecule")
+		md := writeMD(t, dir, "mdchildmol", "parent-child:"+mol)
+		out := bdCreateFail(t, bd, dir, "--file", md)
+		if !strings.Contains(out, "closed parent") {
+			t.Errorf("expected closed-parent guard on markdown create parent-child under closed molecule, got:\n%s", out)
+		}
+	})
+
+	// (8) --force overrides the guard on the markdown axis and lands the batch.
+	t.Run("markdown_parent_child_under_closed_epic_force_succeeds", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "cmf")
+		epic := makeClosedParent(t, dir, "closed epic md force", "epic")
+		md := writeMD(t, dir, "mdforce", "parent-child:"+epic)
+		out, err := bdRunWithFlockRetry(t, bd, dir, "create", "--file", md, "--force")
+		if err != nil {
+			t.Errorf("--force should land the markdown batch under a closed epic, got err: %v\n%s", err, out)
+		}
+	})
+
+	// (9) OPEN epic parent on the markdown axis (regression control).
+	t.Run("markdown_parent_child_under_open_epic_succeeds", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "cmo")
+		epic := bdCreate(t, bd, dir, "open epic md", "--type", "epic")
+		md := writeMD(t, dir, "mdopen", "parent-child:"+epic.ID)
+		out, err := bdRunWithFlockRetry(t, bd, dir, "create", "--file", md)
+		if err != nil {
+			t.Errorf("markdown child under an OPEN epic should land, got err: %v\n%s", err, out)
 		}
 	})
 }

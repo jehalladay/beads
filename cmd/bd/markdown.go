@@ -368,7 +368,7 @@ func dryRunMarkdownBatch(templates []*IssueTemplate, filepath string) error {
 	return nil
 }
 
-func createIssuesFromMarkdown(_ *cobra.Command, filepath string, dryRun bool) error {
+func createIssuesFromMarkdown(_ *cobra.Command, filepath string, dryRun bool, forceCreate bool) error {
 	templates, err := parseMarkdownFile(filepath)
 	if err != nil {
 		// beads-1z1l: this func emits outputJSON(createdIssues) on success, so its
@@ -466,6 +466,27 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string, dryRun bool) er
 
 			if !depType.IsValid() {
 				return HandleErrorRespectJSON("invalid dependency type '%s' for issue '%s'", depType, template.Title)
+			}
+
+			// beads-p1p9n: a parent-child edge authored in markdown
+			// (`- parent-child:<id>`) reaches the SAME "closed parent with an
+			// open child" invariant as `--parent` / `--deps parent-child:`, but
+			// this bulk markdown path routes through CreateIssuesWithFullOptions
+			// (issueops.CreateIssuesInTx) — which is SHARED with JSONL import and
+			// must stay unguarded (import RESTORES already-created beads; the
+			// o70m1/f8fvh reserved-label ruling) — so the guard cannot live at
+			// that storage seam. Enforce it here at the markdown authoring seam
+			// instead, mirroring the reserved-label guards above (kvq0v/4sfae)
+			// and the flag guard in create.go. Fail OPEN on a read miss: a
+			// same-batch sibling target is forward-referenced (not yet created),
+			// and such a sibling is freshly OPEN anyway, so a genuine closed
+			// parent is always an already-persisted issue we can read here.
+			// Overridable with --force.
+			if !forceCreate && !dryRun && store != nil && depType == types.DepParentChild {
+				if depParent, perr := store.GetIssue(rootCtx, dependsOnID); perr == nil &&
+					isAutoClosingParentType(depParent) && depParent.Status == types.StatusClosed {
+					return HandleErrorRespectJSON("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", dependsOnID)
+				}
 			}
 
 			// IssueID left empty — PersistDependencies defaults it to issue.ID

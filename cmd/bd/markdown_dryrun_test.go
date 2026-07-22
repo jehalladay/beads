@@ -46,7 +46,7 @@ func TestCreateIssuesFromMarkdown_DryRun(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() error {
-		return createIssuesFromMarkdown(nil, mdPath, true)
+		return createIssuesFromMarkdown(nil, mdPath, true, false)
 	})
 
 	// Must preview, not reject.
