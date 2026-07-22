@@ -657,8 +657,16 @@ func bondMolMol(ctx context.Context, s storage.DoltStorage, molA, molB *types.Is
 			return fmt.Errorf("linking molecules: %w", err)
 		}
 
-		// Note: bonded_from field tracking is not yet supported by storage layer.
-		// The dependency relationship captures the bonding semantics.
+		// beads-ijzkb: persist compound lineage on the result molecule (molA),
+		// mirroring what bondProtoProto records on its new compound root. molA
+		// becomes the compound in a mol+mol bond, so record molB as its bonded
+		// source; this makes IsCompound() true and `mol show` render Compound.
+		// Merge with any lineage molA already carries (repeated bonds accrete).
+		bondedFrom := append([]types.BondRef(nil), molA.BondedFrom...)
+		bondedFrom = append(bondedFrom, types.BondRef{SourceID: molB.ID, BondType: bondType, BondPoint: ""})
+		if err := tx.UpdateIssue(ctx, molA.ID, map[string]interface{}{"bonded_from": bondedFrom}, actorName); err != nil {
+			return fmt.Errorf("recording compound lineage on %s: %w", molA.ID, err)
+		}
 		return nil
 	})
 

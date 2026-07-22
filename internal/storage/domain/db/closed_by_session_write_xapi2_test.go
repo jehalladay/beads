@@ -61,12 +61,13 @@ func TestInsertIssueRow_CarriesClosedBySession_xapi2(t *testing.T) {
 	}
 }
 
-// closedBySessionArgs pins the 47 positional bind args: every slot is AnyArg
+// closedBySessionArgs pins the 48 positional bind args: every slot is AnyArg
 // except the closed_by_session slot, which must be "sess-DOMAIN-7". In the
 // INSERT list closed_by_session immediately follows close_reason, so it is the
-// 36th column (1-indexed) => arg index 35.
+// 36th column (1-indexed) => arg index 35. (beads-ijzkb added bonded_from after
+// waiters — later in the list — so the closed_by_session index is unchanged.)
 func closedBySessionArgs() []driver.Value {
-	m := make([]driver.Value, 47)
+	m := make([]driver.Value, 48)
 	for i := range m {
 		m[i] = sqlmock.AnyArg()
 	}

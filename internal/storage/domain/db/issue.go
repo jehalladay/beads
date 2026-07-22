@@ -43,7 +43,8 @@ var allowedUpdateFields = map[string]struct{}{
 	"source_repo": {}, "sender": {}, "wisp": {}, "wisp_type": {}, "no_history": {}, "pinned": {},
 	"mol_type": {}, "event_kind": {}, "actor": {}, "target": {}, "payload": {},
 	"due_at": {}, "defer_until": {}, "await_id": {}, "waiters": {},
-	"metadata": {},
+	"bonded_from": {},
+	"metadata":    {},
 }
 
 var updateFieldColumnRename = map[string]string{
@@ -724,7 +725,7 @@ func insertIssueRow(ctx context.Context, runner Runner, table string, issue *typ
 			sender, ephemeral, no_history, wisp_type, pinned, is_template,
 			mol_type, work_type, source_system, source_repo, close_reason, closed_by_session,
 			event_kind, actor, target, payload,
-			await_type, await_id, timeout_ns, waiters,
+			await_type, await_id, timeout_ns, waiters, bonded_from,
 			due_at, defer_until, metadata
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
@@ -734,7 +735,7 @@ func insertIssueRow(ctx context.Context, runner Runner, table string, issue *typ
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?,
-			?, ?, ?, ?,
+			?, ?, ?, ?, ?,
 			?, ?, ?
 		)
 		ON DUPLICATE KEY UPDATE
@@ -747,7 +748,7 @@ func insertIssueRow(ctx context.Context, runner Runner, table string, issue *typ
 		issue.Sender, issue.Ephemeral, issue.NoHistory, string(issue.WispType), issue.Pinned, issue.IsTemplate,
 		string(issue.MolType), string(issue.WorkType), issue.SourceSystem, issue.SourceRepo, issue.CloseReason, issue.ClosedBySession,
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
-		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
+		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters), issueops.FormatBondedFrom(issue.BondedFrom),
 		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
 	)
 	if err != nil {
@@ -864,6 +865,22 @@ func normalizeUpdateValue(key string, value any) any {
 			return string(v)
 		case json.RawMessage:
 			return string(v)
+		}
+	case "bonded_from":
+		// beads-ijzkb: bonded_from is a JSON array of BondRef stored as TEXT.
+		// Marshal the []types.BondRef before binding, mirroring waiters — the
+		// domain/proxied path would otherwise bind the raw slice and fail
+		// "unsupported type" (the beads-qppc waiters class).
+		switch v := value.(type) {
+		case string:
+			return v
+		case []byte:
+			return string(v)
+		case json.RawMessage:
+			return string(v)
+		default:
+			b, _ := json.Marshal(value)
+			return string(b)
 		}
 	}
 	return value

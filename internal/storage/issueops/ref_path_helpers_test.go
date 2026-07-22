@@ -152,7 +152,7 @@ var insertIssueColumns = []string{
 	"sender", "ephemeral", "no_history", "wisp_type", "pinned", "is_template",
 	"mol_type", "work_type", "source_system", "source_repo", "close_reason", "closed_by_session",
 	"event_kind", "actor", "target", "payload",
-	"await_type", "await_id", "timeout_ns", "waiters",
+	"await_type", "await_id", "timeout_ns", "waiters", "bonded_from",
 	"due_at", "defer_until", "metadata",
 }
 

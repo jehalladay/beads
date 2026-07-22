@@ -200,7 +200,8 @@ func IsAllowedUpdateField(key string) bool {
 		"mol_type":       true,
 		"event_category": true, "event_actor": true, "event_target": true, "event_payload": true,
 		"due_at": true, "defer_until": true, "await_id": true, "waiters": true,
-		"metadata": true,
+		"bonded_from": true,
+		"metadata":    true,
 	}
 	return allowed[key]
 }
@@ -408,6 +409,18 @@ func updateIssueInTx(ctx context.Context, tx DBTX, id string, updates map[string
 		if key == "waiters" {
 			waitersJSON, _ := json.Marshal(value)
 			args = append(args, string(waitersJSON))
+		} else if key == "bonded_from" {
+			// beads-ijzkb: bonded_from is a JSON array of BondRef stored as TEXT.
+			// Marshal the []types.BondRef (or already-serialized string) before
+			// binding, mirroring the waiters JSON-TEXT handling — a raw []BondRef
+			// would fail "unsupported type" at the driver (the beads-qppc class).
+			switch v := value.(type) {
+			case string:
+				args = append(args, v)
+			default:
+				bondedJSON, _ := json.Marshal(value)
+				args = append(args, string(bondedJSON))
+			}
 		} else if key == "metadata" {
 			metadataStr, err := storage.NormalizeMetadataValue(value)
 			if err != nil {

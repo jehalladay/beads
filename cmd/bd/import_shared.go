@@ -306,7 +306,8 @@ var restoredUpsertColumns = map[string]struct{}{
 	"closed_by_session": {}, "external_ref": {}, "source_system": {},
 	"pinned": {}, "sender": {}, "wisp_type": {}, "mol_type": {}, "work_type": {},
 	"await_type": {}, "await_id": {}, "timeout_ns": {}, "waiters": {},
-	"event_kind": {}, "actor": {}, "target": {}, "payload": {}, "metadata": {},
+	"bonded_from": {},
+	"event_kind":  {}, "actor": {}, "target": {}, "payload": {}, "metadata": {},
 }
 
 // notRestoredUpsertColumns are upsert columns deliberately NOT preserved on
@@ -492,6 +493,12 @@ func restoreAbsentFieldsFromLocal(ctx context.Context, store storage.DoltStorage
 		}
 		if absent("waiters") {
 			issue.Waiters = local.Waiters
+		}
+		// Compound lineage (beads-ijzkb): bonded_from is user-mutable (mol bond)
+		// and JSON-exported, so preserve the stored lineage when the incoming
+		// line omits it, same as waiters.
+		if absent("bonded_from") {
+			issue.BondedFrom = local.BondedFrom
 		}
 		// Event fields
 		if absent("event_kind") {

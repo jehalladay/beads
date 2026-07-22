@@ -42,6 +42,7 @@ const IssueSelectColumns = `id, content_hash, title, description, design, accept
 	       closed_by_session,
 	       sender, ephemeral, no_history, wisp_type, pinned, is_template,
 	       await_type, await_id, timeout_ns, waiters,
+	       bonded_from,
 	       mol_type,
 	       event_kind, actor, target, payload,
 	       due_at, defer_until,

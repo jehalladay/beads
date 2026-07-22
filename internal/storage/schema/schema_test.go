@@ -453,12 +453,27 @@ FROM schema_migrations`)
 	if len(rows) != 1 {
 		t.Fatalf("schema_migrations query returned %d rows, want 1", len(rows))
 	}
-	want := strconv.Itoa(LatestVersion())
-	if got := rows[0]["max_version"]; got != want {
-		t.Fatalf("MAX(version) = %s, want %s", got, want)
+	// MAX(version) must equal the latest embedded migration version — the latest
+	// migration is applied and its cursor row recorded.
+	wantMax := strconv.Itoa(LatestVersion())
+	if got := rows[0]["max_version"]; got != wantMax {
+		t.Fatalf("MAX(version) = %s, want %s", got, wantMax)
 	}
-	if got := rows[0]["version_count"]; got != want {
-		t.Fatalf("COUNT(*) = %s, want %s", got, want)
+	// version_count must equal the number of embedded up-migration files — this
+	// keeps the real teeth (a migration that silently failed to apply leaves
+	// count < files and fails loud) WITHOUT coupling the count to a gapless-
+	// numbering assumption. beads-ijzkb intentionally skips version 0054: the
+	// fleet hub carries phantom v54 lease columns from an unmerged
+	// 0054_add_lease_columns branch, so bonded_from was numbered 0055 to apply
+	// cleanly on both v53 and phantom-54 DBs (the MAX-based selector at
+	// schema.go:836/848 has no contiguity requirement). Contiguity was only ever
+	// an incidental property of 0001–0053, never a real invariant — asserting
+	// count == LatestVersion() accidentally hard-coded it. Comparing against the
+	// embedded file count restores the true contract: every embedded migration
+	// applied exactly once.
+	wantCount := strconv.Itoa(len(mainSource.list()))
+	if got := rows[0]["version_count"]; got != wantCount {
+		t.Fatalf("COUNT(*) = %s, want %s (embedded up-migration files)", got, wantCount)
 	}
 
 	requireDoltNoRows(t, dir, `

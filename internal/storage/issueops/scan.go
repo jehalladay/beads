@@ -37,6 +37,7 @@ func ScanIssueFrom(s IssueScanner, extra ...any) (*types.Issue, error) {
 	var workType, sourceSystem sql.NullString
 	var sender, wispType, molType, eventKind, actor, target, payload sql.NullString
 	var awaitType, awaitID, waiters sql.NullString
+	var bondedFrom sql.NullString
 	var ephemeral, noHistory, pinned, isTemplate sql.NullInt64
 	var metadata sql.NullString
 
@@ -49,6 +50,7 @@ func ScanIssueFrom(s IssueScanner, extra ...any) (*types.Issue, error) {
 		&closedBySession,
 		&sender, &ephemeral, &noHistory, &wispType, &pinned, &isTemplate,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
+		&bondedFrom,
 		&molType,
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
@@ -144,6 +146,9 @@ func ScanIssueFrom(s IssueScanner, extra ...any) (*types.Issue, error) {
 	if waiters.Valid && waiters.String != "" {
 		issue.Waiters = ParseJSONStringArray(waiters.String)
 	}
+	if bondedFrom.Valid && bondedFrom.String != "" {
+		issue.BondedFrom = ParseBondedFrom(bondedFrom.String)
+	}
 	if molType.Valid {
 		issue.MolType = types.MolType(molType.String)
 	}
@@ -200,6 +205,19 @@ func ParseJSONStringArray(s string) []string {
 		return nil
 	}
 	var result []string
+	if err := json.Unmarshal([]byte(s), &result); err != nil {
+		return nil
+	}
+	return result
+}
+
+// ParseBondedFrom unmarshals the compound-lineage BondRef slice (beads-ijzkb).
+// Returns nil on error or empty input, mirroring ParseJSONStringArray.
+func ParseBondedFrom(s string) []types.BondRef {
+	if s == "" {
+		return nil
+	}
+	var result []types.BondRef
 	if err := json.Unmarshal([]byte(s), &result); err != nil {
 		return nil
 	}

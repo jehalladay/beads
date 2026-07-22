@@ -86,6 +86,11 @@ var issueUpsertColumns = []string{
 	"mol_type", "work_type", "source_system",
 	"event_kind", "actor", "target", "payload",
 	"await_type", "await_id", "timeout_ns", "waiters",
+	// beads-ijzkb: compound-issue lineage (BondedFrom). User-mutable via
+	// `mol bond` and JSON-exported, so it must be in the UPSERT set for a
+	// `bd export → re-import` over an existing id to be lossless — same class
+	// as the waiters/owner/spec_id fields grouped above.
+	"bonded_from",
 	"due_at", "defer_until", "pinned",
 	"updated_at",
 }
@@ -157,7 +162,7 @@ func insertIssueIntoTable(ctx context.Context, tx DBTX, table string, issue *typ
 			sender, ephemeral, no_history, wisp_type, pinned, is_template,
 			mol_type, work_type, source_system, source_repo, close_reason, closed_by_session,
 			event_kind, actor, target, payload,
-			await_type, await_id, timeout_ns, waiters,
+			await_type, await_id, timeout_ns, waiters, bonded_from,
 			due_at, defer_until, metadata
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
@@ -167,7 +172,7 @@ func insertIssueIntoTable(ctx context.Context, tx DBTX, table string, issue *typ
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?,
-			?, ?, ?, ?,
+			?, ?, ?, ?, ?,
 			?, ?, ?
 		)
 		ON DUPLICATE KEY UPDATE
@@ -180,7 +185,7 @@ func insertIssueIntoTable(ctx context.Context, tx DBTX, table string, issue *typ
 		issue.Sender, issue.Ephemeral, issue.NoHistory, issue.WispType, issue.Pinned, issue.IsTemplate,
 		issue.MolType, issue.WorkType, issue.SourceSystem, issue.SourceRepo, issue.CloseReason, issue.ClosedBySession,
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
-		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), FormatJSONStringArray(issue.Waiters),
+		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), FormatJSONStringArray(issue.Waiters), FormatBondedFrom(issue.BondedFrom),
 		issue.DueAt, issue.DeferUntil, JSONMetadata(issue.Metadata),
 	)
 	if err != nil {
@@ -654,6 +659,20 @@ func FormatJSONStringArray(arr []string) string {
 		return ""
 	}
 	data, err := json.Marshal(arr)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// FormatBondedFrom marshals the compound-lineage BondRef slice to JSON,
+// returning "" for empty/nil (beads-ijzkb). Mirrors FormatJSONStringArray but
+// for the []types.BondRef struct slice so bonded_from round-trips.
+func FormatBondedFrom(refs []types.BondRef) string {
+	if len(refs) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(refs)
 	if err != nil {
 		return ""
 	}
