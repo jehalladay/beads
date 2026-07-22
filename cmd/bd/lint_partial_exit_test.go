@@ -113,4 +113,59 @@ func TestEmbeddedLintPartialExitCode(t *testing.T) {
 			t.Errorf("expected the lint JSON object (with a 'total' field) on stdout, got: %v", obj)
 		}
 	})
+
+	// beads-iwy1k: the per-id resolve-loop failure lines ("Issue not found: X" /
+	// "Error getting X: ...") were RAW fmt.Fprintf(os.Stderr) writes that fired
+	// even under --json. Because lint ALWAYS emits its results envelope on stdout
+	// under --json, a `bd lint IDS --json 2>&1 | jq` consumer got plaintext
+	// interleaved with the JSON object and couldn't tell which id failed. The fix
+	// routes both writes through reportItemError, so under --json each per-id
+	// failure is a structured JSON object on STDERR (the clean per-item stderr
+	// contract shared by show/update/label/reopen/undefer/close — fg6/92tz/en28/
+	// n96g). Assert: stderr under --json is parseable JSON carrying the id, and
+	// carries NO raw "Issue not found:" plaintext line. Mutation: reverting to
+	// fmt.Fprintf(os.Stderr, ...) makes stderr raw plaintext → this fails.
+	t.Run("multi_partial_json_stderr_is_structured_not_plaintext_iwy1k", func(t *testing.T) {
+		cmd := exec.Command(bd, "lint", a.ID, "p3-ghost-iwy1k", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		var stdout, stderr strings.Builder
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err == nil {
+			t.Fatalf("expected bd lint %s p3-ghost-iwy1k --json to fail, but succeeded\nstdout:\n%s", a.ID, stdout.String())
+		}
+		errText := stderr.String()
+		// The raw plaintext line must NOT appear under --json.
+		if strings.Contains(errText, "Issue not found: p3-ghost-iwy1k") {
+			t.Errorf("beads-iwy1k: stderr under --json still carries the RAW plaintext line %q; want a structured JSON error object.\nstderr:\n%s", "Issue not found: p3-ghost-iwy1k", errText)
+		}
+		// stderr must carry at least one parseable JSON error object that names
+		// the failed id. jsonStderrError emits an indented multi-line object per
+		// item, so scan for a decodable {...} block containing "error".
+		start := strings.IndexByte(errText, '{')
+		if start < 0 {
+			t.Fatalf("beads-iwy1k: expected a JSON error object on stderr under --json, got:\n%s", errText)
+		}
+		dec := json.NewDecoder(strings.NewReader(errText[start:]))
+		var sawErrorNamingID bool
+		for {
+			var obj map[string]interface{}
+			if derr := dec.Decode(&obj); derr != nil {
+				break
+			}
+			// Unwrap the optional envelope ({schema_version, data:{error}}).
+			inner := obj
+			if data, ok := obj["data"].(map[string]interface{}); ok {
+				inner = data
+			}
+			if msg, ok := inner["error"].(string); ok && strings.Contains(msg, "p3-ghost-iwy1k") {
+				sawErrorNamingID = true
+				break
+			}
+		}
+		if !sawErrorNamingID {
+			t.Errorf("beads-iwy1k: expected a structured JSON stderr error naming the failed id p3-ghost-iwy1k, got:\n%s", errText)
+		}
+	})
 }
