@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 )
 
@@ -66,13 +65,16 @@ func (f *watermarkFakeStore) RestoreDatabase(_ context.Context, _ string, _ bool
 // becomes commitB (the racing commit the backup does not contain).
 func TestRunBackupExport_WatermarkPreBackup_91ffk(t *testing.T) {
 	// backupDir() resolves backup.git-repo/backup when that points at a real git
-	// repo — a hermetic path that needs no beads workspace.
+	// repo — a hermetic path that needs no beads workspace. Set it via the
+	// BD_BACKUP_GIT_REPO env var (not config.Set): sibling tests in this package
+	// re-Initialize() viper, which stomps a config.Set global, whereas an env var
+	// survives re-init (AutomaticEnv re-reads it at GetString time) and t.Setenv
+	// auto-restores it per-test. This mirrors backup_test.go's own workspace setup.
 	gitRepo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(gitRepo, ".git"), 0o755); err != nil {
 		t.Fatalf("mkdir .git: %v", err)
 	}
-	config.Set("backup.git-repo", gitRepo)
-	t.Cleanup(func() { config.Set("backup.git-repo", "") })
+	t.Setenv("BD_BACKUP_GIT_REPO", gitRepo)
 
 	fake := &watermarkFakeStore{
 		commitA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
