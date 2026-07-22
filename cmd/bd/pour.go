@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -304,6 +305,29 @@ func runPour(cmd *cobra.Command, args []string) error {
 			fmt.Sprintf("missing required variables: %s", strings.Join(missingVars, ", ")),
 			fmt.Sprintf("Provide them with: --var %s=<value>", missingVars[0]),
 		)
+	}
+
+	// beads-8m9o7: enforce enum/pattern var constraints before spawning issues.
+	// The cooked proto subgraph carries VarDefs (formula.VarDef); pour previously
+	// only checked missing-required vars, so out-of-enum / pattern-violating
+	// values were substituted into real, persistent issues. Validate the merged
+	// (defaults-applied) value set against the same constraints cook enforces,
+	// including attachment protos' var defs. Fail loud (rc=1, JSON-aware).
+	if subgraph.VarDefs != nil {
+		mergedDefs := make(map[string]formula.VarDef, len(subgraph.VarDefs))
+		for name, def := range subgraph.VarDefs {
+			mergedDefs[name] = def
+		}
+		for _, attach := range attachments {
+			for name, def := range attach.subgraph.VarDefs {
+				if _, exists := mergedDefs[name]; !exists {
+					mergedDefs[name] = def
+				}
+			}
+		}
+		if err := formula.ValidateVarValues(mergedDefs, vars); err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
 	}
 
 	if dryRun {

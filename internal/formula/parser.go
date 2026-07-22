@@ -434,11 +434,32 @@ func Substitute(s string, vars map[string]string) string {
 }
 
 // ValidateVars checks that all required variables are provided
-// and all values pass their constraints.
+// and all values pass their constraints. It operates on a resolved *Formula
+// (whose Vars are pointers); the shared constraint logic lives in
+// ValidateVarValues so callers that carry a value-typed def map (e.g. the
+// pour/mol runtime path, which reconstructs VarDefs from a cooked proto
+// subgraph) can enforce the same enum/pattern rules.
 func ValidateVars(formula *Formula, values map[string]string) error {
+	defs := make(map[string]VarDef, len(formula.Vars))
+	for name, def := range formula.Vars {
+		if def != nil {
+			defs[name] = *def
+		}
+	}
+	return ValidateVarValues(defs, values)
+}
+
+// ValidateVarValues checks provided values against variable-definition
+// constraints (required, enum, pattern). It is the shared core used by both
+// ValidateVars (cook path, *Formula) and the pour/mol runtime substitution
+// path (which carries map[string]VarDef from a cooked proto subgraph).
+// beads-8m9o7: this enforcement was previously defined (in the old ValidateVars
+// body) but had ZERO production callers, so cook/pour silently accepted and
+// landed out-of-enum / pattern-violating values as durable issue content.
+func ValidateVarValues(defs map[string]VarDef, values map[string]string) error {
 	var errs []string
 
-	for name, def := range formula.Vars {
+	for name, def := range defs {
 		val, provided := values[name]
 
 		// Check required

@@ -494,6 +494,20 @@ func runCook(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// beads-8m9o7: enforce variable enum/pattern (and required) constraints in
+	// runtime mode BEFORE any substitution/preview/persist. formula.ValidateVars
+	// exists but had zero production callers, so out-of-enum / pattern-violating
+	// values were silently substituted and landed as durable issue content. Only
+	// runtime mode carries real values to validate; compile-time cook keeps the
+	// {{placeholder}} form and has nothing to check. Applies to dry-run, ephemeral
+	// and persist uniformly. Fail loud (rc=1, JSON-aware) matching the existing
+	// missing-required-var contract.
+	if flags.runtimeMode {
+		if err := formula.ValidateVars(resolved, flags.inputVars); err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
+	}
+
 	if flags.dryRun {
 		// beads-cook-dryrun-json (8lqh --json-contract family, the formula-compile
 		// sibling of the beads-51w8c mol pour/bond/squash/distill dry-run fix):
