@@ -141,7 +141,7 @@ func runGateDiscover(cmd *cobra.Command, args []string) error {
 	matchCount := 0
 	updatedCount := 0
 	for _, gate := range gates {
-		match := matchGateToRun(gate, runs, maxAge)
+		match := matchGateToRun(gate, runs, maxAge, branchFilter)
 		if match == nil {
 			if !jsonOutput {
 				fmt.Printf("  %s %s - no matching run found\n",
@@ -345,14 +345,30 @@ func queryGitHubRuns(branch string, limit int) ([]GHWorkflowRun, error) {
 
 // matchGateToRun finds the best matching run for a gate using heuristics.
 // If the gate has a workflow name hint in AwaitID, only runs matching that workflow are considered.
-func matchGateToRun(gate *types.Issue, runs []GHWorkflowRun, maxAge time.Duration) *GHWorkflowRun {
+//
+// branchFilter is the branch the runs were queried against (queryGitHubRuns);
+// it MUST be used for the branch-match heuristic rather than the current CWD
+// HEAD, otherwise a `--branch X` invocation (where X != CWD HEAD) scores the
+// branch signal as 0 for every queried run (beads-q4gr5 defect 2).
+func matchGateToRun(gate *types.Issue, runs []GHWorkflowRun, maxAge time.Duration, branchFilter string) *GHWorkflowRun {
 	now := time.Now()
 	currentCommit := getGitCommitForGateDiscovery()
-	currentBranch := getGitBranchForGateDiscovery()
+	// Match runs against the branch they were queried with (branchFilter), not
+	// the CWD HEAD — the caller defaults branchFilter to the CWD HEAD when no
+	// --branch is given, so this is equivalent in the no-flag case and correct
+	// when --branch is explicit.
+	currentBranch := branchFilter
+	if currentBranch == "" {
+		currentBranch = getGitBranchForGateDiscovery()
+	}
 	workflowHint := getWorkflowNameHint(gate)
 
 	var bestMatch *GHWorkflowRun
 	var bestScore int
+	// bestStrong tracks whether the current best match has a strong signal
+	// (commit / branch / workflow match). Time proximity alone must never bind
+	// a gate to an unrelated run (beads-q4gr5 defect 1).
+	var bestStrong bool
 
 	for i := range runs {
 		run := &runs[i]
@@ -363,9 +379,11 @@ func matchGateToRun(gate *types.Issue, runs []GHWorkflowRun, maxAge time.Duratio
 			continue
 		}
 
+		hasWorkflowHint := workflowHint != ""
+
 		// If gate has a workflow name hint, require matching workflow
 		// Match against both WorkflowName (display name) and Name (filename)
-		if workflowHint != "" {
+		if hasWorkflowHint {
 			workflowMatches := workflowNameMatches(workflowHint, run.WorkflowName, run.Name)
 			if !workflowMatches {
 				continue // Skip runs that don't match the workflow hint
@@ -375,12 +393,14 @@ func matchGateToRun(gate *types.Issue, runs []GHWorkflowRun, maxAge time.Duratio
 		}
 
 		// Heuristic 1: Commit SHA match (strongest signal after workflow match)
-		if currentCommit != "" && run.HeadSha == currentCommit {
+		commitMatch := currentCommit != "" && run.HeadSha == currentCommit
+		if commitMatch {
 			score += 100
 		}
 
 		// Heuristic 2: Branch match
-		if run.HeadBranch == currentBranch {
+		branchMatch := run.HeadBranch == currentBranch
+		if branchMatch {
 			score += 50
 		}
 
@@ -400,16 +420,23 @@ func matchGateToRun(gate *types.Issue, runs []GHWorkflowRun, maxAge time.Duratio
 			score += 5
 		}
 
+		// A strong signal is a commit, branch, or workflow-name match — anything
+		// that actually ties this run to the gate beyond happening at a similar
+		// time. Time proximity and run-status are weak, corroborating signals only.
+		strong := commitMatch || branchMatch || hasWorkflowHint
+
 		if score > bestScore {
 			bestScore = score
 			bestMatch = run
+			bestStrong = strong
 		}
 	}
 
-	// Require at least some confidence in the match
-	// With workflow hint, workflow match (200) alone is sufficient
-	// Without workflow hint, require branch or commit match (30+ from time proximity)
-	if bestScore >= 30 {
+	// Require a strong signal before binding. With a workflow hint, the workflow
+	// match (200) alone is sufficient. Without one, a branch (+50) or commit
+	// (+100) match is mandatory — time proximity alone (+30) must NOT bind a
+	// gate to a run that shares neither branch nor commit (beads-q4gr5 defect 1).
+	if bestMatch != nil && bestStrong {
 		return bestMatch
 	}
 
