@@ -1310,6 +1310,35 @@ func (u *issueUseCaseImpl) applyGraph(ctx context.Context, plan GraphPlan, actor
 		}
 	}
 
+	// Pass 4.6 — inherit source_repo from a discovered-from edge, matching single
+	// create --deps discovered-from:<parent> (beads-comt0). u.create copies a
+	// non-empty parent source_repo onto the child (the DiscoveredFromParent block
+	// above); Pass 1 mints every node top-level with an empty source_repo, so that
+	// inheritance never runs for graph children over the proxied/domain path (the
+	// domain twin of the executeGraphApply post-pass). For each discovered-from
+	// edge (from=child, to=source-parent, same direction as single create's
+	// depends-on), copy a non-empty parent source_repo onto the child. Runs after
+	// Pass 3/4 so every ID is resolved; reads the parent from the same table the
+	// graph writes to (useWisp), matching the Pass 4/4.5 reads. A miss or an empty
+	// parent source_repo leaves the child's default, mirroring u.create's fallback.
+	for i, edge := range plan.Edges {
+		if edge.Type != types.DepDiscoveredFrom {
+			continue
+		}
+		childID := resolveEdgeRef(edge.FromKey, edge.FromID, keyToID)
+		parentID := resolveEdgeRef(edge.ToKey, edge.ToID, keyToID)
+		if childID == "" || parentID == "" {
+			continue
+		}
+		parent, perr := u.get(ctx, parentID, useWisp)
+		if perr != nil || parent.SourceRepo == "" {
+			continue
+		}
+		if err := u.issueRepo.Update(ctx, childID, map[string]any{"source_repo": parent.SourceRepo}, actor, IssueTableOpts{UseWispsTable: useWisp}); err != nil {
+			return GraphApplyResult{}, fmt.Errorf("applyGraph: edge %d: inherit source_repo onto %s from %s: %w", i, childID, parentID, err)
+		}
+	}
+
 	// Pass 5 — apply deferred assignees.
 	for i, assignee := range pendingAssignees {
 		if assignee == "" {

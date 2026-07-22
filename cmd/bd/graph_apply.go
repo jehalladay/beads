@@ -786,6 +786,40 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 			}
 		}
 
+		// Inherit source_repo from a discovered-from edge, matching single create
+		// (beads-comt0). Single `bd create --deps discovered-from:<parent>` copies
+		// the parent's source_repo onto the child (create.go, mirroring the domain
+		// u.create DiscoveredFromParent block). Graph nodes are minted top-level
+		// with an empty source_repo (the Issue struct above sets none, and
+		// GraphApplyNode carries no source_repo field), then edges are linked in the
+		// loop above — so the single-create inheritance never runs for graph
+		// children. This post-pass mirrors it: for each discovered-from edge
+		// (from=child, to=source-parent, same direction as single create's
+		// depends-on), copy a non-empty parent source_repo onto the child. Runs
+		// AFTER the edge loop so every ID is resolved. Same create-input-parity
+		// class as the l8qsn label pass and the t39ph closed-parent guard; kept
+		// consistent with the domain applyGraph Pass 4.6 twin.
+		for i, edge := range plan.Edges {
+			if graphApplyDependencyType(edge.Type) != types.DepDiscoveredFrom {
+				continue
+			}
+			childID := resolveEdgeRef(edge.FromKey, edge.FromID, keyToID)
+			parentID := resolveEdgeRef(edge.ToKey, edge.ToID, keyToID)
+			if childID == "" || parentID == "" {
+				continue
+			}
+			parent, perr := tx.GetIssue(ctx, parentID)
+			if perr != nil || parent == nil || parent.SourceRepo == "" {
+				// A miss or a parent with no source_repo leaves the child's default
+				// (empty) source_repo, matching single create's "continue with
+				// default" fallback.
+				continue
+			}
+			if err := tx.UpdateIssue(ctx, childID, map[string]interface{}{"source_repo": parent.SourceRepo}, actor); err != nil {
+				return fmt.Errorf("edge %d: inherit source_repo onto %s from %s: %w", i, childID, parentID, err)
+			}
+		}
+
 		// Apply deferred assignees.
 		for i, assignee := range pendingAssignees {
 			updates := map[string]interface{}{
