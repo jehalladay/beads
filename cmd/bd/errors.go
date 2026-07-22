@@ -202,9 +202,15 @@ func HandleErrorRespectJSON(format string, args ...interface{}) error {
 // plaintext print). Otherwise preserve the plaintext error unchanged.
 func argValidationError(cmd *cobra.Command, format string, args ...interface{}) error {
 	msg := fmt.Sprintf(format, args...)
-	if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
-		jsonStdoutError(msg, "")
-		return &exitError{Code: 1}
+	// A nil cmd carries no flags (some unit tests invoke a validator directly as
+	// fn(nil, args) to assert the rejection message); cmd.Flags() would panic, so
+	// treat nil as the non-json plaintext path. At real runtime cobra always
+	// passes the executed *Command, so the --json leg is reached as intended.
+	if cmd != nil {
+		if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
+			jsonStdoutError(msg, "")
+			return &exitError{Code: 1}
+		}
 	}
 	return fmt.Errorf("%s", msg)
 }

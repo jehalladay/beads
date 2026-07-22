@@ -161,6 +161,34 @@ func TestCompactDoltNoArgsValidatorPlaintextWhenNotJSON_1xji0(t *testing.T) {
 	}
 }
 
+// Regression guard: argValidationError must be nil-cmd-safe. Pre-existing unit
+// tests invoke the validators directly as fn(nil, args) (compact_noargs_test.go,
+// count_filter_test.go); before the nil guard, argValidationError(nil, ...) →
+// cmd.Flags() panicked (errors.go). Assert the nil path returns a plain error
+// (not a panic, not an *exitError) with the message preserved.
+func TestArgValidationErrorNilCmdSafe_1xji0(t *testing.T) {
+	err := argValidationError(nil, "some rejection %d", 7)
+	if err == nil {
+		t.Fatal("argValidationError(nil, ...) must return an error, got nil")
+	}
+	if got := err.Error(); got != "some rejection 7" {
+		t.Errorf("nil-cmd path must format+preserve the message, got %q", got)
+	}
+	if _, ok := exitCodeFromError(err); ok {
+		t.Errorf("nil-cmd path must be a plain error (no flags to read → non-json), got an *exitError")
+	}
+	// The real validators must not panic when called with a nil cmd + positional.
+	if e := compactNoArgs(nil, []string{"bd-42"}); e == nil {
+		t.Error("compactNoArgs(nil, positional) should still reject")
+	}
+	if e := compactDoltNoArgs(nil, []string{"x"}); e == nil {
+		t.Error("compactDoltNoArgs(nil, positional) should still reject")
+	}
+	if e := countArgs(nil, []string{"bogus"}); e == nil {
+		t.Error("countArgs(nil, positional) should still reject")
+	}
+}
+
 // Guard: the no-positional happy path stays a nil error for all three (a stray
 // over-application of the helper must not reject valid flag-only invocations).
 func TestArgsValidatorsAcceptZeroPositionals_1xji0(t *testing.T) {
