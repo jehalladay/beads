@@ -468,6 +468,16 @@ func (s *DoltStore) RemoveFederationPeer(ctx context.Context, name string) error
 	// Also remove the Dolt remote (best-effort)
 	_ = s.RemoveRemote(ctx, name) // Best effort cleanup before re-adding remote
 
+	// Commit the deletion to Dolt history, symmetric with AddFederationPeer.
+	// execContext only writes the working set; without this the removed
+	// credential row is left uncommitted and can resurrect on a working-set
+	// reset or never replicate on push (re-opening the orphaned-credential
+	// window beads-af5te closed). doltAddAndCommit tolerates nothing-to-commit,
+	// so removing a peer that was never present is a safe no-op.
+	if err := s.doltAddAndCommit(ctx, []string{"federation_peers"}, "federation: remove peer "+name); err != nil {
+		return fmt.Errorf("failed to commit federation peer removal: %w", err)
+	}
+
 	return nil
 }
 

@@ -499,6 +499,56 @@ func TestAddFederationPeerWithPasswordDoesNotDeadlock(t *testing.T) {
 	}
 }
 
+// TestRemoveFederationPeerCommitsDeletion is the delete-side twin of
+// TestFederationSyncCommitsPendingPeerMetadataBeforeFetch (beads-4521v).
+// AddFederationPeer commits the federation_peers row to Dolt history via
+// doltAddAndCommit; RemoveFederationPeer must symmetrically commit the DELETE,
+// or the removed credential row is left uncommitted in the working set and can
+// resurrect on a working-set reset / never replicate on push (re-opening the
+// orphaned-credential window beads-af5te closed).
+func TestRemoveFederationPeerCommitsDeletion(t *testing.T) {
+	skipIfNoDolt(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	// No Password: the add-peer credential-key init path has an unrelated
+	// re-entrant-lock hang (filed separately); this test targets only the
+	// remove-side commit asymmetry, which is independent of encryption.
+	peer := &storage.FederationPeer{
+		Name:        "peer-remove-commit",
+		RemoteURL:   "file:///tmp/beads-no-such-federation-peer-remove",
+		Username:    "alice",
+		Sovereignty: "T2",
+	}
+	if err := store.AddFederationPeer(ctx, peer); err != nil {
+		t.Fatalf("add federation peer: %v", err)
+	}
+	// Precondition: add-peer left the working set clean (already covered
+	// elsewhere, asserted here so a RED failure is unambiguously the delete side).
+	if federationStatusHasTable(t, ctx, store, "federation_peers") {
+		t.Fatal("precondition: add-peer should commit federation_peers metadata")
+	}
+
+	if err := store.RemoveFederationPeer(ctx, peer.Name); err != nil {
+		t.Fatalf("remove federation peer: %v", err)
+	}
+
+	// The row must actually be gone.
+	if _, err := store.GetFederationPeer(ctx, peer.Name); err == nil {
+		t.Fatal("remove-peer should delete the federation_peers row")
+	}
+
+	// And the deletion must be committed to Dolt history, not left dirty in the
+	// working set — symmetric with add-peer.
+	if federationStatusHasTable(t, ctx, store, "federation_peers") {
+		t.Fatal("remove-peer should commit the federation_peers deletion (working set left dirty)")
+	}
+}
+
 // TestFederationPushPullMethods tests PushTo and PullFrom
 func TestFederationPushPullMethods(t *testing.T) {
 	skipIfNoDolt(t)
