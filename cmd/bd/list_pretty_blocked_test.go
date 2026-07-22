@@ -86,7 +86,7 @@ func TestDisplayPrettyListWithBlocked_54lww(t *testing.T) {
 	blockedBy := map[string][]string{"lw-b": {"lw-a"}}
 
 	out := capturePrettyFooter(t, func() {
-		displayPrettyListWithBlocked(issues, false, nil, false, "", blockedBy)
+		displayPrettyListWithBlocked(issues, false, nil, false, "", blockedBy, "", false)
 	})
 
 	// The blocked child line must carry ● + annotation.

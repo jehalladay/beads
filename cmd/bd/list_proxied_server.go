@@ -135,7 +135,7 @@ func runListProxiedHierarchicalParent(ctx context.Context, uw uow.UnitOfWork, in
 	// for hierarchy context (not as a child result), so exclude it from the
 	// footer count — otherwise the human "Total: N issues" is +1 vs --json
 	// (children only). Proxied twin of the direct list.go --parent fix.
-	displayPrettyListWithBlocked(treeIssues, false, depsByIssueID, false, in.parentID, blockedBy)
+	displayPrettyListWithBlocked(treeIssues, false, depsByIssueID, false, in.parentID, blockedBy, in.sortBy, in.reverse)
 	printSkipLabelsFooter(in.skipLabels)
 	return nil
 }
@@ -248,7 +248,7 @@ func runListProxiedWatch(_ *cobra.Command, ctx context.Context, in listInput) er
 	}
 	// beads-54lww: surface ● blocked + "(blocked by: X)" in the watched tree
 	// view too, matching the non-watch pretty path.
-	displayPrettyListWithBlocked(issues, true, deps, hasMore, "", loadBlockedByForIssues(ctx, uw, issues))
+	displayPrettyListWithBlocked(issues, true, deps, hasMore, "", loadBlockedByForIssues(ctx, uw, issues), in.sortBy, in.reverse)
 	printTruncationHint(hasMore, in.effectiveLimit)
 	lastSnapshot := issueSnapshot(issues)
 
@@ -275,7 +275,7 @@ func runListProxiedWatch(_ *cobra.Command, ctx context.Context, in listInput) er
 			snap := issueSnapshot(issues)
 			if snap != lastSnapshot {
 				lastSnapshot = snap
-				displayPrettyListWithBlocked(issues, true, deps, hasMore, "", loadBlockedByForIssues(ctx, uw, issues))
+				displayPrettyListWithBlocked(issues, true, deps, hasMore, "", loadBlockedByForIssues(ctx, uw, issues), in.sortBy, in.reverse)
 				printTruncationHint(hasMore, in.effectiveLimit)
 				fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
 			}
@@ -379,7 +379,7 @@ func renderProxiedListText(ctx context.Context, uw uow.UnitOfWork, issues []*typ
 		// beads-54lww: default pretty/tree view shows ● blocked + "(blocked by:
 		// X)" for open issues with active blockers, matching --flat/compact.
 		blockedBy := loadBlockedByForIssues(ctx, uw, issues)
-		displayPrettyListWithBlocked(issues, false, depsByIssueID, truncated, "", blockedBy)
+		displayPrettyListWithBlocked(issues, false, depsByIssueID, truncated, "", blockedBy, in.sortBy, in.reverse)
 		printTruncationHint(truncated, in.effectiveLimit)
 		printSkipLabelsFooter(in.skipLabels)
 		return nil

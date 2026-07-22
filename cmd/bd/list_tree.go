@@ -186,7 +186,7 @@ func displayPrettyListWithDepsTruncated(issues []*types.Issue, showHeader bool, 
 // the footer count (and its open/in-progress tally) makes human == json.
 // Callers with no context root pass "" and are unaffected.
 func displayPrettyListWithDepsContextRoot(issues []*types.Issue, showHeader bool, allDeps map[string][]*types.Dependency, truncated bool, contextRootID string) {
-	displayPrettyListWithBlocked(issues, showHeader, allDeps, truncated, contextRootID, nil)
+	displayPrettyListWithBlocked(issues, showHeader, allDeps, truncated, contextRootID, nil, "", false)
 }
 
 // displayPrettyListWithBlocked is displayPrettyListWithDepsContextRoot plus a
@@ -197,7 +197,7 @@ func displayPrettyListWithDepsContextRoot(issues []*types.Issue, showHeader bool
 // no longer under-signals blocked state vs --flat/compact/bd ready. A nil
 // blockedBy reproduces the prior behavior exactly, so callers without blocker
 // data are unaffected.
-func displayPrettyListWithBlocked(issues []*types.Issue, showHeader bool, allDeps map[string][]*types.Dependency, truncated bool, contextRootID string, blockedBy map[string][]string) {
+func displayPrettyListWithBlocked(issues []*types.Issue, showHeader bool, allDeps map[string][]*types.Dependency, truncated bool, contextRootID string, blockedBy map[string][]string, sortBy string, reverse bool) {
 	if showHeader {
 		// Clear screen and show header
 		fmt.Print("\033[2J\033[H")
@@ -213,6 +213,16 @@ func displayPrettyListWithBlocked(issues []*types.Issue, showHeader bool, allDep
 	}
 
 	roots, childrenMap := buildIssueTreeWithDeps(issues, allDeps)
+
+	// beads-z3sku: honor the requested --sort for ROOT ordering. buildIssueTreeWithDeps
+	// re-sorts roots by compareIssuesByPriority for a stable default tree; that
+	// silently discarded the caller's --sort so the default tree view always
+	// rendered priority-DESC regardless of --sort (while --flat/--json/--format
+	// honored it — a documented-behavior contradiction). Re-apply the requested
+	// sort to the roots here; sortIssues is a no-op when sortBy=="", so the
+	// priority default is preserved. Children stay priority-grouped within each
+	// parent for hierarchy readability.
+	sortIssues(roots, sortBy, reverse)
 
 	for _, issue := range roots {
 		fmt.Println(formatPrettyIssueBlocked(issue, blockedBy[issue.ID]))

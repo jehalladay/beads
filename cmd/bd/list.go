@@ -257,10 +257,10 @@ func loadWatchedIssues(ctx context.Context, store storage.DoltStorage, filter ty
 	return issues, nil
 }
 
-func displayWatchedIssueList(ctx context.Context, store watchListDependencyStore, issues []*types.Issue, truncated bool) {
+func displayWatchedIssueList(ctx context.Context, store watchListDependencyStore, issues []*types.Issue, truncated bool, sortBy string, reverse bool) {
 	allDeps := displayedIssueDeps(ctx, store, issues)
 	blockedBy := displayedIssueBlockedBy(ctx, store, issues)
-	displayPrettyListWithBlocked(issues, true, allDeps, truncated, "", blockedBy)
+	displayPrettyListWithBlocked(issues, true, allDeps, truncated, "", blockedBy, sortBy, reverse)
 }
 
 func watchIssues(ctx context.Context, store storage.DoltStorage, filter types.IssueFilter, ready bool, parentID string, sortBy string, reverse bool, effectiveLimit int) {
@@ -274,7 +274,7 @@ func watchIssues(ctx context.Context, store storage.DoltStorage, filter types.Is
 	if truncated {
 		issues = issues[:effectiveLimit]
 	}
-	displayWatchedIssueList(ctx, store, issues, truncated)
+	displayWatchedIssueList(ctx, store, issues, truncated, sortBy, reverse)
 	printTruncationHint(truncated, effectiveLimit)
 	lastSnapshot := issueSnapshot(issues)
 
@@ -307,7 +307,7 @@ func watchIssues(ctx context.Context, store storage.DoltStorage, filter types.Is
 			snap := issueSnapshot(issues)
 			if snap != lastSnapshot {
 				lastSnapshot = snap
-				displayWatchedIssueList(ctx, store, issues, truncated)
+				displayWatchedIssueList(ctx, store, issues, truncated, sortBy, reverse)
 				printTruncationHint(truncated, effectiveLimit)
 				fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
 			}
@@ -704,7 +704,7 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 			// context (getHierarchicalChildren), not as a child result, so exclude
 			// it from the footer count — otherwise the human "Total: N issues" is
 			// +1 vs --json (which returns children only).
-			displayPrettyListWithBlocked(treeIssues, false, allDeps, false, in.parentID, blockedBy)
+			displayPrettyListWithBlocked(treeIssues, false, allDeps, false, in.parentID, blockedBy, in.sortBy, in.reverse)
 			printSkipLabelsFooter(in.skipLabels)
 			// beads-3dr5: the --parent tree view intentionally renders the FULL
 			// subtree (truncating mid-hierarchy would orphan children), so --limit
@@ -722,7 +722,7 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 		// view shows ● blocked + "(blocked by: X)" for open issues with active
 		// blockers, matching --flat/compact and bd ready's exclusion of them.
 		blockedBy := displayedIssueBlockedBy(ctx, activeStore, issues)
-		displayPrettyListWithBlocked(issues, false, allDeps, truncated, "", blockedBy)
+		displayPrettyListWithBlocked(issues, false, allDeps, truncated, "", blockedBy, in.sortBy, in.reverse)
 		printTruncationHint(truncated, in.effectiveLimit)
 		printSkipLabelsFooter(in.skipLabels)
 		return nil
