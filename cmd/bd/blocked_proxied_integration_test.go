@@ -185,6 +185,52 @@ func TestProxiedServerBlocked(t *testing.T) {
 		}
 	})
 
+	// beads-o7nxb: bd blocked --priority / --type filter parity with bd ready.
+	// Proxied twin of the direct-path TestEmbeddedBlockedPriorityTypeFilter —
+	// exercises runBlockedProxiedServer's --priority + --type reads + the invalid
+	// --type hard-fail.
+	t.Run("priority_type_filter", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "bk7")
+		blocker := bdProxiedCreate(t, bd, p.dir, "Shared blocker")
+		p0bug := bdProxiedCreate(t, bd, p.dir, "urgent bug", "--type", "bug", "--priority", "0", "--deps", "depends-on:"+blocker.ID)
+		p3task := bdProxiedCreate(t, bd, p.dir, "routine task", "--type", "task", "--priority", "3", "--deps", "depends-on:"+blocker.ID)
+
+		// --priority 0: only the P0 bug.
+		got := bdProxiedBlockedJSON(t, bd, p, "--priority", "0")
+		ids := map[string]bool{}
+		for _, bi := range got {
+			ids[bi.ID] = true
+		}
+		if !ids[p0bug.ID] {
+			t.Errorf("expected P0 %s in --priority 0 result", p0bug.ID)
+		}
+		if ids[p3task.ID] {
+			t.Errorf("P3 %s leaked into --priority 0 result", p3task.ID)
+		}
+
+		// --type bug: only the bug.
+		got = bdProxiedBlockedJSON(t, bd, p, "--type", "bug")
+		ids = map[string]bool{}
+		for _, bi := range got {
+			ids[bi.ID] = true
+		}
+		if !ids[p0bug.ID] {
+			t.Errorf("expected bug %s in --type bug result", p0bug.ID)
+		}
+		if ids[p3task.ID] {
+			t.Errorf("task %s leaked into --type bug result", p3task.ID)
+		}
+
+		// Invalid --type hard-errors, not a silent empty result.
+		stdout, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "blocked", "--type", "bogustype", "--json")
+		if err == nil {
+			t.Fatalf("bd blocked --type bogustype --json should fail; stdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+		if !strings.Contains(stdout+stderr, "invalid issue type") {
+			t.Errorf("expected 'invalid issue type' error, got stdout:\n%s\nstderr:\n%s", stdout, stderr)
+		}
+	})
+
 	// beads-wu0u: bd blocked --parent <nonexistent> must error (exit != 0) with a
 	// parseable JSON error under --json — not silently return [] exit 0. Proxied
 	// twin of the direct-path check (beads-d5jg) / bd list --parent (beads-n8lv):

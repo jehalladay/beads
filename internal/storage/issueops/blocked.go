@@ -409,6 +409,18 @@ func GetBlockedIssuesInTx(ctx context.Context, tx DBTX, filter types.WorkFilter)
 		if filter.Unassigned && strings.TrimSpace(issue.Assignee) != "" {
 			continue
 		}
+		// beads-o7nxb: --priority / --type filter parity with bd ready / bd list.
+		// Post-query set filters (no new SQL) beside the x5c76/9tljp branches —
+		// BlockedIssue embeds Issue, so the loaded objects already carry Priority
+		// and IssueType. filter.Type was alias-normalized + validated by the RunE
+		// (mr→merge-request etc.), so a direct string-compare against IssueType
+		// matches the ready path without re-normalizing here.
+		if filter.Priority != nil && issue.Priority != *filter.Priority {
+			continue
+		}
+		if filter.Type != "" && string(issue.IssueType) != filter.Type {
+			continue
+		}
 		results = append(results, &types.BlockedIssue{
 			Issue:          *issue,
 			BlockedByCount: len(blockerIDs),

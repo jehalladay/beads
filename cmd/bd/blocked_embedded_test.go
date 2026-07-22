@@ -348,3 +348,109 @@ func TestEmbeddedBlockedUnassignedFilter(t *testing.T) {
 		t.Errorf("unowned blocked %s missing from --unassigned --json:\n%s", blockedOrphan.ID, s[start:])
 	}
 }
+
+// beads-o7nxb: bd blocked --priority / --type filter parity with bd ready
+// (triage lenses "what P0/P1 work is blocked?" / "what bugs are blocked?").
+// Before the fix bd blocked exposed neither, so a blocked-work triage by
+// priority or type was unexpressable. Asserts (1) --priority N returns only
+// blocked issues of that priority, (2) --type T returns only that type,
+// (3) an invalid --type hard-errors (mirrors ready's gddf validation) rather
+// than silently matching nothing, (4) --json carries the same filtered set.
+func TestEmbeddedBlockedPriorityTypeFilter(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "bpt")
+
+	blocker := bdCreate(t, bd, dir, "shared blocker", "--type", "task")
+	// P0 bug, P3 task — two distinct (priority,type) blocked issues.
+	blockedP0Bug := bdCreate(t, bd, dir, "urgent bug blocked", "--type", "bug", "--priority", "0")
+	blockedP3Task := bdCreate(t, bd, dir, "routine task blocked", "--type", "task", "--priority", "3")
+
+	for _, dep := range [][]string{
+		{"dep", "add", blockedP0Bug.ID, blocker.ID},
+		{"dep", "add", blockedP3Task.ID, blocker.ID},
+	} {
+		cmd := exec.Command(bd, dep...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("dep add %v failed: %v\n%s", dep, err, out)
+		}
+	}
+
+	// --priority 0: the P0 bug present, the P3 task absent.
+	cmd := exec.Command(bd, "blocked", "--priority", "0")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd blocked --priority 0 failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), blockedP0Bug.ID) {
+		t.Errorf("expected P0 %s in --priority 0 output:\n%s", blockedP0Bug.ID, stdout.String())
+	}
+	if strings.Contains(stdout.String(), blockedP3Task.ID) {
+		t.Errorf("P3 %s leaked into --priority 0 output:\n%s", blockedP3Task.ID, stdout.String())
+	}
+
+	// --type bug: the bug present, the task absent.
+	cmd = exec.Command(bd, "blocked", "--type", "bug")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err = runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd blocked --type bug failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), blockedP0Bug.ID) {
+		t.Errorf("expected bug %s in --type bug output:\n%s", blockedP0Bug.ID, stdout.String())
+	}
+	if strings.Contains(stdout.String(), blockedP3Task.ID) {
+		t.Errorf("task %s leaked into --type bug output:\n%s", blockedP3Task.ID, stdout.String())
+	}
+
+	// Invalid --type hard-errors (mirrors ready gddf), not a silent empty result.
+	cmd = exec.Command(bd, "blocked", "--type", "bogustype")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("bd blocked --type bogustype: expected non-zero exit for invalid type, got success:\n%s", out)
+	}
+	if !strings.Contains(string(out), "invalid issue type") {
+		t.Errorf("bd blocked --type bogustype: expected 'invalid issue type' error, got:\n%s", out)
+	}
+
+	// --json carries the same filtered set for --type bug: the bug, not the task.
+	cmd = exec.Command(bd, "blocked", "--type", "bug", "--json")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err = runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd blocked --type bug --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	s := strings.TrimSpace(stdout.String())
+	start := strings.IndexAny(s, "[{")
+	if start < 0 {
+		t.Fatalf("no JSON in blocked --type bug --json output: %s", s)
+	}
+	var blocked []*types.BlockedIssue
+	if jerr := json.Unmarshal([]byte(s[start:]), &blocked); jerr != nil {
+		t.Fatalf("invalid JSON: %v\n%s", jerr, s[start:])
+	}
+	sawBug := false
+	for _, b := range blocked {
+		if b.ID == blockedP3Task.ID {
+			t.Errorf("task %s leaked into --type bug --json", blockedP3Task.ID)
+		}
+		if b.ID == blockedP0Bug.ID {
+			sawBug = true
+		}
+	}
+	if !sawBug {
+		t.Errorf("bug %s missing from --type bug --json:\n%s", blockedP0Bug.ID, s[start:])
+	}
+}

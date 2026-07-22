@@ -13,6 +13,8 @@ import (
 	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/utils"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 func runReadyProxiedServer(cmd *cobra.Command, ctx context.Context) {
@@ -101,6 +103,29 @@ func runBlockedProxiedServer(cmd *cobra.Command, ctx context.Context) {
 		filter.Assignee = &a
 	}
 	filter.Unassigned = unassigned
+	// beads-o7nxb: --priority / --type filter parity (proxied twin of the direct
+	// path). Mirror ready.go: --priority StringP via ValidatePriority (Changed()
+	// so P0=0 is not dropped); --type alias-normalized + custom-type-aware
+	// validated so a typo hard-errors. Applied in GetBlockedIssuesInTx.
+	if cmd.Flags().Changed("priority") {
+		priorityStr, _ := cmd.Flags().GetString("priority")
+		priority, perr := validation.ValidatePriority(priorityStr)
+		if perr != nil {
+			FatalErrorRespectJSON("%v", perr)
+		}
+		filter.Priority = &priority
+	}
+	if blockedType, _ := cmd.Flags().GetString("type"); blockedType != "" {
+		blockedType = utils.NormalizeIssueType(blockedType)
+		if t := types.IssueType(blockedType); !t.IsValidWithCustom(loadEmbeddedCustomTypes()) {
+			validTypes := types.ValidWorkTypesString()
+			if custom := loadEmbeddedCustomTypes(); len(custom) > 0 {
+				validTypes += ", " + strings.Join(custom, ", ")
+			}
+			FatalErrorRespectJSON("invalid issue type %q (valid: %s)", blockedType, validTypes)
+		}
+		filter.Type = blockedType
+	}
 
 	blocked, err := uw.IssueUseCase().GetBlockedIssues(ctx, filter)
 	if err != nil {

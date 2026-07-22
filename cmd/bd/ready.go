@@ -526,6 +526,33 @@ var blockedCmd = &cobra.Command{
 			blockedFilter.Assignee = &a
 		}
 		blockedFilter.Unassigned = unassigned
+		// beads-o7nxb: --priority / --type filter parity with bd ready (triage
+		// lenses "what P0/P1 work is blocked?" / "what bugs are blocked?"). Both
+		// mirror ready.go exactly: --priority is a StringP parsed via
+		// ValidatePriority (Changed() so P0=0 is not dropped); --type is
+		// alias-normalized (mr→merge-request) + validated custom-type-aware so a
+		// typo hard-errors instead of silently matching nothing. Applied as a
+		// post-query set filter in GetBlockedIssuesInTx alongside the assignee/
+		// unassigned branches (no new SQL — issueMap already carries Priority/Type).
+		if cmd.Flags().Changed("priority") {
+			priorityStr, _ := cmd.Flags().GetString("priority")
+			priority, err := validation.ValidatePriority(priorityStr)
+			if err != nil {
+				return HandleErrorRespectJSON("%v", err)
+			}
+			blockedFilter.Priority = &priority
+		}
+		if blockedType, _ := cmd.Flags().GetString("type"); blockedType != "" {
+			blockedType = utils.NormalizeIssueType(blockedType) // Expand aliases (mr→merge-request, etc.)
+			if t := types.IssueType(blockedType); !t.IsValidWithCustom(loadEmbeddedCustomTypes()) {
+				validTypes := types.ValidWorkTypesString()
+				if custom := loadEmbeddedCustomTypes(); len(custom) > 0 {
+					validTypes += ", " + strings.Join(custom, ", ")
+				}
+				return HandleErrorRespectJSON("invalid issue type %q (valid: %s)", blockedType, validTypes)
+			}
+			blockedFilter.Type = blockedType
+		}
 		blocked, err := store.GetBlockedIssues(ctx, blockedFilter)
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
@@ -989,5 +1016,7 @@ func init() {
 	blockedCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
 	blockedCmd.Flags().StringP("assignee", "a", "", "Filter blocked issues by assignee")     // beads-x5c76: parity with bd ready/list
 	blockedCmd.Flags().BoolP("unassigned", "u", false, "Show only unassigned blocked issues") // beads-9tljp: parity with bd ready --unassigned
+	blockedCmd.Flags().StringP("priority", "p", "", "Filter blocked issues by priority (0-4)")  // beads-o7nxb: parity with bd ready --priority
+	blockedCmd.Flags().StringP("type", "t", "", "Filter blocked issues by type")                // beads-o7nxb: parity with bd ready --type
 	rootCmd.AddCommand(blockedCmd)
 }
