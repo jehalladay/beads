@@ -211,6 +211,29 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 		whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (SELECT DISTINCT issue_id FROM %s)", tables.Labels))
 	}
 
+	// --label-pattern (glob) / --label-regex. These fields were consumed ONLY by
+	// BuildLabelDrivenSearch (labels.go), which feeds the PLAIN `bd list` path. The
+	// JSON/counts path (search_counts.go runFilterSearchQueryInTx), `bd count`, and
+	// the dolt in-tx readers call BuildIssueFilterClauses with the FULL filter and
+	// never touched these fields — so `bd list --json --label-pattern`/`--label-regex`
+	// silently returned every row unfiltered (beads-tc9m8, the JSON-path twin of
+	// beads-v5i7 which fixed the PLAIN path only). Emit the clauses here so EVERY
+	// caller inherits them and the two builders can't drift again. id-IN subquery
+	// style (mirrors ready.go:288-295 / the exact-label clause above) so there is
+	// no row multiplication on the counts path. Case-insensitive LIKE with the glob
+	// translated by globToLike, and raw SQL REGEXP, matching BuildLabelDrivenSearch.
+	// BuildLabelDrivenSearch clears LabelPattern/LabelRegex from the filter it
+	// forwards here (labels.go:48-49), so the PLAIN path keeps its JOIN and does not
+	// double-apply; the ready path builds its own WHERE and never routes through here.
+	if pattern := strings.TrimSpace(filter.LabelPattern); pattern != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) LIKE LOWER(?))", tables.Labels))
+		args = append(args, globToLike(pattern))
+	}
+	if regex := strings.TrimSpace(filter.LabelRegex); regex != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE label REGEXP ?)", tables.Labels))
+		args = append(args, regex)
+	}
+
 	if filter.Pinned != nil {
 		if *filter.Pinned {
 			whereClauses = append(whereClauses, "pinned = 1")
