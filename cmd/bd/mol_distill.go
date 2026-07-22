@@ -15,6 +15,13 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
+// distillPourDefaultPriority mirrors the priority that pour assigns to a step
+// with no explicit priority (cook.go: `priority := 2`). Distill omits a step's
+// priority only when it equals this default, so the round-trip is lossless for
+// every other priority — including P0/critical (priority 0), which the earlier
+// `> 0` guard wrongly dropped (beads-110o9).
+const distillPourDefaultPriority = 2
+
 var molDistillCmd = &cobra.Command{
 	Use:   "distill <epic-id> [formula-name]",
 	Short: "Extract a formula from an existing epic",
@@ -353,8 +360,13 @@ func subgraphToFormula(subgraph *TemplateSubgraph, name string, replacements map
 			Type:        string(issue.IssueType),
 		}
 
-		// Copy priority if set
-		if issue.Priority > 0 {
+		// Copy priority unless it equals the pour default (beads-110o9).
+		// Priority 0 is a VALID priority (P0/critical), NOT "unset" — the old
+		// `> 0` guard treated P0 as unset, leaving step.Priority nil, so pour
+		// (cook.go: `priority := 2; if step.Priority != nil ...`) silently
+		// downgraded a P0 step to P2. Omitting only the pour default keeps
+		// distilled formulas clean while round-tripping P0/P1/P3/P4 losslessly.
+		if issue.Priority != distillPourDefaultPriority {
 			p := issue.Priority
 			step.Priority = &p
 		}
