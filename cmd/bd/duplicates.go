@@ -21,8 +21,11 @@ var duplicatesCmd = &cobra.Command{
 	Long: `Find issues with identical content (title, description, design, acceptance criteria).
 Groups issues by content hash and reports duplicates with suggested merge targets.
 The merge target is chosen by:
-1. Reference count (most referenced issue wins)
-2. Lexicographically smallest ID if reference counts are equal
+1. Structural weight (most connected issue wins): dependents (children) are
+   weighted 3x more than depends-on references, since discarding an issue with
+   children orphans them while a depends-on link survives closure.
+2. Text reference count (mentions in descriptions/notes) if weights are equal.
+3. Lexicographically smallest ID if weight and reference counts are equal.
 Only groups issues with matching status (open with open, closed with closed).
 Example:
   bd duplicates                    # Show all duplicate groups
