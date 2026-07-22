@@ -226,7 +226,15 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 	// forwards here (labels.go:48-49), so the PLAIN path keeps its JOIN and does not
 	// double-apply; the ready path builds its own WHERE and never routes through here.
 	if pattern := strings.TrimSpace(filter.LabelPattern); pattern != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) LIKE LOWER(?))", tables.Labels))
+		// ESCAPE '\\' so globToLike's backslash-escapes for a literal '%'/'_'/'\'
+		// match literally — go-mysql-server has NO default LIKE escape char, so
+		// without it the backslash matches literally and the metachar still acts
+		// as a wildcard (beads-vw217). beads-k3xye added ESCAPE to the two OTHER
+		// globToLike consumers (BuildLabelDrivenSearch labels.go / BuildReadyWorkWhere
+		// ready.go) but missed this third one — the JSON/counts-path clause tc9m8
+		// added here — so `bd list --json`/`bd count --label-pattern` kept treating
+		// a literal '_'/'%' as a wildcard while the plain path now matched literally.
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) LIKE LOWER(?) ESCAPE '\\\\')", tables.Labels))
 		args = append(args, globToLike(pattern))
 	}
 	if regex := strings.TrimSpace(filter.LabelRegex); regex != "" {
