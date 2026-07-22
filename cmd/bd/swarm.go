@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -58,6 +59,13 @@ type IssueNode struct {
 	DependsOn    []string `json:"depends_on"`     // What this issue depends on
 	DependedOnBy []string `json:"depended_on_by"` // What depends on this issue
 	Wave         int      `json:"wave"`           // Which ready front this belongs to (-1 if blocked by cycle)
+	// ExternalBlocked marks a node blocked by an active OPEN blocker OUTSIDE the
+	// epic (a non-child issue). bd ready's is_blocked predicate is epic-agnostic
+	// and excludes such an issue, so swarm must never seed it into a ready front
+	// (beads-r7sh3). The external blocker is not in the swarm graph, so it never
+	// resolves here — the node stays out of every wave (Wave -1) and its
+	// dependents cascade-block, matching bd ready.
+	ExternalBlocked bool `json:"external_blocked,omitempty"`
 }
 
 // SwarmStorage defines the storage interface needed by swarm commands.
@@ -331,11 +339,37 @@ func analyzeEpicForSwarm(ctx context.Context, s SwarmStorage, epic *types.Issue)
 			if !childIDSet[dep.DependsOnID] && dep.DependsOnID != epic.ID {
 				// Check if it's an external ref
 				if strings.HasPrefix(dep.DependsOnID, "external:") {
+					// beads-r7sh3: a cross-project external: ref has no local row,
+					// so bd ready's is_blocked recompute (which JOINs
+					// depends_on_issue_id to the local issues/wisps tables) never
+					// treats it as blocking — EXISTS is false. Keep the warning but
+					// do NOT exclude the child, matching bd ready.
 					analysis.Warnings = append(analysis.Warnings,
 						fmt.Sprintf("%s has external dependency: %s", issue.ID, dep.DependsOnID))
 				} else {
 					analysis.Warnings = append(analysis.Warnings,
 						fmt.Sprintf("%s depends on %s (outside epic)", issue.ID, dep.DependsOnID))
+					// beads-r7sh3: getEpicChildren returns only the epic's DIRECT
+					// children, so a blocking edge to an issue OUTSIDE the epic never
+					// entered the wave graph — the dependent got inDegree 0 and was
+					// seeded into ready-front wave 0 (Swarmable:YES), while `bd ready`
+					// (whose is_blocked predicate is epic-agnostic) correctly excludes
+					// a child blocked by an OPEN outside-epic issue. Resolve the
+					// external blocker's activeness with the SAME semantics as bd ready
+					// / is_blocked (issueops.IsActiveBlockerByState = the Go mirror of
+					// activeBlockerSQL: a 'blocks' edge blocks while the target is open;
+					// a 'conditional-blocks' edge also blocks while it is closed-success;
+					// any other close/edge does not block). If active, mark the child
+					// ExternalBlocked so computeReadyFronts never seeds it into a wave
+					// (and its dependents cascade-block), aligning swarm scheduling with
+					// bd ready. An unresolvable target (GetIssue error/nil) can't be
+					// confirmed blocking → treated as non-blocking, matching bd ready's
+					// EXISTS-false behavior for a dangling ref.
+					if ext, gerr := s.GetIssue(ctx, dep.DependsOnID); gerr == nil && ext != nil {
+						if issueops.IsActiveBlockerByState(dep.Type, ext.Status, ext.CloseReason) {
+							node.ExternalBlocked = true
+						}
+					}
 				}
 			}
 		}
@@ -507,10 +541,16 @@ func computeReadyFronts(analysis *SwarmAnalysis) {
 		return ok && n.Status == closedStatus
 	}
 	// isNotSchedulable: a node that must never be seeded into a wave or grabbed
-	// by a worker (completed OR deliberately on ice).
+	// by a worker (completed, deliberately on ice, OR blocked by an active open
+	// blocker outside the epic). beads-r7sh3: an externally-blocked child is
+	// genuinely not-actionable (bd ready excludes it via the epic-agnostic
+	// is_blocked predicate); its external blocker is not a node in this graph, so
+	// it would otherwise never resolve and the child would sit in wave 0 forever.
+	// Exclude it like deferred (still-blocked, not done) so it never seeds a wave
+	// and its intra-epic dependents cascade-block, matching bd ready.
 	isNotSchedulable := func(id string) bool {
 		n, ok := analysis.Issues[id]
-		return ok && (n.Status == closedStatus || n.Status == deferredStatus)
+		return ok && (n.Status == closedStatus || n.Status == deferredStatus || n.ExternalBlocked)
 	}
 
 	// Use Kahn's algorithm for topological sort with level tracking.
@@ -586,9 +626,18 @@ func computeReadyFronts(analysis *SwarmAnalysis) {
 	// Estimated sessions = SCHEDULABLE issues (each is roughly one session).
 	// beads-y6pjs: closed children are already done; beads-yw1tx: deferred
 	// children are on ice — neither is a worker-session, so both are subtracted
-	// from the estimate. TotalIssues/ClosedIssues/DeferredIssues remain the full
-	// display counts.
-	analysis.EstimatedSessions = analysis.TotalIssues - analysis.ClosedIssues - analysis.DeferredIssues
+	// from the estimate. beads-r7sh3: a child blocked by an active OPEN blocker
+	// outside the epic is excluded by bd ready and never seeds a wave, so it is
+	// not a worker-session either — subtract it too. (An externally-blocked node
+	// is open, so it is NOT already counted in ClosedIssues/DeferredIssues.)
+	// TotalIssues/ClosedIssues/DeferredIssues remain the full display counts.
+	externallyBlocked := 0
+	for _, n := range analysis.Issues {
+		if n.ExternalBlocked && n.Status != closedStatus && n.Status != deferredStatus {
+			externallyBlocked++
+		}
+	}
+	analysis.EstimatedSessions = analysis.TotalIssues - analysis.ClosedIssues - analysis.DeferredIssues - externallyBlocked
 }
 
 // renderSwarmAnalysis outputs human-readable analysis.
