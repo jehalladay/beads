@@ -165,8 +165,14 @@ func (s *DoltStore) getWisp(ctx context.Context, id string) (*types.Issue, error
 }
 
 // getWispLabels retrieves labels from the wisp_labels table.
+//
+// Uses queryContextNoLock because its only caller (getWisp) already holds
+// s.mu.RLock. Going through the locking queryContext would re-acquire the read
+// lock, and sync.RWMutex read-locks are not re-entrant: a writer (Close)
+// blocking between the two RLocks deadlocks the inner one forever (beads-z30l4,
+// sibling of beads-ti3ks).
 func (s *DoltStore) getWispLabels(ctx context.Context, issueID string) ([]string, error) {
-	rows, err := s.queryContext(ctx, `SELECT label FROM wisp_labels WHERE issue_id = ? ORDER BY label`, issueID)
+	rows, err := s.queryContextNoLock(ctx, `SELECT label FROM wisp_labels WHERE issue_id = ? ORDER BY label`, issueID)
 	if err != nil {
 		return nil, wrapQueryError("get wisp labels", err)
 	}
@@ -381,7 +387,10 @@ func (s *DoltStore) searchWisps(ctx context.Context, query string, filter types.
 		%s
 	`, whereSQL, limitSQL)
 
-	rows, err := s.queryContext(ctx, querySQL, args...)
+	// queryContextNoLock: searchWisps already holds s.mu.RLock; the locking
+	// queryContext would re-acquire it (non-re-entrant RWMutex deadlock vs a
+	// pending Close writer — beads-z30l4).
+	rows, err := s.queryContextNoLock(ctx, querySQL, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search wisps: %w", err)
 	}
@@ -414,6 +423,10 @@ func (s *DoltStore) scanWispIDs(ctx context.Context, rows *sql.Rows) ([]*types.I
 
 // getWispsByIDs retrieves multiple wisps by ID, batching queries to avoid
 // oversized IN-clauses that cause slow queries on large databases.
+//
+// Reached only via scanWispIDs <- searchWisps, which already holds s.mu.RLock,
+// so it uses queryContextNoLock to avoid the non-re-entrant RLock deadlock
+// (beads-z30l4).
 func (s *DoltStore) getWispsByIDs(ctx context.Context, ids []string) ([]*types.Issue, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -438,7 +451,7 @@ func (s *DoltStore) getWispsByIDs(ctx context.Context, ids []string) ([]*types.I
 			WHERE id IN (%s)
 		`, issueSelectColumns, placeholders)
 
-		queryRows, err := s.queryContext(ctx, querySQL, args...)
+		queryRows, err := s.queryContextNoLock(ctx, querySQL, args...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get wisps by IDs: %w", err)
 		}
@@ -481,7 +494,7 @@ func (s *DoltStore) getWispsByIDs(ctx context.Context, ids []string) ([]*types.I
 				ORDER BY issue_id, label
 			`, placeholders)
 
-			labelRows, err := s.queryContext(ctx, labelSQL, args...)
+			labelRows, err := s.queryContextNoLock(ctx, labelSQL, args...)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get wisp labels: %w", err)
 			}
