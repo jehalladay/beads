@@ -625,8 +625,18 @@ func planAllowStaleChanges(ctx context.Context, store storage.DoltStorage, issue
 		}
 		if summary := importRowChangeSummary(local, issue); summary != "" {
 			plan.Updates = append(plan.Updates, ImportChange{ID: issue.ID, Changes: summary})
-			planned[issue.ID] = struct{}{}
+		} else {
+			// A local row exists and its content is IDENTICAL to the incoming
+			// one: the --allow-stale upsert lands but is a no-op, neither a
+			// creation nor an overwrite. Record it in Unchanged so it stays out
+			// of Created (beads-grmih) — mirroring the guarded path's else leg
+			// (beads-fkzvk). Without this an idempotent --allow-stale restore of
+			// an unchanged snapshot (the common backup-restore case) reports the
+			// unchanged row as created, breaking the created/updated/unchanged
+			// partition beads-06x87 upholds on this path.
+			plan.Unchanged = append(plan.Unchanged, issue.ID)
 		}
+		planned[issue.ID] = struct{}{}
 	}
 	return plan, nil
 }
