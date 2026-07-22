@@ -157,8 +157,15 @@ func runPour(cmd *cobra.Command, args []string) error {
 		protoID = sg.Root.ID
 		isFormula = true
 
-		// Warn if formula recommends vapor phase (bd-mol cleanup)
-		if sg.Phase == "vapor" {
+		// Warn if formula recommends vapor phase (bd-mol cleanup).
+		// beads-8zed6: this advisory is a human hint (suggest `bd mol wisp`),
+		// NOT a machine result. Under --json runPour emits a pourResult success
+		// envelope on stdout; an unconditional multi-line plaintext write to
+		// stderr here interleaves with that object under `--json 2>&1 | jq`
+		// (8lqh Direction-2). Suppress it under --json, exactly like the sibling
+		// advisories at mol_burn.go / migrate_issues.go — the JSON envelope
+		// already carries the phase.
+		if sg.Phase == "vapor" && !jsonOutput {
 			fmt.Fprintf(os.Stderr, "%s Formula %q recommends vapor phase (ephemeral)\n", ui.RenderWarn("⚠"), args[0])
 			fmt.Fprintf(os.Stderr, "  Consider using: bd mol wisp %s", args[0])
 			for _, v := range varFlags {
