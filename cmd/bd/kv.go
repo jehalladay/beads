@@ -159,10 +159,18 @@ Examples:
 		storageKey := kvPrefix + key
 
 		ctx := rootCtx
-		value, err := kvGetConfig(ctx, storageKey)
+		// Determine existence via the full config map, not the naive value != ""
+		// heuristic: `bd kv set k ""` is allowed and stores a genuine empty-valued
+		// key (it shows in `bd kv list` as `k = `), but GetConfig collapses both
+		// "absent" and "present-but-empty" to ("", nil), so deriving found/(not
+		// set) from value != "" misreports an empty-valued key as missing and
+		// breaks set→get round-trip. Mirrors the kv clear existence pre-check
+		// (beads-v0rp), which documents this same GetConfig limitation.
+		all, err := kvGetAllConfig(ctx)
 		if err != nil {
 			return HandleErrorRespectJSON("getting key: %v", err)
 		}
+		value, exists := all[storageKey]
 
 		if jsonOutput {
 			// beads-7qkq: a missing key is a RESULT, not an error, in --json mode
@@ -176,10 +184,10 @@ Examples:
 			return outputJSON(map[string]interface{}{
 				"key":   key,
 				"value": value,
-				"found": value != "",
+				"found": exists,
 			})
 		}
-		if value == "" {
+		if !exists {
 			fmt.Fprintf(os.Stderr, "%s (not set)\n", key)
 			return SilentExit()
 		}

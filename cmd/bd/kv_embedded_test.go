@@ -237,6 +237,73 @@ func TestEmbeddedKV(t *testing.T) {
 			t.Error("expected empty_valued to be absent from kv list after clear")
 		}
 	})
+
+	// A key set to the empty string EXISTS, so `bd kv get` must report it as a
+	// HIT (found:true, rc0), not a miss. GetConfig collapses absent and
+	// present-empty to ("", nil), so deriving found/(not set) from value != ""
+	// misreported an empty-valued key as missing and broke set→get round-trip
+	// (kv list shows it, get denied it). Existence is now read from the full
+	// config map, mirroring the kv clear pre-check (beads-v0rp).
+	t.Run("kv_get_empty_value_key_is_found_json", func(t *testing.T) {
+		bdKV(t, bd, dir, "set", "empty_get_json", "")
+		cmd := exec.Command(bd, "kv", "get", "empty_get_json", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		var stdout, stderr strings.Builder
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd kv get <empty-valued> --json must exit 0 (the key EXISTS); got err=%v\nstdout:%s\nstderr:%s", err, stdout.String(), stderr.String())
+		}
+		var obj map[string]interface{}
+		s := strings.TrimSpace(stdout.String())
+		if start := strings.Index(s, "{"); start >= 0 {
+			s = s[start:]
+		}
+		if e := json.Unmarshal([]byte(s), &obj); e != nil {
+			t.Fatalf("kv get --json output is not valid JSON: %v\n%s", e, stdout.String())
+		}
+		if found, ok := obj["found"].(bool); !ok || !found {
+			t.Errorf("expected found:true for an empty-valued key that EXISTS, got: %v", obj["found"])
+		}
+		if v, ok := obj["value"].(string); !ok || v != "" {
+			t.Errorf("expected value:\"\" for an empty-valued key, got: %v", obj["value"])
+		}
+	})
+
+	t.Run("kv_get_empty_value_key_is_found_text", func(t *testing.T) {
+		bdKV(t, bd, dir, "set", "empty_get_text", "")
+		// A HIT in text mode exits 0 and does NOT print "(not set)". bdKV
+		// t.Fatalf's on any non-zero exit, so a rc1 false-miss fails here.
+		out := bdKV(t, bd, dir, "get", "empty_get_text")
+		if strings.Contains(out, "(not set)") {
+			t.Errorf("expected an empty-valued key to be a HIT, not '(not set)': %q", out)
+		}
+	})
+
+	// Regression guard: a genuinely-absent key stays found:false (the fix must
+	// not flip a real miss into a hit).
+	t.Run("kv_get_truly_missing_is_not_found_json", func(t *testing.T) {
+		cmd := exec.Command(bd, "kv", "get", "never_set_kv_get_xyz", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		var stdout strings.Builder
+		cmd.Stdout = &stdout
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd kv get <missing> --json must exit 0 (beads-7qkq); got err=%v\n%s", err, stdout.String())
+		}
+		var obj map[string]interface{}
+		s := strings.TrimSpace(stdout.String())
+		if start := strings.Index(s, "{"); start >= 0 {
+			s = s[start:]
+		}
+		if e := json.Unmarshal([]byte(s), &obj); e != nil {
+			t.Fatalf("kv get --json output is not valid JSON: %v\n%s", e, stdout.String())
+		}
+		if found, ok := obj["found"].(bool); !ok || found {
+			t.Errorf("expected found:false for a genuinely-absent key, got: %v", obj["found"])
+		}
+	})
 }
 
 // TestEmbeddedKVConcurrent exercises kv operations concurrently.
