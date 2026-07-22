@@ -637,10 +637,22 @@ func computeLayout(subgraph *TemplateSubgraph) *GraphLayout {
 
 	// Initialize nodes
 	for _, issue := range subgraph.Issues {
+		// beads-yi8s0: coalesce a map-miss (any node with no `blocks`
+		// dependency — every leaf, and roots that block nothing) from a nil
+		// slice to an empty one so the `bd graph <id> --json` layout emits
+		// "depends_on":[] not null (DependsOn has no omitempty). This mirrors
+		// the sibling guards already in this file — layout.Layers via make,
+		// `graph check` cycles (beads-8wyu), `graph --all` dependencies — that
+		// keep the machine JSON contract stable across the nil-slice→array
+		// class.
+		deps := dependsOn[issue.ID]
+		if deps == nil {
+			deps = []string{}
+		}
 		layout.Nodes[issue.ID] = &GraphNode{
 			Issue:     issue,
 			Layer:     -1, // Unassigned
-			DependsOn: dependsOn[issue.ID],
+			DependsOn: deps,
 		}
 	}
 
