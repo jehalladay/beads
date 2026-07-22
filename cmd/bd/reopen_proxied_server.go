@@ -131,6 +131,15 @@ func runReopenProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 		// wholly-failed batch keeps stderr clean (the deferred item errors are
 		// subsumed by this terminal stdout object), matching reopen.go.
 		if jsonOut && len(reopenedIssues) == 0 {
+			// beads-reopen-json: subsume the ACTUAL per-item guard reason(s)
+			// (closed-parent / superseded / duplicate) into this terminal
+			// object rather than the generic "no issues reopened matching the
+			// provided IDs" — otherwise a --json consumer reads "the id didn't
+			// exist" and applies the WRONG remediation. Mirrors the direct
+			// reopen.go fix; sibling of beads-9c0o/qpcbg (update) + quodm (close).
+			if len(deferredItemErrors) > 0 {
+				FatalErrorRespectJSON("%s", strings.Join(deferredItemErrors, "; "))
+			}
 			FatalErrorRespectJSON("no issues reopened matching the provided IDs")
 		}
 		os.Exit(1)

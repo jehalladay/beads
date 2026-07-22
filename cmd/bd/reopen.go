@@ -229,6 +229,20 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 			// SOME issues reopened (partial success), their JSON array was
 			// already emitted above, so keep the plain non-zero exit.
 			if jsonOutput && len(reopenedIssues) == 0 {
+				// beads-reopen-json: surface the ACTUAL per-item reason(s)
+				// captured in deferredItemErrors (e.g. "cannot reopen X: its
+				// parent is closed" / "it is superseded by Y" / "it is a
+				// duplicate of Z") instead of the generic "no issues reopened
+				// matching the provided IDs". On a wholly-failed batch the
+				// deferred flush above is skipped (its guard requires
+				// len(reopenedIssues) > 0), so this terminal path is the only
+				// place the reason can reach a --json consumer's stdout. A
+				// consumer parsing the generic string reads "the id didn't
+				// exist" and applies the WRONG remediation. Sibling of
+				// beads-9c0o/qpcbg (update) + beads-quodm (close).
+				if len(deferredItemErrors) > 0 {
+					return HandleErrorRespectJSON("%s", strings.Join(deferredItemErrors, "; "))
+				}
 				return HandleErrorRespectJSON("no issues reopened matching the provided IDs")
 			}
 			return SilentExit()
