@@ -346,11 +346,42 @@ func runWispCreateCore(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s Created wisp: %d issues\n", ui.RenderPass("✓"), result.Created)
 	fmt.Printf("  Root issue: %s\n", result.NewEpicID)
 	fmt.Printf("  Phase: vapor (ephemeral, not synced via git)\n")
-	fmt.Printf("\nNext steps:\n")
-	fmt.Printf("  bd close %s.<step>       # Complete steps\n", result.NewEpicID)
-	fmt.Printf("  bd mol squash %s         # Condense to digest (promotes to persistent)\n", result.NewEpicID)
-	fmt.Printf("  bd mol burn %s           # Discard without creating digest\n", result.NewEpicID)
+	printWispCreateNextSteps(os.Stdout, result, subgraph, rootOnly)
 	return nil
+}
+
+// printWispCreateNextSteps renders the "Next steps" hint block after a wisp is
+// created. It lists the REAL minted child IDs to close (from result.IDMapping)
+// rather than a `<root>.<step>` template: a plain `bd mol wisp` (no --child-ref)
+// does not set opts.ParentID, so generateBondedID is skipped and children get
+// random-suffix IDs — the dotted `bd close <root>.<step>` hint always failed
+// RC=1 because those dotted IDs never existed (beads-ap2jc). Printing the actual
+// IDs makes the suggested close command resolve.
+func printWispCreateNextSteps(w io.Writer, result *InstantiateResult, subgraph *TemplateSubgraph, rootOnly bool) {
+	fmt.Fprintf(w, "\nNext steps:\n")
+	// Collect the minted child IDs (every mapped issue except the root), in the
+	// subgraph's deterministic order so the hint is stable.
+	var childIDs []string
+	if subgraph != nil && subgraph.Root != nil {
+		rootOld := subgraph.Root.ID
+		for _, issue := range subgraph.Issues {
+			if issue.ID == rootOld {
+				continue
+			}
+			if newID, ok := result.IDMapping[issue.ID]; ok {
+				childIDs = append(childIDs, newID)
+			}
+		}
+	}
+	if rootOnly || len(childIDs) == 0 {
+		// No child steps (root-only wisp, or fanout produced no children): the
+		// only closable bead is the root itself.
+		fmt.Fprintf(w, "  bd close %s       # Complete the wisp\n", result.NewEpicID)
+	} else {
+		fmt.Fprintf(w, "  bd close %s       # Complete steps\n", strings.Join(childIDs, " "))
+	}
+	fmt.Fprintf(w, "  bd mol squash %s         # Condense to digest (promotes to persistent)\n", result.NewEpicID)
+	fmt.Fprintf(w, "  bd mol burn %s           # Discard without creating digest\n", result.NewEpicID)
 }
 
 // printWispCreateDryRunPreview renders the per-issue preview lines for
