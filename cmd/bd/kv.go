@@ -97,8 +97,13 @@ Examples:
 			}
 		}()
 
-		if err := ensureDirectMode("kv set requires direct database access"); err != nil {
-			return HandleErrorRespectJSON("%v", err)
+		// beads-21vns: kv is a thin wrapper over the config store; route
+		// hub-connected (proxied-server) crew through the UOW like `bd config`
+		// instead of failing ensureDirectMode. Direct crew keep the direct store.
+		if !usesProxiedServer() {
+			if err := ensureDirectMode("kv set requires direct database access"); err != nil {
+				return HandleErrorRespectJSON("%v", err)
+			}
 		}
 
 		key := args[0]
@@ -109,7 +114,7 @@ Examples:
 		storageKey := kvPrefix + key
 
 		ctx := rootCtx
-		if err := store.SetConfig(ctx, storageKey, value); err != nil {
+		if err := kvSetConfig(ctx, storageKey, value, "bd: kv set "+key); err != nil {
 			return HandleErrorRespectJSON("setting key: %v", err)
 		}
 
@@ -144,15 +149,17 @@ Examples:
 			}
 		}()
 
-		if err := ensureDirectMode("kv get requires direct database access"); err != nil {
-			return HandleErrorRespectJSON("%v", err)
+		if !usesProxiedServer() {
+			if err := ensureDirectMode("kv get requires direct database access"); err != nil {
+				return HandleErrorRespectJSON("%v", err)
+			}
 		}
 
 		key := args[0]
 		storageKey := kvPrefix + key
 
 		ctx := rootCtx
-		value, err := store.GetConfig(ctx, storageKey)
+		value, err := kvGetConfig(ctx, storageKey)
 		if err != nil {
 			return HandleErrorRespectJSON("getting key: %v", err)
 		}
@@ -203,8 +210,10 @@ Examples:
 			}
 		}()
 
-		if err := ensureDirectMode("kv clear requires direct database access"); err != nil {
-			return HandleErrorRespectJSON("%v", err)
+		if !usesProxiedServer() {
+			if err := ensureDirectMode("kv clear requires direct database access"); err != nil {
+				return HandleErrorRespectJSON("%v", err)
+			}
 		}
 
 		key := args[0]
@@ -224,14 +233,14 @@ Examples:
 		// full config map to test presence. Keep the idempotent contract for
 		// programmatic callers; only the CLI verb reports the distinction.
 		// Mirrors the landed dep-remove / label-remove fixes (beads-w2tk/yaux).
-		all, err := store.GetAllConfig(ctx)
+		all, err := kvGetAllConfig(ctx)
 		if err != nil {
 			return HandleErrorRespectJSON("checking key: %v", err)
 		}
 		if _, ok := all[storageKey]; !ok {
 			return HandleErrorRespectJSON("no key '%s' to clear", key)
 		}
-		if err := store.DeleteConfig(ctx, storageKey); err != nil {
+		if err := kvDeleteConfig(ctx, storageKey, "bd: kv clear "+key); err != nil {
 			return HandleErrorRespectJSON("deleting key: %v", err)
 		}
 
@@ -268,12 +277,14 @@ Examples:
 			}
 		}()
 
-		if err := ensureDirectMode("kv list requires direct database access"); err != nil {
-			return HandleErrorRespectJSON("%v", err)
+		if !usesProxiedServer() {
+			if err := ensureDirectMode("kv list requires direct database access"); err != nil {
+				return HandleErrorRespectJSON("%v", err)
+			}
 		}
 
 		ctx := rootCtx
-		allConfig, err := store.GetAllConfig(ctx)
+		allConfig, err := kvGetAllConfig(ctx)
 		if err != nil {
 			return HandleErrorRespectJSON("listing keys: %v", err)
 		}

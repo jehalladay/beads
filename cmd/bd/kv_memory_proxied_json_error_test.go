@@ -8,54 +8,144 @@ import (
 	"testing"
 )
 
-// beads-5fu1: bd kv (set/get/clear/list) and the memory commands
-// (remember/memories/forget/recall) are documented --json commands (each honors
-// jsonOutput on its success path), but each has an ensureDirectMode() guard whose
-// failure returned a plain HandleError BEFORE the `if jsonOutput` block. In
-// server/proxied-server mode (a live config — all "require direct database
-// access") that left stdout empty + stderr text, so a --json consumer could not
-// parse the failure. The fix routes each guard failure through
-// HandleErrorRespectJSON (exact 0wp9/y2yo/xwjg/8lqh --json-error-contract class).
-func TestProxiedServerKVMemoryJSONError(t *testing.T) {
+// beads-21vns: `bd kv` (set/get/clear/list) and the memory subsystem
+// (remember/memories/forget/recall) are thin wrappers over the config store,
+// but — unlike `bd config` — only had the direct-store path. In proxied-server
+// mode their ensureDirectMode() guard failed hard (newDoltStoreFromConfig
+// returns "proxy server store should be uow provider"), so the ENTIRE
+// hub-connected fleet could not use `bd kv` or `bd remember` (the
+// persistent-knowledge subsystem CLAUDE.md mandates). This routes each through
+// the proxied UOW like `bd config`.
+//
+// Before beads-21vns the sibling test beads-5fu1 asserted these commands
+// *failed* in proxied mode (it only made the failure emit clean --json). That
+// premise is now inverted: they must WORK. This test proves the round-trip
+// persists and the --json shape is preserved on both success and legitimate
+// error paths.
+func TestProxiedServerKVMemory(t *testing.T) {
 	requireProxiedServerEnv(t)
 	bd := buildEmbeddedBD(t)
 
-	// Each of these fails ensureDirectMode in proxied-server mode. Assert stdout
-	// is a parseable JSON {error} object rather than empty. Commands that take a
-	// positional arg get a throwaway one — the guard fires before arg use.
-	cases := []struct {
-		name string
-		args []string
-	}{
-		{"kv_set", []string{"kv", "set", "k", "v"}},
-		{"kv_get", []string{"kv", "get", "k"}},
-		{"kv_clear", []string{"kv", "clear", "k"}},
-		{"kv_list", []string{"kv", "list"}},
-		{"remember", []string{"remember", "some note"}},
-		{"memories", []string{"memories"}},
-		{"forget", []string{"forget", "somekey"}},
-		{"recall", []string{"recall", "query"}},
+	// The core bug: bd kv set → get round-trips over the proxied server.
+	// Mutation-verify: with the usesProxiedServer() branch removed, `kv set`
+	// fails ensureDirectMode and this Fatalf's.
+	t.Run("kv_set_get_roundtrip", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "kvrt")
+		out, err := bdProxiedRun(t, bd, p.dir, "kv", "set", "feature_flag", "on")
+		if err != nil {
+			t.Fatalf("proxied bd kv set failed (beads-21vns nil-store): %v\n%s", err, out)
+		}
+		got, err := bdProxiedRun(t, bd, p.dir, "kv", "get", "feature_flag")
+		if err != nil {
+			t.Fatalf("proxied bd kv get failed: %v\n%s", err, got)
+		}
+		if !strings.Contains(string(got), "on") {
+			t.Errorf("kv get did not return the set value; got: %s", got)
+		}
+	})
+
+	// list must surface the set key (round-trips through GetAllConfig + the
+	// kvPrefix filter on the proxied path).
+	t.Run("kv_list_shows_key", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "kvls")
+		if _, err := bdProxiedRun(t, bd, p.dir, "kv", "set", "api_endpoint", "https://x"); err != nil {
+			t.Fatalf("kv set failed: %v", err)
+		}
+		out := bdProxiedRunOrFail(t, bd, p.dir, "kv", "list")
+		if !strings.Contains(out, "api_endpoint") {
+			t.Errorf("kv list missing the set key: %s", out)
+		}
+	})
+
+	// clear removes the key AND fails-loud on a missing key (existence
+	// pre-check must run against the proxied config map, not the nil store).
+	t.Run("kv_clear_removes_and_missing_errors", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "kvcl")
+		if _, err := bdProxiedRun(t, bd, p.dir, "kv", "set", "temp", "1"); err != nil {
+			t.Fatalf("kv set failed: %v", err)
+		}
+		if _, err := bdProxiedRun(t, bd, p.dir, "kv", "clear", "temp"); err != nil {
+			t.Fatalf("kv clear of an existing key must succeed: %v", err)
+		}
+		list := bdProxiedRunOrFail(t, bd, p.dir, "kv", "list")
+		if strings.Contains(list, "temp") {
+			t.Errorf("cleared key still present: %s", list)
+		}
+		// Missing-key clear is a fail-loud error even on the proxied path.
+		out, err := bdProxiedRun(t, bd, p.dir, "kv", "clear", "nope")
+		if err == nil {
+			t.Errorf("kv clear of a missing key must error; got:\n%s", out)
+		}
+	})
+
+	// The memory subsystem round-trips (remember → recall → forget). This is
+	// the CLAUDE.md-mandated persistent-knowledge path; without 21vns it is
+	// wholly unusable for the fleet.
+	t.Run("remember_recall_forget_roundtrip", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "memrt")
+		if _, err := bdProxiedRun(t, bd, p.dir, "remember", "always run tests with -race", "--key", "race-flag"); err != nil {
+			t.Fatalf("proxied bd remember failed (beads-21vns nil-store): %v", err)
+		}
+		got := bdProxiedRunOrFail(t, bd, p.dir, "recall", "race-flag")
+		if !strings.Contains(got, "-race") {
+			t.Errorf("recall did not return the stored memory; got: %s", got)
+		}
+		mem := bdProxiedRunOrFail(t, bd, p.dir, "memories")
+		if !strings.Contains(mem, "race-flag") {
+			t.Errorf("memories list missing the stored key: %s", mem)
+		}
+		if _, err := bdProxiedRun(t, bd, p.dir, "forget", "race-flag"); err != nil {
+			t.Fatalf("proxied bd forget failed: %v", err)
+		}
+		after := bdProxiedRunOrFail(t, bd, p.dir, "memories")
+		if strings.Contains(after, "race-flag") {
+			t.Errorf("forgotten memory still listed: %s", after)
+		}
+	})
+
+	// beads-5fu1 retained: --json success envelopes are well-formed on the
+	// proxied path (regression guard for the JSON-contract class that 5fu1
+	// originally covered — now on the working path, not the failure path).
+	t.Run("json_envelopes_wellformed", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "kvjson")
+		// kv set --json
+		out := bdProxiedRunOrFail(t, bd, p.dir, "kv", "set", "k", "v", "--json")
+		assertJSONField(t, out, "key", "k")
+		// kv get of a MISSING key: found:false at rc0 (beads-7qkq parity), not
+		// an error — must still be a parseable envelope on the proxied path.
+		got, gerr := bdProxiedRun(t, bd, p.dir, "kv", "get", "absent", "--json")
+		if gerr != nil {
+			t.Fatalf("kv get --json of a missing key must be rc0 (found:false): %v\n%s", gerr, got)
+		}
+		var m map[string]any
+		s := strings.TrimSpace(string(got))
+		if i := strings.IndexByte(s, '{'); i >= 0 {
+			s = s[i:]
+		}
+		if jerr := json.Unmarshal([]byte(s), &m); jerr != nil {
+			t.Fatalf("kv get --json not a JSON object: %v\n%s", jerr, got)
+		}
+		if m["found"] != false {
+			t.Errorf("expected found:false for a missing key, got: %v", m)
+		}
+		// remember --json
+		rem := bdProxiedRunOrFail(t, bd, p.dir, "remember", "note here", "--key", "nk", "--json")
+		assertJSONField(t, rem, "action", "remembered")
+	})
+}
+
+// assertJSONField parses the first JSON object in out and asserts field==want.
+func assertJSONField(t *testing.T, out, field, want string) {
+	t.Helper()
+	s := strings.TrimSpace(out)
+	if i := strings.IndexByte(s, '{'); i >= 0 {
+		s = s[i:]
 	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			p := bdProxiedInit(t, bd, "km"+tc.name[:1])
-			args := append(append([]string{}, tc.args...), "--json")
-			stdout, stderr, runErr := bdProxiedRunBuffers(t, bd, p.dir, args...)
-			if runErr == nil {
-				t.Fatalf("expected `bd %s --json` to fail in proxied mode; stdout:\n%s", strings.Join(tc.args, " "), stdout)
-			}
-			s := strings.TrimSpace(stdout)
-			if s == "" {
-				t.Fatalf("`bd %s --json` emitted empty stdout on failure — must be a JSON {error} object (beads-5fu1); stderr:\n%s", strings.Join(tc.args, " "), stderr)
-			}
-			var obj map[string]any
-			if jerr := json.Unmarshal([]byte(s), &obj); jerr != nil {
-				t.Fatalf("`bd %s --json` failure stdout is not a JSON object: %v\nstdout:\n%s", strings.Join(tc.args, " "), jerr, s)
-			}
-			if _, ok := obj["error"]; !ok {
-				t.Errorf("`bd %s --json` failure stdout has no \"error\" field: %s", strings.Join(tc.args, " "), s)
-			}
-		})
+	var m map[string]any
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		t.Fatalf("not a JSON object: %v\n%s", err, out)
+	}
+	if got, _ := m[field].(string); got != want {
+		t.Errorf("expected %s=%q, got %q (full: %v)", field, want, got, m)
 	}
 }

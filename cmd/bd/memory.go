@@ -71,8 +71,14 @@ Examples:
 			}
 		}()
 
-		if err := ensureDirectMode("remember requires direct database access"); err != nil {
-			return HandleErrorRespectJSON("%v", err)
+		// beads-21vns: memory is a thin wrapper over the config store (prefixed
+		// kv.memory.*); route hub-connected (proxied-server) crew through the UOW
+		// like `bd config` instead of failing ensureDirectMode. CLAUDE.md mandates
+		// `bd remember` for persistent knowledge — it must work for the fleet.
+		if !usesProxiedServer() {
+			if err := ensureDirectMode("remember requires direct database access"); err != nil {
+				return HandleErrorRespectJSON("%v", err)
+			}
 		}
 
 		insight := args[0]
@@ -99,13 +105,13 @@ Examples:
 
 		ctx := rootCtx
 
-		existing, _ := store.GetConfig(ctx, storageKey)
+		existing, _ := kvGetConfig(ctx, storageKey)
 		verb := "Remembered"
 		if existing != "" {
 			verb = "Updated"
 		}
 
-		if err := store.SetConfig(ctx, storageKey, insight); err != nil {
+		if err := kvSetConfig(ctx, storageKey, insight, "bd: remember "+key); err != nil {
 			return HandleErrorRespectJSON("storing memory: %v", err)
 		}
 		commandDidWrite.Store(true)
@@ -144,12 +150,14 @@ Examples:
 			}
 		}()
 
-		if err := ensureDirectMode("memories requires direct database access"); err != nil {
-			return HandleErrorRespectJSON("%v", err)
+		if !usesProxiedServer() {
+			if err := ensureDirectMode("memories requires direct database access"); err != nil {
+				return HandleErrorRespectJSON("%v", err)
+			}
 		}
 
 		ctx := rootCtx
-		allConfig, err := store.GetAllConfig(ctx)
+		allConfig, err := kvGetAllConfig(ctx)
 		if err != nil {
 			return HandleErrorRespectJSON("listing memories: %v", err)
 		}
@@ -241,8 +249,10 @@ Examples:
 			}
 		}()
 
-		if err := ensureDirectMode("forget requires direct database access"); err != nil {
-			return HandleErrorRespectJSON("%v", err)
+		if !usesProxiedServer() {
+			if err := ensureDirectMode("forget requires direct database access"); err != nil {
+				return HandleErrorRespectJSON("%v", err)
+			}
 		}
 
 		key := args[0]
@@ -250,7 +260,7 @@ Examples:
 
 		ctx := rootCtx
 
-		existing, _ := store.GetConfig(ctx, storageKey)
+		existing, _ := kvGetConfig(ctx, storageKey)
 		if existing == "" {
 			if jsonOutput {
 				// beads-dycj: emit a real JSON boolean, not the string
@@ -270,7 +280,7 @@ Examples:
 			return SilentExit()
 		}
 
-		if err := store.DeleteConfig(ctx, storageKey); err != nil {
+		if err := kvDeleteConfig(ctx, storageKey, "bd: forget "+key); err != nil {
 			return HandleErrorRespectJSON("forgetting memory: %v", err)
 		}
 		commandDidWrite.Store(true)
@@ -308,15 +318,17 @@ Examples:
 			}
 		}()
 
-		if err := ensureDirectMode("recall requires direct database access"); err != nil {
-			return HandleErrorRespectJSON("%v", err)
+		if !usesProxiedServer() {
+			if err := ensureDirectMode("recall requires direct database access"); err != nil {
+				return HandleErrorRespectJSON("%v", err)
+			}
 		}
 
 		key := args[0]
 		storageKey := kvPrefix + memoryPrefix + key
 
 		ctx := rootCtx
-		value, err := store.GetConfig(ctx, storageKey)
+		value, err := kvGetConfig(ctx, storageKey)
 		if err != nil {
 			return HandleErrorRespectJSON("recalling memory: %v", err)
 		}
