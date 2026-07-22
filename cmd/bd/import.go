@@ -390,9 +390,23 @@ func filterDuplicatesByTitle(ctx context.Context, st storage.DoltStorage, issues
 		return issues, 0
 	}
 
+	// beads-6qr22: an incoming row that carries an id ALREADY present locally is
+	// an UPDATE (upsert) target, not a new duplicate. Seeding titleSet from that
+	// same existing issue would make the incoming row title-match ITSELF and be
+	// dropped as a "duplicate" — silently losing a genuine update. Exclude the
+	// incoming batch's own ids when seeding the pre-existing title set so an
+	// update target never competes with itself. New-id rows are unaffected, so
+	// the intended "skip a fresh title duplicate" behavior is preserved.
+	incomingIDs := make(map[string]bool, len(issues))
+	for _, issue := range issues {
+		if issue.ID != "" {
+			incomingIDs[issue.ID] = true
+		}
+	}
+
 	titleSet := make(map[string]bool, len(existing))
 	for _, issue := range existing {
-		if issue.Status != types.StatusClosed {
+		if issue.Status != types.StatusClosed && !incomingIDs[issue.ID] {
 			titleSet[strings.ToLower(issue.Title)] = true
 		}
 	}
