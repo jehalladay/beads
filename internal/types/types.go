@@ -1048,20 +1048,34 @@ var FailureCloseKeywords = []string{
 	"aborted",
 }
 
+// failureCloseKeywordRE matches any FailureCloseKeyword on a whole-word/token
+// boundary (case-insensitive). Whole-word matching (rather than a raw substring
+// Contains) is required so that a SUCCESS close reason that merely embeds a
+// keyword inside a larger word — e.g. "unblocked the pipeline" (contains
+// "blocked"), "no errors found" (contains "error") — is NOT misread as a failure
+// close and does not wrongly release a conditional-blocks downstream (beads-cwaj5).
+var failureCloseKeywordRE = buildFailureCloseKeywordRE()
+
+func buildFailureCloseKeywordRE() *regexp.Regexp {
+	parts := make([]string, len(FailureCloseKeywords))
+	for i, keyword := range FailureCloseKeywords {
+		parts[i] = regexp.QuoteMeta(keyword)
+	}
+	// \b ... \b anchors each keyword to word boundaries: "blocked" matches
+	// "Blocked by dep" but not "unblocked"; "error" matches "hit an error" but
+	// not "no errors found". (?i) makes it case-insensitive.
+	return regexp.MustCompile(`(?i)\b(?:` + strings.Join(parts, "|") + `)\b`)
+}
+
 // IsFailureClose returns true if the close reason indicates the issue failed.
 // This is used by conditional-blocks dependencies: B runs only if A fails.
-// A "failure" close reason contains one of the FailureCloseKeywords (case-insensitive).
+// A "failure" close reason contains one of the FailureCloseKeywords as a whole
+// word (case-insensitive) — see failureCloseKeywordRE for why whole-word.
 func IsFailureClose(closeReason string) bool {
 	if closeReason == "" {
 		return false
 	}
-	lower := strings.ToLower(closeReason)
-	for _, keyword := range FailureCloseKeywords {
-		if strings.Contains(lower, keyword) {
-			return true
-		}
-	}
-	return false
+	return failureCloseKeywordRE.MatchString(closeReason)
 }
 
 // Label represents a tag on an issue

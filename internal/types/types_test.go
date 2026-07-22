@@ -1171,9 +1171,21 @@ func TestIsFailureClose(t *testing.T) {
 		{"implemented", "Feature implemented", false},
 		{"empty", "", false},
 
-		// Partial matches should work
-		{"prefixed", "prefailed", true}, // contains "failed"
-		{"suffixed", "failedtest", true},
+		// beads-cwaj5: whole-word matching — a SUCCESS close reason that merely
+		// embeds a keyword inside a larger word must NOT be read as a failure
+		// close (previously these substring-matched and wrongly released a
+		// conditional-blocks downstream).
+		{"unblocked not blocked", "unblocked the pipeline", false},
+		{"no errors not error", "no errors found", false},
+		{"errorless", "completed errorless", false},
+		{"failsafe not failed", "shipped the failsafe path", false},
+		{"timeouts plural not timeout", "tuned timeouts down", false}, // "timeouts" != "timeout" whole-word
+		{"prefailed no boundary", "prefailed", false},              // was substring-true; not a whole word
+		{"failedtest no boundary", "failedtest", false},            // was substring-true; not a whole word
+		// Whole-word keywords surrounded by punctuation/boundaries still match.
+		{"blocked with punctuation", "blocked: waiting on infra", true},
+		{"error in sentence", "hit an error mid-run", true},
+		{"parenthesized failed", "(failed)", true},
 	}
 
 	for _, tt := range tests {
