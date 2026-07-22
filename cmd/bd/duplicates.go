@@ -99,12 +99,10 @@ Example:
 					sources = append(sources, issue.ID)
 				}
 			}
-			cmd := fmt.Sprintf("# Duplicate: %s (same content as %s)\n# Suggested action: bd close %s && bd dep add %s %s --type related",
+			cmd := fmt.Sprintf("# Duplicate: %s (same content as %s)\n# Suggested action: %s",
 				strings.Join(sources, " "),
 				target.ID,
-				strings.Join(sources, " "),
-				strings.Join(sources, " "),
-				target.ID)
+				suggestedMergeCommand(sources, target.ID))
 			mergeCommands = append(mergeCommands, cmd)
 
 			if autoMerge || dryRun {
@@ -168,8 +166,8 @@ Example:
 				}
 			}
 			fmt.Printf("  %s Duplicate: %s (same content as %s)\n", ui.RenderAccent("Note:"), strings.Join(sources, " "), target.ID)
-			fmt.Printf("  %s bd close %s && bd dep add %s %s --type related\n\n",
-				ui.RenderAccent("Suggested:"), strings.Join(sources, " "), strings.Join(sources, " "), target.ID)
+			fmt.Printf("  %s %s\n\n",
+				ui.RenderAccent("Suggested:"), suggestedMergeCommand(sources, target.ID))
 		}
 		if autoMerge {
 			if dryRun {
@@ -397,11 +395,30 @@ func formatDuplicateGroupsJSON(groups [][]*types.Issue, refCounts map[string]int
 			"issues":            issues,
 			"suggested_target":  target.ID,
 			"suggested_sources": sources,
-			"suggested_action":  fmt.Sprintf("bd close %s && bd dep add %s %s --type related", strings.Join(sources, " "), strings.Join(sources, " "), target.ID),
+			"suggested_action":  suggestedMergeCommand(sources, target.ID),
 			"note":              fmt.Sprintf("Duplicate: %s (same content as %s)", strings.Join(sources, " "), target.ID),
 		})
 	}
 	return result
+}
+
+// suggestedMergeCommand renders the copy-paste hint for merging a set of
+// duplicate sources into a canonical target (beads-ulq23). It emits one
+// `bd duplicate <src> --of <target>` per source (joined with " && "), matching
+// the canonical mark-duplicate path (duplicate.go): a single atomic close+link
+// that mints a types.DepDuplicates edge. The old hint (`bd close <src> && bd
+// dep add <src> <target> --type related`) diverged twice — it was a non-atomic
+// 2-step form AND it produced a "related" edge, which is invisible to the
+// beads-8nugc reopen guard and weaker than what both `bd duplicate` and
+// `bd duplicates --auto-merge` (post-beads-chf1w) actually produce. Following
+// the old hint by hand yielded a provenance-divergent result; this aligns the
+// hint with both automated paths.
+func suggestedMergeCommand(sources []string, target string) string {
+	cmds := make([]string, 0, len(sources))
+	for _, src := range sources {
+		cmds = append(cmds, fmt.Sprintf("bd duplicate %s --of %s", src, target))
+	}
+	return strings.Join(cmds, " && ")
 }
 
 // collectMergeErrors flattens the per-group error slices recorded by
