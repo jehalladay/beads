@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -166,6 +167,16 @@ func runMolDistill(cmd *cobra.Command, args []string) error {
 	}
 
 	f := subgraphToFormula(subgraph, formulaName, replacements)
+
+	// beads-8tw1a: distill silently drops dependency edges that cross the epic
+	// boundary (targets outside this epic's children). The drop is intended (a
+	// formula must be self-contained) but invisible — step count is unchanged
+	// and no depends_on is emitted — so the author never learns the poured
+	// molecule will lose a blocker the source epic had. Warn (to stderr, so
+	// --json stdout stays clean), mirroring the orphan-var warning class.
+	if drops := externalDepDrops(subgraph); len(drops) > 0 {
+		warnDroppedExternalDeps(cmd.ErrOrStderr(), drops)
+	}
 
 	outputPath := ""
 	if outputDir != "" {
@@ -438,6 +449,77 @@ func subgraphToFormula(subgraph *TemplateSubgraph, name string, replacements map
 		Vars:        vars,
 		Steps:       steps,
 	}
+}
+
+// externalDepDrop records a dependency edge that subgraphToFormula silently
+// discards because its target lives outside the distilled epic (beads-8tw1a).
+type externalDepDrop struct {
+	FromID    string // in-epic issue whose dependency was dropped
+	FromTitle string // its title (for a human-readable warning)
+	TargetID  string // the external (cross-epic-boundary) dependency target
+}
+
+// externalDepDrops enumerates the cross-epic-boundary dependency edges that
+// subgraphToFormula drops (beads-8tw1a). subgraphToFormula only carries a
+// depends_on when the target is another child of the same epic (idToStepID
+// hit at mol_distill.go:375); a dep whose target is NOT among the epic's own
+// children (and is not the root, which becomes the formula itself) is dropped.
+// Dropping them is INTENDED — a distilled formula must be self-contained — but
+// the drop is otherwise invisible (step count unchanged, no depends_on entry),
+// which silently strips a blocker the source epic had. Surfacing them lets the
+// command warn, mirroring the orphan-var warning class. This mirrors
+// subgraphToFormula's own membership test rather than threading a second return
+// value through it, so the existing single-return callers/tests are untouched.
+func externalDepDrops(subgraph *TemplateSubgraph) []externalDepDrop {
+	inEpic := make(map[string]bool, len(subgraph.Issues))
+	titleByID := make(map[string]string, len(subgraph.Issues))
+	for _, issue := range subgraph.Issues {
+		inEpic[issue.ID] = true
+		titleByID[issue.ID] = issue.Title
+	}
+
+	var drops []externalDepDrop
+	for _, dep := range subgraph.Dependencies {
+		// A dep on the root is intentionally elided (root becomes the formula
+		// itself), and in-epic deps are preserved as step depends_on — neither
+		// is a silent cross-boundary loss.
+		if dep.DependsOnID == subgraph.Root.ID {
+			continue
+		}
+		if inEpic[dep.DependsOnID] {
+			continue
+		}
+		drops = append(drops, externalDepDrop{
+			FromID:    dep.IssueID,
+			FromTitle: titleByID[dep.IssueID],
+			TargetID:  dep.DependsOnID,
+		})
+	}
+	return drops
+}
+
+// warnDroppedExternalDeps prints a warning (beads-8tw1a) naming the external
+// dependency targets distill dropped, so the author knows the emitted formula —
+// and therefore any poured molecule — no longer carries those blockers. Written
+// to w (stderr) to keep --json stdout parseable.
+func warnDroppedExternalDeps(w io.Writer, drops []externalDepDrop) {
+	fmt.Fprintf(w, "Warning: dropped %d cross-epic dependency %s (formulas are self-contained; the poured molecule will not re-block on %s):\n",
+		len(drops), pluralizeWord(len(drops), "edge", "edges"), pluralizeWord(len(drops), "it", "them"))
+	for _, d := range drops {
+		from := d.FromID
+		if d.FromTitle != "" {
+			from = fmt.Sprintf("%s (%s)", d.FromID, d.FromTitle)
+		}
+		fmt.Fprintf(w, "  %s → %s\n", from, d.TargetID)
+	}
+}
+
+// pluralizeWord picks the singular or plural form based on n.
+func pluralizeWord(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
 }
 
 func init() {
