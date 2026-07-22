@@ -219,7 +219,15 @@ func gatherCreateInput(cmd *cobra.Command, args []string) (createInput, error) {
 		if err != nil {
 			return in, HandleErrorRespectJSON("invalid --defer format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", deferStr)
 		}
-		if t.Before(time.Now()) && !in.silent && !debug.IsQuiet() {
+		// beads-gx69c: gate under !jsonOutput too — this is the proxied/gather
+		// path sibling of the live-create defer-in-past advisory (create.go).
+		// runCreateProxiedServer emits the created-issue JSON envelope on stdout
+		// under --json (create_proxied_server.go), and the defer date is already
+		// carried in the payload (defer_until), so this pure human hint must not
+		// interleave under `bd create --defer <past> --json 2>&1 | jq`
+		// (8lqh Direction-2). in.jsonOutput is set below (line ~265) from the
+		// global jsonOutput bound in PersistentPreRun, so read it directly here.
+		if t.Before(time.Now()) && !in.silent && !debug.IsQuiet() && !jsonOutput {
 			fmt.Fprintf(os.Stderr, "%s Defer date %q is in the past. Issue will appear in bd ready immediately.\n",
 				ui.RenderWarn("!"), t.Format("2006-01-02 15:04"))
 			fmt.Fprintf(os.Stderr, "  Did you mean a future date? Use --defer=+1h or --defer=tomorrow\n")
