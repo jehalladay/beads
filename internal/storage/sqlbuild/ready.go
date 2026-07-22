@@ -227,6 +227,26 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 	if filter.Type != "" {
 		whereClauses = append(whereClauses, "issue_type = ?")
 		args = append(args, filter.Type)
+		// beads-2a7n1: --type is the escape-hatch past the DEFAULT ready-work
+		// exclusions (epic/molecule/mr/gate/rig/infra), but the user's explicit
+		// --exclude-type must STILL compose with it — bd list applies both --type
+		// and --exclude-type (AND), so `--type X --exclude-type Y` narrows the same
+		// way there. Previously the whole else-branch (incl. the user excludes,
+		// which ReadyWorkExcludeTypes merges in) was skipped when --type was set, so
+		// --exclude-type was silently dropped and ready↔list diverged on any
+		// overlapping input. Emit only the user's excludes here (not the defaults),
+		// preserving the escape-hatch while restoring parity.
+		var userExcludes []types.IssueType
+		for _, t := range filter.ExcludeTypes {
+			if t != "" {
+				userExcludes = append(userExcludes, t)
+			}
+		}
+		if len(userExcludes) > 0 {
+			ph, a := InPlaceholders(userExcludes)
+			whereClauses = append(whereClauses, fmt.Sprintf("issue_type NOT IN (%s)", ph))
+			args = append(args, a...)
+		}
 	} else {
 		ph, a := InPlaceholders(ReadyWorkExcludeTypes(filter.ExcludeTypes))
 		whereClauses = append(whereClauses, fmt.Sprintf("issue_type NOT IN (%s)", ph))

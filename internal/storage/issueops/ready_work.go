@@ -353,6 +353,19 @@ func readyWorkWispIssueFilter(filter types.WorkFilter) types.IssueFilter {
 	if filter.Type != "" {
 		t := types.IssueType(filter.Type)
 		wispFilter.IssueType = &t
+		// beads-2a7n1: the wisp tier had the same if/else drop as the main
+		// BuildReadyWorkWhere path — when --type was set the user's explicit
+		// --exclude-type was silently discarded (only the else forwarded excludes).
+		// --type bypasses the DEFAULT ready-work exclusions, but the user's
+		// --exclude-type must still compose with it (bd list AND-composes both), so
+		// forward only the user's non-empty excludes here (not the defaults).
+		var userExcludes []types.IssueType
+		for _, et := range filter.ExcludeTypes {
+			if et != "" {
+				userExcludes = append(userExcludes, et)
+			}
+		}
+		wispFilter.ExcludeTypes = userExcludes
 	} else {
 		wispFilter.ExcludeTypes = readyWorkExcludeTypes(filter.ExcludeTypes)
 	}

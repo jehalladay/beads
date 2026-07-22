@@ -179,6 +179,28 @@ func TestReadyWorkWispIssueFilter(t *testing.T) {
 		}
 	})
 
+	// beads-2a7n1: when --type is set the wisp tier bypasses the DEFAULT
+	// ready-work exclusions (escape-hatch), but the user's explicit --exclude-type
+	// must STILL compose with --type (bd list AND-composes both). The old if/else
+	// dropped the user's excludes entirely when --type was set — the same silent
+	// drop the main BuildReadyWorkWhere path had.
+	t.Run("beads-2a7n1: user --exclude-type composes with --type on the wisp tier", func(t *testing.T) {
+		t.Parallel()
+		got := readyWorkWispIssueFilter(types.WorkFilter{
+			Type:         "bug",
+			ExcludeTypes: []types.IssueType{"bug", ""},
+		})
+		if got.IssueType == nil || *got.IssueType != types.IssueType("bug") {
+			t.Errorf("IssueType = %v, want bug", got.IssueType)
+		}
+		// The user's --exclude-type must survive (composes with --type), and empty
+		// entries must be dropped. Default exclusions must NOT be re-added here
+		// (escape-hatch), so the ONLY excluded type is the user's "bug".
+		if len(got.ExcludeTypes) != 1 || got.ExcludeTypes[0] != types.IssueType("bug") {
+			t.Errorf("beads-2a7n1: ExcludeTypes = %v, want exactly [bug] (user exclude composed, empties dropped, no defaults)", got.ExcludeTypes)
+		}
+	})
+
 	t.Run("explicit status overrides default status set", func(t *testing.T) {
 		t.Parallel()
 		got := readyWorkWispIssueFilter(types.WorkFilter{Status: types.StatusClosed})

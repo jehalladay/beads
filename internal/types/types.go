@@ -1534,7 +1534,9 @@ type WorkFilter struct {
 
 	// Type exclusion: exclude issues with these types from results.
 	// Appended to the default exclusion list (merge-request, gate, molecule, etc.).
-	// When Type is set, ExcludeTypes is ignored (explicit type inclusion wins).
+	// When Type is set, the DEFAULT exclusions are bypassed (explicit type inclusion
+	// wins the escape-hatch), but the user's explicit ExcludeTypes still compose with
+	// --type, matching bd list's AND semantics (beads-2a7n1).
 	ExcludeTypes []IssueType
 
 	// Metadata field filtering (GH#1406)
