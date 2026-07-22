@@ -185,12 +185,23 @@ func runGateDiscover(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println()
-	if dryRun {
-		fmt.Printf("Would update %d gate(s). Run without --dry-run to apply.\n", matchCount)
-	} else {
-		fmt.Printf("Updated %d gate(s) with discovered run IDs.\n", matchCount)
-	}
+	fmt.Println(gateDiscoverSummaryLine(dryRun, matchCount, updatedCount))
 	return nil
+}
+
+// gateDiscoverSummaryLine builds the non-JSON summary line for `bd gate discover`.
+//
+// beads-ahcyo: the non-dry-run summary previously reported matchCount, which
+// over-counts when updateGateAwaitID fails mid-loop (that gate is matched but
+// NOT updated — the loop `continue`s without incrementing updatedCount). The
+// truthful figure for how many gates were actually written is updatedCount, and
+// the --json emit already uses it. Dry-run reports matchCount because dry-run
+// updates nothing, so the meaningful preview count is what WOULD be updated.
+func gateDiscoverSummaryLine(dryRun bool, matchCount, updatedCount int) string {
+	if dryRun {
+		return fmt.Sprintf("Would update %d gate(s). Run without --dry-run to apply.", matchCount)
+	}
+	return fmt.Sprintf("Updated %d gate(s) with discovered run IDs.", updatedCount)
 }
 
 // isNumericRunID returns true if the string looks like a GitHub numeric run ID.
