@@ -458,14 +458,34 @@ func showMoleculeWithParallel(subgraph *MoleculeSubgraph) error {
 	analysis := analyzeMoleculeParallel(subgraph)
 
 	if jsonOutput {
+		// beads-wgvo1: normalize the same three nil-able slices to [] that the
+		// default showMolecule path does (beads-1sq7f), so `bd mol show --parallel
+		// --json` matches `bd mol show --json` on the JSON-array nil-slice contract.
+		// dependencies is nil for a root-only/no-internal-dep molecule, variables
+		// (extractAllVariables) is nil with no {{handlebars}}, and bonded_from is
+		// nil for a non-compound root; all three feed no-omitempty json fields via
+		// this raw map, so a nil slice would marshal to null. This sibling emit
+		// site was missed by 1sq7f (guib/5fv3/036h/4mkg/1sq7f json-ARRAY contract).
+		deps := subgraph.Dependencies
+		if deps == nil {
+			deps = []*types.Dependency{}
+		}
+		vars := extractAllVariables(subgraph)
+		if vars == nil {
+			vars = []string{}
+		}
+		bondedFrom := subgraph.Root.BondedFrom
+		if bondedFrom == nil {
+			bondedFrom = []types.BondRef{}
+		}
 		return outputJSON(map[string]interface{}{
 			"root":         subgraph.Root,
 			"issues":       subgraph.Issues,
-			"dependencies": subgraph.Dependencies,
-			"variables":    extractAllVariables(subgraph),
+			"dependencies": deps,
+			"variables":    vars,
 			"parallel":     analysis,
 			"is_compound":  subgraph.Root.IsCompound(),
-			"bonded_from":  subgraph.Root.BondedFrom,
+			"bonded_from":  bondedFrom,
 		})
 	}
 
