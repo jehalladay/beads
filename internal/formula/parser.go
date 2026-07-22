@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -500,6 +501,26 @@ func ValidateVarValues(defs map[string]VarDef, values map[string]string) error {
 			} else if !re.MatchString(val) {
 				errs = append(errs, fmt.Sprintf("variable %q: value %q does not match pattern %q", name, val, def.Pattern))
 			}
+		}
+
+		// Check type constraint (beads-w5sk7). VarDef.Type declares the expected
+		// value type ("string"/"" default, "int", "bool") but was never enforced
+		// — a var declared type:int silently accepted a non-numeric value and
+		// landed it as durable issue content. "string" and "" are no-ops (every
+		// var value is already a string); int/bool must coerce cleanly.
+		switch def.Type {
+		case "", "string":
+			// no constraint
+		case "int":
+			if _, err := strconv.Atoi(val); err != nil {
+				errs = append(errs, fmt.Sprintf("variable %q: value %q is not a valid int", name, val))
+			}
+		case "bool":
+			if _, err := strconv.ParseBool(val); err != nil {
+				errs = append(errs, fmt.Sprintf("variable %q: value %q is not a valid bool", name, val))
+			}
+		default:
+			errs = append(errs, fmt.Sprintf("variable %q: unknown type %q (expected int, bool, or string)", name, def.Type))
 		}
 	}
 
