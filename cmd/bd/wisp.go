@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -272,6 +273,26 @@ func runWispCreateCore(cmd *cobra.Command, args []string) error {
 			fmt.Sprintf("missing required variables: %s", strings.Join(missingVars, ", ")),
 			fmt.Sprintf("Provide them with: --var %s=<value>", missingVars[0]),
 		)
+	}
+
+	// beads-d9d8y: enforce enum/pattern var constraints before materializing the
+	// wisp DAG — the wisp sibling of the beads-8m9o7 cook/pour fix. The cooked
+	// proto subgraph carries VarDefs (formula.VarDef); wisp create previously only
+	// checked missing-required vars, so out-of-enum / pattern-violating values were
+	// substituted into real (ephemeral) issues. Validate the merged
+	// (defaults-applied) value set against the same constraints cook enforces, at
+	// parity with pour (pour.go). Runs BEFORE the dry-run block so --dry-run also
+	// rejects a bad value. Fail loud (rc=1, JSON-aware). The legacy DB-proto path
+	// (loadTemplateSubgraph) leaves VarDefs nil, so this is a no-op there — matching
+	// pour, where only cooked-formula subgraphs carry VarDefs.
+	if subgraph.VarDefs != nil {
+		mergedDefs := make(map[string]formula.VarDef, len(subgraph.VarDefs))
+		for name, def := range subgraph.VarDefs {
+			mergedDefs[name] = def
+		}
+		if err := formula.ValidateVarValues(mergedDefs, vars); err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
 	}
 
 	// By default, wisps materialize the same child DAG as pour, just marked
