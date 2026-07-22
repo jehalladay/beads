@@ -362,6 +362,19 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 		return match
 	}
 
+	// beads-siggb: adapt the batch ReplaceAllStringFunc into the
+	// (string) -> (string, changed) shape rewriteCommentRefsInTx expects, so the
+	// --repair path rewrites COMMENT bodies the same way renamePrefixInDB (the
+	// single-old-prefix path) already does via g8qfo. repairPrefixes rewrote the
+	// 5 issue text fields but never visited the comments table, so a comment that
+	// referenced any repaired id (a cross-issue ref OR the row's own old id) kept
+	// the now-nonexistent id after consolidation — a dangling reference reported
+	// with RC=0 and no warning.
+	commentRewrite := func(s string) (string, bool) {
+		out := oldPrefixPattern.ReplaceAllStringFunc(s, replaceFunc)
+		return out, out != s
+	}
+
 	// beads-xu7q9: consolidate every incorrect-prefix issue + the prefix config
 	// update in ONE transaction. --repair exists to CURE a corrupted
 	// multi-prefix DB; running each UpdateIssueID as its own self-committing
@@ -400,6 +413,13 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 			// Update the issue in the database
 			if err := tx.UpdateIssueID(ctx, oldID, newID, issue, actorName); err != nil {
 				return fmt.Errorf("failed to update issue %s -> %s: %w", oldID, newID, err)
+			}
+
+			// beads-siggb: comments are re-keyed to newID by the UpdateIssueID FK
+			// cascade, so fetch by newID and rewrite any repaired-id ref in the
+			// body — the same comment-body pass renamePrefixInDB runs (g8qfo).
+			if err := rewriteCommentRefsInTx(ctx, tx, newID, commentRewrite); err != nil {
+				return err
 			}
 		}
 
