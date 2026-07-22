@@ -849,6 +849,15 @@ func getSwarmStatus(ctx context.Context, s SwarmStorage, epic *types.Issue) (*Sw
 
 	// Build dependency map (within epic children only)
 	dependsOn := make(map[string][]string)
+	// beads-k0ln4: active blocking deps to issues OUTSIDE the epic. getEpicChildren
+	// returns only the epic's DIRECT children, so a blocking edge to a non-child
+	// issue is dropped by the childIDSet filter below and never counted as a
+	// blocker — the child falls to status.Ready even though `bd ready` (whose
+	// is_blocked predicate is epic-agnostic) EXCLUDES it. Sibling of beads-r7sh3
+	// (the wave path); resolve external blocker activeness with the SAME semantics
+	// as bd ready via issueops.IsActiveBlockerByState so swarm status stays in
+	// lockstep with bd ready.
+	externalBlockers := make(map[string][]string)
 	for _, issue := range childIssues {
 		deps, err := s.GetDependencyRecords(ctx, issue.ID)
 		if err != nil {
@@ -865,6 +874,28 @@ func getSwarmStatus(ctx context.Context, s SwarmStorage, epic *types.Issue) (*Sw
 			}
 			if childIDSet[dep.DependsOnID] {
 				dependsOn[issue.ID] = append(dependsOn[issue.ID], dep.DependsOnID)
+				continue
+			}
+			// beads-k0ln4: a blocking dep whose target is outside the epic.
+			if dep.DependsOnID == epic.ID {
+				continue
+			}
+			// A cross-project external: ref has no local row, so bd ready's
+			// is_blocked JOIN never treats it as blocking (EXISTS is false) —
+			// don't block on it here either, matching bd ready.
+			if strings.HasPrefix(dep.DependsOnID, "external:") {
+				continue
+			}
+			// Resolve the outside-epic blocker's activeness exactly like bd ready:
+			// a 'blocks' edge blocks while the target is open; a 'conditional-blocks'
+			// edge also blocks while it is closed-success; any other close does not
+			// block. An unresolvable target (GetIssue error/nil) can't be confirmed
+			// blocking → treated as non-blocking, matching bd ready's EXISTS-false
+			// behavior for a dangling ref.
+			if ext, gerr := s.GetIssue(ctx, dep.DependsOnID); gerr == nil && ext != nil {
+				if issueops.IsActiveBlockerByState(dep.Type, ext.Status, ext.CloseReason) {
+					externalBlockers[issue.ID] = append(externalBlockers[issue.ID], dep.DependsOnID)
+				}
 			}
 		}
 	}
@@ -905,6 +936,11 @@ func getSwarmStatus(ctx context.Context, s SwarmStorage, epic *types.Issue) (*Sw
 					blockers = append(blockers, depID)
 				}
 			}
+			// beads-k0ln4: also count active blocking deps to issues OUTSIDE the
+			// epic (already filtered to active blockers via IsActiveBlockerByState
+			// above) so the child is categorized Blocked, matching bd ready — the
+			// old childIDSet-only map dropped them and mis-categorized as Ready.
+			blockers = append(blockers, externalBlockers[issue.ID]...)
 
 			if len(blockers) > 0 {
 				si.BlockedBy = blockers
