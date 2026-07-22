@@ -151,12 +151,17 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 		whereClauses = append(whereClauses, fmt.Sprintf("id IN (%s)", strings.Join(placeholders, ", ")))
 	}
 	if filter.IDPrefix != "" {
-		whereClauses = append(whereClauses, "id LIKE ?")
-		args = append(args, filter.IDPrefix+"%")
+		// beads-aetpz: escape LIKE metachars in the user-supplied prefix + ESCAPE
+		// '\\' so a literal %/_ in the prefix matches literally instead of acting
+		// as a wildcard (e.g. `--spec 'SPEC_A'` must not also match `SPECXA`, and
+		// `--spec '%'` must not return every row). The trailing '%' stays the only
+		// wildcard, preserving the intended prefix-match. Sibling of b9ova/k3xye.
+		whereClauses = append(whereClauses, `id LIKE ? ESCAPE '\\'`)
+		args = append(args, EscapeLikePattern(filter.IDPrefix)+"%")
 	}
 	if filter.SpecIDPrefix != "" {
-		whereClauses = append(whereClauses, "spec_id LIKE ?")
-		args = append(args, filter.SpecIDPrefix+"%")
+		whereClauses = append(whereClauses, `spec_id LIKE ? ESCAPE '\\'`)
+		args = append(args, EscapeLikePattern(filter.SpecIDPrefix)+"%")
 	}
 
 	if filter.ParentID != nil {
