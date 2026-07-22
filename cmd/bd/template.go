@@ -560,6 +560,30 @@ func ensureSubgraphCustomTypes(ctx context.Context, s storage.DoltStorage, subgr
 	return s.SetConfig(ctx, "types.custom", buf.String())
 }
 
+// stripMoleculeLabel returns a copy of labels with the MoleculeLabel ("template")
+// removed, preserving order and all other labels. Used when cloning a subgraph so
+// a live instance spawned from a DB-persisted proto does not inherit the proto's
+// template label (which would classify it a proto per isProto() and hide it from
+// default `bd list`; beads-hqa6b). Returns nil when the input is empty so the
+// clone matches the formula path (no template label present) exactly. Legit user
+// step-labels are retained.
+func stripMoleculeLabel(labels []string) []string {
+	if len(labels) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(labels))
+	for _, l := range labels {
+		if l == MoleculeLabel {
+			continue
+		}
+		out = append(out, l)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // cloneSubgraph creates new issues from the template with variable substitution.
 // Uses CloneOptions to control all spawn/bond behavior including dynamic bonding.
 func cloneSubgraph(ctx context.Context, s storage.DoltStorage, subgraph *TemplateSubgraph, opts CloneOptions) (*InstantiateResult, error) {
@@ -610,8 +634,16 @@ func cloneSubgraph(ctx context.Context, s storage.DoltStorage, subgraph *Templat
 				AwaitType: oldIssue.AwaitType,
 				AwaitID:   substituteVariables(oldIssue.AwaitID, opts.Vars),
 				Timeout:   oldIssue.Timeout,
-				Labels:    oldIssue.Labels,
-				Metadata:  oldIssue.Metadata,
+				// Strip the MoleculeLabel ("template") when cloning: a DB-persisted
+				// proto (loadTemplateSubgraph) carries the template label on every
+				// bead, and copying it verbatim onto the live clone-root makes the
+				// instance a proto per isProto() → HIDDEN from default `bd list`
+				// (beads-hqa6b). The formula path already achieves this by
+				// construction (its subgraph is freshly parsed, no template label).
+				// Only the MoleculeLabel is removed; legit user step-labels
+				// (deliberately carried per f990671d0) are preserved.
+				Labels:   stripMoleculeLabel(oldIssue.Labels),
+				Metadata: oldIssue.Metadata,
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
 			}
