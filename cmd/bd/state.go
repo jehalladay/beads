@@ -155,6 +155,21 @@ The --reason flag provides context for the event bead (recommended).`,
 		if msg := reservedIdentityLabelError(dimension + ":" + newValue); msg != "" {
 			return HandleErrorRespectJSON("%s", msg)
 		}
+		// beads-qxikd: also reject the 'provides:' capability family here, at
+		// parity with single create (create.go) / graph (graph_apply.go) / cook
+		// (cook.go, beads-1zq73) / label add (label.go:274) and the create-form/
+		// markdown/quick/update/tag seams (beads-4sfae). set-state builds its label
+		// as <dimension>:<value>, so `bd set-state <bead> provides=cap` constructs
+		// the reserved "provides:cap" single-provider capability label and, without
+		// this guard, stamps it via tx.AddLabel (direct) / labelUC.AddLabel
+		// (proxied) OUTSIDE `bd ship` (the only sanctioned applier — it enforces
+		// closed-requirement + single-provider before stamping via storage).
+		// Guard here — same shared site as the identity check, before the
+		// usesProxiedServer() split — so ONE site covers direct + proxied. Unlike
+		// the identity guard, providesLabelError has NO GT_INTERNAL bypass.
+		if msg := providesLabelError(dimension + ":" + newValue); msg != "" {
+			return HandleErrorRespectJSON("%s", msg)
+		}
 
 		reason, _ := cmd.Flags().GetString("reason")
 		// beads-57f51: a whitespace-only --reason must collapse to no-reason so it
