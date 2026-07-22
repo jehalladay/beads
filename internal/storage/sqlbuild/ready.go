@@ -232,6 +232,18 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 		whereClauses = append(whereClauses, fmt.Sprintf("issue_type NOT IN (%s)", ph))
 		args = append(args, a...)
 	}
+	// --mol-type: molecule subtype filter, parity with bd list (filter.go:171
+	// MolType → `mol_type = ?`). Both the direct ready.go RunE and gatherReadyInput
+	// (proxied) populate WorkFilter.MolType, and the wisp tier already forwards it
+	// (readyWorkWispIssueFilter, beads-3y8y8) claiming "identical semantics to the
+	// main ready-issues path (and bd list)" — but the main WHERE builder never
+	// emitted the predicate, so `bd ready --type molecule --mol-type swarm`
+	// silently returned ALL molecule subtypes (same silent-ignore class as the
+	// label glob/regex + priority-range parity fixes). Same issues-table column.
+	if filter.MolType != nil {
+		whereClauses = append(whereClauses, "mol_type = ?")
+		args = append(args, string(*filter.MolType))
+	}
 	if filter.Unassigned {
 		whereClauses = append(whereClauses, "(assignee IS NULL OR assignee = '')")
 	} else if filter.Assignee != nil {
