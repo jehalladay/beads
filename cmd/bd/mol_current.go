@@ -755,13 +755,20 @@ func parseRange(rangeStr string) (start, end int, err error) {
 }
 
 // filterStepsByRange filters steps to a 1-based range [start, end].
+//
+// beads-x94o4: an out-of-range start returns an EMPTY (non-nil) slice, not nil.
+// MoleculeProgress.Steps has no omitempty json tag, so a nil slice marshals to
+// "steps":null while the default single-arg path explicitly inits it to
+// []*StepStatus{} (getMoleculeProgress) — normalizing here keeps `bd mol current
+// --range <past-last-step> --json` emitting "steps":[] rather than null,
+// matching the non-range path (wgvo1/1sq7f json-array nil-slice contract).
 func filterStepsByRange(steps []*StepStatus, start, end int) []*StepStatus {
 	// Convert to 0-based indices
 	startIdx := start - 1
 	endIdx := end
 
 	if startIdx >= len(steps) {
-		return nil
+		return []*StepStatus{}
 	}
 	if endIdx > len(steps) {
 		endIdx = len(steps)
