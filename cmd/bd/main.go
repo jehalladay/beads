@@ -689,8 +689,16 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Block dangerous env var overrides that could cause data fragmentation (bd-hevyw).
+		// beads-5v4ku: this guard runs in PersistentPreRunE, ahead of EVERY
+		// subcommand including --json ones, so a bare HandleError (plaintext→stderr)
+		// leaves stdout empty and breaks the --json contract for a scripted
+		// `bd … --json | jq` (8lqh class). jsonOutput is already bound from the
+		// --json PersistentFlag (flag-parse precedes PersistentPreRunE), so
+		// HandleErrorRespectJSON emits a structured {error} on stdout for an
+		// explicit --json invocation. (A config-file-only json:true resolves later
+		// at L724 — a pre-existing limitation shared by the whole early-guard chain.)
 		if err := checkBlockedEnvVars(); err != nil {
-			return HandleError("%v", err)
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		loadSelectionEnvironment()
