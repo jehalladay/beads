@@ -287,6 +287,25 @@ func CreateIssueFromFormValues(ctx context.Context, s storage.DoltStorage, fv *c
 			continue
 		}
 
+		// beads-o8h79: a parent-child edge supplied via the form's Dependencies
+		// field (`parent-child:<id>`) reaches the SAME "closed parent with an
+		// open child" invariant as the --parent leg, but the 3jdex guard above
+		// (L157) only fires for fv.ParentID. Mirror it here so the generic-dep
+		// axis of the form can't smuggle an open child under a closed
+		// auto-closing parent (epic/molecule/wisp) — the create-FORM straggler
+		// of the closed-parent guard family (3jdex form --parent, p1p9n
+		// create --deps/markdown, t39ph graph, aw9x8/j8ekq dep-add). Overridable
+		// with --force (fv.Force, already threaded by 3jdex). Fail OPEN on a
+		// read miss (err==nil gate): this loop does not otherwise validate the
+		// dep target's existence, so a lookup error must not newly reject the
+		// create — only a successfully-read closed auto-closing parent is barred.
+		if !fv.Force && depType == types.DepParentChild {
+			if parent, err := s.GetIssue(ctx, dependsOnID); err == nil &&
+				isAutoClosingParentType(parent) && parent.Status == types.StatusClosed {
+				return nil, fmt.Errorf("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", dependsOnID)
+			}
+		}
+
 		pendingEdges = append(pendingEdges, pendingEdge{
 			dependsOnID: dependsOnID,
 			depType:     depType,
