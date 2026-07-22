@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 )
 
 // Credential storage and encryption for federation peers.
@@ -288,30 +289,23 @@ func (s *DoltStore) AddFederationPeer(ctx context.Context, peer *storage.Federat
 		}
 	}
 
-	// Upsert the peer credentials
-	_, err = s.execContext(ctx, `
-		INSERT INTO federation_peers (name, remote_url, username, password_encrypted, sovereignty)
-		VALUES (?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			remote_url = VALUES(remote_url),
-			username = VALUES(username),
-			password_encrypted = VALUES(password_encrypted),
-			sovereignty = VALUES(sovereignty),
-			updated_at = CURRENT_TIMESTAMP
-	`, peer.Name, peer.RemoteURL, peer.Username, encryptedPwd, peer.Sovereignty)
-
-	if err != nil {
+	// Upsert the peer credentials AND add the Dolt remote in a single SQL
+	// transaction so the two writes are atomic. Previously the INSERT ran via
+	// execContext (which auto-commits its own implicit tx) and only THEN was
+	// AddRemote called — so a failing remote add left an orphaned credential
+	// row committed with no matching Dolt remote (beads-1170j). Mirrors the
+	// EmbeddedDoltStore path via the shared issueops helpers.
+	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
+		if err := issueops.AddFederationPeerInTx(ctx, tx, peer, encryptedPwd); err != nil {
+			return err
+		}
+		return issueops.AddRemoteIfNotExists(ctx, tx, peer.Name, peer.RemoteURL)
+	}); err != nil {
 		return fmt.Errorf("failed to add federation peer: %w", err)
 	}
 
-	// Also add the Dolt remote.
-	if err := s.AddRemote(ctx, peer.Name, peer.RemoteURL); err != nil {
-		// Ignore "remote already exists" errors
-		if !strings.Contains(err.Error(), "already exists") {
-			return fmt.Errorf("failed to add dolt remote: %w", err)
-		}
-	}
-
+	// The SQL tx already made the credential row + remote atomic; make the Dolt
+	// commit atomic too.
 	if err := s.doltAddAndCommit(ctx, []string{"federation_peers"}, "federation: add peer "+peer.Name); err != nil {
 		return fmt.Errorf("failed to commit federation peer: %w", err)
 	}
