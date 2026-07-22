@@ -155,6 +155,16 @@ The --reason flag provides context for the event bead (recommended).`,
 		if msg := reservedIdentityLabelError(dimension + ":" + newValue); msg != "" {
 			return HandleErrorRespectJSON("%s", msg)
 		}
+		// beads-8o666: also reject the 'provides:' capability family here (o70m1
+		// parity). set-state stamps <dimension>:<value>, so `bd set-state <bead>
+		// provides:cap` mints the single-provider capability label outside `bd
+		// ship`, bypassing ship's CLOSED + single-provider invariants — the exact
+		// o70m1 bypass at a mutation seam NOT in 4sfae's create-verb list.
+		// providesLabelError is UNGATED (ship stamps provides: via storage, not this
+		// seam), and this pre-split site covers both direct + proxied like rdzwu.
+		if msg := providesLabelError(dimension + ":" + newValue); msg != "" {
+			return HandleErrorRespectJSON("%s", msg)
+		}
 
 		reason, _ := cmd.Flags().GetString("reason")
 		// beads-57f51: a whitespace-only --reason must collapse to no-reason so it
