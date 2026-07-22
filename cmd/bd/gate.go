@@ -801,8 +801,12 @@ Examples:
 			// unparseable ("Extra data"). Side effects (closeGate/escalateGate) and
 			// stderr error lines are unchanged; only the stdout progress text is gated.
 			if r.resolved {
-				resolvedCount++
 				if dryRun {
+					// beads-9zt6z: dry-run performs no close; it previews what
+					// WOULD resolve, so count it as resolved.
+					rd, ed := gateCheckResolveCounts(true, nil)
+					resolvedCount += rd
+					errorCount += ed
 					if !jsonOutput {
 						fmt.Printf("%s %s: would resolve - %s\n",
 							ui.RenderPass("✓"), r.gate.ID, formatGateCheckReason(r.reason))
@@ -813,10 +817,17 @@ Examples:
 					// the GC-survivable audit-file trail at parity with manual
 					// resolve (beads-8ociu / beads-1jkl5).
 					closeErr := closeGate(ctx, r.gate.ID, string(r.gate.Status), r.reason)
+					// beads-9zt6z: count resolved ONLY when the close actually
+					// succeeded. A gate that was resolvable but failed to close is
+					// still open, so it must count only as an error — not as BOTH
+					// resolved AND error (which made resolved+escalated+errors
+					// exceed checked and reported a still-open gate as "resolved").
+					rd, ed := gateCheckResolveCounts(false, closeErr)
+					resolvedCount += rd
+					errorCount += ed
 					if closeErr != nil {
 						fmt.Fprintf(os.Stderr, "%s %s: error closing - %v\n",
 							ui.RenderFail("✗"), r.gate.ID, closeErr)
-						errorCount++
 					} else if !jsonOutput {
 						fmt.Printf("%s %s: resolved - %s\n",
 							ui.RenderPass("✓"), r.gate.ID, formatGateCheckReason(r.reason))
@@ -864,6 +875,23 @@ Examples:
 		}
 		return nil
 	},
+}
+
+// gateCheckResolveCounts returns the (resolved, error) count deltas for a single
+// resolvable gate in the `bd gate check` batch loop.
+//
+// beads-9zt6z: resolvedCount was previously incremented the moment a gate was
+// deemed resolvable, BEFORE the close attempt. When closeGate failed the gate
+// was counted as BOTH resolved AND error, so resolved+escalated+errors could
+// exceed checked and the summary reported a still-open gate as "resolved". A
+// failed close means the gate is still open → it must count only as an error.
+// Dry-run performs no close and previews what WOULD resolve, so it counts as
+// resolved.
+func gateCheckResolveCounts(dryRun bool, closeErr error) (resolvedDelta, errorDelta int) {
+	if dryRun || closeErr == nil {
+		return 1, 0
+	}
+	return 0, 1
 }
 
 // validateGateCheckType rejects an unknown/typo/retired `bd gate check --type`
