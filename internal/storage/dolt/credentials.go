@@ -136,6 +136,12 @@ func (s *DoltStore) legacyEncryptionKey() []byte {
 
 // migrateCredentialKeys re-encrypts all stored federation passwords from the
 // old dbPath-derived key to the new random key.
+//
+// PRECONDITION: the caller (initCredentialKey via ensureCredentialKey) already
+// holds s.mu.Lock() (write). It therefore MUST use the *NoLock query/exec
+// variants — the locking execContext/queryContext re-take s.mu.RLock(), and
+// because sync.RWMutex is not re-entrant, that would deadlock forever against
+// the held write lock (beads-ti3ks).
 func (s *DoltStore) migrateCredentialKeys(ctx context.Context, newKey []byte) error {
 	if s.db == nil {
 		return nil // No database connection — nothing to migrate
@@ -143,7 +149,7 @@ func (s *DoltStore) migrateCredentialKeys(ctx context.Context, newKey []byte) er
 
 	oldKey := s.legacyEncryptionKey()
 
-	rows, err := s.queryContext(ctx, `
+	rows, err := s.queryContextNoLock(ctx, `
 		SELECT name, password_encrypted FROM federation_peers
 		WHERE password_encrypted IS NOT NULL AND LENGTH(password_encrypted) > 0
 	`)
@@ -184,7 +190,7 @@ func (s *DoltStore) migrateCredentialKeys(ctx context.Context, newKey []byte) er
 		if err != nil {
 			return fmt.Errorf("failed to re-encrypt password for peer %s: %w", entry.name, err)
 		}
-		if _, err := s.execContext(ctx, `
+		if _, err := s.execContextNoLock(ctx, `
 			UPDATE federation_peers SET password_encrypted = ? WHERE name = ?
 		`, encrypted, entry.name); err != nil {
 			return fmt.Errorf("failed to update encrypted password for peer %s: %w", entry.name, err)

@@ -438,6 +438,67 @@ func federationStatusHasTable(t *testing.T, ctx context.Context, store *DoltStor
 	return count > 0
 }
 
+// TestAddFederationPeerWithPasswordDoesNotDeadlock is the teeth for beads-ti3ks.
+// The FIRST federation op with a non-empty password on a server-backed store
+// with no credential-key file yet triggers ensureCredentialKey -> (write lock)
+// -> initCredentialKey -> migrateCredentialKeys, which used to run its query via
+// the locking queryContext -> rlockOpen -> s.mu.RLock(). sync.RWMutex is not
+// re-entrant, so that RLock blocked forever against the held write lock =
+// permanent deadlock. The fix routes migration through the *NoLock variants.
+//
+// A RED (pre-fix) run hangs; we bound it so the failure surfaces in seconds
+// instead of hanging the whole suite for the 10-minute lock-wait.
+func TestAddFederationPeerWithPasswordDoesNotDeadlock(t *testing.T) {
+	skipIfNoDolt(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	// Force the fresh-credential-key path: point beadsDir at an isolated temp
+	// dir with NO pre-existing key file (setupTestStore derives beadsDir from a
+	// TMPDIR parent shared across tests, where an earlier run may have persisted
+	// a key — that would let initCredentialKey return early and skip the
+	// migration query that used to deadlock). A missing key file forces
+	// generate-new-key -> migrateCredentialKeys -> query under the write lock.
+	store.beadsDir = t.TempDir()
+	store.credentialKey = nil
+
+	// A non-empty Password with no pre-existing credential key forces the
+	// lazy-init + migration path that held the write lock while querying.
+	peer := &storage.FederationPeer{
+		Name:        "peer-password-deadlock",
+		RemoteURL:   "file:///tmp/beads-no-such-federation-peer-password",
+		Username:    "alice",
+		Password:    "s3cr3t-federation-token",
+		Sovereignty: "T2",
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- store.AddFederationPeer(ctx, peer) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("add federation peer with password: %v", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("AddFederationPeer with password deadlocked (ensureCredentialKey held the write lock while migrateCredentialKeys re-took the read lock)")
+	}
+
+	// Sanity: the encrypted password round-trips, proving the credential key was
+	// actually initialized (not merely unblocked).
+	got, err := store.GetFederationPeer(ctx, peer.Name)
+	if err != nil {
+		t.Fatalf("get federation peer: %v", err)
+	}
+	if got.Password != peer.Password {
+		t.Fatalf("password round-trip mismatch: got %q want %q", got.Password, peer.Password)
+	}
+}
+
 // TestFederationPushPullMethods tests PushTo and PullFrom
 func TestFederationPushPullMethods(t *testing.T) {
 	skipIfNoDolt(t)

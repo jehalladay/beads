@@ -154,6 +154,16 @@ func (s *DoltStore) execContext(ctx context.Context, query string, args ...any) 
 		return nil, err
 	}
 	defer release()
+	return s.execContextNoLock(ctx, query, args...)
+}
+
+// execContextNoLock is execContext without the rlockOpen guard, for callers
+// that ALREADY hold s.mu (read or write). It must not be called without the
+// lock held. Extracted to break a re-entrant-lock deadlock: initCredentialKey
+// runs under s.mu.Lock() (write) and migrateCredentialKeys needs to exec/query;
+// going through the locking execContext would re-take s.mu.RLock() on a
+// non-reentrant RWMutex and hang forever (beads-ti3ks).
+func (s *DoltStore) execContextNoLock(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	ctx, span := doltTracer.Start(ctx, "dolt.exec",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(append(s.doltSpanAttrs(),
@@ -162,7 +172,7 @@ func (s *DoltStore) execContext(ctx context.Context, query string, args ...any) 
 		)...),
 	)
 	var result sql.Result
-	err = s.withRetry(ctx, func() error {
+	err := s.withRetry(ctx, func() error {
 		tx, txErr := s.db.BeginTx(ctx, nil)
 		if txErr != nil {
 			return txErr
@@ -194,6 +204,12 @@ func (s *DoltStore) queryContext(ctx context.Context, query string, args ...any)
 		return nil, err
 	}
 	defer release()
+	return s.queryContextNoLock(ctx, query, args...)
+}
+
+// queryContextNoLock is queryContext without the rlockOpen guard, for callers
+// that ALREADY hold s.mu. See execContextNoLock for why (beads-ti3ks).
+func (s *DoltStore) queryContextNoLock(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	ctx, span := doltTracer.Start(ctx, "dolt.query",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(append(s.doltSpanAttrs(),
@@ -202,7 +218,7 @@ func (s *DoltStore) queryContext(ctx context.Context, query string, args ...any)
 		)...),
 	)
 	var rows *sql.Rows
-	err = s.withRetry(ctx, func() error {
+	err := s.withRetry(ctx, func() error {
 		// Close any Rows from a previous failed attempt to avoid leaking connections.
 		if rows != nil {
 			_ = rows.Close()
