@@ -28,10 +28,13 @@ func TestMarkBlockedTemplateForIssues(t *testing.T) {
 		// beads-a3hm: the blocks/conditional-blocks legs are now the reason-aware
 		// activeBlockerSQL fragment. It still references both edge types, and the
 		// conditional-blocks leg keeps a success-closed target blocking via the
-		// failure-close INSTR guard.
+		// failure-close guard. beads-cwaj5: that guard is now a whole-WORD REGEXP
+		// (\b-anchored) mirroring the Go word-boundary types.IsFailureClose, not
+		// the old INSTR substring test.
 		"d.type = 'blocks'",
 		"d.type = 'conditional-blocks'",
-		"INSTR(LOWER(t.close_reason)",
+		"LOWER(t.close_reason) REGEXP",
+		`\\b(?:`,
 		"d.type = 'parent-child'",
 		"d.type = 'waits-for'",
 	} {
