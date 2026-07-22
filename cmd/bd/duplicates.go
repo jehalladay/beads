@@ -99,12 +99,10 @@ Example:
 					sources = append(sources, issue.ID)
 				}
 			}
-			cmd := fmt.Sprintf("# Duplicate: %s (same content as %s)\n# Suggested action: bd close %s && bd dep add %s %s --type related",
+			cmd := fmt.Sprintf("# Duplicate: %s (same content as %s)\n# Suggested action: %s",
 				strings.Join(sources, " "),
 				target.ID,
-				strings.Join(sources, " "),
-				strings.Join(sources, " "),
-				target.ID)
+				suggestedDuplicateCommands(sources, target.ID))
 			mergeCommands = append(mergeCommands, cmd)
 
 			if autoMerge || dryRun {
@@ -168,8 +166,8 @@ Example:
 				}
 			}
 			fmt.Printf("  %s Duplicate: %s (same content as %s)\n", ui.RenderAccent("Note:"), strings.Join(sources, " "), target.ID)
-			fmt.Printf("  %s bd close %s && bd dep add %s %s --type related\n\n",
-				ui.RenderAccent("Suggested:"), strings.Join(sources, " "), strings.Join(sources, " "), target.ID)
+			fmt.Printf("  %s %s\n\n",
+				ui.RenderAccent("Suggested:"), suggestedDuplicateCommands(sources, target.ID))
 		}
 		if autoMerge {
 			if dryRun {
@@ -361,6 +359,22 @@ func chooseMergeTarget(group []*types.Issue, refCounts map[string]int, structura
 	return target
 }
 
+// suggestedDuplicateCommands renders the copy-paste hint for merging duplicate
+// sources into a canonical target. It emits one canonical `bd duplicate <src>
+// --of <target>` per source (joined with " && "), matching what `--auto-merge`
+// executes: `bd duplicate` runs LinkAndClose atomically (close + a proper
+// types.DepDuplicates edge + the wqrfi/cjl9y guards + molecule auto-close +
+// on_close hook). The prior hint (`bd close && bd dep add --type related`)
+// taught the non-atomic, guard-bypassing form and minted a weaker `related`
+// edge invisible to the beads-8nugc reopen guard (beads-ulq23, post-chf1w).
+func suggestedDuplicateCommands(sources []string, targetID string) string {
+	cmds := make([]string, 0, len(sources))
+	for _, src := range sources {
+		cmds = append(cmds, fmt.Sprintf("bd duplicate %s --of %s", src, targetID))
+	}
+	return strings.Join(cmds, " && ")
+}
+
 // formatDuplicateGroupsJSON formats duplicate groups for JSON output
 func formatDuplicateGroupsJSON(groups [][]*types.Issue, refCounts map[string]int, structuralScores map[string]*issueScore) []map[string]interface{} {
 	var result []map[string]interface{}
@@ -397,7 +411,7 @@ func formatDuplicateGroupsJSON(groups [][]*types.Issue, refCounts map[string]int
 			"issues":            issues,
 			"suggested_target":  target.ID,
 			"suggested_sources": sources,
-			"suggested_action":  fmt.Sprintf("bd close %s && bd dep add %s %s --type related", strings.Join(sources, " "), strings.Join(sources, " "), target.ID),
+			"suggested_action":  suggestedDuplicateCommands(sources, target.ID),
 			"note":              fmt.Sprintf("Duplicate: %s (same content as %s)", strings.Join(sources, " "), target.ID),
 		})
 	}
