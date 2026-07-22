@@ -381,6 +381,22 @@ the flags appear in the command line.`,
 			// (beads-fg6, matching the update batch path) instead of a bare
 			// silent exit that leaves --json consumers with empty stdout.
 			if jsonOutput {
+				// beads: surface the ACTUAL per-item reason(s) captured in
+				// deferredItemErrors (e.g. "cannot close X: N open child
+				// issue(s)" / "blocked by open issues" / a gate rejection)
+				// instead of the generic "no issues closed matching the
+				// provided IDs" — the generic string misleads a --json consumer
+				// parsing stdout into thinking the ID didn't exist when the real
+				// cause was an integrity-guard rejection on an EXISTING id. On a
+				// wholly-failed batch the deferred flush above is skipped (its
+				// guard requires len(closedIssues) > 0), so the reasons would
+				// otherwise reach only stderr. Falls back to the generic message
+				// only when no specific reason was recorded. This is the sibling
+				// of beads-9c0o/qpcbg, which fixed the identical leak in the
+				// `bd update` all-failed --json path.
+				if len(deferredItemErrors) > 0 {
+					return HandleErrorRespectJSON("%s", strings.Join(deferredItemErrors, "; "))
+				}
 				return HandleErrorRespectJSON("no issues closed matching the provided IDs")
 			}
 			return SilentExit()
