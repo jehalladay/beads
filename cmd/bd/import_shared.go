@@ -201,6 +201,20 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 				InvalidMetadataIDs: invalidMetadataIDs,
 			}, nil
 		}
+	} else {
+		// beads-06x87: --allow-stale skips the stale FILTER (older rows are
+		// allowed to overwrite), but it must NOT skip the change-PLAN. Without
+		// this, an --allow-stale overwrite of an existing issue is miscounted as
+		// a creation and the documented updated_issues summary is never emitted
+		// — a snapshot-restore reports zero visibility into which local rows it
+		// clobbered. Classify existing-issue overwrites as Updates here (no
+		// older-skip), so Created stays a true partition and updated_issues is
+		// populated exactly as on the guarded path.
+		plan, err := planAllowStaleChanges(ctx, store, issues)
+		if err != nil {
+			return nil, err
+		}
+		changePlan = plan
 	}
 
 	var skippedDependencies []string
@@ -553,6 +567,68 @@ type importChangePlan struct {
 	// export→import of unchanged data reports "created N" while ground truth is
 	// unchanged.
 	Unchanged []string
+}
+
+// planAllowStaleChanges classifies which incoming rows overwrite an existing
+// local issue when --allow-stale is set (beads-06x87). It mirrors the change
+// bookkeeping in filterStaleImportIssues but WITHOUT the stale-skip: under
+// --allow-stale every row lands (even an older one overwriting newer local
+// state), so an existing-issue overwrite whose content differs is an Update
+// regardless of updated_at direction. This keeps Created a true partition and
+// populates the documented updated_issues summary on the restore path. TieKept
+// is not applicable here — --allow-stale never keeps local state on a tie.
+func planAllowStaleChanges(ctx context.Context, store storage.DoltStorage, issues []*types.Issue) (importChangePlan, error) {
+	var plan importChangePlan
+	ids := make([]string, 0, len(issues))
+	seen := make(map[string]struct{}, len(issues))
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" {
+			continue
+		}
+		if _, ok := seen[issue.ID]; ok {
+			continue
+		}
+		seen[issue.ID] = struct{}{}
+		ids = append(ids, issue.ID)
+	}
+	if len(ids) == 0 {
+		return plan, nil
+	}
+
+	localIssues, err := store.GetIssuesByIDs(ctx, ids)
+	if err != nil {
+		return plan, fmt.Errorf("check existing issues before import: %w", err)
+	}
+	localByID := make(map[string]*types.Issue, len(localIssues))
+	for _, issue := range localIssues {
+		if issue != nil && issue.ID != "" && !issue.UpdatedAt.IsZero() {
+			localByID[issue.ID] = issue
+		}
+	}
+	if len(localByID) == 0 {
+		return plan, nil
+	}
+
+	// One entry per distinct id (the batch upsert collapses duplicates), so the
+	// Updates list never double-counts an id repeated in the input.
+	planned := make(map[string]struct{}, len(ids))
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" {
+			continue
+		}
+		if _, done := planned[issue.ID]; done {
+			continue
+		}
+		local, ok := localByID[issue.ID]
+		if !ok {
+			continue
+		}
+		if summary := importRowChangeSummary(local, issue); summary != "" {
+			plan.Updates = append(plan.Updates, ImportChange{ID: issue.ID, Changes: summary})
+			planned[issue.ID] = struct{}{}
+		}
+	}
+	return plan, nil
 }
 
 func filterStaleImportIssues(ctx context.Context, store storage.DoltStorage, issues []*types.Issue) ([]*types.Issue, []string, importChangePlan, error) {

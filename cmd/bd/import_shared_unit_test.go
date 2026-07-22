@@ -200,6 +200,12 @@ func TestImportIssuesCoreDedupsIntraBatchDuplicateIDs(t *testing.T) {
 // bd-6dnrw.9: --allow-stale must bypass the stale guard so deliberately
 // restoring an older snapshot actually writes rows instead of silently
 // no-oping per row.
+//
+// beads-06x87: the incoming bd-stale overwrites an EXISTING local bd-stale
+// whose content differs (the local row has no title), so it is an Update, not
+// a Create — the row still lands (the point of --allow-stale), it is just
+// counted correctly. Created stays a true partition; the write is asserted via
+// store.created.
 func TestImportIssuesCoreAllowStaleImportsOlderRows(t *testing.T) {
 	base := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
 	store := &fakeImportIssueLookupStore{issues: []*types.Issue{
@@ -212,8 +218,17 @@ func TestImportIssuesCoreAllowStaleImportsOlderRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("importIssuesCore: %v", err)
 	}
-	if result.Created != 1 {
-		t.Fatalf("Created = %d, want 1", result.Created)
+	// The overwrite of the existing bd-stale is an Update, not a Create
+	// (beads-06x87).
+	if result.Created != 0 {
+		t.Fatalf("Created = %d, want 0 (overwrite of existing bd-stale is an Update)", result.Created)
+	}
+	if result.Updated != 1 || len(result.UpdatedIssues) != 1 || result.UpdatedIssues[0].ID != "bd-stale" {
+		t.Fatalf("Updated = %d, UpdatedIssues = %#v, want exactly bd-stale (beads-06x87)", result.Updated, result.UpdatedIssues)
+	}
+	// The row STILL lands under --allow-stale (that is the bd-6dnrw.9 point).
+	if len(result.ImportedIDs) != 1 || result.ImportedIDs[0] != "bd-stale" {
+		t.Fatalf("ImportedIDs = %#v, want the stale row landed", result.ImportedIDs)
 	}
 	if result.Skipped != 0 || len(result.StaleSkippedIDs) != 0 {
 		t.Fatalf("Skipped = %d, StaleSkippedIDs = %#v, want none", result.Skipped, result.StaleSkippedIDs)
