@@ -93,17 +93,7 @@ Examples:
 				return nil
 			}
 
-			closedCount := 0
-			for _, orphan := range orphans {
-				err := closeIssue(orphan.IssueID)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", orphan.IssueID, err)
-				} else {
-					fmt.Printf("✓ Closed %s\n", orphan.IssueID)
-					closedCount++
-				}
-			}
-			fmt.Printf("\nClosed %d issue(s)\n", closedCount)
+			return closeOrphans(orphans)
 		}
 		return nil
 	},
@@ -233,6 +223,28 @@ func findOrphanedIssues(path string, labels, labelsAny []string) ([]orphanIssueO
 // closeIssue closes an issue using bd close
 func closeIssue(issueID string) error {
 	return closeIssueRunner(issueID)
+}
+
+// closeOrphans closes the given orphaned issues, reporting per-issue results.
+// It returns a non-zero (SilentExit) error when NONE of the attempted closes
+// succeed, so rc!=0 distinguishes an all-failed run from "no orphans found"
+// (beads-07rpt, mirrors the b0df/epic close-eligible all-failed-fails-loud
+// guard).
+func closeOrphans(orphans []orphanIssueOutput) error {
+	closedCount := 0
+	for _, orphan := range orphans {
+		if err := closeIssue(orphan.IssueID); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", orphan.IssueID, err)
+		} else {
+			fmt.Printf("✓ Closed %s\n", orphan.IssueID)
+			closedCount++
+		}
+	}
+	fmt.Printf("\nClosed %d issue(s)\n", closedCount)
+	if len(orphans) > 0 && closedCount == 0 {
+		return SilentExit()
+	}
+	return nil
 }
 
 func init() {

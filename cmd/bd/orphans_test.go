@@ -109,6 +109,41 @@ func TestCloseIssue_UsesRunner(t *testing.T) {
 	}
 }
 
+// TestCloseOrphans_AllFailedFailsLoud verifies beads-07rpt: when every close
+// fails, closeOrphans returns a non-zero exit so the run is distinguishable
+// from "no orphans found".
+func TestCloseOrphans_AllFailedFailsLoud(t *testing.T) {
+	orig := closeIssueRunner
+	closeIssueRunner = func(string) error { return errors.New("nope") }
+	t.Cleanup(func() { closeIssueRunner = orig })
+
+	err := closeOrphans([]orphanIssueOutput{{IssueID: "bd-1"}, {IssueID: "bd-2"}})
+	if err == nil {
+		t.Fatal("expected non-zero exit when all closes fail, got nil")
+	}
+	var ee *exitError
+	if !errors.As(err, &ee) || ee.Code == 0 {
+		t.Fatalf("expected non-zero exitError, got %#v", err)
+	}
+}
+
+// TestCloseOrphans_PartialSuccessOK verifies that at least one successful close
+// yields a nil (exit 0) result even if others fail.
+func TestCloseOrphans_PartialSuccessOK(t *testing.T) {
+	orig := closeIssueRunner
+	closeIssueRunner = func(id string) error {
+		if id == "bd-2" {
+			return errors.New("nope")
+		}
+		return nil
+	}
+	t.Cleanup(func() { closeIssueRunner = orig })
+
+	if err := closeOrphans([]orphanIssueOutput{{IssueID: "bd-1"}, {IssueID: "bd-2"}}); err != nil {
+		t.Fatalf("expected nil on partial success, got %v", err)
+	}
+}
+
 func TestCloseIssue_PropagatesError(t *testing.T) {
 	orig := closeIssueRunner
 	closeIssueRunner = func(string) error { return errors.New("nope") }
