@@ -24,9 +24,28 @@ func isFreshCloneError(err error) bool {
 // handleFreshCloneError displays a helpful message when a fresh clone is detected
 // and returns true if the error was handled (so caller should exit).
 // If not a fresh clone error, returns false and does nothing.
+//
+// beads-aza6m: this runs inside main.go's PersistentPreRunE newDoltStore error
+// branch, ahead of EVERY subcommand including --json ones, and its caller then
+// os.Exit(1)s. A bare plaintext-stderr message left `bd list --json` on a fresh
+// clone / uninitialized DB with rc=1, EMPTY stdout, and plaintext on stderr —
+// breaking a scripted `bd ... --json | jq` (the 8lqh --json-contract class,
+// same as beads-5v4ku's blocked-env-var leg one block up). The immediately
+// adjacent siblings in that same `if err != nil` block (schema-skew,
+// remote-migrate-gate) already gate on `if jsonOutput`; only this leg did not.
+// Under --json emit a parseable JSON error on stdout (jsonStdoutError, the 8lqh
+// stdout channel so `| jq` sees it); otherwise keep the plaintext guidance.
 func handleFreshCloneError(err error) bool {
 	if !isFreshCloneError(err) {
 		return false
+	}
+
+	if jsonOutput {
+		jsonStdoutError(
+			"database not initialized (fresh clone or database needing recovery)",
+			"run 'bd doctor' to diagnose; 'bd bootstrap' for an existing project or fresh clone; 'bd init --prefix <your-prefix>' for a brand-new database",
+		)
+		return true
 	}
 
 	fmt.Fprintf(os.Stderr, "Error: Database not initialized\n\n")
