@@ -144,6 +144,12 @@ func runMolBond(cmd *cobra.Command, args []string) error {
 			return HandleErrorRespectJSON("%v", err)
 		}
 
+		// beads-51w8c (8lqh --json-contract family): under --json emit a parseable
+		// preview envelope instead of the plaintext dry-run so a scripted preview
+		// before a real bond parses with `| jq`.
+		if jsonOutput {
+			return outputMolBondDryRunJSON(issueA, issueB, formulaA, formulaB, args[0], args[1], bondType, customTitle, childRef, vars, ephemeral, pour)
+		}
 		printMolBondDryRun(issueA, issueB, formulaA, formulaB, args[0], args[1], bondType, customTitle, childRef, vars, ephemeral, pour)
 		return nil
 	}
@@ -289,6 +295,76 @@ func printMolBondDryRun(issueA, issueB *types.Issue, formulaA, formulaB, argA, a
 	if formulaA != "" || formulaB != "" {
 		fmt.Printf("\n  Note: Cooked formulas are ephemeral and deleted after bonding.\n")
 	}
+}
+
+// outputMolBondDryRunJSON emits the `bd mol bond --dry-run --json` preview as a
+// parseable JSON envelope (beads-51w8c), mirroring the classification logic of
+// printMolBondDryRun. Titles are sanitized via displayTitle for the same
+// untrusted-import reason as the plaintext path (7n9y sink-class).
+func outputMolBondDryRunJSON(issueA, issueB *types.Issue, formulaA, formulaB, argA, argB, bondType, customTitle, childRef string, vars map[string]string, ephemeral, pour bool) error {
+	idA := argA
+	idB := argB
+	aIsProto := false
+	bIsProto := false
+	if issueA != nil {
+		idA = issueA.ID
+		aIsProto = isProto(issueA)
+	}
+	if issueB != nil {
+		idB = issueB.ID
+		bIsProto = isProto(issueB)
+	}
+	if formulaA != "" {
+		aIsProto = true
+	}
+	if formulaB != "" {
+		bIsProto = true
+	}
+
+	result := "compound molecule"
+	if aIsProto && bIsProto {
+		result = "compound proto"
+	} else if aIsProto || bIsProto {
+		result = "spawn proto, attach to molecule"
+	}
+
+	phaseOverride := ""
+	if ephemeral {
+		phaseOverride = "vapor"
+	} else if pour {
+		phaseOverride = "liquid"
+	}
+
+	out := map[string]interface{}{
+		"dry_run":   true,
+		"a":         idA,
+		"b":         idB,
+		"bond_type": bondType,
+		"result":    result,
+	}
+	if formulaA != "" {
+		out["a_formula"] = formulaA
+	} else if issueA != nil {
+		out["a_title"] = displayTitle(issueA.Title)
+		out["a_type"] = operandType(aIsProto)
+	}
+	if formulaB != "" {
+		out["b_formula"] = formulaB
+	} else if issueB != nil {
+		out["b_title"] = displayTitle(issueB.Title)
+		out["b_type"] = operandType(bIsProto)
+	}
+	if phaseOverride != "" {
+		out["phase_override"] = phaseOverride
+	}
+	if childRef != "" {
+		out["child_ref"] = childRef
+		out["child_ref_resolved"] = substituteVariables(childRef, vars)
+	}
+	if (aIsProto && bIsProto) && customTitleProvided(customTitle) {
+		out["custom_title"] = displayTitle(customTitle)
+	}
+	return outputJSON(out)
 }
 
 // isProto checks if an issue is a proto (has the template label)

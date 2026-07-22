@@ -175,6 +175,23 @@ func runMolDistill(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
+		// beads-51w8c (8lqh --json-contract family): under --json emit a parseable
+		// preview envelope instead of the plaintext dry-run block, so a scripted
+		// `bd mol distill --dry-run --json | jq` parses.
+		if jsonOutput {
+			vars := make(map[string]string, len(replacements))
+			for value, varName := range replacements {
+				vars[varName] = value
+			}
+			return outputJSON(map[string]interface{}{
+				"dry_run":      true,
+				"epic_id":      epicID,
+				"formula_name": formulaName,
+				"output_path":  outputPath,
+				"steps":        countSteps(f.Steps),
+				"variables":    vars,
+			})
+		}
 		fmt.Printf("\nDry run: would distill %d steps from %s into formula\n\n", countSteps(f.Steps), epicID)
 		fmt.Printf("Formula: %s\n", formulaName)
 		fmt.Printf("Output: %s\n", outputPath)

@@ -150,6 +150,12 @@ func runMolSquash(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
+		// beads-51w8c (8lqh --json-contract family): --dry-run --json must emit a
+		// parseable envelope, not the plaintext preview, so a scripted preview
+		// before a real squash parses with `| jq`.
+		if jsonOutput {
+			return outputMolSquashDryRunJSON(subgraph.Root, wispChildren, moleculeID, keepChildren)
+		}
 		printMolSquashDryRunPreview(subgraph.Root, wispChildren, moleculeID, keepChildren)
 		return nil
 	}
@@ -208,6 +214,36 @@ func printMolSquashDryRunPreview(root *types.Issue, wispChildren []*types.Issue,
 	} else {
 		fmt.Printf("\nChildren would be deleted after digest creation.\n")
 	}
+}
+
+// outputMolSquashDryRunJSON emits the `bd mol squash --dry-run --json` preview
+// as a parseable JSON envelope (beads-51w8c). Root/child titles and the digest
+// preview are sanitized via displayTitle for the same untrusted-import reason as
+// printMolSquashDryRunPreview (7n9y sink-class); the stored digest is built
+// independently in squashMolecule so this preview does not alter persisted data.
+func outputMolSquashDryRunJSON(root *types.Issue, wispChildren []*types.Issue, moleculeID string, keepChildren bool) error {
+	type dryRunChild struct {
+		ID     string `json:"id"`
+		Title  string `json:"title"`
+		Status string `json:"status"`
+	}
+	children := make([]dryRunChild, 0, len(wispChildren))
+	for _, issue := range wispChildren {
+		children = append(children, dryRunChild{
+			ID:     issue.ID,
+			Title:  displayTitle(issue.Title),
+			Status: string(issue.Status),
+		})
+	}
+	return outputJSON(map[string]interface{}{
+		"dry_run":        true,
+		"molecule_id":    moleculeID,
+		"root_title":     displayTitle(root.Title),
+		"would_squash":   len(wispChildren),
+		"keep_children":  keepChildren,
+		"children":       children,
+		"digest_preview": displayTitle(generateDigest(root, wispChildren)),
+	})
 }
 
 func generateDigest(root *types.Issue, children []*types.Issue) string {

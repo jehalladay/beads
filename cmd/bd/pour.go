@@ -83,6 +83,53 @@ func printPourDryRun(subgraph *TemplateSubgraph, attachments []attachmentInfo, v
 	}
 }
 
+// outputPourDryRunJSON emits the `bd mol pour --dry-run --json` preview as a
+// parseable JSON envelope (beads-51w8c), mirroring the fields of printPourDryRun
+// so a scripted caller gets machine output on the safe preview path instead of
+// plaintext that breaks `| jq`. Titles are sanitized via displayTitle for the
+// same untrusted-import reason as the plaintext path (7n9y sink-class).
+func outputPourDryRunJSON(subgraph *TemplateSubgraph, attachments []attachmentInfo, vars map[string]string, assignee, attachType, protoID string) error {
+	type dryRunIssue struct {
+		Title    string `json:"title"`
+		FromID   string `json:"from_id"`
+		Assignee string `json:"assignee,omitempty"`
+	}
+	type dryRunAttachment struct {
+		Title  string `json:"title"`
+		Issues int    `json:"issues"`
+	}
+	issues := make([]dryRunIssue, 0, len(subgraph.Issues))
+	for _, issue := range subgraph.Issues {
+		di := dryRunIssue{
+			Title:  displayTitle(substituteVariables(issue.Title, vars)),
+			FromID: issue.ID,
+		}
+		if issue.ID == subgraph.Root.ID && assignee != "" {
+			di.Assignee = assignee
+		}
+		issues = append(issues, di)
+	}
+	attach := make([]dryRunAttachment, 0, len(attachments))
+	for _, a := range attachments {
+		attach = append(attach, dryRunAttachment{
+			Title:  displayTitle(a.issue.Title),
+			Issues: len(a.subgraph.Issues),
+		})
+	}
+	out := map[string]interface{}{
+		"dry_run":      true,
+		"proto_id":     protoID,
+		"storage":      "permanent",
+		"would_create": len(subgraph.Issues),
+		"issues":       issues,
+	}
+	if len(attach) > 0 {
+		out["attach_type"] = attachType
+		out["attachments"] = attach
+	}
+	return outputJSON(out)
+}
+
 func runPour(cmd *cobra.Command, args []string) error {
 	CheckReadonly("pour")
 
@@ -260,6 +307,15 @@ func runPour(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
+		// beads-51w8c (8lqh --json-contract family, sibling of the 8zed6 pour
+		// vapor-advisory fix): --dry-run is the SAFE preview path scripts/agents
+		// use before a real pour, so it is exactly where --json consumers live.
+		// printPourDryRun writes plaintext via fmt.Printf, so `--dry-run --json`
+		// leaked human text and broke `| jq`. Under --json emit a parseable
+		// preview envelope instead.
+		if jsonOutput {
+			return outputPourDryRunJSON(subgraph, attachments, vars, assignee, attachType, protoID)
+		}
 		printPourDryRun(subgraph, attachments, vars, assignee, attachType, protoID)
 		return nil
 	}
