@@ -6,10 +6,28 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
 )
+
+// isMigratableSupersedeEdge reports whether an incoming dependency edge on a
+// superseded issue must be re-pointed to the replacement (beads-0c9d1). These
+// are the STRUCTURAL edge types the ready/blocked + tree engines act on
+// (issueops.AffectedByDepChangeInTx): a blocking edge left on the closed source
+// silently unblocks its dependent, and a parent-child edge orphans structure.
+// Provenance / knowledge edges (related, relates-to, duplicates, supersedes,
+// discovered-from, tracks, …) are intentionally excluded — they legitimately
+// keep referring to the historical source.
+func isMigratableSupersedeEdge(t types.DependencyType) bool {
+	switch t {
+	case types.DepBlocks, types.DepConditionalBlocks, types.DepWaitsFor, types.DepParentChild:
+		return true
+	default:
+		return false
+	}
+}
 
 var duplicateCmd = &cobra.Command{
 	Use:     "duplicate <id> --of <canonical>",
@@ -351,46 +369,100 @@ func runSupersede(cmd *cobra.Command, args []string) error {
 		oldOldStatus = string(oldPre.Status)
 	}
 
-	// Add a "supersedes" dependency edge (old → new) AND close the superseded
-	// issue atomically (beads-njnw): a mid-sequence failure must not leave the
-	// edge added while the issue stays open.
-	dep := &types.Dependency{
-		IssueID:     oldID,
-		DependsOnID: newID,
-		Type:        types.DepSupersedes,
+	// beads-0c9d1: supersede's contract is "newID replaces oldID", so the
+	// dependents of oldID must FOLLOW the replacement — not evaporate onto the
+	// closed source. The pre-fix path called store.LinkAndClose, which added the
+	// supersedes edge + closed oldID but migrated NO incoming edges. That left
+	// every edge incident on the now-CLOSED oldID dangling while newID (which
+	// inherits oldID's work) stays OPEN:
+	//   • an incoming blocks/waits-for edge → the ready/blocked engine treats the
+	//     closed blocker as satisfied → the dependent silently UNBLOCKS even
+	//     though the real successor newID is not done (premature-actionable).
+	//   • an incoming parent-child edge → the child dangles on the closed oldID,
+	//     never reparenting to newID → newID has no children, structure lost.
+	// Fix: inside ONE transaction (preserving beads-njnw atomicity — a
+	// mid-sequence failure must not leave the edge added while the issue stays
+	// open) migrate oldID's incoming STRUCTURAL edges (blocks / conditional-
+	// blocks / waits-for / parent-child — the set AffectedByDepChangeInTx acts
+	// on) to newID, then add the supersedes edge and close oldID. Provenance /
+	// knowledge edges (related / relates-to / duplicates / supersedes /
+	// discovered-from / etc.) are deliberately NOT migrated — they legitimately
+	// point at the historical source (a "related to the old spec" note should
+	// stay about the old spec). This mirrors performMerge's per-source reparent
+	// (beads-zcq86), extended from parent-child-only to all blocking edge types.
+	// The transaction seam auto-routes wisp sources (pega7) and, via
+	// HookFiringStore.RunInTransaction, fires on_close after commit (usumn) — so
+	// the separate post-close EventClose leg is no longer needed here.
+	incoming, incErr := store.GetDependentsWithMetadata(ctx, oldID)
+	if incErr != nil {
+		return HandleErrorRespectJSON("failed to read dependents of %s: %v", oldID, incErr)
 	}
-	if err := store.LinkAndClose(ctx, dep, actor); err != nil {
-		return HandleErrorRespectJSON("failed to mark superseded: %v", err)
+
+	commitMsg := fmt.Sprintf("bd: supersede %s with %s", oldID, newID)
+	txErr := transact(ctx, store, commitMsg, func(tx storage.Transaction) error {
+		// Migrate incoming structural edges oldID → newID. Re-point each
+		// dependent from oldID to newID for the same edge type before the close,
+		// so the dependent tracks the live replacement instead of the closed
+		// source.
+		for _, dep := range incoming {
+			if !isMigratableSupersedeEdge(dep.DependencyType) {
+				continue
+			}
+			dependentID := dep.Issue.ID
+			// A self-edge to newID would be created if the dependent IS newID;
+			// skip so newID never depends on / parents itself.
+			if dependentID == newID {
+				continue
+			}
+			if err := tx.RemoveDependency(ctx, dependentID, oldID, actor); err != nil {
+				return fmt.Errorf("remove incoming %s %s→%s: %w", dep.DependencyType, dependentID, oldID, err)
+			}
+			migrated := &types.Dependency{
+				IssueID:     dependentID,
+				DependsOnID: newID,
+				Type:        dep.DependencyType,
+			}
+			if err := tx.AddDependency(ctx, migrated, actor); err != nil {
+				return fmt.Errorf("reattach incoming %s %s→%s: %w", dep.DependencyType, dependentID, newID, err)
+			}
+		}
+
+		// Add the "supersedes" dependency edge (old → new).
+		superEdge := &types.Dependency{
+			IssueID:     oldID,
+			DependsOnID: newID,
+			Type:        types.DepSupersedes,
+		}
+		if err := tx.AddDependency(ctx, superEdge, actor); err != nil {
+			return fmt.Errorf("link supersedes %s→%s: %w", oldID, newID, err)
+		}
+
+		// Close the superseded source (preserving a meaningful reason). The
+		// hook-tracking tx records the on_close so it fires after commit.
+		if err := tx.CloseIssue(ctx, oldID, fmt.Sprintf("superseded by %s", newID), actor, ""); err != nil {
+			return fmt.Errorf("close superseded %s: %w", oldID, err)
+		}
+		return nil
+	})
+	if txErr != nil {
+		return HandleErrorRespectJSON("failed to mark superseded: %v", txErr)
 	}
 
 	commandDidWrite.Store(true)
 
-	// beads-r3m8v: superseding closes the source via LinkAndClose, whose DB
-	// EventClosed row does not survive a Dolt GC flatten. bd close/update write a
-	// GC-survivable audit-FILE entry (.beads/interactions.jsonl); this leg
-	// dropped it (n4sn class, LinkAndClose leg). Emit the same status
-	// field_change so a superseded issue's close stays in the durable record.
+	// beads-r3m8v: the transaction seam closes via CloseIssueWithoutEventInTx,
+	// whose DB EventClosed row does not survive a Dolt GC flatten. bd close/update
+	// write a GC-survivable audit-FILE entry (.beads/interactions.jsonl); emit the
+	// same status field_change so a superseded issue's close stays in the durable
+	// record (the tx already committed the close durably).
 	auditStatusChange(oldID, oldOldStatus, "closed", actor, fmt.Sprintf("superseded by %s", newID))
 
-	// beads-26gea: superseding closes the source via LinkAndClose, bypassing the
-	// cmd-layer completed-molecule auto-close cascade `bd close` runs (same class
-	// as the duplicate leg above and beads-zzp26). Run it post-close so
-	// superseding a molecule's FINAL step auto-closes the completed root.
+	// beads-26gea: superseding closes the source via the transaction seam,
+	// bypassing the cmd-layer completed-molecule auto-close cascade `bd close`
+	// runs (same class as the duplicate leg above and beads-zzp26). Run it
+	// post-close so superseding a molecule's FINAL step auto-closes the completed
+	// root.
 	autoCloseCompletedMolecule(ctx, store, oldID, actor, "")
-
-	// beads-usumn: superseding closes the source via LinkAndClose (on_update-only,
-	// hook_decorator.go:180) — but reaches the same terminal closed state as
-	// `bd close`/`bd update --status closed` (vn7dl)/`bd batch` (7o4av), which all
-	// fire on_close. Fire the missing EventClose at the cmd layer so on_close
-	// automation runs on close-by-supersede too (on_update already fired in the
-	// decorator; only on a genuine open->closed transition).
-	if oldOldStatus != string(types.StatusClosed) {
-		if runner := getHookRunner(); runner != nil {
-			if after, err := store.GetIssue(ctx, oldID); err == nil && after != nil {
-				_ = runner.RunSync(hooks.EventClose, after)
-			}
-		}
-	}
 
 	if isJSONOutput() {
 		return outputJSON(map[string]interface{}{
