@@ -850,7 +850,11 @@ func runCompactDolt() {
 	// Find beads directory
 	beadsDir := beads.FindBeadsDir()
 	if beadsDir == "" {
-		FatalErrorWithHint(activeWorkspaceNotFoundError(), diagHint())
+		// Honor the --json error contract on stdout, matching every sibling
+		// error leg in runCompactDolt (dolt-dir-not-found, dolt-not-in-PATH,
+		// gc-failed). FatalErrorWithHint routes the JSON to STDERR, leaving
+		// stdout empty under `bd compact --dolt --json`.
+		FatalErrorWithHintRespectJSON(activeWorkspaceNotFoundError(), diagHint())
 	}
 
 	// Check for dolt directory

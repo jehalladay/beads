@@ -92,6 +92,54 @@ func runCompactDoltGCChild() {
 	runCompactDolt()
 }
 
+// TestCompactDoltNoWorkspaceRespectsJSON is the teeth for the compact.go:853
+// sibling of beads-906um: when `bd compact --dolt --json` runs with no
+// discoverable .beads workspace, runCompactDolt's first guard must emit the
+// structured {error} object on STDOUT (FatalErrorWithHintRespectJSON), not on
+// stderr (the pre-fix FatalErrorWithHint routed JSON to stderr, leaving stdout
+// empty — the same 8lqh break the gc leg had). Every other error leg in the
+// same func already emits on stdout under --json.
+//
+// Hermetic: the child runs in an empty temp dir with BEADS_DIR unset and the
+// uwdua walk-ceiling (GT_TEST_WORKSPACE_CEILING) pinned to that dir, so
+// FindBeadsDir walks nowhere and returns "" — no real Dolt or repo needed.
+func TestCompactDoltNoWorkspaceRespectsJSON(t *testing.T) {
+	if os.Getenv("BD_COMPACT_NOWS_CHILD") == "1" {
+		runCompactDoltGCChild()
+		return // unreachable — child os.Exits inside runCompactDolt
+	}
+
+	tmp := t.TempDir()
+
+	cmd := exec.Command(os.Args[0], "-test.run", "TestCompactDoltNoWorkspaceRespectsJSON") // #nosec G204 -- test self-reexec
+	cmd.Dir = tmp
+	cmd.Env = append(os.Environ(),
+		"BD_COMPACT_NOWS_CHILD=1",
+		"BEADS_DIR=",                    // force the discovery walk (step 1 skipped)
+		"GT_TEST_WORKSPACE_CEILING="+tmp, // walk stops immediately -> FindBeadsDir returns ""
+	)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+
+	if err == nil {
+		t.Fatalf("expected child to exit non-zero when no workspace found; stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+
+	out := strings.TrimSpace(stdout.String())
+	if out == "" {
+		t.Fatalf("--json no-workspace guard emitted EMPTY stdout (json contract broken); stderr=%q", stderr.String())
+	}
+	var parsed map[string]interface{}
+	if jerr := json.Unmarshal([]byte(out), &parsed); jerr != nil {
+		t.Fatalf("--json no-workspace guard stdout is not valid JSON: %v\nstdout=%q", jerr, out)
+	}
+	if _, ok := parsed["error"]; !ok {
+		t.Fatalf("--json no-workspace guard JSON has no \"error\" key: %v", parsed)
+	}
+}
+
 func TestCompactSuite(t *testing.T) {
 	// Compaction is now implemented for Dolt backend
 	tmpDir := t.TempDir()
