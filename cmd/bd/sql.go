@@ -39,7 +39,38 @@ func sqlStatementIsReadOnlySafe(query string) bool {
 	if strings.Contains(trimmed, "DOLT_") {
 		return false
 	}
+	// A stacked multi-statement (e.g. `SELECT 1; DELETE FROM issues`) has a read
+	// prefix but a write tail. The DSN opens with MultiStatements:true
+	// (internal/storage/doltutil/dsn.go), so db.QueryContext executes every
+	// statement in the string — the trailing DELETE runs and --readonly is
+	// breached (beads-wsvio, the vector 5afw deferred as "depends on the driver's
+	// multi-statement setting"; that precondition is now proven). We only reason
+	// about a single statement's prefix here, so treat anything with more than one
+	// statement as NOT provably read-only and force the up-front CheckReadonly
+	// gate. A lone trailing ';' on a single statement stays safe.
+	if hasMultipleSQLStatements(trimmed) {
+		return false
+	}
 	return true
+}
+
+// hasMultipleSQLStatements reports whether query contains more than one
+// non-empty ';'-separated statement. It is deliberately conservative for the
+// --readonly classifier (beads-wsvio): a semicolon inside a string literal or
+// comment would make this over-count, but over-counting only costs a
+// readonly-mode user a false "unsafe" error on an exotic query — never a
+// sandbox breach. query is expected pre-trimmed/upper-cased by the caller.
+func hasMultipleSQLStatements(query string) bool {
+	count := 0
+	for _, stmt := range strings.Split(query, ";") {
+		if strings.TrimSpace(stmt) != "" {
+			count++
+			if count > 1 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 var sqlCmd = &cobra.Command{

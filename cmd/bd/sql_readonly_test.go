@@ -34,6 +34,20 @@ func TestSqlStatementIsReadOnlySafe(t *testing.T) {
 		{"insert", "INSERT INTO issues (id) VALUES ('z')", false},
 		{"drop", "DROP TABLE issues", false},
 		{"empty", "", false},
+
+		// The beads-wsvio bypass vector — a stacked <read>; <write> multi-statement
+		// has a read prefix but a write tail, and the DSN's MultiStatements:true
+		// runs the tail too. Must be UNSAFE.
+		{"stacked select then delete", "SELECT 1; DELETE FROM issues", false},
+		{"stacked select then update", "SELECT id FROM issues; UPDATE issues SET title = 'x'", false},
+		{"stacked select then drop", "SELECT 1; DROP TABLE issues", false},
+		{"stacked select then dolt_commit", "SELECT 1; SELECT DOLT_COMMIT('-Am','x')", false},
+		{"three stacked statements", "SELECT 1; SELECT 2; DELETE FROM issues", false},
+		{"stacked with leading whitespace on tail", "SELECT 1;   DELETE FROM issues", false},
+
+		// A lone trailing ';' on a single statement stays safe (only one non-empty stmt).
+		{"single select trailing semicolon", "SELECT id FROM issues;", true},
+		{"single select trailing semicolon + whitespace", "SELECT 1;   ", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
