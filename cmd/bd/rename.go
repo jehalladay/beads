@@ -63,8 +63,18 @@ func runRename(cmd *cobra.Command, args []string) error {
 		return HandleErrorRespectJSON("old and new IDs are the same")
 	}
 
-	idPattern := regexp.MustCompile(`^[a-z]+-[a-zA-Z0-9._-]+$`)
-	if !idPattern.MatchString(newID) {
+	// beads-b2du4: validate the new ID's FORMAT via the canonical
+	// validation.ValidateIDFormat — the same "looks like an id" check `bd
+	// create` uses. The previous private regex `^[a-z]+-...` restricted the
+	// PREFIX segment to letters only, so any digit-containing prefix
+	// (jpij12x-, mz5x-, proj2-) was rejected even though the rest of bd creates
+	// and operates on such IDs fine — a create-accept/rename-reject charset
+	// divergence that made those rigs' issues un-renamable. ValidateIDFormat
+	// only requires no-whitespace + a hyphen and extracts hyphenated/digit
+	// prefixes correctly (via utils.ExtractIssuePrefix). The DB-prefix
+	// invariant is enforced separately below (beads-c3igh
+	// ValidateIDPrefixAllowed), so this check's sole job is "well-formed id".
+	if _, err := validation.ValidateIDFormat(newID); err != nil {
 		return HandleErrorRespectJSON("invalid new ID format %q: must be prefix-suffix (e.g., bd-dolt)", newID)
 	}
 
