@@ -19,11 +19,7 @@ func GetMoleculeProgressInTx(ctx context.Context, tx *sql.Tx, moleculeID string)
 	}
 
 	isWisp := IsActiveWispInTx(ctx, tx, moleculeID)
-	issueTable, _, _, depTable := WispTableRouting(isWisp)
-	parentCol := "depends_on_issue_id"
-	if isWisp {
-		parentCol = "depends_on_wisp_id"
-	}
+	issueTable, _, _, _ := WispTableRouting(isWisp)
 
 	// Get molecule title.
 	var title sql.NullString
@@ -32,26 +28,18 @@ func GetMoleculeProgressInTx(ctx context.Context, tx *sql.Tx, moleculeID string)
 		stats.MoleculeTitle = title.String
 	}
 
-	// Step 1: Get child issue IDs from dependencies table.
-	depRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-		SELECT issue_id FROM %s
-		WHERE %s = ? AND type = 'parent-child'
-	`, depTable, parentCol), moleculeID)
+	// Step 1: Get ALL descendant IDs (recursive), not just direct children.
+	// beads-1s2q8: the previous one-hop parent-child query counted only direct
+	// children, so a molecule whose direct children were all closed reported
+	// 100% even while nested grandchildren remained open — diverging from the
+	// RECURSIVE accounting mol current/mol show use (loadTemplateSubgraph ->
+	// loadDescendants) and from autoclose's descendant walk. Reuse the SAME
+	// recursive descendant traversal the ready-work path uses (blocked.go
+	// GetDescendantIDsInTx, maxDepth=0 = unbounded, cycle-safe, spans
+	// issues+wisps) rather than minting a parallel one-level walk.
+	childIDs, err := GetDescendantIDsInTx(ctx, tx, moleculeID, 0)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get molecule children: %w", err)
-	}
-	var childIDs []string
-	for depRows.Next() {
-		var id string
-		if err := depRows.Scan(&id); err != nil {
-			_ = depRows.Close()
-			return nil, fmt.Errorf("get molecule progress: scan child: %w", err)
-		}
-		childIDs = append(childIDs, id)
-	}
-	_ = depRows.Close()
-	if err := depRows.Err(); err != nil {
-		return nil, fmt.Errorf("get molecule progress: child rows: %w", err)
+		return nil, fmt.Errorf("failed to get molecule descendants: %w", err)
 	}
 
 	// Step 2: Batch-fetch status for all children.

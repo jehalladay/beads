@@ -137,129 +137,24 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 	return stats, nil
 }
 
-// GetMoleculeProgress returns progress stats for a molecule
+// GetMoleculeProgress returns progress stats for a molecule.
+//
+// beads-1s2q8: delegates to issueops.GetMoleculeProgressInTx (the same shared
+// logic EmbeddedDoltStore uses) so both backends count ALL recursive
+// descendants, not just direct children. The prior inline body here duplicated
+// the counting loop AND the one-hop direct-children query, so a molecule whose
+// direct children were all closed reported a false 100% while nested
+// grandchildren stayed open — diverging from the recursive accounting mol
+// current/mol show/autoclose use. Delegating removes the duplicate bug at its
+// root (single source of truth, matching the other query methods above).
 func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) (*types.MoleculeProgressStats, error) {
-	stats := &types.MoleculeProgressStats{
-		MoleculeID: moleculeID,
-	}
-
-	// Route to correct table based on whether molecule is a wisp (bd-w2w)
-	issueTable := "issues"
-	depTable := "dependencies"
-	parentCol := "depends_on_issue_id"
-	if s.isActiveWisp(ctx, moleculeID) {
-		issueTable = "wisps"
-		depTable = "wisp_dependencies"
-		parentCol = "depends_on_wisp_id"
-	}
-
-	// Get molecule title
-	var title sql.NullString
-	//nolint:gosec // G201: issueTable is hardcoded to "issues" or "wisps"
-	err := s.db.QueryRowContext(ctx, fmt.Sprintf("SELECT title FROM %s WHERE id = ?", issueTable), moleculeID).Scan(&title)
-	if err == nil && title.Valid {
-		stats.MoleculeTitle = title.String
-	}
-
-	// Step 1: Get child issue IDs from dependencies table (single-table scan)
-	//nolint:gosec // G201: depTable and parentCol are hardcoded
-	depRows, err := s.queryContext(ctx, fmt.Sprintf(`
-		SELECT issue_id FROM %s
-		WHERE %s = ? AND type = 'parent-child'
-	`, depTable, parentCol), moleculeID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get molecule children: %w", err)
-	}
-	var childIDs []string
-	for depRows.Next() {
-		var id string
-		if err := depRows.Scan(&id); err != nil {
-			_ = depRows.Close() // Best effort cleanup on error path
-			return nil, wrapScanError("get molecule progress: scan child", err)
-		}
-		childIDs = append(childIDs, id)
-	}
-	if err := depRows.Err(); err != nil {
-		_ = depRows.Close() // Best effort cleanup on error path
-		return nil, wrapScanError("get molecule progress: iterate children", err)
-	}
-	_ = depRows.Close() // Redundant close for safety (rows already iterated)
-
-	// Step 2: Batch-fetch status for all children (batched IN clauses to avoid full table scans).
-	// Children of a wisp molecule are also wisps, so use the same table.
-	// beads-tcx7: also fetch closed_at so FirstClosed/LastClosed can be
-	// populated — the rate/ETA feature (mol_progress.go rate_per_hour/eta_hours
-	// + human "Rate: ~N steps/hour") was dead because no producer ever assigned
-	// those two fields, so the FirstClosed!=nil && LastClosed!=nil guard was
-	// never true.
-	if len(childIDs) > 0 {
-		type childInfo struct {
-			status   string
-			closedAt sql.NullTime
-		}
-		childMap := make(map[string]childInfo)
-		for start := 0; start < len(childIDs); start += queryBatchSize {
-			end := start + queryBatchSize
-			if end > len(childIDs) {
-				end = len(childIDs)
-			}
-			batch := childIDs[start:end]
-			placeholders, args := doltBuildSQLInClause(batch)
-			// nolint:gosec // G201: issueTable is hardcoded, placeholders contains only ? markers
-			query := fmt.Sprintf("SELECT id, status, closed_at FROM %s WHERE id IN (%s)", issueTable, placeholders)
-			statusRows, err := s.queryContext(ctx, query, args...)
-			if err != nil {
-				return nil, fmt.Errorf("failed to batch-fetch child statuses: %w", err)
-			}
-			for statusRows.Next() {
-				var id, status string
-				var closedAt sql.NullTime
-				if err := statusRows.Scan(&id, &status, &closedAt); err != nil {
-					_ = statusRows.Close()
-					return nil, wrapScanError("get molecule progress: scan status", err)
-				}
-				childMap[id] = childInfo{status: status, closedAt: closedAt}
-			}
-			if err := statusRows.Err(); err != nil {
-				_ = statusRows.Close()
-				return nil, wrapScanError("get molecule progress: iterate statuses", err)
-			}
-			_ = statusRows.Close()
-		}
-
-		for _, childID := range childIDs {
-			info, ok := childMap[childID]
-			if !ok {
-				continue
-			}
-			stats.Total++
-			switch types.Status(info.status) {
-			case types.StatusClosed:
-				stats.Completed++
-				// beads-tcx7: track earliest/latest closure timestamps across
-				// closed children so the rate/ETA computation has its two
-				// endpoints. Skip rows whose closed_at is NULL (defensive).
-				if info.closedAt.Valid {
-					t := info.closedAt.Time
-					if stats.FirstClosed == nil || t.Before(*stats.FirstClosed) {
-						ft := t
-						stats.FirstClosed = &ft
-					}
-					if stats.LastClosed == nil || t.After(*stats.LastClosed) {
-						lt := t
-						stats.LastClosed = &lt
-					}
-				}
-			case types.StatusInProgress:
-				stats.InProgress++
-				if stats.CurrentStepID == "" {
-					stats.CurrentStepID = childID
-				}
-			}
-		}
-	}
-
-	return stats, nil
+	var result *types.MoleculeProgressStats
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = issueops.GetMoleculeProgressInTx(ctx, tx, moleculeID)
+		return err
+	})
+	return result, err
 }
 
 // GetMoleculeLastActivity returns the most recent activity timestamp for a molecule.

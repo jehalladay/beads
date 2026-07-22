@@ -1304,7 +1304,7 @@ type TreeNode struct {
 type MoleculeProgressStats struct {
 	MoleculeID    string     `json:"molecule_id"`
 	MoleculeTitle string     `json:"molecule_title"`
-	Total         int        `json:"total"`           // Total steps (direct children)
+	Total         int        `json:"total"`           // Total steps (all recursive descendants; beads-1s2q8)
 	Completed     int        `json:"completed"`       // Closed steps
 	InProgress    int        `json:"in_progress"`     // Steps currently in progress
 	CurrentStepID string     `json:"current_step_id"` // First in_progress step ID (if any)
