@@ -291,6 +291,21 @@ func validateMigrateIssuesFilters(ctx context.Context, s storage.DoltStorage, p 
 			return fmt.Errorf("invalid issue type %q (valid: %s)", p.issueType, validTypes)
 		}
 	}
+	// beads-0oj6e: --include selects the dependency-closure expansion mode
+	// (expandMigrationSet). A typo'd value ("closur", "all", "=up") is not
+	// "none"/"" so it skips the short-circuit and enters the BFS, where it
+	// matches NO case in the include switch (there is no default) → deps stays
+	// nil → the requested closure is SILENTLY dropped and the operator sees
+	// "✓ Successfully migrated N" for a partial move. Reject an unknown mode
+	// here (before candidate selection, like the other filters) so the typo
+	// aborts loudly with zero mutation — the same fail-loud-on-typo class as
+	// the --status/--type/--priority checks above (ev8m). "none"/"" are the
+	// no-expansion values.
+	switch p.include {
+	case "", "none", "upstream", "downstream", "closure":
+	default:
+		return fmt.Errorf("invalid --include %q (valid: none, upstream, downstream, closure)", p.include)
+	}
 	return nil
 }
 
@@ -403,6 +418,14 @@ func expandMigrationSet(ctx context.Context, s storage.DoltStorage, candidates [
 			} else {
 				deps = append(upDeps, downDeps...)
 			}
+		default:
+			// beads-0oj6e defense-in-depth: validateMigrateIssuesFilters
+			// rejects an unknown --include before we get here, and the
+			// none/"" short-circuit above returns early, so this is
+			// unreachable in normal flow. If a future caller reaches
+			// expandMigrationSet with an unrecognized mode, fail loudly
+			// rather than silently returning candidates with no closure.
+			return nil, dependencyStats{}, fmt.Errorf("invalid --include %q (valid: none, upstream, downstream, closure)", p.include)
 		}
 
 		if err != nil {

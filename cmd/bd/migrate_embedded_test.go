@@ -297,6 +297,11 @@ func TestEmbeddedMigrateIssuesRejectsInvalidEnums(t *testing.T) {
 		{"invalid_type", []string{"--type", "notatype"}, "invalid issue type"},
 		{"priority_too_high", []string{"--priority", "99"}, "invalid priority"},
 		{"priority_negative", []string{"--priority", "-5"}, "invalid priority"},
+		// beads-0oj6e: --include was validated nowhere; a typo skips the
+		// none/"" short-circuit, matches no BFS case, and silently drops the
+		// requested dependency closure while reporting success.
+		{"invalid_include_typo", []string{"--include", "closur"}, "invalid --include"},
+		{"invalid_include_word", []string{"--include", "all"}, "invalid --include"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -318,6 +323,13 @@ func TestEmbeddedMigrateIssuesRejectsInvalidEnums(t *testing.T) {
 		{"--status", "open"},
 		{"--type", "bug"},
 		{"--priority", "1"},
+		// beads-0oj6e: every valid --include mode must pass validation. "none"
+		// is the flag default (unset); the three expansion modes must not be
+		// rejected by the new guard.
+		{"--include", "none"},
+		{"--include", "upstream"},
+		{"--include", "downstream"},
+		{"--include", "closure"},
 	} {
 		base := []string{"issues", "--from", fromDir, "--to", toDir, "--dry-run"}
 		out := bdMigrate(t, bd, fromDir, append(base, args...)...)
