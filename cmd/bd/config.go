@@ -1097,6 +1097,16 @@ var intConfigKeys = map[string]bool{
 // hand-edited. Rejecting up-front (nothing written) mirrors the bool/int leg.
 var enumConfigKeys = map[string][]string{
 	"dolt.auto-commit": {"off", "on", "batch"},
+	// validation.on-create / validation.on-close (beads-ixb4w): fixed-domain
+	// enum keys (default "none") consumed by create.go/close.go (and the proxied
+	// create path) with a `!= "error" && != "warn"` check. Without this
+	// allowlist, an out-of-domain typo (`bd config set validation.on-create
+	// warm`) persists unchecked and the read-path treats it as DISABLED —
+	// validation silently OFF while the user believes it is on. Rejecting at
+	// set-time (the write-path leg, sibling of the dolt.auto-commit entry above)
+	// turns that silent misconfiguration into a loud, self-correctable error.
+	"validation.on-create": {"none", "warn", "error"},
+	"validation.on-close":  {"none", "warn", "error"},
 }
 
 // validateConfigValueType rejects a value that does not parse as the key's
