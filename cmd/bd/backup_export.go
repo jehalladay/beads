@@ -139,16 +139,26 @@ func runBackupExport(ctx context.Context, force bool) (*backupState, error) {
 		return nil, fmt.Errorf("storage backend does not support backup operations")
 	}
 
+	// beads-91ffk: capture the watermark BEFORE the backup, not after. On a
+	// shared multi-writer hub, re-reading HEAD after BackupDatabase can observe a
+	// commit that landed in the window between the sync completing and this read
+	// — recording a watermark the backup does NOT contain (overshoot), so the
+	// next run's change-detection SKIPs that commit and it is silently absent
+	// from the backup. Undershoot is safe: if a write lands during the sync the
+	// watermark stays at preCommit, so the next run re-syncs and idempotently
+	// captures it (BackupSync is a full push). This matches the pre-effect
+	// capture already used by export_auto.go and dolt_autopush.go.
+	preCommit, err := store.GetCurrentCommit(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current commit for state: %w", err)
+	}
+
 	if err := bs.BackupDatabase(ctx, dir); err != nil {
 		return nil, err
 	}
 
-	// Update watermarks
-	currentCommit, err := store.GetCurrentCommit(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get current commit for state: %w", err)
-	}
-	state.LastDoltCommit = currentCommit
+	// Update watermarks with the pre-backup commit (see above).
+	state.LastDoltCommit = preCommit
 	state.Timestamp = time.Now().UTC()
 
 	if err := saveBackupState(dir, state); err != nil {
