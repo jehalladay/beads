@@ -401,6 +401,22 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 			if err := tx.UpdateIssueID(ctx, oldID, newID, issue, actorName); err != nil {
 				return fmt.Errorf("failed to update issue %s -> %s: %w", oldID, newID, err)
 			}
+
+			// beads-vbm9s: g8qfo wired comment-body ref rewriting into the normal
+			// renamePrefixInDB path but NOT this sibling --repair path, so
+			// consolidating a corrupted multi-prefix DB rewrote the 5 issue fields
+			// yet left comment bodies pointing at the vanished old ids. Comments
+			// are re-keyed to newID by the UpdateIssueID FK cascade, so fetch by
+			// newID and apply the SAME renameMap-keyed rewrite the fields got
+			// (the generic oldPrefixPattern + replaceFunc, not a single-prefix
+			// rewrite — --repair consolidates multiple prefixes at once).
+			commentRewrite := func(s string) (string, bool) {
+				out := oldPrefixPattern.ReplaceAllStringFunc(s, replaceFunc)
+				return out, out != s
+			}
+			if err := rewriteCommentRefsInTx(ctx, tx, newID, commentRewrite); err != nil {
+				return err
+			}
 		}
 
 		// Set the new prefix in config
