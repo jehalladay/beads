@@ -31,10 +31,23 @@ func runRelateProxiedServer(ctx context.Context, args []string) error {
 
 	// beads-hwgq: mirror the direct path's 57nt honest-no-op report.
 	// AddDependencies is idempotent, so re-relating an already-related pair would
-	// print "✓ Linked" as if something changed. Reuse the same
-	// proxiedRelatesToLinkExists helper the unrelate path uses (beads-piud) and
-	// report "Already related, no change" (rc=0) instead of a false "Linked".
-	if alreadyRelated, checkErr := proxiedRelatesToLinkExists(ctx, uw, id1, id2); checkErr == nil && alreadyRelated {
+	// print "✓ Linked" as if something changed. Report "Already related, no
+	// change" (rc=0) instead of a false "Linked".
+	//
+	// beads-tdylv: gate the no-op on the FULLY-bidirectional check, mirroring
+	// the direct path's beads-ri535 fix. ri535 changed runRelate to use
+	// relatesToLinkFullyBidirectional (both directions) so `bd relate` on an
+	// ASYMMETRIC link (one direction present — from an imported one-sided row or
+	// legacy pre-oyy1 data) falls through and HEALS the missing reciprocal
+	// instead of falsely reporting "already related, no change". But ri535 only
+	// touched relate.go, leaving this proxied twin on the either-direction
+	// proxiedRelatesToLinkExists — so every hub-connected (proxied) crew still
+	// false-no-op'd an asymmetric link and never healed it. Use the
+	// fully-bidirectional check so an asymmetric link falls through to the
+	// idempotent AddDependencies below (the present edge is a no-op, the missing
+	// reciprocal gets written). The unrelate path keeps the either-direction
+	// proxiedRelatesToLinkExists — a half-link should still be removable.
+	if fullyRelated, checkErr := proxiedRelatesToLinkFullyBidirectional(ctx, uw, id1, id2); checkErr == nil && fullyRelated {
 		if jsonOutput {
 			result := map[string]interface{}{"id1": id1, "id2": id2, "related": true, "unchanged": true}
 			return outputJSON(result)
@@ -141,4 +154,30 @@ func proxiedRelatesToLinkExists(ctx context.Context, uw uow.UnitOfWork, id1, id2
 		}
 	}
 	return false, nil
+}
+
+// proxiedRelatesToLinkFullyBidirectional reports whether BOTH id1->id2 AND
+// id2->id1 relates-to edges exist (the proxied counterpart of the direct path's
+// relatesToLinkFullyBidirectional, beads-ri535). Distinct from
+// proxiedRelatesToLinkExists (either-direction): the relate no-op guard must
+// only short-circuit when the link is FULLY bidirectional, so a `bd dep relate`
+// on an ASYMMETRIC link (one direction present, from an imported one-sided row
+// or legacy pre-oyy1 data) proceeds to the idempotent AddDependencies and HEALS
+// the missing reciprocal instead of falsely reporting "already related". The
+// unrelate path keeps the either-direction check, since a half-link should
+// still be removable.
+func proxiedRelatesToLinkFullyBidirectional(ctx context.Context, uw uow.UnitOfWork, id1, id2 string) (bool, error) {
+	recs, err := uw.DependencyUseCase().GetIssueDependencyRecords(ctx, []string{id1, id2})
+	if err != nil {
+		return false, err
+	}
+	hasEdge := func(from, to string) bool {
+		for _, rec := range recs[from] {
+			if rec != nil && rec.DependsOnID == to && rec.Type == types.DepRelatesTo {
+				return true
+			}
+		}
+		return false
+	}
+	return hasEdge(id1, id2) && hasEdge(id2, id1), nil
 }
