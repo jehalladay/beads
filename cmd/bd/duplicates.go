@@ -423,7 +423,7 @@ func collectMergeErrors(mergeResults []map[string]interface{}) []string {
 // performMerge executes the merge operation:
 // 1. Re-parents children of source issues to the target (prevents orphaning)
 // 2. Closes all source issues with a reason indicating they are duplicates
-// 3. Links each source to the target with a "related" dependency
+// 3. Links each source to the target with a "duplicates" dependency (beads-chf1w)
 // Returns a map with the merge result for JSON output
 func performMerge(targetID string, sourceIDs []string) map[string]interface{} {
 	ctx := rootCtx
@@ -447,7 +447,7 @@ func performMerge(targetID string, sourceIDs []string) map[string]interface{} {
 		// autocommitting store call, so a mid-sequence failure left a split
 		// state: a child ORPHANED mid-reparent (old parent-child link removed,
 		// new one not added), or the source CLOSED with reason "Duplicate of X"
-		// but with NO "related" edge to the target — a closed duplicate with no
+		// but with NO "duplicates" edge to the target — a closed duplicate with no
 		// provenance link (the same split-state class store.LinkAndClose fixed
 		// for bd duplicate / bd supersede, beads-njnw; the batch/swarm/gate
 		// siblings are beads-ary2n/ivnqm). Wrapping the whole per-source unit in
@@ -504,11 +504,20 @@ func performMerge(targetID string, sourceIDs []string) map[string]interface{} {
 			}
 			sourceClosed = true
 
-			// Add dependency linking source to target.
+			// Link the merged-away source to the target with a "duplicates" edge
+			// (beads-chf1w). Previously this minted a "related" edge, diverging
+			// from the canonical mark-duplicate path (`bd duplicate`, duplicate.go)
+			// which uses types.DepDuplicates. Two consequences: (1) it bypassed the
+			// beads-8nugc reopen guard (reopen.go duplicatesTargets scans ONLY
+			// DepDuplicates edges), so reopening the surviving canonical never
+			// reasoned about the merged-away dup; (2) it downgraded dup-provenance
+			// to a vague "related". Same direction as before (source -> target,
+			// i.e. loser -duplicates-> canonical, matching duplicate.go:LinkAndClose);
+			// only the type changes.
 			dep := &types.Dependency{
 				IssueID:     sourceID,
 				DependsOnID: targetID,
-				Type:        types.DependencyType("related"),
+				Type:        types.DepDuplicates,
 			}
 			if err := tx.AddDependency(ctx, dep, getActor()); err != nil {
 				return fmt.Errorf("failed to link %s to %s: %w", sourceID, targetID, err)
