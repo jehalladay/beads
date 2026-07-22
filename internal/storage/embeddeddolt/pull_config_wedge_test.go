@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage"
@@ -190,18 +191,30 @@ func statusHasConfig(t *testing.T, ctx context.Context, te *testEnv) bool {
 // Pull/PullRemote/PullFrom already do. Persistent memories live in config as
 // kv.memory.* rows that `bd remember` leaves uncommitted; without the pre-merge
 // CommitPending, a dirty config working set survives into DOLT_MERGE and wedges
-// `bd federation sync` ("cannot merge with uncommitted changes"). The peer remote
-// does not exist, so Sync fails at fetch — but only after the pre-merge commit has
-// already staged config, which is exactly what this test pins.
+// `bd federation sync` ("cannot merge with uncommitted changes"). This test pins
+// that the config working set is clean once Sync has run — proving the pre-merge
+// commit staged it.
+//
+// beads-aapwu: a file:// remote that has never been seeded is the fresh/empty
+// peer case, NOT a hard error — DOLT_FETCH auto-creates the remote dir and
+// succeeds, then the peer/main merge fails "branch not found", which Sync now
+// treats as the bootstrap case and publishes to (Pushed=true, err=nil). So this
+// test no longer asserts an early Sync failure (that proxy was never accurate —
+// fetch succeeded, only the merge failed); it asserts the real GH#2474 invariant
+// directly: config is committed, not left dirty.
 func TestEmbeddedSyncCommitsConfigBeforeMerge(t *testing.T) {
 	te := newTestEnv(t, "syncwedge")
 	ctx := t.Context()
 
-	// Register a peer whose file remote does not exist: Sync runs its pre-merge
-	// auto-commit, then fails at fetch — far enough to prove config was staged.
+	// Register a fresh (never-seeded) file peer: Sync runs its pre-merge
+	// auto-commit, fetches, then bootstrap-publishes to the empty peer. The
+	// remote lives under t.TempDir() so it is genuinely empty on EVERY run:
+	// a fixed shared path (e.g. /tmp/...) would be SEEDED by the first run's
+	// bootstrap push, and the next run's merge would then fail "no common
+	// ancestor" instead of exercising the empty-peer bootstrap (beads-aapwu).
 	peer := &storage.FederationPeer{
 		Name:        "peer-sync-wedge",
-		RemoteURL:   "file:///tmp/beads-no-such-embedded-federation-peer",
+		RemoteURL:   "file://" + filepath.Join(t.TempDir(), "freshpeer"),
 		Sovereignty: "T2",
 	}
 	if err := te.store.AddFederationPeer(ctx, peer); err != nil {
@@ -221,8 +234,11 @@ func TestEmbeddedSyncCommitsConfigBeforeMerge(t *testing.T) {
 		t.Fatal("memory write did not dirty config; cannot reproduce the wedge precondition")
 	}
 
-	if _, err := te.store.Sync(ctx, peer.Name, ""); err == nil {
-		t.Fatal("expected sync to fail for nonexistent file remote")
+	// Sync must NOT wedge on the dirty config: the pre-merge CommitPending stages
+	// it, so DOLT_MERGE never sees "cannot merge with uncommitted changes". A
+	// fresh empty peer bootstrap-publishes rather than erroring (beads-aapwu).
+	if _, err := te.store.Sync(ctx, peer.Name, ""); err != nil {
+		t.Fatalf("Sync wedged/failed instead of committing config before merge (GH#2474): %v", err)
 	}
 
 	if statusHasConfig(t, ctx, te) {

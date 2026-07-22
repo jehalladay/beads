@@ -66,8 +66,13 @@ func TestCommitBeforePullIncludesConfig(t *testing.T) {
 // its merge, and that pre-merge commit must include config. Plain Commit
 // (GH#2455) excludes config, so a dirty kv.memory.* row used to survive Sync's
 // pre-merge commit and wedge DOLT_MERGE — the same failure this PR fixes for the
-// pull paths. The pre-merge commit must leave config clean even though Sync then
-// fails at fetch against a nonexistent remote.
+// pull paths. The pre-merge commit must leave config clean.
+//
+// beads-aapwu: this test no longer asserts an early Sync failure. A fresh
+// (never-seeded) file peer is the bootstrap case, not a hard error — Sync may
+// legitimately publish to the empty peer (Pushed=true, err=nil). The real
+// invariant this test pins is unchanged and outcome-independent: config is
+// committed, not left dirty.
 func TestFederationSyncCommitsConfigBeforeFetch(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -77,8 +82,9 @@ func TestFederationSyncCommitsConfigBeforeFetch(t *testing.T) {
 
 	db := store.db
 
-	// Register a peer whose remote does not exist: Sync runs its pre-merge
-	// auto-commit, then fails at fetch — far enough to prove config was staged.
+	// Register a fresh (never-seeded) file peer: Sync runs its pre-merge
+	// auto-commit, then either fails at fetch or bootstrap-publishes — both are
+	// far enough to prove config was staged first.
 	peer := &storage.FederationPeer{
 		Name:        "peer-config-wedge",
 		RemoteURL:   "file:///tmp/beads-no-such-federation-peer",
@@ -97,9 +103,11 @@ func TestFederationSyncCommitsConfigBeforeFetch(t *testing.T) {
 		t.Fatalf("inserted memory row did not dirty config; cannot reproduce the wedge precondition")
 	}
 
-	if _, err := store.Sync(ctx, peer.Name, ""); err == nil {
-		t.Fatal("expected sync to fail for nonexistent file remote")
-	}
+	// Sync must not WEDGE on the dirty config (that is the GH#2474 regression):
+	// the pre-merge CommitPending stages it. The outcome (fetch error vs
+	// bootstrap-publish, beads-aapwu) is not what this test pins — the clean
+	// config working set below is.
+	_, _ = store.Sync(ctx, peer.Name, "")
 	if configDirty(t, ctx, db) {
 		t.Fatal("Sync left config dirty before merge; bd federation sync would wedge DOLT_MERGE (GH#2474)")
 	}

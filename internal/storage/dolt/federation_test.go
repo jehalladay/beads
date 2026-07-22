@@ -417,10 +417,9 @@ func TestFederationSyncCommitsPendingPeerMetadataBeforeFetch(t *testing.T) {
 		t.Fatal("expected direct federation_peers update to dirty the working set")
 	}
 
-	_, err := store.Sync(ctx, peer.Name, "")
-	if err == nil {
-		t.Fatal("expected sync to fail for nonexistent file remote")
-	}
+	// beads-aapwu: the outcome (fetch error vs bootstrap-publish to the fresh
+	// empty peer) is not what this test pins — the committed metadata below is.
+	_, _ = store.Sync(ctx, peer.Name, "")
 	if federationStatusHasTable(t, ctx, store, "federation_peers") {
 		t.Fatal("sync should commit pending federation_peers metadata before fetch/merge")
 	}

@@ -3,9 +3,22 @@ package versioncontrolops
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/storage"
 )
+
+// IsBranchNotFoundError reports whether err is a DOLT_MERGE failure caused by
+// the merged ref not existing yet — Dolt raises "branch not found: <ref>"
+// (Error 1105). This is the normal state of a freshly added peer's
+// remote-tracking branch (peer/main) before any data has ever been pushed to
+// it: on a first federation sync there is nothing to merge, so callers treat
+// this as the bootstrap case (skip the merge, fall through to the publishing
+// push) rather than a fatal error (beads-aapwu). Matches the string-based
+// idiom already used for DOLT_PULL branch-tracking and "up to date" errors.
+func IsBranchNotFoundError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "branch not found")
+}
 
 // ListRemotes returns all configured Dolt remotes (name and URL).
 func ListRemotes(ctx context.Context, db DBConn) ([]storage.RemoteInfo, error) {

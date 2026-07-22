@@ -337,10 +337,24 @@ func (s *DoltStore) Sync(ctx context.Context, peer string, strategy string) (*Sy
 
 	// Step 3: Merge peer's branch
 	remoteBranch := fmt.Sprintf("%s/%s", peer, s.branch)
+	bootstrap := false
 	conflicts, err := s.Merge(ctx, remoteBranch)
 	if err != nil {
-		result.Error = fmt.Errorf("merge failed: %w", err)
-		return result, result.Error
+		// beads-aapwu: a fresh peer added via `bd federation add-peer` has no
+		// branch yet, so the remote-tracking ref peer/main does not exist and
+		// DOLT_MERGE fails "branch not found: peer/main". That is not a fatal
+		// error — it is the bootstrap case: there is nothing to merge yet, and
+		// Step 5's push below is exactly what publishes the local town and
+		// creates the peer's branch. Skip the merge (leave Merged=false, no
+		// pulled commits) and fall through to the publishing push, so the
+		// documented add-peer -> sync onboarding works against an empty peer.
+		// Mirrors the embedded twin (embeddeddolt/federation.go).
+		if !versioncontrolops.IsBranchNotFoundError(err) {
+			result.Error = fmt.Errorf("merge failed: %w", err)
+			return result, result.Error
+		}
+		bootstrap = true
+		conflicts = nil
 	}
 
 	// Step 4: Handle conflicts if any
@@ -380,12 +394,17 @@ func (s *DoltStore) Sync(ctx context.Context, peer string, strategy string) (*Sy
 			return result, result.Error
 		}
 	}
-	result.Merged = true
+	// On the bootstrap path (beads-aapwu) no merge happened — leave Merged
+	// false and PulledCommits 0 so the result stays truthful; the value of a
+	// first sync of an empty peer is entirely in the publishing push below.
+	if !bootstrap {
+		result.Merged = true
 
-	// Count pulled commits
-	afterCommit, _ := s.GetCurrentCommit(ctx) // Best effort: empty commit hash means diff won't be logged
-	if beforeCommit != afterCommit {
-		result.PulledCommits = 1 // Simplified - could count actual commits
+		// Count pulled commits
+		afterCommit, _ := s.GetCurrentCommit(ctx) // Best effort: empty commit hash means diff won't be logged
+		if beforeCommit != afterCommit {
+			result.PulledCommits = 1 // Simplified - could count actual commits
+		}
 	}
 
 	// Step 5: Push our changes to peer, filtering excluded types.
