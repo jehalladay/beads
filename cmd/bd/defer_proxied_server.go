@@ -77,6 +77,14 @@ func runDeferProxiedServer(ctx context.Context, args []string, deferUntil *time.
 			// notes + "\n" + reason), matching the direct defer path.
 			in.hasAppendNotes = true
 			in.appendNotes = reason
+			// Also thread the reason into the status-change audit entry so the
+			// GC-flatten-survivable trail matches the direct path's
+			// auditStatusChange(..., reason) (defer.go). Without this the proxied
+			// status audit records "" while direct records the reason — the sole
+			// audit-reason parity gap among the status-transition verbs, since
+			// reopen/undefer emit their own reasoned auditStatusChange but defer
+			// delegates to the generic update core (beads-tw6qj, jffu family).
+			in.auditReason = reason
 		}
 
 		issue, ok := applyUpdateProxiedOne(ctx, id, in, false)

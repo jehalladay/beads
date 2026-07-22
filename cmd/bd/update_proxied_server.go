@@ -249,7 +249,10 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, forc
 	// when the field actually changed to avoid a spurious no-op trail.
 	if updated != nil {
 		if string(updated.Status) != string(current.Status) {
-			audit.LogFieldChange(id, "status", string(current.Status), string(updated.Status), actor, "")
+			// in.auditReason is "" for `bd update` (unchanged trail); a delegating
+			// verb like `bd defer --reason` sets it so the proxied audit entry
+			// carries the same reason its direct path records (beads-tw6qj).
+			audit.LogFieldChange(id, "status", string(current.Status), string(updated.Status), actor, in.auditReason)
 		}
 		if updated.Assignee != current.Assignee {
 			audit.LogFieldChange(id, "assignee", current.Assignee, updated.Assignee, actor, "")

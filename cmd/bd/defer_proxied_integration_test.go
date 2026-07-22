@@ -56,6 +56,45 @@ func TestProxiedServerDefer(t *testing.T) {
 		}
 	})
 
+	t.Run("defer_with_reason_writes_audit_reason", func(t *testing.T) {
+		// beads-tw6qj: proxied `bd defer --reason` must record the reason in the
+		// GC-survivable audit trail's status field_change (extra["reason"]),
+		// matching the direct path's auditStatusChange(..., reason) (defer.go) and
+		// the proxied close/reopen/undefer legs — NOT just append it to notes. The
+		// proxied defer delegates to applyUpdateProxiedOne, which used to emit the
+		// status LogFieldChange with a hardcoded "" reason, so the durable trail
+		// dropped it. Fix threads updateInput.auditReason through.
+		//
+		// MUTATION-VERIFIED: reverting `in.auditReason = reason` in
+		// defer_proxied_server.go (or the pass-through in update_proxied_server.go)
+		// leaves extra["reason"]=="" → this assertion goes RED.
+		p := bdProxiedInit(t, bd, "dfrr")
+
+		// CONTROL: a proxied close --reason writes the reason to the audit trail,
+		// proving the harness reads extra["reason"] and the trail is wired.
+		ctrl := bdProxiedCreate(t, bd, p.dir, "control reasoned close", "--type", "task")
+		if out, err := bdProxiedRun(t, bd, p.dir, "close", ctrl.ID, "--reason", "ctrl-reason"); err != nil {
+			t.Fatalf("CONTROL proxied close %s failed: %v\n%s", ctrl.ID, err, out)
+		}
+		if r, ok := auditFieldChangeReason(t, p.dir, ctrl.ID, "status", "closed"); !ok || r != "ctrl-reason" {
+			t.Fatalf("CONTROL: proxied close --reason must record reason in audit trail, got reason=%q found=%v — harness broken", r, ok)
+		}
+
+		// TEST: proxied defer --reason must do the same for the status=deferred entry.
+		a := bdProxiedCreate(t, bd, p.dir, "defer records reason", "--type", "task")
+		const reason = "waiting on upstream release"
+		if out, err := bdProxiedRun(t, bd, p.dir, "defer", a.ID, "--reason", reason); err != nil {
+			t.Fatalf("proxied defer --reason failed: %v\n%s", err, out)
+		}
+		got, ok := auditFieldChangeReason(t, p.dir, a.ID, "status", "deferred")
+		if !ok {
+			t.Fatalf("proxied defer --reason did not write a status=deferred field_change for %s", a.ID)
+		}
+		if got != reason {
+			t.Errorf("proxied defer --reason recorded audit reason=%q, want %q (beads-tw6qj: reason dropped from the GC-survivable trail)", got, reason)
+		}
+	})
+
 	t.Run("defer_all_unresolvable_exits_nonzero", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "dfr3")
 		// No such issue → every requested ID fails → non-zero exit (not false

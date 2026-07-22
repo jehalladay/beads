@@ -30,6 +30,13 @@ type updateInput struct {
 	unsetMetadata    []string
 	mergeMetadataIn  json.RawMessage
 	clearDeferStatus bool
+	// auditReason is an optional human note threaded into the status-change audit
+	// entry on the proxied write path (applyUpdateProxiedOne). It defaults to ""
+	// for all `bd update` callers (which never carried a status reason), matching
+	// the pre-existing behavior; only verbs whose direct path emits a reasoned
+	// auditStatusChange (e.g. `bd defer --reason`) set it, so the proxied trail
+	// records the same reason instead of dropping it (beads-tw6qj, jffu family).
+	auditReason string
 }
 
 func gatherUpdateInput(ctx context.Context, cmd *cobra.Command) *updateInput {

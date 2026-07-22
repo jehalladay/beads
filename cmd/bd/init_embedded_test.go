@@ -234,6 +234,42 @@ func auditHasStatusChange(t *testing.T, dir, issueID, wantNew string) bool {
 	return auditHasFieldChange(t, dir, issueID, "status", wantNew)
 }
 
+// auditFieldChangeReason returns the extra["reason"] recorded on the FIRST
+// matching field_change entry (issueID + field==wantField + new_value==wantNew)
+// in the GC-survivable audit trail, plus whether such an entry was found. Used
+// to assert reason FIDELITY (not just presence) — LogFieldChange only persists
+// extra["reason"] when non-empty, so a proxied path that hardcodes "" leaves it
+// absent (reason=="") even when the field_change itself is written (beads-tw6qj).
+func auditFieldChangeReason(t *testing.T, dir, issueID, wantField, wantNew string) (string, bool) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, ".beads", "interactions.jsonl"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false
+		}
+		t.Fatalf("read audit trail: %v", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var e struct {
+			Kind    string         `json:"kind"`
+			IssueID string         `json:"issue_id"`
+			Extra   map[string]any `json:"extra"`
+		}
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("bad audit line %q: %v", line, err)
+		}
+		if e.Kind == "field_change" && e.IssueID == issueID &&
+			e.Extra["field"] == wantField && e.Extra["new_value"] == wantNew {
+			reason, _ := e.Extra["reason"].(string)
+			return reason, true
+		}
+	}
+	return "", false
+}
+
 // bdInitInDir runs bd init --quiet in an existing dir. Fatals on failure.
 func runBDInit(t *testing.T, bd, dir string, extraArgs ...string) string {
 	t.Helper()
