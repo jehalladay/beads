@@ -362,7 +362,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 	if dedupHits > 0 {
 		fmt.Fprintf(os.Stderr, " (%d duplicates skipped)", dedupHits)
 	}
-	if staleSkipped := result.Skipped - dedupHits - len(result.InvalidMetadataIDs); staleSkipped > 0 {
+	if staleSkipped := staleSkippedHintCount(result, dedupHits); staleSkipped > 0 {
 		fmt.Fprintf(os.Stderr, " (%d stale skipped; use --allow-stale to restore older rows)", staleSkipped)
 	}
 	if n := len(result.InvalidMetadataIDs); n > 0 {
@@ -387,6 +387,25 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		fmt.Fprintf(os.Stderr, "Skipped dependency: %s\n", skipped)
 	}
 	return nil
+}
+
+// staleSkippedHintCount reports how many rows were skipped as stale (older than
+// the local row) for the "use --allow-stale" human hint.
+//
+// beads-tua8k: the count must come from the exact stale-skipped ID slice, NOT
+// from `result.Skipped - dedupHits - len(InvalidMetadataIDs)`. On the non-dry
+// import path result.Skipped is only importResult.Skipped (= stale + invalid);
+// dedupHits is never folded into it (dedup rows are filtered out before
+// importIssuesCore, and the sole `result.Skipped = dedupHits` assignment lives
+// in the dry-run branch, which early-returns before this point). Subtracting
+// dedupHits therefore double-subtracted a value that was never added: with S
+// stale rows and D dedup skips the old expression printed S-D, and D >= S
+// suppressed the hint entirely — so a user deduping an import of older rows was
+// never told --allow-stale exists. dedupHits is retained in the signature so
+// the intent (this line is about stale, not dedup, which has its own line) is
+// explicit and to keep call-site parity with the JSON stale_skipped_ids field.
+func staleSkippedHintCount(result importResultJSON, dedupHits int) int {
+	return len(result.StaleSkippedIDs)
 }
 
 // filterDuplicatesByTitle removes issues whose title matches an existing open issue.
