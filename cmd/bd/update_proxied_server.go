@@ -205,6 +205,9 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, forc
 		reportItemError("Issue %s not found", id)
 		return nil, false
 	}
+	// beads-3ii21: resolve a bare-hash/partial id to the canonical full id for
+	// every downstream exact-ID op (ApplyUpdate, close guards, audit, commit).
+	id = current.ID
 	if err := validateIssueUpdatable(id, current); err != nil {
 		reportItemError("%s", err)
 		return nil, false

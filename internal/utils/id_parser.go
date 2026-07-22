@@ -36,11 +36,26 @@ func parseIssueID(input string, prefix string) string {
 // Returns an error if:
 // - No issue found matching the ID
 // - Multiple issues match (ambiguous prefix)
+// PartialIDResolver is the minimal read surface ResolvePartialID needs:
+// exact/substring issue search and config lookup. Both storage.Storage and a
+// proxied-server unit-of-work adapter satisfy it, so the same partial-ID
+// resolution (bare hash, prefix-less, truncated substring, cross-prefix, and
+// the ambiguity error) runs on the direct AND proxied-server paths (beads-3ii21).
+type PartialIDResolver interface {
+	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error)
+	GetConfig(ctx context.Context, key string) (string, error)
+}
+
 func ResolvePartialID(ctx context.Context, store storage.Storage, input string) (string, error) {
 	if store == nil {
 		return "", fmt.Errorf("cannot resolve issue ID %q: storage is nil", input)
 	}
+	return ResolvePartialIDVia(ctx, store, input)
+}
 
+// ResolvePartialIDVia is ResolvePartialID against any PartialIDResolver (the
+// direct store or a proxied-server UOW adapter). The caller guards nil.
+func ResolvePartialIDVia(ctx context.Context, store PartialIDResolver, input string) (string, error) {
 	// Fast path: Use SearchIssues with exact ID filter (GH#942).
 	// This uses the same query path as "bd list --id", ensuring consistency.
 	// Previously we used GetIssue which could fail in cases where SearchIssues

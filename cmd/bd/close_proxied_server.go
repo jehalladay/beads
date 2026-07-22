@@ -247,6 +247,11 @@ func closeProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string, 
 		report("Issue %s not found", id)
 		return closeProxiedOutcome{}, false
 	}
+	// beads-3ii21: proxiedResolveIssueOrWisp now resolves a bare-hash/partial id;
+	// use the canonical full id for every downstream op (guard counts, IsBlocked,
+	// CloseIssue, audit) — the underlying repos are exact WHERE id = ? and would
+	// otherwise fail "issue not found" on the un-resolved partial.
+	id = current.ID
 
 	if err := validateIssueClosable(id, current, in.force); err != nil {
 		report("%s", err)
@@ -351,6 +356,14 @@ func closeProxiedCommitMessage(outcomes []closeProxiedOutcome, claimed *types.Is
 }
 
 func proxiedResolveIssueOrWisp(ctx context.Context, uw uow.UnitOfWork, id string) (*types.Issue, bool) {
+	// Resolve bare-hash / prefix-less / truncated partials via the UOW, mirroring
+	// the direct path's utils.ResolvePartialID (beads-3ii21). On an ambiguous
+	// partial (>1 match) proxiedResolvePartialID returns an error; this no-error
+	// twin then leaves id unresolved so the exact GetIssue below returns nil
+	// (not-found) rather than silently mutating an arbitrary match.
+	if resolved, resErr := proxiedResolvePartialID(ctx, uw, id); resErr == nil {
+		id = resolved
+	}
 	issue, err := uw.IssueUseCase().GetIssue(ctx, id)
 	if err == nil && issue != nil {
 		return issue, false

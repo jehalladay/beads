@@ -16,6 +16,7 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/uimd"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 type showProxiedInput struct {
@@ -143,7 +144,55 @@ func resolveCurrentIssueIDProxied(ctx context.Context, uw uow.UnitOfWork) string
 	return GetLastTouchedID()
 }
 
+// uowPartialIDResolver adapts a proxied-server UnitOfWork to the
+// utils.PartialIDResolver read surface (SearchIssues + GetConfig), so the
+// proxied resolve helpers can resolve bare-hash / prefix-less / truncated
+// partial ids and report the ambiguity error exactly like the direct path's
+// utils.ResolvePartialID (beads-3ii21). Without this, proxied show/close/update/
+// label-list used strict uw.IssueUseCase().GetIssue (WHERE id = ?) only, so a
+// bare hash that resolves locally failed "not found" for a hub-connected crew.
+type uowPartialIDResolver struct {
+	uw uow.UnitOfWork
+}
+
+func (r uowPartialIDResolver) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	page, err := r.uw.IssueUseCase().SearchIssues(ctx, query, filter)
+	if err != nil {
+		return nil, err
+	}
+	return page.Items, nil
+}
+
+func (r uowPartialIDResolver) GetConfig(ctx context.Context, key string) (string, error) {
+	return r.uw.ConfigUseCase().GetConfig(ctx, key)
+}
+
+// proxiedResolvePartialID resolves a (possibly partial) id to a full id via the
+// UOW, mirroring the direct path's utils.ResolvePartialID. Falls back to the raw
+// input if resolution finds nothing so the downstream exact GetIssue/GetWisp
+// still produces the canonical not-found error (and so a valid full id that
+// SearchIssues can't see is unaffected). An ambiguity error is surfaced to the
+// caller so >1 match reports "ambiguous ID" instead of silently picking one.
+func proxiedResolvePartialID(ctx context.Context, uw uow.UnitOfWork, id string) (string, error) {
+	resolved, err := utils.ResolvePartialIDVia(ctx, uowPartialIDResolver{uw: uw}, id)
+	if err != nil {
+		if strings.HasPrefix(err.Error(), "ambiguous ID ") {
+			return "", err
+		}
+		return id, nil // not-found → defer to exact GetIssue's canonical error
+	}
+	if resolved == "" {
+		return id, nil
+	}
+	return resolved, nil
+}
+
 func proxiedGetIssueOrWisp(ctx context.Context, uw uow.UnitOfWork, id string) (issue *types.Issue, isWisp bool, err error) {
+	resolved, resErr := proxiedResolvePartialID(ctx, uw, id)
+	if resErr != nil {
+		return nil, false, resErr
+	}
+	id = resolved
 	issue, err = uw.IssueUseCase().GetIssue(ctx, id)
 	if err == nil && issue != nil {
 		return issue, false, nil

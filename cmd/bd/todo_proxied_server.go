@@ -122,6 +122,9 @@ func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string,
 			failedCount++
 			continue
 		}
+		// beads-3ii21: use the canonical full id for downstream exact-ID ops
+		// (child/blocker guards, close), so a bare-hash/partial arg works.
+		issueID = current.ID
 
 		if !force {
 			// (1) open-child guard for auto-closing parents (epic/molecule/wisp

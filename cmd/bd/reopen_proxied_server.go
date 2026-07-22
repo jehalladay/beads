@@ -162,6 +162,9 @@ func reopenProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string,
 		reportItemErr("Issue %s not found", id)
 		return reopenProxiedOutcome{}, false
 	}
+	// beads-3ii21: use the canonical full id for downstream exact-ID ops (parent/
+	// supersede/dup guards, reopen), so a bare-hash/partial arg works.
+	id = current.ID
 	if current.Status != types.StatusClosed {
 		// beads-efyts/hxc2: an already-open reopen is an idempotent no-op SUCCESS,
 		// distinct from a non-closed-non-open (in_progress/deferred/blocked) status
