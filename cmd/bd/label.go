@@ -645,10 +645,6 @@ var labelPropagateCmd = &cobra.Command{
 
 		ctx := rootCtx
 
-		parentID, err := utils.ResolvePartialID(ctx, store, args[0])
-		if err != nil {
-			return HandleErrorRespectJSON("resolving parent %s: %v", args[0], err)
-		}
 		label := strings.TrimSpace(args[1])
 		if label == "" {
 			return HandleErrorRespectJSON("label cannot be empty")
@@ -659,6 +655,23 @@ var labelPropagateCmd = &cobra.Command{
 		}
 		if msg := reservedIdentityLabelError(label); msg != "" {
 			return HandleErrorRespectJSON("%s", msg)
+		}
+
+		// beads-ouxlo: route to the proxied handler in proxied-server mode.
+		// Without this, propagate resolves+searches+mutates via the direct global
+		// `store`, which is NIL under proxiedServerMode (main.go PersistentPreRun
+		// returns early once uowProvider is set, before store init) — so
+		// `bd label propagate` failed "storage is nil" for hub-connected crew,
+		// unlike its mutation siblings `label add`/`label remove` (routed by
+		// beads-aocj). This is the 3rd label mutation the aocj sweep missed. The
+		// proxied handler resolves the parent + searches children via the UOW.
+		if usesProxiedServer() {
+			return runLabelPropagateProxiedServer(rootCtx, args[0], label)
+		}
+
+		parentID, err := utils.ResolvePartialID(ctx, store, args[0])
+		if err != nil {
+			return HandleErrorRespectJSON("resolving parent %s: %v", args[0], err)
 		}
 
 		children, err := store.SearchIssues(ctx, "", types.IssueFilter{ParentID: &parentID})

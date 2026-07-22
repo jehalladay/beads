@@ -42,6 +42,101 @@ func runLabelRemoveProxiedServer(ctx context.Context, issueIDs []string, label s
 	return applyLabelBatchProxied(ctx, issueIDs, []string{label}, "removed")
 }
 
+// runLabelPropagateProxiedServer applies `bd label propagate [parent-id] [label]`
+// via the UOW for hub-connected crew (beads-ouxlo). The direct path resolves the
+// parent + searches children + mutates through the nil global `store`, so it
+// failed "storage is nil" under proxiedServerMode — the 3rd label mutation the
+// aocj sweep missed (add/remove were routed by beads-aocj). This mirrors the
+// direct labelPropagateCmd contract exactly: resolve the parent, find its direct
+// children via the ParentID filter, add the label to each child (idempotent
+// AddLabel), and emit one "propagated" line/JSON entry per child. `parentArg` is
+// the raw parent argument; the caller has already validated the label (empty /
+// provides: / reserved-identity guards run pre-branch in the shared RunE).
+func runLabelPropagateProxiedServer(ctx context.Context, parentArg, label string) error {
+	if uowProvider == nil {
+		FatalError("proxied-server UOW provider not initialized")
+	}
+
+	// Resolve the parent through a short-lived read UOW (mirrors the direct
+	// ResolvePartialID+GetIssue, which resolves either an issue or a wisp).
+	uwResolve, err := uowProvider.NewUOW(ctx)
+	if err != nil {
+		return HandleErrorRespectJSON("opening unit of work: %v", err)
+	}
+	parent, _ := proxiedResolveIssueOrWisp(ctx, uwResolve, parentArg)
+	if parent == nil {
+		uwResolve.Close(ctx)
+		return HandleErrorRespectJSON("resolving parent %s: not found", parentArg)
+	}
+	parentID := parent.ID
+
+	page, err := uwResolve.IssueUseCase().SearchIssues(ctx, "", types.IssueFilter{ParentID: &parentID})
+	uwResolve.Close(ctx)
+	if err != nil {
+		return HandleErrorRespectJSON("searching children of %s: %v", parentID, err)
+	}
+	children := page.Items
+
+	if len(children) == 0 {
+		if jsonOutput {
+			return outputJSON([]map[string]interface{}{})
+		}
+		fmt.Printf("No children found for %s\n", parentID)
+		return nil
+	}
+
+	// Apply the label to each child via the shared proxied update core, which
+	// resolves via the UOW, enforces validateIssueUpdatable (template guard),
+	// and commits per issue — matching the mutation semantics of the add/remove
+	// proxied path. A per-child failure is reported + skipped; a whole-batch
+	// failure exits non-zero so scripts don't read false success.
+	okCount := 0
+	applied := make([]*types.Issue, 0, len(children))
+	for _, child := range children {
+		in := &updateInput{addLabels: []string{label}}
+		if _, ok := applyUpdateProxiedOne(ctx, child.ID, in, false); ok {
+			okCount++
+			applied = append(applied, child)
+		}
+	}
+
+	if okCount == 0 {
+		if jsonOutput {
+			return HandleErrorRespectJSON("no children of %s could be labeled", parentID)
+		}
+		return SilentExit()
+	}
+	if len(applied) > 0 {
+		commandDidWrite.Store(true)
+		SetLastTouchedID(applied[0].ID)
+	}
+
+	if jsonOutput {
+		results := make([]map[string]interface{}, 0, len(applied))
+		for _, child := range applied {
+			results = append(results, map[string]interface{}{
+				"status":   "propagated",
+				"issue_id": child.ID,
+				"label":    label,
+			})
+		}
+		if err := outputJSON(results); err != nil {
+			return err
+		}
+	} else {
+		for _, child := range applied {
+			fmt.Printf("%s Propagated label '%s' to %s\n", ui.RenderPass("✓"), label, child.ID)
+		}
+	}
+
+	// A partial batch (some children failed to label) exits non-zero without a
+	// second stdout doc — matching the uctf/en28 partial-batch contract.
+	if okCount < len(children) {
+		return SilentExit()
+	}
+	return nil
+}
+
 // applyLabelBatchProxied loops applyUpdateProxiedOne over every id, adding or
 // removing every label in one update spec per issue. It preserves the direct
 // label batch semantics: a per-id resolution/mutation failure is reported to
