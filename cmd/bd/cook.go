@@ -906,6 +906,33 @@ func collectCookPlan(f *formula.Formula, protoID string) *cookPlan {
 // transaction. Shared by cookFormula's own transact and the atomic force path in
 // persistCookFormula (beads-xpnnf).
 func cookPlanTx(ctx context.Context, tx storage.Transaction, plan *cookPlan) error {
+	// beads-1zq73: reject reserved labels carried by formula steps BEFORE any
+	// write. A step's `labels:` flow verbatim from the (user/agent-authorable)
+	// formula TOML into plan.labels via collectStepIssue → collectSteps, and
+	// storage AddLabel has no guard (guards live in the cmd layer). Without this,
+	// a step carrying labels:["gt:role"] mints beads at RC=0 with a reserved
+	// identity label HIDDEN from `bd ready` (the 3c4g spoof foot-gun), and
+	// labels:["provides:cap"] bypasses `bd ship`'s CLOSED + single-provider
+	// invariants (the o70m1 vector). This mirrors the graph authoring-seam guard
+	// (validateGraphApplyPlan, graph_apply.go:407-424): reservedIdentityLabelError
+	// stays GT_INTERNAL-gated so gt's own cooks keep working; providesLabelError
+	// is ungated (ship stamps provides: via storage, not this seam). cook --persist
+	// is atomic (transact), so a reject here creates nothing; cookPlanTx is the
+	// shared chokepoint for both the fresh cookFormula path and the force-replace
+	// path, so one guard covers both. Direct-only: cook --persist is
+	// proxied-blocked at cook.go:407, so there is no proxied twin.
+	// Return a plain error (like validateGraphApplyPlan): runCook surfaces the
+	// persistCookFormula error once via HandleErrorRespectJSON, so emitting here
+	// too would double-report (stderr line or JSON error object twice).
+	for _, l := range plan.labels {
+		if msg := reservedIdentityLabelError(l.label); msg != "" {
+			return fmt.Errorf("%s", msg)
+		}
+		if msg := providesLabelError(l.label); msg != "" {
+			return fmt.Errorf("%s", msg)
+		}
+	}
+
 	// Create all issues
 	if err := tx.CreateIssues(ctx, plan.issues, actor); err != nil {
 		return fmt.Errorf("failed to create issues: %w", err)
