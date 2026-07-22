@@ -73,6 +73,10 @@ func TestGetMoleculeLastActivityInTx(t *testing.T) {
 		// closed query returns no rows -> stays step_updated
 		mock.ExpectQuery(batchCls).WithArgs("c1", "c2").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "closed_at"}))
+		// beads-9unof: root updated_at is older than the step -> step wins, unchanged.
+		rootTs := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+		mock.ExpectQuery(updOneQ).WithArgs("mol-2").
+			WillReturnRows(sqlmock.NewRows([]string{"updated_at"}).AddRow(rootTs))
 
 		got, err := GetMoleculeLastActivityInTx(context.Background(), tx, "mol-2")
 		if err != nil {
@@ -98,6 +102,10 @@ func TestGetMoleculeLastActivityInTx(t *testing.T) {
 		closed := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
 		mock.ExpectQuery(batchCls).WithArgs("c1").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "closed_at"}).AddRow("c1", closed))
+		// beads-9unof: root updated_at older than the closed step -> step wins.
+		rootTs := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+		mock.ExpectQuery(updOneQ).WithArgs("mol-3").
+			WillReturnRows(sqlmock.NewRows([]string{"updated_at"}).AddRow(rootTs))
 
 		got, err := GetMoleculeLastActivityInTx(context.Background(), tx, "mol-3")
 		if err != nil {
@@ -167,6 +175,77 @@ func TestGetMoleculeLastActivityInTx(t *testing.T) {
 		}
 		if got.Source != "molecule_updated" || !got.LastActivity.Equal(ts) {
 			t.Fatalf("got %+v, want molecule_updated at %v", got, ts)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet: %v", err)
+		}
+	})
+
+	// beads-9unof: with children, a root-only edit (root.updated_at newer than
+	// every step) must count as activity — the with-children branch previously
+	// ignored the root entirely (asymmetric with the childless branch), so an
+	// actively-curated molecule with quiescent steps reported a false-stale
+	// last-activity and risked being reaped.
+	//
+	// MUTATION-VERIFY: delete the root-updated_at fold-in block at the end of the
+	// with-children branch in GetMoleculeLastActivityInTx and this subtest FAILS —
+	// the newer root edit is dropped and Source stays step_updated at the old step
+	// timestamp.
+	t.Run("children + root edit newest -> molecule_updated (9unof)", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		expectNotWisp(mock, "mol-r")
+		mock.ExpectQuery(childQ).WithArgs("mol-r").
+			WillReturnRows(sqlmock.NewRows([]string{"issue_id"}).AddRow("c1"))
+		stepUpd := time.Date(2026, 7, 5, 9, 0, 0, 0, time.UTC)
+		mock.ExpectQuery(batchUpd).WithArgs("c1").
+			WillReturnRows(sqlmock.NewRows([]string{"id", "updated_at"}).AddRow("c1", stepUpd))
+		mock.ExpectQuery(batchCls).WithArgs("c1").
+			WillReturnRows(sqlmock.NewRows([]string{"id", "closed_at"}))
+		// The root was touched AFTER the last step activity.
+		rootUpd := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+		mock.ExpectQuery(updOneQ).WithArgs("mol-r").
+			WillReturnRows(sqlmock.NewRows([]string{"updated_at"}).AddRow(rootUpd))
+
+		got, err := GetMoleculeLastActivityInTx(context.Background(), tx, "mol-r")
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if got.Source != "molecule_updated" || !got.LastActivity.Equal(rootUpd) {
+			t.Fatalf("REGRESSION (9unof): a root edit newer than every step was dropped for a molecule with children — got %+v, want molecule_updated at %v [beads-9unof]", got, rootUpd)
+		}
+		if got.SourceStepID != "" {
+			t.Errorf("9unof: molecule_updated result should clear SourceStepID, got %q", got.SourceStepID)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet: %v", err)
+		}
+	})
+
+	// beads-9unof negative: a root edit that is OLDER than a closed step must not
+	// override step_closed — the root only wins when it is strictly the newest.
+	t.Run("children + root edit older than step_closed -> step_closed unchanged (9unof)", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		expectNotWisp(mock, "mol-ro")
+		mock.ExpectQuery(childQ).WithArgs("mol-ro").
+			WillReturnRows(sqlmock.NewRows([]string{"issue_id"}).AddRow("c1"))
+		stepUpd := time.Date(2026, 7, 5, 9, 0, 0, 0, time.UTC)
+		mock.ExpectQuery(batchUpd).WithArgs("c1").
+			WillReturnRows(sqlmock.NewRows([]string{"id", "updated_at"}).AddRow("c1", stepUpd))
+		closed := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
+		mock.ExpectQuery(batchCls).WithArgs("c1").
+			WillReturnRows(sqlmock.NewRows([]string{"id", "closed_at"}).AddRow("c1", closed))
+		rootUpd := time.Date(2026, 7, 6, 0, 0, 0, 0, time.UTC) // between step_updated and step_closed
+		mock.ExpectQuery(updOneQ).WithArgs("mol-ro").
+			WillReturnRows(sqlmock.NewRows([]string{"updated_at"}).AddRow(rootUpd))
+
+		got, err := GetMoleculeLastActivityInTx(context.Background(), tx, "mol-ro")
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if got.Source != "step_closed" || got.SourceStepID != "c1" || !got.LastActivity.Equal(closed) {
+			t.Fatalf("9unof: root older than step_closed must not win, got %+v want step_closed c1 at %v", got, closed)
 		}
 		if err := mock.ExpectationsWereMet(); err != nil {
 			t.Fatalf("unmet: %v", err)

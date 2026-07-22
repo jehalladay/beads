@@ -415,5 +415,25 @@ func GetMoleculeLastActivityInTx(ctx context.Context, tx *sql.Tx, moleculeID str
 		}
 	}
 
+	// beads-9unof: fold the molecule ROOT's own updated_at into the comparison.
+	// The childless branch above returns the root's updated_at directly (Source
+	// "molecule_updated"), but the with-children branch only scanned the child
+	// IDs, so a root-only edit (re-title/re-prioritize/re-assign/annotate the
+	// molecule itself) was silently dropped and last-activity reported an
+	// artificially old step timestamp — a false-stale/reap risk for a molecule
+	// whose root is actively curated but whose steps are quiescent. Query the
+	// root and let it win when it is the most recent activity, so the command
+	// answers "does root metadata count as activity?" symmetrically regardless
+	// of child count. (One level only, matching getEpicChildren / the existing
+	// child scan; nested-grandchild expansion is a separate design choice.)
+	var rootUpdatedAt time.Time
+	if err := tx.QueryRowContext(ctx, fmt.Sprintf("SELECT updated_at FROM %s WHERE id = ?", issueTable), moleculeID).Scan(&rootUpdatedAt); err == nil {
+		if rootUpdatedAt.After(result.LastActivity) {
+			result.LastActivity = rootUpdatedAt
+			result.Source = "molecule_updated"
+			result.SourceStepID = ""
+		}
+	}
+
 	return result, nil
 }
