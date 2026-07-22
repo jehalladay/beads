@@ -131,7 +131,11 @@ var createCmd = &cobra.Command{
 
 		// Warn if creating a test issue in a database with existing issues.
 		// A brand-new repo with zero issues is not a "production database" (#2898).
-		if isTestIssue(title) && !silent && !debug.IsQuiet() {
+		// beads-gx69c: gate under !jsonOutput too — runCreate emits the
+		// created-issue JSON envelope on stdout, so this pure human hint
+		// (title -> already in the payload) must not interleave under
+		// `bd create --json 2>&1 | jq` (8lqh Direction-2, sibling of beads-8zed6).
+		if isTestIssue(title) && !silent && !debug.IsQuiet() && !jsonOutput {
 			if stats, err := store.GetStatistics(context.Background()); err == nil && stats != nil && stats.TotalIssues >= 5 {
 				fmt.Fprintf(os.Stderr, "%s Creating test issue in production database\n", ui.RenderWarn("⚠"))
 				fmt.Fprintf(os.Stderr, "  Title: %q appears to be test data\n", title)
@@ -271,8 +275,12 @@ var createCmd = &cobra.Command{
 			if err != nil {
 				return HandleErrorRespectJSON("invalid --defer format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", deferStr)
 			}
-			// Warn if defer date is in the past (user probably meant future)
-			if t.Before(time.Now()) && !silent && !debug.IsQuiet() {
+			// Warn if defer date is in the past (user probably meant future).
+			// beads-gx69c: gate under !jsonOutput too — the defer date is already
+			// carried in the JSON envelope (deferUntil); an unconditional stderr
+			// write here interleaves with the stdout JSON object under
+			// `bd create --json 2>&1 | jq` (8lqh Direction-2, sibling of beads-8zed6).
+			if t.Before(time.Now()) && !silent && !debug.IsQuiet() && !jsonOutput {
 				fmt.Fprintf(os.Stderr, "%s Defer date %q is in the past. Issue will appear in bd ready immediately.\n",
 					ui.RenderWarn("!"), t.Format("2006-01-02 15:04"))
 				fmt.Fprintf(os.Stderr, "  Did you mean a future date? Use --defer=+1h or --defer=tomorrow\n")
