@@ -93,7 +93,7 @@ func runPollutionCheck(_ string, clean bool, yes bool) error {
 	}
 
 	backupPath := ".beads/pollution-backup.jsonl"
-	if err := backupPollutedIssues(polluted, backupPath); err != nil {
+	if err := hydrateAndBackupPollutedIssues(ctx, store, polluted, backupPath); err != nil {
 		return HandleErrorRespectJSON("backing up issues: %v", err)
 	}
 	fmt.Printf("Backed up %d issues to %s\n", len(polluted), backupPath)

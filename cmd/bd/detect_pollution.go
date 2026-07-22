@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -18,6 +19,14 @@ type pollutionResult struct {
 	issue   *types.Issue
 	score   float64
 	reasons []string
+}
+
+// pollutionBackupStore is the narrow slice of the store the pollution backup
+// needs to hydrate relational data (beads-nqwl1). Both methods are satisfied by
+// storage.DoltStorage (DependencyQueryStore + AnnotationStore).
+type pollutionBackupStore interface {
+	GetDependencyRecordsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Dependency, error)
+	GetCommentsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error)
 }
 
 // testPrefixPattern matches common test issue title prefixes.
@@ -102,6 +111,44 @@ func detectTestPollution(issues []*types.Issue) []pollutionResult {
 	}
 
 	return results
+}
+
+// hydrateAndBackupPollutedIssues populates each flagged issue's Dependencies +
+// Comments before writing the backup JSONL, then delegates to
+// backupPollutedIssues.
+//
+// beads-nqwl1: doctor --check=pollution --clean tells the user "To restore, run:
+// bd init --from-jsonl <backup>", but the backup was asymmetrically lossy vs a
+// real export. runPollutionCheck fetches issues via store.SearchIssues with a
+// zero-value filter (IncludeDependencies=false), and the search path never
+// hydrates comments at all, so the marshaled structs carried id/title/scalars/
+// Labels but EMPTY Dependencies and EMPTY Comments. deleteIssue then removes the
+// issue AND its dependency/comment rows, so a restore via `bd init --from-jsonl`
+// (which DOES re-create deps + comments) silently came back with dependency
+// edges and comment history gone — permanent data loss for any wrongly-flagged
+// issue. Mirror the real export path (export.go bulk-loads
+// GetDependencyRecordsForIssues + GetCommentsForIssues and assigns them before
+// marshaling) so backup==export fidelity.
+func hydrateAndBackupPollutedIssues(ctx context.Context, st pollutionBackupStore, polluted []pollutionResult, path string) error {
+	if len(polluted) > 0 {
+		ids := make([]string, len(polluted))
+		for i, p := range polluted {
+			ids[i] = p.issue.ID
+		}
+		allDeps, err := st.GetDependencyRecordsForIssues(ctx, ids)
+		if err != nil {
+			return fmt.Errorf("hydrating dependencies for backup: %w", err)
+		}
+		commentsMap, err := st.GetCommentsForIssues(ctx, ids)
+		if err != nil {
+			return fmt.Errorf("hydrating comments for backup: %w", err)
+		}
+		for _, p := range polluted {
+			p.issue.Dependencies = allDeps[p.issue.ID]
+			p.issue.Comments = commentsMap[p.issue.ID]
+		}
+	}
+	return backupPollutedIssues(polluted, path)
 }
 
 func backupPollutedIssues(polluted []pollutionResult, path string) error {
