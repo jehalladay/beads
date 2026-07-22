@@ -290,6 +290,95 @@ func TestAnalyzeEpicForSwarm(t *testing.T) {
 		}
 	})
 
+	t.Run("deferred children excluded from waves, sessions, and parallelism (yw1tx)", func(t *testing.T) {
+		// beads-yw1tx: DEFERRED extends the y6pjs closed-exclusion. `bd ready`
+		// excludes a deferred issue as not-yet-actionable, so swarm must never
+		// seed it into a wave or count it as a worker-session. Two inDegree-0
+		// roots (one open, one DEFERRED) + an open leaf depending on the open
+		// root: the deferred root must not seed wave 0 (MaxParallelism stays 1)
+		// nor inflate EstimatedSessions.
+		//
+		// MUTATION-VERIFY: revert the isNotSchedulable node-exclusion (or the
+		// DeferredIssues subtraction) in computeReadyFronts and this FAILS — the
+		// deferred root seeds wave 0 (MaxParallelism 2) and counts as a session.
+		f := newFakeSwarmStore()
+		f.dependents["epic"] = []*types.Issue{
+			{ID: "r1", Title: "open root", Status: types.StatusOpen},
+			{ID: "r2", Title: "iced root", Status: types.StatusDeferred},
+			{ID: "leaf", Title: "leaf", Status: types.StatusOpen},
+		}
+		f.depRecords["r1"] = []*types.Dependency{{DependsOnID: "epic", Type: types.DepParentChild}}
+		f.depRecords["r2"] = []*types.Dependency{{DependsOnID: "epic", Type: types.DepParentChild}}
+		f.depRecords["leaf"] = []*types.Dependency{
+			{DependsOnID: "epic", Type: types.DepParentChild},
+			{DependsOnID: "r1", Type: types.DepBlocks},
+		}
+		a, err := analyzeEpicForSwarm(ctx, f, epic)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		// Display counts keep counting all children (3 total, 1 deferred, 0 closed).
+		if a.TotalIssues != 3 || a.DeferredIssues != 1 || a.ClosedIssues != 0 {
+			t.Fatalf("counts wrong: total=%d deferred=%d closed=%d", a.TotalIssues, a.DeferredIssues, a.ClosedIssues)
+		}
+		if a.EstimatedSessions != 2 {
+			t.Errorf("EstimatedSessions want 2 (open only, deferred excluded), got %d", a.EstimatedSessions)
+		}
+		if a.MaxParallelism != 1 {
+			t.Errorf("MaxParallelism want 1 (deferred root must not inflate wave 0), got %d", a.MaxParallelism)
+		}
+		if a.Issues["r2"].Wave != -1 {
+			t.Errorf("deferred root must not be scheduled, got wave %d", a.Issues["r2"].Wave)
+		}
+		if a.Issues["r1"].Wave != 0 || a.Issues["leaf"].Wave != 1 {
+			t.Errorf("open chain wave wrong: r1=%d leaf=%d", a.Issues["r1"].Wave, a.Issues["leaf"].Wave)
+		}
+		for _, front := range a.ReadyFronts {
+			for _, id := range front.Issues {
+				if id == "r2" {
+					t.Errorf("deferred issue r2 appeared in ready front wave %d", front.Wave)
+				}
+			}
+		}
+	})
+
+	t.Run("deferred dependency still blocks (unlike closed) (yw1tx)", func(t *testing.T) {
+		// beads-yw1tx: deferred differs from closed on the DEPENDENCY axis — a
+		// closed blocker is DONE (satisfied), a deferred blocker is merely
+		// PAUSED, so its open dependent is still genuinely blocked. The open
+		// leaf's only blocker is a deferred issue → it must NOT be ready at
+		// wave 0 (contrast the y6pjs "closed dependency is satisfied" subtest).
+		//
+		// MUTATION-VERIFY: change the inDegree loop to also skip deferred deps
+		// (isNotSchedulable instead of isClosed) and this FAILS — the leaf would
+		// wrongly become ready at wave 0 while its blocker is still on ice.
+		f := newFakeSwarmStore()
+		f.dependents["epic"] = []*types.Issue{
+			{ID: "iced", Title: "iced", Status: types.StatusDeferred},
+			{ID: "next", Title: "next", Status: types.StatusOpen},
+		}
+		f.depRecords["iced"] = []*types.Dependency{{DependsOnID: "epic", Type: types.DepParentChild}}
+		f.depRecords["next"] = []*types.Dependency{
+			{DependsOnID: "epic", Type: types.DepParentChild},
+			{DependsOnID: "iced", Type: types.DepBlocks},
+		}
+		a, err := analyzeEpicForSwarm(ctx, f, epic)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		// 'next' depends on a DEFERRED (paused, not done) blocker → still blocked,
+		// never seeded into a wave. Its blocker is not schedulable either.
+		if a.Issues["next"].Wave != -1 {
+			t.Errorf("open leaf blocked by a DEFERRED issue must not be scheduled, got wave %d", a.Issues["next"].Wave)
+		}
+		if a.Issues["iced"].Wave != -1 {
+			t.Errorf("deferred blocker must not be scheduled, got wave %d", a.Issues["iced"].Wave)
+		}
+		if a.EstimatedSessions != 1 {
+			t.Errorf("EstimatedSessions want 1 (only the open leaf), got %d", a.EstimatedSessions)
+		}
+	})
+
 	t.Run("external dependency produces a warning", func(t *testing.T) {
 		f := newFakeSwarmStore()
 		f.dependents["epic"] = []*types.Issue{{ID: "a", Title: "a", Status: types.StatusOpen}}

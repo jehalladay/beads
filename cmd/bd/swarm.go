@@ -32,6 +32,7 @@ type SwarmAnalysis struct {
 	EpicTitle         string                `json:"epic_title"`
 	TotalIssues       int                   `json:"total_issues"`
 	ClosedIssues      int                   `json:"closed_issues"`
+	DeferredIssues    int                   `json:"deferred_issues"`
 	ReadyFronts       []ReadyFront          `json:"ready_fronts"`
 	MaxParallelism    int                   `json:"max_parallelism"`
 	EstimatedSessions int                   `json:"estimated_sessions"`
@@ -272,6 +273,11 @@ func analyzeEpicForSwarm(ctx context.Context, s SwarmStorage, epic *types.Issue)
 		if issue.Status == types.StatusClosed {
 			analysis.ClosedIssues++
 		}
+		// beads-yw1tx: DEFERRED children are deliberately on ice — `bd ready`
+		// excludes them as not-yet-actionable, so swarm scheduling must too.
+		if issue.Status == types.StatusDeferred {
+			analysis.DeferredIssues++
+		}
 
 		// beads-sq19v: getEpicChildren returns only DIRECT parent-child
 		// dependents (one level), so a child that is itself an epic or
@@ -485,18 +491,35 @@ func computeReadyFronts(analysis *SwarmAnalysis) {
 	// getSwarmStatus, which categorizes a closed child as Completed (:760) and
 	// counts a closed dependency as non-blocking (:775). Closed nodes keep
 	// Wave -1 (never seeded into a front, never grabbed by a worker).
+	//
+	// beads-yw1tx: DEFERRED children extend the same "must match the real
+	// actionable-work set" invariant — `bd ready` excludes a deferred issue as
+	// not-yet-actionable, so swarm must never seed it into a wave or count it as
+	// a session either. But deferred differs from closed on the DEPENDENCY axis:
+	// a closed blocker is DONE (satisfied), while a deferred blocker is merely
+	// PAUSED — its dependent is still genuinely blocked until the blocker is
+	// reactivated. So node-exclusion covers both statuses, but only a CLOSED
+	// dependency is treated as satisfied; a deferred dependency keeps blocking.
 	closedStatus := string(types.StatusClosed)
+	deferredStatus := string(types.StatusDeferred)
 	isClosed := func(id string) bool {
 		n, ok := analysis.Issues[id]
 		return ok && n.Status == closedStatus
 	}
+	// isNotSchedulable: a node that must never be seeded into a wave or grabbed
+	// by a worker (completed OR deliberately on ice).
+	isNotSchedulable := func(id string) bool {
+		n, ok := analysis.Issues[id]
+		return ok && (n.Status == closedStatus || n.Status == deferredStatus)
+	}
 
 	// Use Kahn's algorithm for topological sort with level tracking.
-	// inDegree is tracked for OPEN nodes only and counts only unsatisfied
-	// (OPEN) dependencies; a dependency on a closed issue is already done.
+	// inDegree is tracked for SCHEDULABLE nodes only and counts every
+	// unsatisfied dependency; a dependency on a closed issue is already done
+	// (not counted), but a dependency on a deferred issue still blocks.
 	inDegree := make(map[string]int)
 	for id, node := range analysis.Issues {
-		if isClosed(id) {
+		if isNotSchedulable(id) {
 			continue
 		}
 		deg := 0
@@ -508,7 +531,7 @@ func computeReadyFronts(analysis *SwarmAnalysis) {
 		inDegree[id] = deg
 	}
 
-	// Start with all OPEN nodes that have no OPEN dependencies (wave 0)
+	// Start with all schedulable nodes that have no unsatisfied dependencies (wave 0)
 	var currentWave []string
 	for id, degree := range inDegree {
 		if degree == 0 {
@@ -560,10 +583,12 @@ func computeReadyFronts(analysis *SwarmAnalysis) {
 		wave++
 	}
 
-	// Estimated sessions = OPEN issues (each is roughly one session). beads-y6pjs:
-	// closed children are already done, so they must not inflate the session
-	// estimate. TotalIssues/ClosedIssues remain the full display counts.
-	analysis.EstimatedSessions = analysis.TotalIssues - analysis.ClosedIssues
+	// Estimated sessions = SCHEDULABLE issues (each is roughly one session).
+	// beads-y6pjs: closed children are already done; beads-yw1tx: deferred
+	// children are on ice — neither is a worker-session, so both are subtracted
+	// from the estimate. TotalIssues/ClosedIssues/DeferredIssues remain the full
+	// display counts.
+	analysis.EstimatedSessions = analysis.TotalIssues - analysis.ClosedIssues - analysis.DeferredIssues
 }
 
 // renderSwarmAnalysis outputs human-readable analysis.
@@ -625,17 +650,19 @@ func renderSwarmAnalysis(analysis *SwarmAnalysis) {
 
 // SwarmStatus holds the current status of a swarm (computed from beads).
 type SwarmStatus struct {
-	EpicID       string        `json:"epic_id"`
-	EpicTitle    string        `json:"epic_title"`
-	TotalIssues  int           `json:"total_issues"`
-	Completed    []StatusIssue `json:"completed"`
-	Active       []StatusIssue `json:"active"`
-	Ready        []StatusIssue `json:"ready"`
-	Blocked      []StatusIssue `json:"blocked"`
-	Progress     float64       `json:"progress_percent"`
-	ActiveCount  int           `json:"active_count"`
-	ReadyCount   int           `json:"ready_count"`
-	BlockedCount int           `json:"blocked_count"`
+	EpicID        string        `json:"epic_id"`
+	EpicTitle     string        `json:"epic_title"`
+	TotalIssues   int           `json:"total_issues"`
+	Completed     []StatusIssue `json:"completed"`
+	Active        []StatusIssue `json:"active"`
+	Ready         []StatusIssue `json:"ready"`
+	Blocked       []StatusIssue `json:"blocked"`
+	Deferred      []StatusIssue `json:"deferred"`
+	Progress      float64       `json:"progress_percent"`
+	ActiveCount   int           `json:"active_count"`
+	ReadyCount    int           `json:"ready_count"`
+	BlockedCount  int           `json:"blocked_count"`
+	DeferredCount int           `json:"deferred_count"`
 }
 
 // StatusIssue represents an issue in swarm status output.
@@ -751,6 +778,7 @@ func getSwarmStatus(ctx context.Context, s SwarmStorage, epic *types.Issue) (*Sw
 		Active:    []StatusIssue{},
 		Ready:     []StatusIssue{},
 		Blocked:   []StatusIssue{},
+		Deferred:  []StatusIssue{},
 	}
 
 	// Get all child issues of the epic
@@ -810,6 +838,14 @@ func getSwarmStatus(ctx context.Context, s SwarmStorage, epic *types.Issue) (*Sw
 		case types.StatusInProgress:
 			status.Active = append(status.Active, si)
 
+		case types.StatusDeferred:
+			// beads-yw1tx: a deferred child is deliberately on ice, not
+			// actionable. Without this explicit case it fell into `default`,
+			// had no open blockers, and was mis-categorized as Ready —
+			// inflating ReadyCount and inviting a worker to grab a paused
+			// issue. `bd ready` excludes deferred; swarm status must too.
+			status.Deferred = append(status.Deferred, si)
+
 		default: // open or other
 			// Check if blocked by open dependencies
 			deps := dependsOn[issue.ID]
@@ -843,11 +879,15 @@ func getSwarmStatus(ctx context.Context, s SwarmStorage, epic *types.Issue) (*Sw
 	sort.Slice(status.Blocked, func(i, j int) bool {
 		return utils.NaturalCompareIDs(status.Blocked[i].ID, status.Blocked[j].ID) < 0
 	})
+	sort.Slice(status.Deferred, func(i, j int) bool {
+		return utils.NaturalCompareIDs(status.Deferred[i].ID, status.Deferred[j].ID) < 0
+	})
 
 	// Compute counts and progress
 	status.ActiveCount = len(status.Active)
 	status.ReadyCount = len(status.Ready)
 	status.BlockedCount = len(status.Blocked)
+	status.DeferredCount = len(status.Deferred)
 	if status.TotalIssues > 0 {
 		status.Progress = float64(len(status.Completed)) / float64(status.TotalIssues) * 100
 	}
@@ -927,6 +967,18 @@ func renderSwarmStatus(status *SwarmStatus) {
 			}
 			blockerStr := strings.Join(issue.BlockedBy, ", ")
 			fmt.Printf("◌ %s (needs %s)\n", issue.ID, blockerStr)
+		}
+	}
+
+	// Deferred (beads-yw1tx): on ice — surfaced separately so it is never
+	// conflated with Ready/actionable work.
+	if len(status.Deferred) > 0 {
+		fmt.Printf("Deferred:      ")
+		for i, issue := range status.Deferred {
+			if i > 0 {
+				fmt.Printf("               ")
+			}
+			fmt.Printf("❄ %s\n", issue.ID)
 		}
 	}
 

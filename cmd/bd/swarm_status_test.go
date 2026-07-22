@@ -118,6 +118,31 @@ func TestGetSwarmStatus(t *testing.T) {
 		}
 	})
 
+	t.Run("deferred child is categorized Deferred, not Ready (yw1tx)", func(t *testing.T) {
+		// beads-yw1tx: a deferred child has no open blockers, so before the
+		// explicit StatusDeferred case it fell into `default` and was
+		// mis-counted as Ready — inviting a swarm worker to grab a paused issue.
+		// It must land in the Deferred bucket and stay out of ReadyCount.
+		//
+		// MUTATION-VERIFY: delete the `case types.StatusDeferred` arm in
+		// getSwarmStatus and this FAILS — the deferred child reappears in Ready
+		// (ReadyCount 1) and DeferredCount drops to 0.
+		f := newFakeStatusStore()
+		f.pcChild("epic", &types.Issue{ID: "r", Title: "r", Status: types.StatusOpen})
+		f.pcChild("epic", &types.Issue{ID: "iced", Title: "iced", Status: types.StatusDeferred})
+
+		st, err := getSwarmStatus(ctx, f, epic)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if st.ReadyCount != 1 || st.Ready[0].ID != "r" {
+			t.Errorf("only the OPEN child should be Ready, got ready=%+v", st.Ready)
+		}
+		if st.DeferredCount != 1 || len(st.Deferred) != 1 || st.Deferred[0].ID != "iced" {
+			t.Errorf("deferred child must be in the Deferred bucket, got deferred=%+v ready=%+v", st.Deferred, st.Ready)
+		}
+	})
+
 	t.Run("open issue whose blocker is closed becomes Ready", func(t *testing.T) {
 		f := newFakeStatusStore()
 		f.pcChild("epic", &types.Issue{ID: "done", Title: "done", Status: types.StatusClosed})
