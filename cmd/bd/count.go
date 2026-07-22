@@ -427,10 +427,10 @@ func countArgs(cmd *cobra.Command, args []string) error {
 	first := args[0]
 	if key, _, ok := strings.Cut(first, "="); ok && key != "" {
 		if cmd.Flags().Lookup(key) != nil {
-			return fmt.Errorf("bd count does not accept positional arguments; did you mean --%s? (see bd count --help)", key)
+			return argValidationError(cmd, "bd count does not accept positional arguments; did you mean --%s? (see bd count --help)", key)
 		}
 	}
-	return fmt.Errorf("bd count does not accept positional arguments; use flags instead (see bd count --help)")
+	return argValidationError(cmd, "bd count does not accept positional arguments; use flags instead (see bd count --help)")
 }
 
 // applyCountIncludeInfra switches the count filter to the wisps-inclusive

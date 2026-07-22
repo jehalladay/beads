@@ -21,11 +21,11 @@ var (
 // `bd compact somebead --force` silently discarded "somebead" and squashed ALL
 // old Dolt history with rc=0 (beads-jg5e). Make the mistake loud and point at
 // the flags.
-func compactDoltNoArgs(_ *cobra.Command, args []string) error {
+func compactDoltNoArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
-	return fmt.Errorf("bd compact does not accept positional arguments; it operates on the whole database and is configured via flags such as --days/--force (see bd compact --help). Got unexpected argument %q", args[0])
+	return argValidationError(cmd, "bd compact does not accept positional arguments; it operates on the whole database and is configured via flags such as --days/--force (see bd compact --help). Got unexpected argument %q", args[0])
 }
 
 var compactDoltCmd = &cobra.Command{
