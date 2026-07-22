@@ -198,6 +198,35 @@ func populateSyncResultErrorMsgs(result *storage.SyncResult, fatalErr error) {
 	}
 }
 
+// printFederationDivergedGuidance prints recovery guidance (to stderr) when a
+// federation peer merge fails with diverged histories — the two towns have
+// independent commit histories with no common merge base (beads-sa08u). Unlike
+// bd dolt push/pull's diverged guidance, the recovery here is peer↔peer: there
+// is no single "origin" to re-clone or force-push to, so the towns must be
+// re-converged by seeding one from the other's export.
+func printFederationDivergedGuidance(peer string) {
+	w := os.Stderr
+	fmt.Fprintln(w, "")
+	fmt.Fprintf(w, "Federation sync with %q failed: the two towns have diverged\n", peer)
+	fmt.Fprintln(w, "histories with no common merge base. This happens when each town was")
+	fmt.Fprintln(w, "initialized independently (both ran 'bd init') instead of one being")
+	fmt.Fprintln(w, "cloned from the other — so there is no shared ancestor to merge against.")
+	fmt.Fprintln(w, "Retrying will not help; the histories cannot be auto-merged.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Recovery (re-converge on one canonical town):")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "  1. Pick ONE town as canonical. On EACH other town, save local-only")
+	fmt.Fprintln(w, "     issues so nothing is lost:")
+	fmt.Fprintln(w, "       bd export --all -o /tmp/beads-local.jsonl")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "  2. Re-seed each non-canonical town by cloning the canonical town's")
+	fmt.Fprintln(w, "     database (shared history), then re-apply the saved issues:")
+	fmt.Fprintln(w, "       bd import /tmp/beads-local.jsonl")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Tip: to avoid this, federate towns that share history — seed a new town")
+	fmt.Fprintln(w, "by cloning an existing one rather than running 'bd init' on each.")
+}
+
 func runFederationSync(cmd *cobra.Command, args []string) error {
 	evt := metrics.NewCommandEvent("federation-sync")
 	defer func() {
@@ -268,6 +297,19 @@ func runFederationSync(cmd *cobra.Command, args []string) error {
 			populateSyncResultErrorMsgs(result, err)
 			if !jsonOutput {
 				fmt.Printf("  %s %v\n", ui.RenderFail("✗"), err)
+				// beads-sa08u: when the peer merge fails because the two towns
+				// were independently init'd (diverged histories with no common
+				// ancestor), a bare "merge failed: ..." line leaves the operator
+				// with no way forward. `bd dolt push/pull` classify the SAME Dolt
+				// error via isDivergedHistoryErr and print recovery guidance —
+				// but their guidance (bd bootstrap / bd dolt push --force) is
+				// local↔remote-origin specific and WRONG for a peer↔peer
+				// federation divergence (neither town is the other's origin), so
+				// emit federation-appropriate guidance instead. (Human-only; the
+				// --json path already carries the error string via o35h0.)
+				if isDivergedHistoryErr(err) {
+					printFederationDivergedGuidance(peer)
+				}
 			}
 			continue
 		}
