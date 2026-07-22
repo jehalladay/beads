@@ -59,12 +59,19 @@ func runRenameProxiedServer(ctx context.Context, oldID, newID string, force bool
 		return HandleErrorRespectJSON("failed to rename issue: %v", err)
 	}
 
-	refWarning := ""
+	// beads-kjuye: a ref-rewrite failure must ROLL THE RENAME BACK, not commit it
+	// with a soft warning. The rename + cross-issue reference rewrite are one
+	// composite write staged on the single UOW; returning here (before Commit)
+	// leaves nothing committed — the deferred uw.Close() calls
+	// RollbackUnlessCommitted (uow.go), so the OLD id keeps resolving and no
+	// dangling old-id reference survives. This is true parity with the atomic
+	// DIRECT path (rename.go: one store.RunInTransaction whose ref-rewrite error
+	// rolls the rename back — beads-uorhi). Previously this swallowed the error
+	// into refWarning and committed the rename + an arbitrary partial suffix of
+	// ref-rewrites at RC=0, re-introducing the exact pre-uorhi dangling-ref bug on
+	// the proxied path.
 	if err := updateReferencesInAllIssuesProxied(ctx, uw, oldID, newID); err != nil {
-		refWarning = err.Error()
-		if !jsonOutput {
-			fmt.Printf("Warning: failed to update some references: %v\n", err)
-		}
+		return HandleErrorRespectJSON("failed to update references (rename rolled back): %v", err)
 	}
 
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: rename %s -> %s", oldID, newID)); err != nil && !isDoltNothingToCommit(err) {
@@ -76,9 +83,6 @@ func runRenameProxiedServer(ctx context.Context, oldID, newID string, force bool
 			"renamed": true,
 			"old_id":  oldID,
 			"new_id":  newID,
-		}
-		if refWarning != "" {
-			out["ref_update_warning"] = refWarning
 		}
 		return outputJSON(out)
 	}
