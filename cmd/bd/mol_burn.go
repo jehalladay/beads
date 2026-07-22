@@ -32,6 +32,49 @@ func printBurnDryRunIssues(subgraph *TemplateSubgraph, ephemeralOnly bool) {
 	}
 }
 
+// outputBurnDryRunJSON emits the `bd mol burn --dry-run --json` preview as a
+// parseable JSON envelope (beads-tcfwk, continuation of beads-51w8c), mirroring
+// the fields printBurnDryRunIssues shows so a scripted preview parses with
+// `| jq` instead of getting the plaintext block. ephemeralOnly matches the
+// wisp-vs-persistent leg: a wisp burn only deletes ephemeral children, a
+// persistent mol burn deletes the whole subgraph. Titles are sanitized via
+// displayTitle for the same untrusted-import reason as the plaintext path
+// (7n9y sink-class); the dry-run performs no mutation so this preview does not
+// alter persisted data.
+func outputBurnDryRunJSON(subgraph *TemplateSubgraph, moleculeID string, ephemeralOnly bool) error {
+	type dryRunIssue struct {
+		ID     string `json:"id"`
+		Title  string `json:"title"`
+		Status string `json:"status"`
+		Root   bool   `json:"root,omitempty"`
+	}
+	issues := make([]dryRunIssue, 0, len(subgraph.Issues))
+	for _, issue := range subgraph.Issues {
+		if ephemeralOnly && !issue.Ephemeral {
+			continue
+		}
+		issues = append(issues, dryRunIssue{
+			ID:     issue.ID,
+			Title:  displayTitle(issue.Title),
+			Status: string(issue.Status),
+			Root:   issue.ID == subgraph.Root.ID,
+		})
+	}
+	phase := "mol"
+	if ephemeralOnly {
+		phase = "wisp"
+	}
+	return outputJSON(map[string]interface{}{
+		"dry_run":        true,
+		"molecule_id":    moleculeID,
+		"phase":          phase,
+		"root_title":     displayTitle(subgraph.Root.Title),
+		"would_delete":   len(issues),
+		"creates_digest": false,
+		"issues":         issues,
+	})
+}
+
 var molBurnCmd = &cobra.Command{
 	Use:   "burn <molecule-id> [molecule-id...]",
 	Short: "Delete a molecule without creating a digest",
@@ -187,25 +230,50 @@ func burnMultipleMolecules(ctx context.Context, moleculeIDs []string, dryRun, fo
 	}
 
 	if dryRun {
-		if !jsonOutput {
-			fmt.Printf("\nDry run: would burn %d wisp(s) and %d persistent molecule(s)\n", len(wispIDs), len(persistentIDs))
-			if len(wispIDs) > 0 {
-				fmt.Printf("\nWisps to delete:\n")
-				for _, id := range wispIDs {
-					fmt.Printf("  - %s\n", id)
+		if jsonOutput {
+			// beads-tcfwk: the batch dry-run already suppressed plaintext under
+			// --json, but emitted NOTHING — so `bd mol burn a b --dry-run --json |
+			// jq` failed on empty input. Emit a parseable envelope at parity with
+			// the single-molecule path so the whole `mol burn --dry-run --json`
+			// surface is machine-readable. Slices are made non-nil ([] not null),
+			// matching the BatchBurnResult nil-slice contract (beads-m9gn).
+			nonNil := func(s []string) []string {
+				if s == nil {
+					return []string{}
 				}
+				return s
 			}
-			if len(persistentIDs) > 0 {
-				fmt.Printf("\nPersistent molecules to delete:\n")
-				for _, id := range persistentIDs {
-					fmt.Printf("  - %s\n", id)
-				}
-			}
+			_ = outputJSON(map[string]interface{}{
+				"dry_run":        true,
+				"batch":          true,
+				"would_burn":     len(wispIDs) + len(persistentIDs),
+				"wisp_ids":       nonNil(wispIDs),
+				"persistent_ids": nonNil(persistentIDs),
+				"failed_resolve": nonNil(failedResolve),
+				"creates_digest": false,
+			})
 			if len(failedResolve) > 0 {
-				fmt.Printf("\nFailed to resolve (%d):\n", len(failedResolve))
-				for _, id := range failedResolve {
-					fmt.Printf("  - %s\n", id)
-				}
+				return &exitError{Code: 1}
+			}
+			return nil
+		}
+		fmt.Printf("\nDry run: would burn %d wisp(s) and %d persistent molecule(s)\n", len(wispIDs), len(persistentIDs))
+		if len(wispIDs) > 0 {
+			fmt.Printf("\nWisps to delete:\n")
+			for _, id := range wispIDs {
+				fmt.Printf("  - %s\n", id)
+			}
+		}
+		if len(persistentIDs) > 0 {
+			fmt.Printf("\nPersistent molecules to delete:\n")
+			for _, id := range persistentIDs {
+				fmt.Printf("  - %s\n", id)
+			}
+		}
+		if len(failedResolve) > 0 {
+			fmt.Printf("\nFailed to resolve (%d):\n", len(failedResolve))
+			for _, id := range failedResolve {
+				fmt.Printf("  - %s\n", id)
 			}
 		}
 		if len(failedResolve) > 0 {
@@ -318,6 +386,12 @@ func burnWispMolecule(ctx context.Context, resolvedID string, dryRun, force bool
 	}
 
 	if dryRun {
+		// beads-tcfwk (8lqh --json-contract family, continuation of beads-51w8c):
+		// under --json emit a parseable preview envelope instead of the plaintext
+		// block, so a scripted `bd mol burn <wisp> --dry-run --json | jq` parses.
+		if jsonOutput {
+			return outputBurnDryRunJSON(subgraph, resolvedID, true)
+		}
 		fmt.Printf("\nDry run: would burn wisp %s\n\n", resolvedID)
 		fmt.Printf("Root: %s\n", displayTitle(subgraph.Root.Title))
 		fmt.Printf("\nWisp issues to delete (%d total):\n", len(wispIDs))
@@ -379,6 +453,12 @@ func burnPersistentMolecule(ctx context.Context, resolvedID string, dryRun, forc
 	}
 
 	if dryRun {
+		// beads-tcfwk (8lqh --json-contract family, continuation of beads-51w8c):
+		// under --json emit a parseable preview envelope instead of the plaintext
+		// block, so a scripted `bd mol burn <mol> --dry-run --json | jq` parses.
+		if jsonOutput {
+			return outputBurnDryRunJSON(subgraph, resolvedID, false)
+		}
 		fmt.Printf("\nDry run: would burn mol %s\n\n", resolvedID)
 		fmt.Printf("Root: %s\n", displayTitle(subgraph.Root.Title))
 		fmt.Printf("\nIssues to delete (%d total):\n", len(issueIDs))

@@ -279,6 +279,16 @@ func runWispCreateCore(cmd *cobra.Command, args []string) error {
 	// of fanout (e.g. for patrol wisps whose steps are inlined at prime time
 	// rather than tracked as beads). GH#3872.
 	if dryRun {
+		issuesToShow := subgraph.Issues
+		if rootOnly && len(issuesToShow) > 0 {
+			issuesToShow = issuesToShow[:1]
+		}
+		// beads-tcfwk (8lqh --json-contract family, continuation of beads-51w8c):
+		// under --json emit a parseable preview envelope instead of the plaintext
+		// block, so a scripted `bd mol wisp <proto> --dry-run --json | jq` parses.
+		if jsonOutput {
+			return outputWispCreateDryRunJSON(issuesToShow, vars, protoID, rootOnly, len(subgraph.Issues))
+		}
 		if rootOnly {
 			skipped := len(subgraph.Issues) - 1
 			fmt.Printf("\nDry run: would create wisp with 1 issue (root only) from proto %s\n", protoID)
@@ -289,10 +299,6 @@ func runWispCreateCore(cmd *cobra.Command, args []string) error {
 			fmt.Printf("\nDry run: would create wisp with %d issues from proto %s\n\n", len(subgraph.Issues), protoID)
 		}
 		fmt.Printf("Storage: main database (ephemeral=true, not synced via git)\n\n")
-		issuesToShow := subgraph.Issues
-		if rootOnly && len(issuesToShow) > 0 {
-			issuesToShow = issuesToShow[:1]
-		}
 		printWispCreateDryRunPreview(os.Stdout, issuesToShow, vars)
 		return nil
 	}
@@ -339,6 +345,45 @@ func printWispCreateDryRunPreview(w io.Writer, issues []*types.Issue, vars map[s
 		newTitle := substituteVariables(issue.Title, vars)
 		fmt.Fprintf(w, "  - %s (from %s)\n", displayTitle(newTitle), issue.ID)
 	}
+}
+
+// outputWispCreateDryRunJSON emits the `bd mol wisp <proto> --dry-run --json`
+// preview as a parseable JSON envelope (beads-tcfwk, continuation of
+// beads-51w8c), mirroring printWispCreateDryRunPreview so a scripted preview
+// parses with `| jq` instead of getting the plaintext block. totalIssues is the
+// full subgraph size (used to report the --root-only skip count); issuesToShow
+// is already truncated to the root when rootOnly. Titles are variable-
+// substituted then sanitized via displayTitle for the same untrusted-import
+// reason as the plaintext path (7n9y sink-class); the dry-run performs no
+// mutation so this preview does not alter persisted data.
+func outputWispCreateDryRunJSON(issuesToShow []*types.Issue, vars map[string]string, protoID string, rootOnly bool, totalIssues int) error {
+	type dryRunIssue struct {
+		Title  string `json:"title"`
+		FromID string `json:"from_id"`
+	}
+	issues := make([]dryRunIssue, 0, len(issuesToShow))
+	for _, issue := range issuesToShow {
+		issues = append(issues, dryRunIssue{
+			Title:  displayTitle(substituteVariables(issue.Title, vars)),
+			FromID: issue.ID,
+		})
+	}
+	out := map[string]interface{}{
+		"dry_run":      true,
+		"proto_id":     protoID,
+		"storage":      "ephemeral",
+		"root_only":    rootOnly,
+		"would_create": len(issues),
+		"issues":       issues,
+	}
+	if rootOnly {
+		skipped := totalIssues - 1
+		if skipped < 0 {
+			skipped = 0
+		}
+		out["skipped_children"] = skipped
+	}
+	return outputJSON(out)
 }
 
 // isProtoIssue checks if an issue is a proto (has the template label)
