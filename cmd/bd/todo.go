@@ -96,6 +96,17 @@ var addTodoCmd = &cobra.Command{
 			CreatedBy:   getActorWithGit(),
 		}
 
+		// beads-9dsym: in proxiedServerMode the global `store` is nil (main.go
+		// wires uowProvider and returns before store init), so getStore().CreateIssue
+		// below fails with "storage is nil" for every hub-connected crew. Route to
+		// a UOW-based handler, mirroring `bd create`/`bd q` (create_proxied_server.go /
+		// quick_proxied_server.go) — the aocj/fszd/eh0z proxied-routing umbrella. The
+		// input parsing + priority validation above run BEFORE the split, so one site
+		// covers both modes.
+		if usesProxiedServer() {
+			return runTodoAddProxiedServer(rootCtx, issue)
+		}
+
 		if err := getStore().CreateIssue(ctx, issue, getActorWithGit()); err != nil {
 			// beads-j9ir: honor the --json error contract on the store-error path
 			// (bd todo add --json marshals the issue on success, so a store error
@@ -149,6 +160,14 @@ func runTodoListCore(cmd *cobra.Command, _ []string) error {
 		filter.Status = &openStatus
 	}
 
+	// beads-9dsym: getStore() is nil in proxiedServerMode (see the add path) —
+	// route the list read through the proxied UOW SearchIssues, mirroring
+	// list_proxied_server.go. The task-type/open filter is built above, before the
+	// split, so one site covers both modes.
+	if usesProxiedServer() {
+		return runTodoListProxiedServer(ctx, filter)
+	}
+
 	issues, err := getStore().SearchIssues(ctx, "", filter)
 	if err != nil {
 		// beads-j9ir: honor the --json error contract on the store-error path
@@ -156,6 +175,13 @@ func runTodoListCore(cmd *cobra.Command, _ []string) error {
 		return HandleErrorRespectJSON("failed to list TODOs: %v", err)
 	}
 
+	return renderTodoList(issues)
+}
+
+// renderTodoList emits the TODO list output — --json array or the sorted human
+// table — shared by the direct path (runTodoListCore) and the proxied path
+// (runTodoListProxiedServer, beads-9dsym) so both render byte-identically.
+func renderTodoList(issues []*types.Issue) error {
 	if jsonOutput {
 		// beads-s2oy: outputJSON for schema_version + BD_JSON_ENVELOPE.
 		return outputJSON(issues)
@@ -217,6 +243,18 @@ var doneTodoCmd = &cobra.Command{
 		reason, _ := cmd.Flags().GetString("reason")
 		reason = todoDoneReasonOrDefault(reason)
 		force, _ := cmd.Flags().GetBool("force")
+
+		// beads-9dsym: getStore() is nil in proxiedServerMode (see the add/list
+		// paths) — route `bd todo done` through the proxied UOW close stack so it
+		// works for hub-connected crew instead of panicking on the nil store. The
+		// proxied handler preserves the SAME behavior this direct path has: the
+		// three bd-close pre-close guards + --force (beads-k96re), the audit-file
+		// trail + completed-molecule auto-close cascade (beads-58kg8), the
+		// {"closed":[...],"reason":...} --json shape, and the partial-failure exit
+		// code (beads-xi35). Reason/force are parsed above, before the split.
+		if usesProxiedServer() {
+			return runTodoDoneProxiedServer(ctx, args, reason, force)
+		}
 
 		var closedIDs []string
 		failedCount := 0
