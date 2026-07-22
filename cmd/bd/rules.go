@@ -139,6 +139,17 @@ func ParseRuleFile(path string) (RuleFile, error) {
 // extractAllDirectives parses Do and Don't blocks from rule content.
 // Don't patterns are checked first to avoid false matches (since "Don't" contains "Do").
 func extractAllDirectives(content string) (doLines, dontLines []string) {
+	// beads-geelj: seed both to [] so a rule file with no Do:/Don't: block
+	// yields empty slices, not nil. RuleFile.DoLines/DontLines
+	// (json:"do_lines"/"dont_lines", NO omitempty) are emitted inside
+	// AuditResult.Rules by `bd rules audit --json`; a naked nil named-return
+	// marshaled to null while sibling fields (keywords, always non-nil via the
+	// ExtractKeywords body fallback) emitted []. Same nil-slice-array contract
+	// as tamf/r64h, which fixed only the TOP-LEVEL contradictions/
+	// merge_candidates — this is the nested per-RuleFile facet they missed.
+	doLines = []string{}
+	dontLines = []string{}
+
 	lines := strings.Split(content, "\n")
 
 	// blockType: 0=none, 1=do, 2=dont

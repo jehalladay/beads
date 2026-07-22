@@ -463,6 +463,46 @@ func TestRulesRunAudit_MissingDirJSONArrays(t *testing.T) {
 	}
 }
 
+// TestRulesRunAudit_NoDirectiveBlockJSONArrays covers beads-geelj: a rule file
+// with NO Do:/Don't: block makes extractAllDirectives return nil slices, so the
+// per-RuleFile DoLines/DontLines fields (json:"do_lines"/"dont_lines", NO
+// omitempty) marshaled to null inside AuditResult.Rules — the nested facet the
+// tamf/r64h top-level fix (contradictions/merge_candidates) did not cover. The
+// fix seeds both to [] in extractAllDirectives; the string check on the marshaled
+// JSON is the authoritative tooth (a typed decode conflates null and []).
+func TestRulesRunAudit_NoDirectiveBlockJSONArrays(t *testing.T) {
+	dir := tempRulesDir(t)
+	// Prose only: no **Do:**/**Don't:** block → extractAllDirectives matches
+	// nothing → nil named returns before the fix.
+	writeRule(t, dir, "prose-only", `# Some Rule
+
+Just prose describing a policy with no directive blocks at all.
+`)
+
+	result, err := RunAudit(dir, 0.6)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Rules) != 1 {
+		t.Fatalf("rules = %d, want 1", len(result.Rules))
+	}
+	rf := result.Rules[0]
+	if rf.DoLines == nil {
+		t.Error("RuleFile.DoLines must be a non-nil slice for a directive-free rule (else --json emits null)")
+	}
+	if rf.DontLines == nil {
+		t.Error("RuleFile.DontLines must be a non-nil slice for a directive-free rule (else --json emits null)")
+	}
+	b, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(b)
+	if strings.Contains(s, `"do_lines":null`) || strings.Contains(s, `"dont_lines":null`) {
+		t.Errorf("directive-free rule --json must emit [] not null for do_lines/dont_lines, got %s", s)
+	}
+}
+
 func TestRulesRunAudit_SingleRule(t *testing.T) {
 	dir := tempRulesDir(t)
 	writeRule(t, dir, "only-rule", `# Only Rule
