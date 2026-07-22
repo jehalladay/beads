@@ -92,10 +92,15 @@ func runBlockedProxiedServer(cmd *cobra.Command, ctx context.Context) {
 	// beads-x5c76: --assignee filter parity (proxied twin of the direct path in
 	// ready.go). Trim to match the write-side trim + case-insensitive compare
 	// convention (beads-sabd/llzt); applied in GetBlockedIssuesInTx.
-	if assignee, _ := cmd.Flags().GetString("assignee"); strings.TrimSpace(assignee) != "" {
+	// beads-9tljp: --unassigned is the triage complement — mirror ready.go:288
+	// mutual-exclusion precedence (--assignee only applies when NOT --unassigned;
+	// the unassigned flag wins). Proxied twin of the direct path.
+	unassigned, _ := cmd.Flags().GetBool("unassigned")
+	if assignee, _ := cmd.Flags().GetString("assignee"); strings.TrimSpace(assignee) != "" && !unassigned {
 		a := strings.TrimSpace(assignee)
 		filter.Assignee = &a
 	}
+	filter.Unassigned = unassigned
 
 	blocked, err := uw.IssueUseCase().GetBlockedIssues(ctx, filter)
 	if err != nil {

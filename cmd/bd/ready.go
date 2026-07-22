@@ -514,10 +514,18 @@ var blockedCmd = &cobra.Command{
 		// applied as a post-query set filter in GetBlockedIssuesInTx, mirroring the
 		// ParentID handling (no new SQL — the loaded issue objects already carry
 		// Assignee).
-		if assignee, _ := cmd.Flags().GetString("assignee"); strings.TrimSpace(assignee) != "" {
+		// beads-9tljp: --unassigned is the triage complement of --assignee — "what
+		// blocked work is UNOWNED / needs assigning?". Mirror the ready.go:288
+		// mutual-exclusion precedence: --assignee only applies when NOT --unassigned
+		// (an explicit assignee and "show only unassigned" are contradictory; the
+		// unassigned flag wins). Applied as a post-query set filter in
+		// GetBlockedIssuesInTx alongside the assignee branch.
+		unassigned, _ := cmd.Flags().GetBool("unassigned")
+		if assignee, _ := cmd.Flags().GetString("assignee"); strings.TrimSpace(assignee) != "" && !unassigned {
 			a := strings.TrimSpace(assignee)
 			blockedFilter.Assignee = &a
 		}
+		blockedFilter.Unassigned = unassigned
 		blocked, err := store.GetBlockedIssues(ctx, blockedFilter)
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
@@ -979,6 +987,7 @@ func init() {
 	readyCmd.Flags().String("has-metadata-key", "", "Filter issues that have this metadata key set")
 	rootCmd.AddCommand(readyCmd)
 	blockedCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
-	blockedCmd.Flags().StringP("assignee", "a", "", "Filter blocked issues by assignee") // beads-x5c76: parity with bd ready/list
+	blockedCmd.Flags().StringP("assignee", "a", "", "Filter blocked issues by assignee")     // beads-x5c76: parity with bd ready/list
+	blockedCmd.Flags().BoolP("unassigned", "u", false, "Show only unassigned blocked issues") // beads-9tljp: parity with bd ready --unassigned
 	rootCmd.AddCommand(blockedCmd)
 }

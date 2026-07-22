@@ -255,3 +255,96 @@ func TestEmbeddedBlockedAssigneeFilter(t *testing.T) {
 		}
 	}
 }
+
+// beads-9tljp: bd blocked --unassigned filters to blocked work that has NO
+// owner — the triage complement of x5c76's --assignee ("what blocked work
+// needs assigning?"), at parity with bd ready --unassigned. Asserts (1) an
+// unassigned blocked issue is present, (2) an assigned blocked issue is
+// excluded, (3) --json carries the same filtered set, (4) the mutual-exclusion
+// precedence (ready.go:288) — --unassigned wins over --assignee, so
+// `--unassigned --assignee bob` still returns only the unassigned issue.
+func TestEmbeddedBlockedUnassignedFilter(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "buf")
+
+	blocker := bdCreate(t, bd, dir, "shared blocker", "--type", "task")
+	blockedOrphan := bdCreate(t, bd, dir, "unowned blocked", "--type", "task")
+	blockedBob := bdCreate(t, bd, dir, "bob blocked", "--type", "task", "--assignee", "bob")
+
+	for _, dep := range [][]string{
+		{"dep", "add", blockedOrphan.ID, blocker.ID},
+		{"dep", "add", blockedBob.ID, blocker.ID},
+	} {
+		cmd := exec.Command(bd, dep...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("dep add %v failed: %v\n%s", dep, err, out)
+		}
+	}
+
+	// --unassigned: the unowned blocked issue present, the assigned one absent.
+	cmd := exec.Command(bd, "blocked", "--unassigned")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd blocked --unassigned failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), blockedOrphan.ID) {
+		t.Errorf("expected unowned blocked %s in --unassigned output:\n%s", blockedOrphan.ID, stdout.String())
+	}
+	if strings.Contains(stdout.String(), blockedBob.ID) {
+		t.Errorf("assigned blocked %s leaked into --unassigned output:\n%s", blockedBob.ID, stdout.String())
+	}
+
+	// Mutual-exclusion (ready.go:288 mirror): --unassigned wins over --assignee.
+	cmd = exec.Command(bd, "blocked", "--unassigned", "--assignee", "bob")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err = runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd blocked --unassigned --assignee bob failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), blockedOrphan.ID) {
+		t.Errorf("--unassigned should win over --assignee bob; expected unowned %s:\n%s", blockedOrphan.ID, stdout.String())
+	}
+	if strings.Contains(stdout.String(), blockedBob.ID) {
+		t.Errorf("--unassigned should win over --assignee bob; bob's %s must not appear:\n%s", blockedBob.ID, stdout.String())
+	}
+
+	// --json carries the same filtered set: the unowned one, none with an owner.
+	cmd = exec.Command(bd, "blocked", "--unassigned", "--json")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err = runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd blocked --unassigned --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	s := strings.TrimSpace(stdout.String())
+	start := strings.IndexAny(s, "[{")
+	if start < 0 {
+		t.Fatalf("no JSON in blocked --unassigned --json output: %s", s)
+	}
+	var blocked []*types.BlockedIssue
+	if jerr := json.Unmarshal([]byte(s[start:]), &blocked); jerr != nil {
+		t.Fatalf("invalid JSON: %v\n%s", jerr, s[start:])
+	}
+	sawOrphan := false
+	for _, b := range blocked {
+		if strings.TrimSpace(b.Assignee) != "" {
+			t.Errorf("assigned issue %s (assignee=%q) in --unassigned --json", b.ID, b.Assignee)
+		}
+		if b.ID == blockedOrphan.ID {
+			sawOrphan = true
+		}
+	}
+	if !sawOrphan {
+		t.Errorf("unowned blocked %s missing from --unassigned --json:\n%s", blockedOrphan.ID, s[start:])
+	}
+}

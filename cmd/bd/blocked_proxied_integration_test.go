@@ -146,6 +146,45 @@ func TestProxiedServerBlocked(t *testing.T) {
 		}
 	})
 
+	// beads-9tljp: bd blocked --unassigned filters to unowned blocked work, at
+	// parity with bd ready --unassigned. Proxied twin of the direct-path
+	// TestEmbeddedBlockedUnassignedFilter — exercises runBlockedProxiedServer's
+	// --unassigned read + the mutual-exclusion precedence (ready.go:288 mirror).
+	t.Run("unassigned_filter", func(t *testing.T) {
+		p := bdProxiedInit(t, bd, "bk6")
+		blocker := bdProxiedCreate(t, bd, p.dir, "Shared blocker")
+		orphan := bdProxiedCreate(t, bd, p.dir, "Unowned blocked", "--deps", "depends-on:"+blocker.ID)
+		bob := bdProxiedCreate(t, bd, p.dir, "Bob blocked", "--assignee", "bob", "--deps", "depends-on:"+blocker.ID)
+
+		got := bdProxiedBlockedJSON(t, bd, p, "--unassigned")
+		ids := map[string]bool{}
+		for _, bi := range got {
+			ids[bi.ID] = true
+			if strings.TrimSpace(bi.Assignee) != "" {
+				t.Errorf("assigned issue %s (assignee=%q) in --unassigned result", bi.ID, bi.Assignee)
+			}
+		}
+		if !ids[orphan.ID] {
+			t.Errorf("expected unowned blocked %s in --unassigned result", orphan.ID)
+		}
+		if ids[bob.ID] {
+			t.Errorf("bob's blocked %s leaked into --unassigned result", bob.ID)
+		}
+
+		// Mutual-exclusion: --unassigned wins over --assignee bob.
+		got = bdProxiedBlockedJSON(t, bd, p, "--unassigned", "--assignee", "bob")
+		ids = map[string]bool{}
+		for _, bi := range got {
+			ids[bi.ID] = true
+		}
+		if !ids[orphan.ID] {
+			t.Errorf("--unassigned should win over --assignee bob; expected unowned %s", orphan.ID)
+		}
+		if ids[bob.ID] {
+			t.Errorf("--unassigned should win over --assignee bob; bob's %s must not appear", bob.ID)
+		}
+	})
+
 	// beads-wu0u: bd blocked --parent <nonexistent> must error (exit != 0) with a
 	// parseable JSON error under --json — not silently return [] exit 0. Proxied
 	// twin of the direct-path check (beads-d5jg) / bd list --parent (beads-n8lv):

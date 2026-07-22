@@ -402,6 +402,13 @@ func GetBlockedIssuesInTx(ctx context.Context, tx DBTX, filter types.WorkFilter)
 		if haveAssigneeFilter && strings.ToLower(issue.Assignee) != assigneeFilter {
 			continue
 		}
+		// beads-9tljp: --unassigned triage filter — drop any issue that has an
+		// owner, keeping only unowned blocked work ("what needs assigning?").
+		// Complement of the x5c76 assignee branch; the RunE mutual-exclusion
+		// (ready.go:288 mirror) guarantees Assignee is nil when Unassigned is set.
+		if filter.Unassigned && strings.TrimSpace(issue.Assignee) != "" {
+			continue
+		}
 		results = append(results, &types.BlockedIssue{
 			Issue:          *issue,
 			BlockedByCount: len(blockerIDs),
