@@ -478,13 +478,37 @@ func computeReadyFronts(analysis *SwarmAnalysis) {
 		return
 	}
 
-	// Use Kahn's algorithm for topological sort with level tracking
-	inDegree := make(map[string]int)
-	for id, node := range analysis.Issues {
-		inDegree[id] = len(node.DependsOn)
+	// beads-y6pjs: CLOSED children are completed work, not worker-sessions.
+	// Exclude them from the schedulable graph so waves / MaxParallelism /
+	// EstimatedSessions reflect only OPEN actionable work, and treat a
+	// dependency on a closed issue as already satisfied — mirroring
+	// getSwarmStatus, which categorizes a closed child as Completed (:760) and
+	// counts a closed dependency as non-blocking (:775). Closed nodes keep
+	// Wave -1 (never seeded into a front, never grabbed by a worker).
+	closedStatus := string(types.StatusClosed)
+	isClosed := func(id string) bool {
+		n, ok := analysis.Issues[id]
+		return ok && n.Status == closedStatus
 	}
 
-	// Start with all nodes that have no dependencies (wave 0)
+	// Use Kahn's algorithm for topological sort with level tracking.
+	// inDegree is tracked for OPEN nodes only and counts only unsatisfied
+	// (OPEN) dependencies; a dependency on a closed issue is already done.
+	inDegree := make(map[string]int)
+	for id, node := range analysis.Issues {
+		if isClosed(id) {
+			continue
+		}
+		deg := 0
+		for _, depID := range node.DependsOn {
+			if !isClosed(depID) {
+				deg++
+			}
+		}
+		inDegree[id] = deg
+	}
+
+	// Start with all OPEN nodes that have no OPEN dependencies (wave 0)
 	var currentWave []string
 	for id, degree := range inDegree {
 		if degree == 0 {
@@ -536,8 +560,10 @@ func computeReadyFronts(analysis *SwarmAnalysis) {
 		wave++
 	}
 
-	// Estimated sessions = total issues (each issue is roughly one session)
-	analysis.EstimatedSessions = analysis.TotalIssues
+	// Estimated sessions = OPEN issues (each is roughly one session). beads-y6pjs:
+	// closed children are already done, so they must not inflate the session
+	// estimate. TotalIssues/ClosedIssues remain the full display counts.
+	analysis.EstimatedSessions = analysis.TotalIssues - analysis.ClosedIssues
 }
 
 // renderSwarmAnalysis outputs human-readable analysis.

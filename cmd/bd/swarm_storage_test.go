@@ -192,14 +192,101 @@ func TestAnalyzeEpicForSwarm(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
+		// TotalIssues/ClosedIssues are display counts and keep counting all
+		// children (2 total, 1 closed).
 		if a.TotalIssues != 2 || a.ClosedIssues != 1 {
 			t.Fatalf("counts wrong: total=%d closed=%d", a.TotalIssues, a.ClosedIssues)
 		}
 		if !a.Swarmable || len(a.Errors) != 0 {
 			t.Fatalf("clean chain should be swarmable, got errors=%v", a.Errors)
 		}
-		if a.Issues["b"].Wave != 1 || a.Issues["a"].Wave != 0 {
-			t.Errorf("wave assignment wrong: a=%d b=%d", a.Issues["a"].Wave, a.Issues["b"].Wave)
+		// beads-y6pjs: b is CLOSED — it is not a worker-session and must never be
+		// scheduled into a wave (Wave stays -1). Only the open leaf 'a' is a
+		// schedulable root at wave 0.
+		if a.Issues["a"].Wave != 0 {
+			t.Errorf("open root should be wave 0, got %d", a.Issues["a"].Wave)
+		}
+		if a.Issues["b"].Wave != -1 {
+			t.Errorf("closed child must NOT be scheduled into a wave, got wave %d", a.Issues["b"].Wave)
+		}
+		// EstimatedSessions/MaxParallelism reflect only OPEN actionable work.
+		if a.EstimatedSessions != 1 {
+			t.Errorf("EstimatedSessions should exclude closed children (want 1), got %d", a.EstimatedSessions)
+		}
+		// No ready front may list the closed issue.
+		for _, front := range a.ReadyFronts {
+			for _, id := range front.Issues {
+				if id == "b" {
+					t.Errorf("closed issue b appeared in ready front wave %d", front.Wave)
+				}
+			}
+		}
+	})
+
+	t.Run("closed children excluded from waves, sessions, and parallelism", func(t *testing.T) {
+		// beads-y6pjs: two inDegree-0 roots (one open, one CLOSED) plus an open
+		// leaf depending on the open root. Without the closed-exclusion the closed
+		// root would seed wave 0 alongside the open root (MaxParallelism 2) and
+		// count as a session; the analysis must instead reflect only open work.
+		f := newFakeSwarmStore()
+		f.dependents["epic"] = []*types.Issue{
+			{ID: "r1", Title: "open root", Status: types.StatusOpen},
+			{ID: "r2", Title: "done root", Status: types.StatusClosed},
+			{ID: "leaf", Title: "leaf", Status: types.StatusOpen},
+		}
+		f.depRecords["r1"] = []*types.Dependency{{DependsOnID: "epic", Type: types.DepParentChild}}
+		f.depRecords["r2"] = []*types.Dependency{{DependsOnID: "epic", Type: types.DepParentChild}}
+		f.depRecords["leaf"] = []*types.Dependency{
+			{DependsOnID: "epic", Type: types.DepParentChild},
+			{DependsOnID: "r1", Type: types.DepBlocks},
+		}
+		a, err := analyzeEpicForSwarm(ctx, f, epic)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if a.TotalIssues != 3 || a.ClosedIssues != 1 {
+			t.Fatalf("counts wrong: total=%d closed=%d", a.TotalIssues, a.ClosedIssues)
+		}
+		if a.EstimatedSessions != 2 {
+			t.Errorf("EstimatedSessions want 2 (open only), got %d", a.EstimatedSessions)
+		}
+		if a.MaxParallelism != 1 {
+			t.Errorf("MaxParallelism want 1 (closed root must not inflate wave 0), got %d", a.MaxParallelism)
+		}
+		if a.Issues["r2"].Wave != -1 {
+			t.Errorf("closed root must not be scheduled, got wave %d", a.Issues["r2"].Wave)
+		}
+		if a.Issues["r1"].Wave != 0 || a.Issues["leaf"].Wave != 1 {
+			t.Errorf("open chain wave wrong: r1=%d leaf=%d", a.Issues["r1"].Wave, a.Issues["leaf"].Wave)
+		}
+	})
+
+	t.Run("closed dependency is treated as satisfied", func(t *testing.T) {
+		// beads-y6pjs: an open leaf whose only blocker is CLOSED must be READY at
+		// wave 0 (the closed blocker is done — mirrors getSwarmStatus treating a
+		// closed dependency as satisfied). The closed blocker itself is excluded.
+		f := newFakeSwarmStore()
+		f.dependents["epic"] = []*types.Issue{
+			{ID: "done", Title: "done", Status: types.StatusClosed},
+			{ID: "next", Title: "next", Status: types.StatusOpen},
+		}
+		f.depRecords["done"] = []*types.Dependency{{DependsOnID: "epic", Type: types.DepParentChild}}
+		f.depRecords["next"] = []*types.Dependency{
+			{DependsOnID: "epic", Type: types.DepParentChild},
+			{DependsOnID: "done", Type: types.DepBlocks},
+		}
+		a, err := analyzeEpicForSwarm(ctx, f, epic)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if a.Issues["next"].Wave != 0 {
+			t.Errorf("open leaf with only a closed blocker should be ready at wave 0, got %d", a.Issues["next"].Wave)
+		}
+		if a.Issues["done"].Wave != -1 {
+			t.Errorf("closed blocker must not be scheduled, got wave %d", a.Issues["done"].Wave)
+		}
+		if a.EstimatedSessions != 1 {
+			t.Errorf("EstimatedSessions want 1, got %d", a.EstimatedSessions)
 		}
 	})
 
