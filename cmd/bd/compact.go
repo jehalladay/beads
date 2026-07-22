@@ -917,11 +917,18 @@ func runCompactDolt() {
 	cmd.Dir = doltPath
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: dolt gc failed: %v\n", err)
+		// beads-906um: honor the --json error contract on the gc-failed leg.
+		// Every other error path in this func (no dolt dir L858/876, dolt not
+		// in PATH L908) already routes through FatalError*RespectJSON so a
+		// `bd compact --dolt --json` consumer gets a structured {error} object
+		// on stdout; this leg alone emitted plaintext to stderr + bare
+		// os.Exit(1), leaving stdout empty. Fold the gc output into the message
+		// so the JSON error carries it too (8lqh class).
+		msg := fmt.Sprintf("dolt gc failed: %v", err)
 		if len(output) > 0 {
-			fmt.Fprintf(os.Stderr, "Output: %s\n", string(output))
+			msg += fmt.Sprintf("\nOutput: %s", string(output))
 		}
-		os.Exit(1)
+		FatalErrorRespectJSON("%s", msg)
 	}
 
 	// Get size after GC

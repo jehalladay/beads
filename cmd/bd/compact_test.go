@@ -4,13 +4,93 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// TestCompactDoltGCFailureRespectsJSON is the teeth for beads-906um: when
+// `dolt gc` fails under `bd compact --dolt --json`, runCompactDolt must emit a
+// structured {error} object on stdout (via FatalErrorRespectJSON), not
+// plaintext on stderr with an empty stdout. It uses the subprocess re-exec
+// idiom (beads-4yi7) because the path exits via os.Exit — an in-process call
+// would kill the test binary.
+//
+// The child drives runCompactDolt() directly with:
+//   - BEADS_DIR pointing at a temp .beads containing a dolt/ subdir (so
+//     FindBeadsDir + the doltPath stat both resolve without a real DB), and
+//   - a fake `dolt` on PATH that exits 1 (so the gc exec fails
+//     deterministically, hermetically, with no real Dolt needed).
+func TestCompactDoltGCFailureRespectsJSON(t *testing.T) {
+	if os.Getenv("BD_COMPACT_GC_CHILD") == "1" {
+		runCompactDoltGCChild()
+		return // unreachable — child os.Exits inside runCompactDolt
+	}
+
+	tmp := t.TempDir()
+
+	// Hermetic .beads with a dolt/ dir so FindBeadsDir + doltPath stat pass.
+	beadsDir := filepath.Join(tmp, ".beads")
+	if err := os.MkdirAll(filepath.Join(beadsDir, "dolt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fake `dolt` binary that always fails, on an isolated PATH.
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeDolt := filepath.Join(binDir, "dolt")
+	if err := os.WriteFile(fakeDolt, []byte("#!/bin/sh\necho 'boom: simulated gc failure' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run", "TestCompactDoltGCFailureRespectsJSON") // #nosec G204 -- test self-reexec
+	cmd.Env = append(os.Environ(),
+		"BD_COMPACT_GC_CHILD=1",
+		"BEADS_DIR="+beadsDir,
+		"PATH="+binDir, // ONLY the fake dolt is resolvable
+	)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+
+	// The gc-failed leg must exit non-zero (it's a fatal error).
+	if err == nil {
+		t.Fatalf("expected child to exit non-zero on gc failure; stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+
+	// The fix: under --json, stdout MUST carry a parseable JSON error object.
+	// Pre-fix (bare os.Exit after Fprintf to stderr) leaves stdout empty.
+	out := strings.TrimSpace(stdout.String())
+	if out == "" {
+		t.Fatalf("--json gc failure emitted EMPTY stdout (json contract broken); stderr=%q", stderr.String())
+	}
+	var parsed map[string]interface{}
+	if jerr := json.Unmarshal([]byte(out), &parsed); jerr != nil {
+		t.Fatalf("--json gc failure stdout is not valid JSON: %v\nstdout=%q", jerr, out)
+	}
+	if _, ok := parsed["error"]; !ok {
+		t.Fatalf("--json gc failure JSON has no \"error\" key: %v", parsed)
+	}
+}
+
+// runCompactDoltGCChild installs the package globals runCompactDolt needs and
+// invokes it. The fake `dolt` on PATH makes the gc exec fail, driving the
+// beads-906um error leg, which os.Exits.
+func runCompactDoltGCChild() {
+	jsonOutput = true
+	compactDryRun = false
+	runCompactDolt()
+}
 
 func TestCompactSuite(t *testing.T) {
 	// Compaction is now implemented for Dolt backend
