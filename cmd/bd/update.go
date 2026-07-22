@@ -549,6 +549,16 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 		// under --json we DEFER per-item errors and flush them to stderr only if
 		// at least one issue updated (partial success); when nothing updates, the
 		// single terminal stdout object is the sole error and stderr stays clean.
+		//
+		// beads-qpcbg: ALL per-item failures — including the close/demote/reopen
+		// integrity-guard rejections and metadata-edit errors below — MUST route
+		// through this wrapper (not the bare reportItemError). Otherwise, when a
+		// guard rejection is the SOLE failure, deferredItemErrors stays empty and
+		// the all-failed terminal path (below) falls back to the misleading
+		// generic "no issues updated matching the provided IDs" on stdout (implies
+		// the ID didn't exist) while the real reason goes only to stderr. This is
+		// the same class beads-9c0o fixed for invalid-field-value; the guard paths
+		// predated the wrapper and were missed.
 		var deferredItemErrors []string
 		reportUpdateItemError := func(format string, a ...interface{}) {
 			if jsonOutput {
@@ -603,7 +613,7 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 				// regardless of parent type, so it works for those roots unchanged.
 				if isAutoClosingParentType(issue) {
 					if openChildren := countEpicOpenChildren(ctx, issueStore, result.ResolvedID); openChildren > 0 {
-						reportItemError("cannot close %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
+						reportUpdateItemError("cannot close %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
 						closeIfUnmutated(result)
 						continue
 					}
@@ -611,12 +621,12 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 				// Blocked close guard: prevent closing an issue with open blockers.
 				blocked, blockers, err := issueStore.IsBlocked(ctx, result.ResolvedID)
 				if err != nil {
-					reportItemError("Error checking blockers for %s: %v", id, err)
+					reportUpdateItemError("Error checking blockers for %s: %v", id, err)
 					closeIfUnmutated(result)
 					continue
 				}
 				if blocked && len(blockers) > 0 {
-					reportItemError("cannot close %s: blocked by open issues %v (use --force to override)", id, blockers)
+					reportUpdateItemError("cannot close %s: blocked by open issues %v (use --force to override)", id, blockers)
 					closeIfUnmutated(result)
 					continue
 				}
@@ -633,7 +643,7 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 				// untrusted external SCM data (PR title / workflow name) that can
 				// carry terminal escapes (beads-pbt8m, 7n9y sink class).
 				if err := checkGateSatisfaction(issue); err != nil {
-					reportItemError("cannot close %s: %s", id, ui.SanitizeForTerminal(err.Error()))
+					reportUpdateItemError("cannot close %s: %s", id, ui.SanitizeForTerminal(err.Error()))
 					closeIfUnmutated(result)
 					continue
 				}
@@ -660,7 +670,7 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 			if newTypeRaw, ok := updates["issue_type"].(string); ok && !forceFlag &&
 				isAutoClosingParentType(issue) && !wouldRemainAutoClosingParent(issue, types.IssueType(newTypeRaw)) {
 				if openChildren := countEpicOpenChildren(ctx, issueStore, result.ResolvedID); openChildren > 0 {
-					reportItemError("cannot demote %s to %s: %d open child issue(s); close children first or use --force to override", id, newTypeRaw, openChildren)
+					reportUpdateItemError("cannot demote %s to %s: %d open child issue(s); close children first or use --force to override", id, newTypeRaw, openChildren)
 					closeIfUnmutated(result)
 					continue
 				}
@@ -677,7 +687,7 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 			if newStatus, ok := updates["status"].(string); ok && !forceFlag &&
 				types.Status(newStatus) == types.StatusOpen && issue.Status == types.StatusClosed {
 				if closedEpics := closedEpicParents(ctx, issueStore, result.ResolvedID); len(closedEpics) > 0 {
-					reportItemError("cannot reopen %s: its parent %v is closed; reopen the parent first or use --force to override", id, closedEpics)
+					reportUpdateItemError("cannot reopen %s: its parent %v is closed; reopen the parent first or use --force to override", id, closedEpics)
 					closeIfUnmutated(result)
 					continue
 				}
@@ -693,12 +703,12 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 				// messages/hints, same --force override) so the closed->open legs
 				// don't diverge.
 				if supersedes := supersededByTargets(ctx, issueStore, result.ResolvedID); len(supersedes) > 0 {
-					reportItemError("cannot reopen %s: it is superseded by %v; remove the supersedes link (bd dep remove %s <target> --type supersedes) or use --force to override", id, supersedes, id)
+					reportUpdateItemError("cannot reopen %s: it is superseded by %v; remove the supersedes link (bd dep remove %s <target> --type supersedes) or use --force to override", id, supersedes, id)
 					closeIfUnmutated(result)
 					continue
 				}
 				if dups := duplicatesTargets(ctx, issueStore, result.ResolvedID); len(dups) > 0 {
-					reportItemError("cannot reopen %s: it is a duplicate of %v; remove the duplicates link (bd dep remove %s <target> --type duplicates) or use --force to override", id, dups, id)
+					reportUpdateItemError("cannot reopen %s: it is a duplicate of %v; remove the duplicates link (bd dep remove %s <target> --type duplicates) or use --force to override", id, dups, id)
 					closeIfUnmutated(result)
 					continue
 				}
@@ -858,7 +868,7 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 			// Apply per-key metadata edits atomically at the server (beads-fnp6).
 			if len(metaSets) > 0 || len(metaUnsets) > 0 {
 				if err := issueStore.UpdateMetadataFields(ctx, result.ResolvedID, metaSets, metaUnsets, actor); err != nil {
-					reportItemError("metadata edit failed for %s: %v", id, err)
+					reportUpdateItemError("metadata edit failed for %s: %v", id, err)
 					closeIfUnmutated(result)
 					continue
 				}
