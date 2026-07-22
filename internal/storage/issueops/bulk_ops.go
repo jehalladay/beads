@@ -211,6 +211,19 @@ func DeleteIssuesBySourceRepoInTx(ctx context.Context, tx *sql.Tx, sourceRepo st
 		return 0, fmt.Errorf("affected by source-repo delete: %w", aerr)
 	}
 
+	// beads-wart9: tombstone live references to every deleted id in surviving
+	// connected issues BEFORE the rows (and their dependency edges) are removed,
+	// so `bd repo remove` tombstones like the other bulk-delete paths rb00b
+	// covered (DeleteIssueInTx/DeleteIssuesInTx + the DoltStore wisp paths). This
+	// is the 6th bulk-delete path — a SEPARATE InTx function rb00b never touched —
+	// which previously ran a raw DELETE with no rewrite, leaving survivors that
+	// reference a source-repo-deleted issue holding a raw dangling id. Only the
+	// `issues` table is deleted here (no wisps), so issueIDs is the full delete set.
+	// The rewriter is idempotent, so any caller that already tombstoned is a no-op.
+	if _, rerr := RewriteTextReferencesToDeletedInTx(ctx, tx, issueIDs, ""); rerr != nil {
+		return 0, fmt.Errorf("tombstone text references (source-repo delete): %w", rerr)
+	}
+
 	result, err := tx.ExecContext(ctx, `DELETE FROM issues WHERE source_repo = ?`, sourceRepo)
 	if err != nil {
 		return 0, fmt.Errorf("delete issues: %w", err)
