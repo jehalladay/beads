@@ -282,6 +282,18 @@ Also triggers Dolt push/pull if a remote is configured.`,
 		totalImported := 0
 		totalSkipped := 0
 
+		// beads-tgufj: track per-repo hydration failures so `bd repo sync` does
+		// not report false success. Sibling of beads-o35h0 (federation sync): the
+		// loop below prints "Warning: ..." + continue on each failure, so without
+		// an accumulator the fn would return nil (rc=0) even if every repo failed,
+		// and the --json repos_synced count would include the failed repos.
+		reposFailed := 0
+		var syncErrors []string
+		noteRepoFailure := func(repoPath string, err error) {
+			reposFailed++
+			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", repoPath, err))
+		}
+
 		// Hydrate issues from each additional repository
 		for _, repoPath := range repos.Additional {
 			// Remote URL: pull into cache, read issues from SQL store
@@ -289,15 +301,18 @@ Also triggers Dolt push/pull if a remote is configured.`,
 				cache, err := remotecache.DefaultCache()
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to init cache for %s: %v\n", repoPath, err)
+					noteRepoFailure(repoPath, err)
 					continue
 				}
 				if _, err = cache.Ensure(ctx, repoPath); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to sync remote %s: %v\n", repoPath, err)
+					noteRepoFailure(repoPath, err)
 					continue
 				}
 				remoteStore, err := cache.OpenStore(ctx, repoPath, newDoltStoreFromConfig)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to open remote store %s: %v\n", repoPath, err)
+					noteRepoFailure(repoPath, err)
 					continue
 				}
 
@@ -305,6 +320,7 @@ Also triggers Dolt push/pull if a remote is configured.`,
 				_ = remoteStore.Close() // close eagerly — defer in a loop would leak connections
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to read issues from %s: %v\n", repoPath, err)
+					noteRepoFailure(repoPath, err)
 					continue
 				}
 
@@ -317,6 +333,7 @@ Also triggers Dolt push/pull if a remote is configured.`,
 						SkipPrefixValidation: true,
 					}); importErr != nil {
 						fmt.Fprintf(os.Stderr, "Warning: failed to import from %s: %v\n", repoPath, importErr)
+						noteRepoFailure(repoPath, importErr)
 						continue
 					}
 					totalImported += len(issues)
@@ -340,6 +357,7 @@ Also triggers Dolt push/pull if a remote is configured.`,
 			absPath, err := filepath.Abs(expandedPath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to resolve path %s: %v\n", repoPath, err)
+				noteRepoFailure(repoPath, err)
 				continue
 			}
 
@@ -367,6 +385,7 @@ Also triggers Dolt push/pull if a remote is configured.`,
 			issues, err := parseIssuesFromJSONL(jsonlPath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to parse %s: %v\n", jsonlPath, err)
+				noteRepoFailure(repoPath, err)
 				continue
 			}
 
@@ -388,6 +407,7 @@ Also triggers Dolt push/pull if a remote is configured.`,
 				SkipPrefixValidation: true,
 			}); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to import from %s: %v\n", repoPath, err)
+				noteRepoFailure(repoPath, err)
 				continue
 			}
 
@@ -409,23 +429,48 @@ Also triggers Dolt push/pull if a remote is configured.`,
 			commandDidWrite.Store(true)
 		}
 
+		// beads-tgufj: repos that FAILED must not be counted as synced.
+		reposSynced := len(repos.Additional) - totalSkipped - reposFailed
+		if reposSynced < 0 {
+			reposSynced = 0
+		}
+
 		if jsonOutput {
 			result := map[string]interface{}{
-				"synced":          true,
-				"repos_synced":    len(repos.Additional) - totalSkipped,
+				"synced":          reposFailed == 0,
+				"failed":          reposFailed > 0,
+				"repos_synced":    reposSynced,
 				"repos_skipped":   totalSkipped,
+				"repos_failed":    reposFailed,
 				"issues_imported": totalImported,
 			}
-			return outputJSON(result)
+			if len(syncErrors) > 0 {
+				result["errors"] = syncErrors
+			}
+			if err := outputJSON(result); err != nil {
+				return err
+			}
+			// beads-tgufj: a failed hydration must surface as a non-zero exit
+			// even under --json (the per-repo ✗ already printed to stderr).
+			if reposFailed > 0 {
+				return SilentExit()
+			}
+			return nil
 		}
 
 		if totalImported > 0 {
 			fmt.Printf("Multi-repo sync complete: imported %d issue(s) from %d repo(s)\n",
-				totalImported, len(repos.Additional)-totalSkipped)
+				totalImported, reposSynced)
 		} else if totalSkipped == len(repos.Additional) {
 			fmt.Println("Multi-repo sync complete: all repos up to date")
 		} else {
 			fmt.Println("Multi-repo sync complete")
+		}
+		// beads-tgufj: return non-zero when any configured repo failed to sync so
+		// `bd repo sync && next` / $?-checking scripts do not proceed on failure.
+		if reposFailed > 0 {
+			fmt.Fprintf(os.Stderr, "Multi-repo sync: %d repo(s) failed to sync\n", reposFailed)
+			return SilentExit()
 		}
 		return nil
 	},
