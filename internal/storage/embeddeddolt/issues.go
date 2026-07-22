@@ -55,26 +55,21 @@ func (s *EmbeddedDoltStore) UpdateIssue(ctx context.Context, id string, updates 
 
 // ReopenIssue reopens a closed issue, setting status to open and clearing
 // closed_at and defer_until. If reason is non-empty, it is recorded as a comment.
-// Wraps UpdateIssue; EmbeddedDolt auto-commits the transaction.
+// Delegates SQL work to issueops.ReopenIssueInTx; EmbeddedDolt auto-commits the
+// transaction.
 func (s *EmbeddedDoltStore) ReopenIssue(ctx context.Context, id string, reason string, actor string) error {
-	updates := map[string]interface{}{
-		"status":      string(types.StatusOpen),
-		"defer_until": nil,
-	}
-	if err := s.UpdateIssue(ctx, id, updates, actor); err != nil {
+	// beads-x5hvu: route the reopen (UPDATE + EventReopened + reason-comment +
+	// is_blocked recompute) through the shared single-tx issueops.ReopenIssueInTx
+	// seam — the same one the domain path (domain/db/issue.go:1038) uses — so the
+	// status flip and the documented reason-comment are all-or-nothing. Previously
+	// this split into two auto-committed transactions (UpdateIssue, then a separate
+	// AddIssueComment): if the comment write failed the issue was reopened with the
+	// reason silently lost and no rollback. Sibling of njnw (LinkAndClose) / pj38
+	// (CompactOverwrite) split-state consolidations; mirrors this store's CloseIssue.
+	return s.withConn(ctx, true, func(tx *sql.Tx) error {
+		_, err := issueops.ReopenIssueInTx(ctx, tx, id, reason, actor)
 		return err
-	}
-	if reason != "" {
-		// beads-bimd0: record the reason in the COMMENTS table (AddIssueComment),
-		// not the events table (AddComment→EventCommented). bd show / bd comments
-		// read only the comments table, so an events-table row is invisible — the
-		// documented "recorded as a comment" reason silently vanished. Mirrors the
-		// shared issueops.ReopenIssueInTx seam and beads-9l1it (promote).
-		if _, err := s.AddIssueComment(ctx, id, actor, reason); err != nil {
-			return fmt.Errorf("reopen comment: %w", err)
-		}
-	}
-	return nil
+	})
 }
 
 // UpdateIssueType changes the issue_type field of an issue.

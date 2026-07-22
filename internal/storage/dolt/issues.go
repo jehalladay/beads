@@ -273,26 +273,46 @@ func (s *DoltStore) ClaimReadyIssue(ctx context.Context, filter types.WorkFilter
 
 // ReopenIssue reopens a closed issue, setting status to open and clearing
 // closed_at and defer_until. If reason is non-empty, it is recorded as a comment.
-// Wraps UpdateIssue for Dolt-specific concerns (wisp routing, DOLT_COMMIT, etc.).
+// Delegates SQL work to issueops.ReopenIssueInTx; handles Dolt-specific concerns
+// (wisp routing, DOLT_ADD/COMMIT).
 func (s *DoltStore) ReopenIssue(ctx context.Context, id string, reason string, actor string) error {
-	updates := map[string]interface{}{
-		"status":      string(types.StatusOpen),
-		"defer_until": nil,
+	// beads-x5hvu: route the reopen (UPDATE + EventReopened + reason-comment +
+	// is_blocked recompute) through the shared single-tx issueops.ReopenIssueInTx
+	// seam — the same one the domain path (domain/db/issue.go:1038) uses — so the
+	// status flip and the documented reason-comment are all-or-nothing. Previously
+	// this split into two committed transactions (UpdateIssue commit, then a
+	// separate AddIssueComment commit): if the comment write failed (conn drop,
+	// timeout, retry exhaustion, ctx cancel between the calls) the issue was
+	// reopened+committed with the reason silently lost and no rollback. Sibling of
+	// the njnw (LinkAndClose) / pj38 (CompactOverwrite) split-state consolidations.
+
+	// Wisps live in dolt_ignored tables — skip Dolt versioning entirely, same as
+	// LinkAndClose/CloseIssue for a wisp; ReopenIssueInTx auto-routes to the wisp
+	// tables via IsActiveWispInTx/WispTableRouting.
+	if s.isActiveWisp(ctx, id) {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := issueops.ReopenIssueInTx(ctx, tx, id, reason, actor); err != nil {
+			return err
+		}
+		return wrapTransactionError("commit reopen wisp issue", tx.Commit())
 	}
-	if err := s.UpdateIssue(ctx, id, updates, actor); err != nil {
+
+	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
+		_, err := issueops.ReopenIssueInTx(ctx, tx, id, reason, actor)
+		return err
+	}); err != nil {
 		return err
 	}
-	if reason != "" {
-		// beads-bimd0: record the reason in the COMMENTS table (AddIssueComment),
-		// not the events table (AddComment→EventCommented). bd show / bd comments
-		// read only the comments table, so an events-table row is invisible — the
-		// documented "recorded as a comment" reason silently vanished. Mirrors the
-		// shared issueops.ReopenIssueInTx seam and beads-9l1it (promote).
-		if _, err := s.AddIssueComment(ctx, id, actor, reason); err != nil {
-			return fmt.Errorf("reopen comment: %w", err)
-		}
-	}
-	return nil
+	// Commit all touched tables in one Dolt commit — the SQL tx already made the
+	// reopen + reason-comment atomic; this makes the Dolt commit atomic too.
+	// comments is included because ReopenIssueInTx writes the reason via
+	// AddIssueCommentInTx (beads-bimd0) into the comments table.
+	return s.doltAddAndCommit(ctx, []string{"issues", "events", "comments"},
+		fmt.Sprintf("bd: reopen %s", id))
 }
 
 // UpdateIssueType changes the issue_type field of an issue.
