@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 
@@ -261,12 +260,22 @@ var doneTodoCmd = &cobra.Command{
 		for _, issueID := range args {
 			issue, err := getStore().GetIssue(ctx, issueID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to get issue %s: %v\n", issueID, err)
+				// beads-scl2z: `bd todo done` ALWAYS emits its {"closed":[...],
+				// "reason":...} envelope on stdout under --json (below), so a per-id
+				// failure must NOT leak plaintext to stderr — that pollutes
+				// `bd todo done $IDS --json 2>&1 | jq` and hides which id failed from
+				// a --json consumer (it survived only in the plaintext + exit code).
+				// Route through the json-aware reportItemError (errors.go:250): a JSON
+				// error object to stderr under --json, the plain line otherwise —
+				// exactly as `bd close` (which this verb documents itself as wrapping)
+				// does via reportCloseItemError. Clean-stderr per-item contract family
+				// (fg6/92tz/en28/n96g/iwy1k).
+				reportItemError("Error: failed to get issue %s: %v", issueID, err)
 				failedCount++
 				continue
 			}
 			if issue == nil {
-				fmt.Fprintf(os.Stderr, "Error: issue %s not found\n", issueID)
+				reportItemError("Error: issue %s not found", issueID)
 				failedCount++
 				continue
 			}
@@ -282,7 +291,7 @@ var doneTodoCmd = &cobra.Command{
 				// root) — close.go:168-174 (beads-bigro/aw9x8 closed-parent invariant).
 				if isAutoClosingParentType(issue) {
 					if openChildren := countEpicOpenChildren(ctx, getStore(), issueID); openChildren > 0 {
-						fmt.Fprintf(os.Stderr, "Error: cannot close %s: %d open child issue(s); close children first or use --force to override\n", issueID, openChildren)
+						reportItemError("Error: cannot close %s: %d open child issue(s); close children first or use --force to override", issueID, openChildren)
 						failedCount++
 						continue
 					}
@@ -291,26 +300,26 @@ var doneTodoCmd = &cobra.Command{
 				// untrusted external SCM data (gh:pr/gh:run), so sanitize for display
 				// (7n9y sink class).
 				if gerr := checkGateSatisfaction(issue); gerr != nil {
-					fmt.Fprintf(os.Stderr, "Error: cannot close %s: %s\n", issueID, ui.SanitizeForTerminal(gerr.Error()))
+					reportItemError("Error: cannot close %s: %s", issueID, ui.SanitizeForTerminal(gerr.Error()))
 					failedCount++
 					continue
 				}
 				// (3) open-blocker guard — close.go:193-203.
 				blocked, blockers, berr := getStore().IsBlocked(ctx, issueID)
 				if berr != nil {
-					fmt.Fprintf(os.Stderr, "Error: checking blockers for %s: %v\n", issueID, berr)
+					reportItemError("Error: checking blockers for %s: %v", issueID, berr)
 					failedCount++
 					continue
 				}
 				if blocked && len(blockers) > 0 {
-					fmt.Fprintf(os.Stderr, "Error: cannot close %s: blocked by open issues %v (use --force to override)\n", issueID, blockers)
+					reportItemError("Error: cannot close %s: blocked by open issues %v (use --force to override)", issueID, blockers)
 					failedCount++
 					continue
 				}
 			}
 
 			if err := getStore().CloseIssue(ctx, issueID, reason, getActorWithGit(), ""); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to close %s: %v\n", issueID, err)
+				reportItemError("Error: failed to close %s: %v", issueID, err)
 				failedCount++
 				continue
 			}

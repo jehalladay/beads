@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/storage/uow"
@@ -114,7 +113,12 @@ func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string,
 	for _, issueID := range args {
 		current, isWisp := proxiedResolveIssueOrWisp(ctx, uw, issueID)
 		if current == nil {
-			fmt.Fprintf(os.Stderr, "Error: issue %s not found\n", issueID)
+			// beads-scl2z (proxied twin): route per-id failures through the
+			// json-aware reportItemError so `bd todo done $IDS --json 2>&1 | jq`
+			// stays a clean JSON stream and names the failed id, matching the
+			// direct todo.go path + `bd close`. Clean-stderr per-item contract
+			// family (fg6/92tz/en28/n96g/iwy1k).
+			reportItemError("Error: issue %s not found", issueID)
 			failedCount++
 			continue
 		}
@@ -131,7 +135,7 @@ func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string,
 					openChildren, cerr = uw.IssueUseCase().CountOpenChildren(ctx, issueID)
 				}
 				if cerr == nil && openChildren > 0 {
-					fmt.Fprintf(os.Stderr, "Error: cannot close %s: %d open child issue(s); close children first or use --force to override\n", issueID, openChildren)
+					reportItemError("Error: cannot close %s: %d open child issue(s); close children first or use --force to override", issueID, openChildren)
 					failedCount++
 					continue
 				}
@@ -139,7 +143,7 @@ func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string,
 			// (2) gate-satisfaction guard. The error can embed untrusted external
 			// SCM data (gh:pr/gh:run), so sanitize for display (7n9y sink class).
 			if gerr := checkGateSatisfaction(current); gerr != nil {
-				fmt.Fprintf(os.Stderr, "Error: cannot close %s: %s\n", issueID, ui.SanitizeForTerminal(gerr.Error()))
+				reportItemError("Error: cannot close %s: %s", issueID, ui.SanitizeForTerminal(gerr.Error()))
 				failedCount++
 				continue
 			}
@@ -153,12 +157,12 @@ func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string,
 				blocked, blockers, berr = uw.DependencyUseCase().IsBlocked(ctx, issueID)
 			}
 			if berr != nil {
-				fmt.Fprintf(os.Stderr, "Error: checking blockers for %s: %v\n", issueID, berr)
+				reportItemError("Error: checking blockers for %s: %v", issueID, berr)
 				failedCount++
 				continue
 			}
 			if blocked && len(blockers) > 0 {
-				fmt.Fprintf(os.Stderr, "Error: cannot close %s: blocked by open issues %v (use --force to override)\n", issueID, blockers)
+				reportItemError("Error: cannot close %s: blocked by open issues %v (use --force to override)", issueID, blockers)
 				failedCount++
 				continue
 			}
@@ -171,7 +175,7 @@ func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string,
 			_, err = uw.IssueUseCase().CloseIssue(ctx, issueID, params, actorName)
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to close %s: %v\n", issueID, err)
+			reportItemError("Error: failed to close %s: %v", issueID, err)
 			failedCount++
 			continue
 		}
