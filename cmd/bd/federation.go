@@ -572,7 +572,11 @@ func runFederationRemovePeer(cmd *cobra.Command, args []string) error {
 
 	name := args[0]
 
-	if err := store.RemoveRemote(ctx, name); err != nil {
+	// RemoveFederationPeer deletes the federation_peers credential row (added by
+	// add-peer --user/--password) AND removes the underlying Dolt remote best-effort.
+	// Calling RemoveRemote alone (beads-af5te) left the encrypted credential row
+	// orphaned forever — invisible to list-peers/status, which read ListRemotes.
+	if err := store.RemoveFederationPeer(ctx, name); err != nil {
 		return HandleErrorRespectJSON("failed to remove peer: %v", err)
 	}
 
