@@ -209,6 +209,7 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 		WaitsFor:                waitsFor,
 		DiscoveredFromParent:    discoveredFromParent(in.deps),
 		ForcePrefix:             in.force,
+		Force:                   in.force, // beads-p1p9n: honor --force on the parent-child dep-spec guard
 	}
 
 	var result domain.CreateIssueResult
@@ -366,6 +367,7 @@ func runCreateProxiedMarkdown(_ *cobra.Command, ctx context.Context, in createIn
 			},
 			Labels:       t.Labels,
 			Dependencies: b.deps,
+			Force:        in.force, // beads-p1p9n: honor --force on the parent-child dep-spec guard
 		})
 	}
 

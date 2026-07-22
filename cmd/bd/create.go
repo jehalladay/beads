@@ -715,6 +715,27 @@ var createCmd = &cobra.Command{
 				return HandleErrorRespectJSON("unknown dependency type %q; valid types: %s", depType, createDepsAcceptedTypeList())
 			}
 
+			// beads-p1p9n: a parent-child edge supplied via --deps
+			// (`--deps parent-child:<id>`) reaches the SAME "closed parent with
+			// an open child" invariant as `--parent`, but the guard above at
+			// L501 only fires for the --parent flag (gated on parentID). Mirror
+			// it here so the generic-dep axis can't smuggle an open child under
+			// a closed auto-closing parent (epic/molecule/wisp) — the create
+			// straggler of the closed-parent guard family (a8a1b/czu1s --parent,
+			// t39ph graph, aw9x8/j8ekq dep-add). Overridable with --force.
+			if !forceCreate && depType == types.DepParentChild {
+				depParent, err := parentLookupStore.GetIssue(rootCtx, dependsOnID)
+				if err != nil {
+					if errors.Is(err, storage.ErrNotFound) {
+						return HandleErrorRespectJSON("parent issue %s not found", dependsOnID)
+					}
+					return HandleErrorRespectJSON("failed to check parent issue: %v", err)
+				}
+				if isAutoClosingParentType(depParent) && depParent.Status == types.StatusClosed {
+					return HandleErrorRespectJSON("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", dependsOnID)
+				}
+			}
+
 			edgeSpecs = append(edgeSpecs, edgeSpec{
 				target:  dependsOnID,
 				depType: depType,

@@ -191,6 +191,13 @@ type CreateIssueParams struct {
 	WaitsFor                *WaitsForSpec
 	DiscoveredFromParent    string
 	ForcePrefix             bool
+	// Force overrides the closed-parent guard on the parent-child dep-spec
+	// seam (beads-p1p9n): a `parent-child` edge supplied via Dependencies
+	// (proxied `--deps parent-child:<id>` / markdown `parent-child:`) reaches
+	// the same "closed parent with an open child" invariant as ParentID, so
+	// the create() Dependencies loop refuses it under a closed auto-closing
+	// parent unless Force — mirroring the single/graph guards' --force escape.
+	Force bool
 }
 
 type DependencySpec struct {
@@ -1014,6 +1021,19 @@ func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams,
 	}
 
 	for _, spec := range params.Dependencies {
+		// beads-p1p9n: a parent-child edge supplied via Dependencies (proxied
+		// `--deps parent-child:<id>` and markdown `parent-child:`) links a child
+		// here, distinct from the params.ParentID post-pass above. The single/graph
+		// closed-parent guards (a8a1b/czu1s/t39ph) never run for this seam, so an
+		// open child under a CLOSED auto-closing parent (epic/molecule/wisp) leaked
+		// silently over the proxied+markdown paths. Mirror the guard: refuse unless
+		// params.Force. Reads via u.get (wisp-table aware) like the graph guard.
+		if !params.Force && spec.Type == types.DepParentChild && !spec.SwapDirection {
+			parent, perr := u.get(ctx, spec.TargetID, useWisp)
+			if perr == nil && parent.IsAutoClosingParentType() && parent.Status == types.StatusClosed {
+				return result, fmt.Errorf("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", spec.TargetID)
+			}
+		}
 		dep := &types.Dependency{
 			IssueID:     issue.ID,
 			DependsOnID: spec.TargetID,
