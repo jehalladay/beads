@@ -491,22 +491,59 @@ func performMerge(targetID string, sourceIDs []string) map[string]interface{} {
 		txErr := transact(ctx, store, commitMsg, func(tx storage.Transaction) error {
 			if derr == nil {
 				for _, dep := range dependents {
-					if dep.DependencyType != types.DepParentChild {
+					// beads-706mw: transfer BOTH structural (parent-child) AND
+					// blocking (blocks / conditional-blocks / waits-for) inbound
+					// edges from the source (merge-loser) to the target
+					// (canonical). Previously only parent-child was reparented, so
+					// closing the source at CloseIssue below silently dropped every
+					// blocking edge pointing at it — a dependent that was
+					// blocked-by the loser appeared UNBLOCKED (released into ready
+					// work) even though the surviving canonical it merged into may
+					// still be open. A merged duplicate must carry its blocks over,
+					// not evaporate them. parent-child prevents child orphaning;
+					// blocking transfer preserves the blocked/ready state.
+					isBlocking := dep.DependencyType.IsBlockingEdge()
+					if dep.DependencyType != types.DepParentChild && !isBlocking {
 						continue
 					}
 					childID := dep.Issue.ID
-					// Remove old parent-child link
-					if err := tx.RemoveDependency(ctx, childID, sourceID, getActor()); err != nil {
-						return fmt.Errorf("failed to remove parent link %s→%s: %w", childID, sourceID, err)
+					// A self-edge would result if the target itself was a
+					// dependent of the loser (target -blocks/child-> source);
+					// transferring it to target -> target is invalid
+					// (AddDependency rejects self-deps) and semantically empty.
+					// Just drop the stale edge to the closing loser.
+					if childID == targetID {
+						if err := tx.RemoveDependency(ctx, childID, sourceID, getActor()); err != nil {
+							return fmt.Errorf("failed to remove self-referential edge %s→%s: %w", childID, sourceID, err)
+						}
+						continue
 					}
-					// Add new parent-child link to target
+					// Preserve the original edge's metadata (waits-for gate config
+					// lives in Dependency.Metadata; GetDependentsWithMetadata drops
+					// it, so read the child's outbound records to recover it).
+					newType := dep.DependencyType
+					var edgeMeta string
+					if records, rerr := tx.GetDependencyRecords(ctx, childID); rerr == nil {
+						for _, r := range records {
+							if r.DependsOnID == sourceID && r.Type == dep.DependencyType {
+								edgeMeta = r.Metadata
+								break
+							}
+						}
+					}
+					// Remove old link to the source (loser).
+					if err := tx.RemoveDependency(ctx, childID, sourceID, getActor()); err != nil {
+						return fmt.Errorf("failed to remove %s link %s→%s: %w", newType, childID, sourceID, err)
+					}
+					// Add the same-typed link to the target (canonical).
 					newDep := &types.Dependency{
 						IssueID:     childID,
 						DependsOnID: targetID,
-						Type:        types.DepParentChild,
+						Type:        newType,
+						Metadata:    edgeMeta,
 					}
 					if err := tx.AddDependency(ctx, newDep, getActor()); err != nil {
-						return fmt.Errorf("failed to reparent %s to %s: %w", childID, targetID, err)
+						return fmt.Errorf("failed to move %s edge %s to %s: %w", newType, childID, targetID, err)
 					}
 					reparentedThisSource = append(reparentedThisSource, childID)
 				}
