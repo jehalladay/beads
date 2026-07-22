@@ -119,6 +119,19 @@ func runPour(cmd *cobra.Command, args []string) error {
 	attachFlags, _ := cmd.Flags().GetStringSlice("attach")
 	attachType, _ := cmd.Flags().GetString("attach-type")
 
+	// Validate --attach-type up front, before any mutation, mirroring
+	// `bd mol bond --type` (mol_bond.go runMolBond). Both entry points feed the
+	// shared bondProtoMolWithSubgraph switch whose default arm maps ANY unknown
+	// value to DepParentChild (parallel) — so without this check a typo'd
+	// --attach-type (e.g. "sequentail") is NOT rejected, it silently bonds the
+	// attachment as parallel instead of the intended sequential/conditional. pour
+	// spawns the molecule root before the attach loop, so a late check would be
+	// fail-after-side-effect; the guard belongs here next to the flag read, same
+	// as mol bond's up-front reject (beads-u6suf, EARLY-VALIDATION-PARITY class).
+	if attachType != types.BondTypeSequential && attachType != types.BondTypeParallel && attachType != types.BondTypeConditional {
+		return HandleErrorRespectJSON("invalid attach-type '%s', must be: sequential, parallel, or conditional", attachType)
+	}
+
 	// Parse variables
 	vars := make(map[string]string)
 	for _, v := range varFlags {
