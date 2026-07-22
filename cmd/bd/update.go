@@ -82,6 +82,14 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 				if msg := reservedIdentityLabelError(label); msg != "" {
 					return HandleErrorRespectJSON("%s", msg)
 				}
+				// beads-4sfae: reserve the 'provides:' capability family on the
+				// MUTATION seam too — `bd update --add-label/--set-labels` attaching
+				// provides:<cap> to an existing bead is the same outside-`bd ship`
+				// bypass beads-o70m1 closed at create/graph and label.go rejects on
+				// `bd label add`. Mirrors the identity guard directly above.
+				if msg := providesLabelError(label); msg != "" {
+					return HandleErrorRespectJSON("%s", msg)
+				}
 			}
 		}
 

@@ -37,6 +37,15 @@ Examples:
 		if msg := reservedIdentityLabelError(args[1]); msg != "" {
 			return HandleErrorRespectJSON("%s", msg)
 		}
+		// beads-4sfae: reserve the 'provides:' capability family on the tag verb
+		// too — `bd tag <id> provides:<cap>` is `bd update --add-label` shorthand
+		// with its OWN RunE (doesn't route through update.go), so it needs the same
+		// provides: reservation beads-o70m1 added at create/graph and label.go
+		// enforces on `bd label add`. Same pre-proxied-split placement as the
+		// identity guard above.
+		if msg := providesLabelError(args[1]); msg != "" {
+			return HandleErrorRespectJSON("%s", msg)
+		}
 
 		evt := metrics.NewCommandEvent("tag")
 		defer func() {

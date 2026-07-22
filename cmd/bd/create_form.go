@@ -117,6 +117,14 @@ func validateCreateFormValues(fv *createFormValues) error {
 		if msg := reservedIdentityLabelError(label); msg != "" {
 			return fmt.Errorf("%s", msg)
 		}
+		// beads-4sfae: reserve the 'provides:' capability family here too, at
+		// parity with single create (create.go) / graph (graph_apply.go) —
+		// beads-o70m1 added providesLabelError to those two seams but not this
+		// create-form authoring seam, so a hand-set provides:<cap> still minted an
+		// OPEN bead carrying the reserved single-provider label outside `bd ship`.
+		if msg := providesLabelError(label); msg != "" {
+			return fmt.Errorf("%s", msg)
+		}
 	}
 	return nil
 }

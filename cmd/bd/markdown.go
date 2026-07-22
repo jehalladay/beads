@@ -397,6 +397,14 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string, dryRun bool) er
 			if msg := reservedIdentityLabelError(label); msg != "" {
 				return HandleErrorRespectJSON("issue %q: %s", template.Title, msg)
 			}
+			// beads-4sfae: reserve the 'provides:' capability family here too, at
+			// parity with single create / graph (beads-o70m1 covered those two but
+			// not this markdown-create seam). Like the identity guard, this is a
+			// create-authoring path; JSONL `bd import` stays unguarded (restores
+			// already-created beads, o70m1's f8fvh ruling).
+			if msg := providesLabelError(label); msg != "" {
+				return HandleErrorRespectJSON("issue %q: %s", template.Title, msg)
+			}
 		}
 	}
 

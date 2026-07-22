@@ -72,6 +72,13 @@ Example:
 			if msg := reservedIdentityLabelError(label); msg != "" {
 				return HandleErrorRespectJSON("%s", msg)
 			}
+			// beads-4sfae: reserve the 'provides:' capability family here too, at
+			// parity with single create / graph (beads-o70m1 covered those two but
+			// not this quick-create seam). Same CLI-layer / pre-proxied-split
+			// placement as the identity guard above.
+			if msg := providesLabelError(label); msg != "" {
+				return HandleErrorRespectJSON("%s", msg)
+			}
 		}
 
 		priority, err := validation.ValidatePriority(priorityStr)
