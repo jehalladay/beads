@@ -46,6 +46,17 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 			}
 		}()
 
+		// beads-cncgt: a repeated issue id in one batch (`bd reopen X X`) would
+		// otherwise be reported twice in the --json reopenedIssues array — iter-1
+		// does the real reopen and appends the updated issue; iter-2 sees it
+		// already-open and appends it again via the hxc2 already-open no-op path.
+		// The DB stays correct (a single reopen), but a script counting reopened
+		// issues or reading the array is misled. Dedup preserving first occurrence
+		// before the usesProxiedServer() dispatch so it covers direct + proxied in
+		// one shot, mirroring delete.go:86 + label add/remove (hzg2y). Distinct
+		// ids are unaffected; a repeated reopen target is meaningless.
+		args = uniqueStrings(args)
+
 		if usesProxiedServer() {
 			runReopenProxiedServer(cmd, rootCtx, args)
 			return nil
