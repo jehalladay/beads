@@ -1127,6 +1127,11 @@ func planAllowStaleChanges(ctx context.Context, store storage.DoltStorage, issue
 	if len(localByID) == 0 {
 		return plan, nil
 	}
+	// beads-dn438: hydrate local dep edges so importRowChangeSummary can diff
+	// them (GetIssuesByIDs leaves Dependencies nil).
+	if err := hydrateLocalImportDependencies(ctx, store, localByID); err != nil {
+		return plan, err
+	}
 
 	// One entry per distinct id (the batch upsert collapses duplicates), so the
 	// Updates list never double-counts an id repeated in the input.
@@ -1191,6 +1196,11 @@ func filterStaleImportIssues(ctx context.Context, store storage.DoltStorage, iss
 	if len(localByID) == 0 {
 		return issues, nil, plan, nil
 	}
+	// beads-dn438: hydrate local dep edges so importRowChangeSummary can diff
+	// them (GetIssuesByIDs leaves Dependencies nil).
+	if err := hydrateLocalImportDependencies(ctx, store, localByID); err != nil {
+		return nil, nil, plan, err
+	}
 
 	filtered := make([]*types.Issue, 0, len(issues))
 	skippedIDs := make([]string, 0)
@@ -1234,6 +1244,29 @@ func filterStaleImportIssues(ctx context.Context, store storage.DoltStorage, iss
 }
 
 // importRowChangeSummary summarizes the differences between the local issue
+// hydrateLocalImportDependencies populates the Dependencies slice on each local
+// issue in localByID (beads-dn438). GetIssuesByIDs hydrates labels but NOT
+// dependencies (dep hydration is off by default for perf), so the change-plan's
+// dep diff would otherwise see local.Dependencies == nil and false-positive on
+// every import that carries a pre-existing edge. One batch query covers all ids.
+func hydrateLocalImportDependencies(ctx context.Context, store storage.DoltStorage, localByID map[string]*types.Issue) error {
+	if len(localByID) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(localByID))
+	for id := range localByID {
+		ids = append(ids, id)
+	}
+	depsByID, err := store.GetDependencyRecordsForIssues(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("hydrate local dependencies before import: %w", err)
+	}
+	for id, local := range localByID {
+		local.Dependencies = depsByID[id]
+	}
+	return nil
+}
+
 // row and the incoming import row, restricted to the columns the import
 // upsert rewrites. Returns "" when none of those fields differ. Status,
 // priority, and type transitions show old → new; long-form fields are listed
@@ -1283,7 +1316,81 @@ func importRowChangeSummary(local, incoming *types.Issue) string {
 	if string(local.Metadata) != string(incoming.Metadata) {
 		parts = append(parts, "metadata")
 	}
+	// beads-dn438: labels and dependencies are RELATIONAL fields the import
+	// apply path DOES mutate (labels via INSERT IGNORE = union-add; deps via a
+	// deterministic-PK INSERT that is additive-only, #4259/beads-8292k), yet the
+	// scalar-column diff above omitted them. A label-only or dep-only upsert
+	// therefore produced an empty summary and was mis-classified as "Unchanged
+	// (already up to date)" while the row was really changed — breaking the
+	// created/updated/unchanged partition the beads-06x87/fkzvk/grmih family
+	// keeps honest. Report them so such an upsert lands in Updates with an
+	// accurate change list. Both apply paths are additive-only, so the diff is a
+	// one-way set difference (incoming carries a member local lacks); a member
+	// only local has cannot be dropped by import, so it is not reported.
+	if importLabelsAdded(local.Labels, incoming.Labels) {
+		parts = append(parts, "labels")
+	}
+	if importDependenciesAdded(local.Dependencies, incoming.Dependencies) {
+		parts = append(parts, "dependencies")
+	}
 	return strings.Join(parts, ", ")
+}
+
+// importLabelsAdded reports whether the incoming import row carries a label the
+// local issue does not already have. Mirrors the apply path (PersistLabels): a
+// label is compared on its trimmed value and empties are ignored, and the
+// INSERT IGNORE union-add can only ADD labels (a label present locally but
+// absent from the incoming line is NOT removed on import), so this is a one-way
+// "incoming has a new label" check, not a symmetric set-inequality.
+func importLabelsAdded(local, incoming []string) bool {
+	if len(incoming) == 0 {
+		return false
+	}
+	localSet := make(map[string]struct{}, len(local))
+	for _, l := range local {
+		if l = strings.TrimSpace(l); l != "" {
+			localSet[l] = struct{}{}
+		}
+	}
+	for _, l := range incoming {
+		if l = strings.TrimSpace(l); l == "" {
+			continue
+		}
+		if _, ok := localSet[l]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+// importDependenciesAdded reports whether the incoming import row carries a
+// dependency edge the local issue does not already have. The apply path keys
+// the edge on (issue_id, depends_on_id) (depid.New flattens the target; the
+// edge type is NOT part of the primary key) and is additive-only — a re-import
+// of an existing target is a no-op even at a different type (beads-8292k), and
+// an edge present locally but absent from the incoming line is never removed by
+// import. So the comparison is a one-way check keyed on the target id: an
+// incoming edge whose target the local issue does not already depend on is a
+// genuine add.
+func importDependenciesAdded(local, incoming []*types.Dependency) bool {
+	if len(incoming) == 0 {
+		return false
+	}
+	localSet := make(map[string]struct{}, len(local))
+	for _, d := range local {
+		if d != nil && d.DependsOnID != "" {
+			localSet[d.DependsOnID] = struct{}{}
+		}
+	}
+	for _, d := range incoming {
+		if d == nil || d.DependsOnID == "" {
+			continue
+		}
+		if _, ok := localSet[d.DependsOnID]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 func stringPtrEqual(a, b *string) bool {

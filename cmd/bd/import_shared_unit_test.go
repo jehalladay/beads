@@ -47,6 +47,23 @@ func (f *fakeImportIssueLookupStore) GetCustomStatusesDetailed(_ context.Context
 	return nil, nil
 }
 
+// GetDependencyRecordsForIssues returns each fake issue's already-set
+// Dependencies keyed by ID. hydrateLocalImportDependencies (beads-dn438) calls
+// this from the change-plan path to hydrate local dep edges (GetIssuesByIDs
+// leaves them nil); the embedded storage.DoltStorage would panic on this
+// nil-method, so the fake must implement it. These unit tests do not exercise
+// dep-diff classification, so returning the local slices (usually nil) keeps
+// the change plan's dep comparison a no-op.
+func (f *fakeImportIssueLookupStore) GetDependencyRecordsForIssues(_ context.Context, _ []string) (map[string][]*types.Dependency, error) {
+	out := make(map[string][]*types.Dependency, len(f.issues))
+	for _, iss := range f.issues {
+		if iss != nil && iss.ID != "" {
+			out[iss.ID] = iss.Dependencies
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeImportIssueLookupStore) CreateIssuesWithFullOptions(_ context.Context, issues []*types.Issue, _ string, opts storage.BatchCreateOptions) error {
 	f.created = append(f.created, issues...)
 	f.createOpts = append(f.createOpts, opts)
