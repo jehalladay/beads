@@ -53,6 +53,22 @@ Examples:
 		if !flattenDryRun {
 			CheckReadonly("flatten")
 		}
+
+		// beads-94s8d: flatten is not in noDbCommands, so in proxied-server mode
+		// main.go PersistentPreRun returns before newDoltStore, leaving the global
+		// `store` nil — `storage.UnwrapStore(store).(storage.Flattener)` below then
+		// yields ok=false and flatten reports the MISLEADING "storage backend does
+		// not support flatten" (the Dolt backend supports it fine; store is nil
+		// only because of proxied mode). This is the aocj proxied-routing class
+		// (maintenance-cmd leg): flatten's history-squash + DoltGC are inherently
+		// LOCAL Dolt maintenance ops with no proxied/UOW equivalent, so — like
+		// `bd branch` (beads-jr2h4), `bd gc` (beads-0lunb, whose comment even cites
+		// flatten as a sibling), and `bd compact` — refuse cleanly with a clear,
+		// purpose-built message instead of the misleading backend-capability error.
+		if usesProxiedServer() {
+			return HandleErrorRespectJSON("flatten requires direct/embedded Dolt access and is not available in proxied-server mode")
+		}
+
 		ctx := rootCtx
 		start := time.Now()
 
