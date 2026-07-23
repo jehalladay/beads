@@ -635,21 +635,42 @@ func proxiedGetMoleculeProgress(ctx context.Context, uw uow.UnitOfWork, molecule
 		}
 	}
 
+	// beads-bpc9y: a custom done-category status is a terminal "done" outcome,
+	// so a step in such a status must count toward Completed / render as "done"
+	// exactly like a literal-closed step — matching the cmd-side
+	// getMoleculeProgress (beads-x463g), the storage-layer GetMoleculeProgressInTx
+	// (beads-bobpm), autoclose, and bd ready/count/list. Without this, a molecule
+	// whose steps are all in a done-category status reports Completed<Total in
+	// proxied mode, so proxiedTryAutoCloseMolecule never fires and mol current
+	// mislabels done steps as "pending"/"ready". Resolve the configured
+	// done-category names once via the UOW's config use case; a nil/empty set (no
+	// config or a read error) leaves behaviour byte-identical to before (only
+	// StatusClosed completes). Degraded-safe: a config-read error just yields an
+	// empty done-set rather than failing progress accounting.
+	doneStatusNames := map[string]bool{}
+	if detailed, cerr := uw.ConfigUseCase().GetCustomStatuses(ctx); cerr == nil {
+		for _, cs := range detailed {
+			if cs.Category == types.CategoryDone {
+				doneStatusNames[cs.Name] = true
+			}
+		}
+	}
+
 	var steps []*StepStatus
 	for _, issue := range subgraph.Issues {
 		if issue.ID == subgraph.Root.ID {
 			continue
 		}
 		step := &StepStatus{Issue: issue}
-		switch issue.Status {
-		case types.StatusClosed:
+		switch {
+		case issue.Status == types.StatusClosed || doneStatusNames[string(issue.Status)]:
 			step.Status = "done"
 			progress.Completed++
-		case types.StatusInProgress:
+		case issue.Status == types.StatusInProgress:
 			step.Status = "current"
 			step.IsCurrent = true
 			progress.CurrentStep = issue
-		case types.StatusBlocked:
+		case issue.Status == types.StatusBlocked:
 			step.Status = "blocked"
 		default:
 			if readyIDs[issue.ID] {
