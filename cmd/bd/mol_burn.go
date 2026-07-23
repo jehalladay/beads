@@ -150,6 +150,18 @@ func runMolBurn(cmd *cobra.Command, args []string) error {
 		force = true
 	}
 
+	// beads-nqpqt: dedup a repeated molecule ID in one batch (in-batch-dup class,
+	// sibling of the landed delete/hzg2y label/cncgt reopen/4k0d8 defer/vam5w todo
+	// done fixes). `bd mol burn X X` on a PERSISTENT molecule categorizes the id
+	// twice in burnMultipleMolecules' first pass → iter-1 burns it (deleteBatch),
+	// iter-2's loadTemplateSubgraph fails on the now-deleted id → FailedCount++ →
+	// the JSON envelope reports failed_count:1 and the command exits non-zero even
+	// though the ONE molecule the user named was fully burned (a false partial
+	// failure a script reads as a burn error). Dedup first-seen-order BEFORE the
+	// single/multi split so both paths process each distinct molecule exactly once,
+	// matching delete.go:86 uniqueStrings(issueIDs).
+	args = uniqueStrings(args)
+
 	if len(args) == 1 {
 		return burnSingleMolecule(ctx, args[0], dryRun, force)
 	}
