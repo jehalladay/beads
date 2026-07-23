@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -45,7 +44,16 @@ func runLinkProxiedServer(ctx context.Context, id1, id2, depType string) error {
 	defer uw.Close(ctx)
 
 	dep := &types.Dependency{IssueID: id1, DependsOnID: id2, Type: dt}
-	if _, err := uw.DependencyUseCase().AddDependencies(ctx, []*types.Dependency{dep}, actor, domain.BulkAddDepsOpts{}); err != nil {
+	// beads-l4hil: route the edge write by source kind, parity with the DIRECT
+	// link path (link.go -> store.AddDependency auto-detects the wisp table via
+	// IsActiveWispInTx) and with proxied `bd dep add` (zdg7x). The domain dep
+	// use case is FLAG-routed (pickDepTable(UseWispsTable)) and never
+	// auto-detects, so an unconditional AddDependencies (useWisp=false) INSERT
+	// validated against the issues table -> "issue <wisp> not found" for a wisp
+	// source. Detect the source kind and route AddWispDependencies vs
+	// AddDependencies (reused zdg7x helpers).
+	srcIsWisp := proxiedDepSourceIsWisp(ctx, uw, id1)
+	if err := proxiedAddDepEdges(ctx, uw, []*types.Dependency{dep}, srcIsWisp, false); err != nil {
 		return HandleErrorRespectJSON("%v", err)
 	}
 
