@@ -589,6 +589,18 @@ func runFederationAddPeer(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	url := args[1]
 
+	// beads-dnik6: a --password without --user cannot authenticate and was
+	// silently DISCARDED — the routing below sends a userless add to
+	// store.AddRemote (the else branch), which stores no credentials, so the
+	// supplied password vanished with no warning or error on a security-adjacent
+	// path. The credential model is username+password keyed on username presence
+	// (withPeerCredentials authenticates only when both are non-empty), so a
+	// password alone is meaningless. Reject it explicitly (honoring --json) rather
+	// than dropping it, mirroring the --user-without---password prompt asymmetry.
+	if federationPassword != "" && federationUser == "" {
+		return HandleErrorRespectJSON("--password requires --user (a password without a username cannot authenticate)")
+	}
+
 	password := federationPassword
 	if federationUser != "" && password == "" {
 		fmt.Fprint(os.Stderr, "Password: ")
