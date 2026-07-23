@@ -173,9 +173,37 @@ func runSetStateProxiedServer(ctx context.Context, issueID, dimension, newValue,
 		return HandleErrorRespectJSON("adding label: %v", aerr)
 	}
 
+	// beads-07nv2: capture the post-swap TARGET snapshot from within the
+	// still-open UOW (BEFORE Commit) so the on_update hook can fire with it AFTER
+	// the commit — the same in-tx-snapshot / post-commit-fire ordering the proxied
+	// update path uses (captureProxiedHookSnapshot, beads-29tyj/26gea). The DIRECT
+	// set-state fires on_update on the target via the HookFiringStore label
+	// decorator (hook_decorator.go AddLabel/RemoveLabel → EventUpdate on fullID),
+	// but the proxied UOW label ops bypass HookFiringStore, so a hub-connected
+	// (proxiedServerMode, store==nil) crew's on_update automation silently never
+	// ran for set-state (5o5kp sibling, out of its close-verb scope). Wisp-aware:
+	// captureProxiedHookSnapshot falls back to GetWisp on an issues-table miss
+	// (beads-vv8cj), matching this handler's own wisp-routed read/write legs.
+	afterTarget := captureProxiedHookSnapshot(ctx, uw, fullID, false)
+
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: set-state %s %s=%s", fullID, dimension, newValue)); err != nil && !isDoltNothingToCommit(err) {
 		return HandleErrorRespectJSON("failed to commit: %v", err)
 	}
+
+	// beads-07nv2: fire the target's on_update + the minted event bead's on_create
+	// AFTER the commit, at parity with the direct decorator. The direct path fires
+	// on_update on fullID (the label swap) and on_create for the event bead
+	// (tx.CreateIssue → createHookEvents). Best-effort: the writes are already
+	// durably committed, so a hook error only warns (mirrors the fireProxiedUpdateHooks
+	// callers + fireProxiedCreateHooks best-effort semantics). The event bead is a
+	// regular label-free issue, so its on_create is the label-free createHookEvents
+	// shape (fireProxiedCreateHooks with no labels). fireProxiedUpdateHooks only
+	// fires on_close for a real open->closed transition, which set-state never makes
+	// on the target, so passing the pre-swap `issue` as `before` is safe.
+	if err := fireProxiedUpdateHooks(ctx, issue, afterTarget); err != nil {
+		WarnError("%s: %v", fullID, err)
+	}
+	fireProxiedCreateHooks(ctx, event, nil)
 
 	if jsonOutput {
 		result := map[string]interface{}{
