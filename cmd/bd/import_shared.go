@@ -102,6 +102,17 @@ type ImportResult struct {
 	// The type change was reverted to the local value (all other fields still
 	// import); the ids are reported so the silent close-guard bypass is visible.
 	ParentDemoteReverted []string
+	// MetadataKeysDropped lists incoming rows whose metadata object OMITS one or
+	// more top-level keys that the local issue currently has, so the verbatim
+	// import REPLACE silently drops them (beads-85nml). This is the twin
+	// divergence with `bd update --metadata`, which does a shallow top-level
+	// MERGE (MergeMetadataWithCAS) so unlisted keys survive — an export -> edit
+	// (remove a key) -> import round-trip drops the unlisted keys at RC=0 with a
+	// success line. Import is a full-state REPLACE by design (import.go), so the
+	// drop is NOT reverted (that would be a design-gated behavior flip); instead
+	// the ids are reported so the otherwise-silent key loss is visible, mirroring
+	// the InvalidMetadataIDs / SkippedDependencies skip-and-report idiom.
+	MetadataKeysDropped []string
 }
 
 // ImportChange describes how an import row modified an existing local issue.
@@ -230,6 +241,8 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		staleSkippedIDs = skipped
 		changePlan = plan
 		if len(issues) == 0 {
+			// No rows land here (every row was stale-skipped), so there is no
+			// metadata key-drop to report — MetadataKeysDropped stays nil.
 			return &ImportResult{
 				Skipped:              len(staleSkippedIDs) + len(invalidMetadataIDs),
 				StaleSkippedIDs:      staleSkippedIDs,
@@ -251,6 +264,26 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 			return nil, err
 		}
 		changePlan = plan
+	}
+
+	// Metadata round-trip key-loss (beads-85nml): `bd update --metadata` does a
+	// shallow top-level MERGE (unlisted keys survive) but import applies the
+	// incoming metadata object VERBATIM (REPLACE), so an incoming line that
+	// carries a metadata object with FEWER top-level keys than the local issue
+	// silently drops the omitted keys. Detect over the post-stale-filter issue
+	// set (the rows that will actually land) so stale-skipped rows do not
+	// false-positive, and only when the caller tracks field presence (the CLI
+	// import path) so a full-replace/bootstrap caller is unaffected. Report the
+	// ids — LOUD-warn, not revert: import is a full-state REPLACE by design.
+	// Detection is read-only, so it runs identically on the real and dry-run
+	// (preview) paths — a preview surfaces the same drop warning the real import
+	// would emit.
+	var metadataKeysDropped []string
+	if len(opts.PresentFieldsByID) > 0 {
+		metadataKeysDropped, err = detectImportMetadataKeyDrops(ctx, store, issues, opts.PresentFieldsByID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var skippedDependencies []string
@@ -357,6 +390,7 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		UpdatedIssues:        updatedIssues,
 		TieKeptLocalIDs:      changePlan.TieKeptLocal,
 		ParentDemoteReverted: demoteReverted,
+		MetadataKeysDropped:  metadataKeysDropped,
 	}, nil
 }
 
@@ -674,6 +708,115 @@ func guardImportParentDemote(ctx context.Context, store storage.DoltStorage, iss
 		}
 	}
 	return reverted, nil
+}
+
+// detectImportMetadataKeyDrops reports incoming rows whose metadata object
+// OMITS one or more top-level keys the local issue currently has (beads-85nml).
+// Import applies the incoming metadata VERBATIM (a full-state REPLACE), unlike
+// `bd update --metadata`, which shallow-MERGEs top-level keys — so an export ->
+// edit (drop a key) -> import round-trip silently drops the omitted keys. This
+// is read-only: it does NOT mutate the incoming metadata (the REPLACE is
+// intentional per import.go; reverting would be a design-gated behavior flip).
+// It returns the ids so the import can LOUD-warn, mirroring the
+// InvalidMetadataIDs / SkippedDependencies skip-and-report idiom.
+//
+// A drop is reported only when ALL of:
+//   - the incoming JSON line explicitly carried the "metadata" field (present),
+//     so preserve-on-absent rows (handled by restoreAbsentFieldsFromLocal) and
+//     bootstrap/full-replace callers that don't track presence never trip it;
+//   - both the local and incoming metadata are JSON objects (non-object rows
+//     are handled by the InvalidMetadataIDs skip);
+//   - the local object has at least one top-level key absent from the incoming
+//     object.
+func detectImportMetadataKeyDrops(ctx context.Context, store storage.DoltStorage, issues []*types.Issue, presentByID map[string]map[string]bool) ([]string, error) {
+	// Collect ids of rows that explicitly carry a metadata field and are not
+	// genuinely new (a local lookup is only worthwhile for those).
+	ids := make([]string, 0, len(issues))
+	seen := make(map[string]struct{}, len(issues))
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" {
+			continue
+		}
+		if present := presentByID[issue.ID]; present == nil || !present["metadata"] {
+			continue // metadata absent on the line — preserve-on-absent already ran
+		}
+		if _, ok := seen[issue.ID]; ok {
+			continue
+		}
+		seen[issue.ID] = struct{}{}
+		ids = append(ids, issue.ID)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	localIssues, err := store.GetIssuesByIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("load local issues for import metadata-drop check: %w", err)
+	}
+	localByID := make(map[string]*types.Issue, len(localIssues))
+	for _, local := range localIssues {
+		if local != nil && local.ID != "" {
+			localByID[local.ID] = local
+		}
+	}
+	if len(localByID) == 0 {
+		return nil, nil // every row genuinely new — nothing to drop
+	}
+
+	var dropped []string
+	droppedSet := make(map[string]struct{}, len(ids))
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" {
+			continue
+		}
+		if present := presentByID[issue.ID]; present == nil || !present["metadata"] {
+			continue
+		}
+		local, ok := localByID[issue.ID]
+		if !ok {
+			continue // genuinely new
+		}
+		localKeys := topLevelMetadataKeys(local.Metadata)
+		if len(localKeys) == 0 {
+			continue // local has no metadata keys to drop
+		}
+		incomingKeys := topLevelMetadataKeys(issue.Metadata)
+		// A drop is any local key not present in the incoming object.
+		droppedAny := false
+		for k := range localKeys {
+			if _, kept := incomingKeys[k]; !kept {
+				droppedAny = true
+				break
+			}
+		}
+		if !droppedAny {
+			continue
+		}
+		if _, dup := droppedSet[issue.ID]; !dup {
+			droppedSet[issue.ID] = struct{}{}
+			dropped = append(dropped, issue.ID)
+		}
+	}
+	return dropped, nil
+}
+
+// topLevelMetadataKeys returns the set of top-level keys of a metadata blob,
+// or an empty set when the blob is empty or not a JSON object (non-object
+// metadata is handled separately by the InvalidMetadataIDs skip).
+func topLevelMetadataKeys(raw json.RawMessage) map[string]struct{} {
+	keys := make(map[string]struct{})
+	if len(raw) == 0 {
+		return keys
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return keys // non-object / malformed — not our concern here
+	}
+	for k := range obj {
+		keys[k] = struct{}{}
+	}
+	return keys
 }
 
 // importChangePlan reports how the import batch relates to existing local
