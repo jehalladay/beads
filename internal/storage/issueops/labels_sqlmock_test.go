@@ -176,7 +176,7 @@ func TestSetLabelsInTx(t *testing.T) {
 		mock.ExpectQuery(regexp.QuoteMeta("SELECT label FROM labels WHERE issue_id = ? ORDER BY label")).
 			WithArgs("bd-1").
 			WillReturnRows(sqlmock.NewRows([]string{"label"}).AddRow("a").AddRow("b"))
-		mock.ExpectExec(regexp.QuoteMeta("DELETE FROM labels WHERE issue_id = ? AND label = ?")).
+		mock.ExpectExec(regexp.QuoteMeta("DELETE FROM labels WHERE issue_id = ? AND LOWER(label) = ?")).
 			WithArgs("bd-1", "a").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec(regexp.QuoteMeta("INSERT INTO events (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)")).
@@ -217,7 +217,7 @@ func TestSetLabelsInTx(t *testing.T) {
 		mock.ExpectQuery(regexp.QuoteMeta("SELECT label FROM labels WHERE issue_id = ? ORDER BY label")).
 			WithArgs("bd-1").
 			WillReturnRows(sqlmock.NewRows([]string{"label"}).AddRow("a"))
-		mock.ExpectExec(regexp.QuoteMeta("DELETE FROM labels WHERE issue_id = ? AND label = ?")).
+		mock.ExpectExec(regexp.QuoteMeta("DELETE FROM labels WHERE issue_id = ? AND LOWER(label) = ?")).
 			WithArgs("bd-1", "a").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec(regexp.QuoteMeta("INSERT INTO events (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)")).
@@ -273,7 +273,7 @@ func TestRemoveLabelInTx(t *testing.T) {
 	t.Run("deletes label then records the label_removed event", func(t *testing.T) {
 		t.Parallel()
 		_, mock, tx := beginMockTx(t)
-		mock.ExpectExec(regexp.QuoteMeta("DELETE FROM labels WHERE issue_id = ? AND label = ?")).
+		mock.ExpectExec(regexp.QuoteMeta("DELETE FROM labels WHERE issue_id = ? AND LOWER(label) = ?")).
 			WithArgs("bd-1", "bug").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec(regexp.QuoteMeta("INSERT INTO events (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)")).
@@ -293,7 +293,7 @@ func TestRemoveLabelInTx(t *testing.T) {
 		// recording a label_removed event for a removal that never happened
 		// pollutes the audit trail (beads-usz1). Expect ONLY the DELETE.
 		_, mock, tx := beginMockTx(t)
-		mock.ExpectExec(regexp.QuoteMeta("DELETE FROM labels WHERE issue_id = ? AND label = ?")).
+		mock.ExpectExec(regexp.QuoteMeta("DELETE FROM labels WHERE issue_id = ? AND LOWER(label) = ?")).
 			WithArgs("bd-1", "bug").
 			WillReturnResult(sqlmock.NewResult(0, 0))
 		if err := RemoveLabelInTx(context.Background(), tx, "labels", "events", "bd-1", "bug", "alice"); err != nil {

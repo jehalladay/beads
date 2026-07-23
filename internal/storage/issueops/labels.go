@@ -146,6 +146,16 @@ func AddLabelInTx(ctx context.Context, tx DBTX, labelTable, eventTable, issueID,
 	// the single live-path chokepoint for AddLabel across the dolt and
 	// embeddeddolt stores, and mirrors the CLI `bd label add` TrimSpace guard.
 	label = strings.TrimSpace(label)
+	// beads-9jjj8: case-fold labels at WRITE so all three verbs agree. The
+	// query/filter side is case-INSENSITIVE (LOWER(label)=LOWER(?) throughout
+	// sqlbuild), so storing verbatim mixed case let 'FOO' and 'foo' coexist yet
+	// both surface under `--label foo` (un-disambiguatable), and `label remove
+	// foo` failed to remove a stored 'FOO' (case-exact DELETE) even though the
+	// user had just found it via that same query casing. Folding at write is the
+	// coherent end-state (matches NormalizeIssueType's write-fold and the
+	// assignee LOWER()/EqualFold precedent); RemoveLabelInTx also folds so the
+	// trap closes for pre-existing mixed-case rows.
+	label = strings.ToLower(label)
 	if label == "" {
 		return fmt.Errorf("label must not be empty")
 	}
@@ -218,9 +228,13 @@ func SetLabelsInTx(ctx context.Context, tx DBTX, labelTable, eventTable, issueID
 		}
 	}
 
+	// beads-9jjj8: fold desired labels to lower so the diff below compares like
+	// with like — AddLabelInTx/RemoveLabelInTx now case-fold, and stored labels
+	// are lower, so an un-folded desired 'FOO' would false-diff against a stored
+	// 'foo' (spurious remove+re-add churn, and a stale mixed-case event comment).
 	desired := make(map[string]bool, len(labels))
 	for _, l := range labels {
-		if l = strings.TrimSpace(l); l != "" {
+		if l = strings.ToLower(strings.TrimSpace(l)); l != "" {
 			desired[l] = true
 		}
 	}
@@ -259,6 +273,14 @@ func RemoveLabelInTx(ctx context.Context, tx DBTX, labelTable, eventTable, issue
 	// arg trims to empty and can never match an existing label, so the DELETE
 	// no-ops (matching the add-side empty guard's intent).
 	label = strings.TrimSpace(label)
+	// beads-9jjj8: match on LOWER() so remove is case-insensitive like the
+	// query side (LOWER(label)=LOWER(?) throughout sqlbuild). Previously the
+	// DELETE was case-EXACT, so `label remove foo` could not remove a stored
+	// 'FOO' the user had just surfaced with `--label foo` (the find-then-
+	// cannot-remove trap). New writes fold to lower (AddLabelInTx), but folding
+	// here too clears pre-existing mixed-case rows and covers a padded/mixed
+	// remove arg regardless.
+	label = strings.ToLower(label)
 	if labelTable == "" || eventTable == "" {
 		isWisp := IsActiveWispInTx(ctx, tx, issueID)
 		_, lt, et, _ := WispTableRouting(isWisp)
@@ -269,7 +291,7 @@ func RemoveLabelInTx(ctx context.Context, tx DBTX, labelTable, eventTable, issue
 			eventTable = et
 		}
 	}
-	res, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE issue_id = ? AND label = ?`, labelTable), issueID, label)
+	res, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE issue_id = ? AND LOWER(label) = ?`, labelTable), issueID, label)
 	if err != nil {
 		return fmt.Errorf("remove label: %w", err)
 	}

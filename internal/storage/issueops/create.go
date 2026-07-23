@@ -672,6 +672,12 @@ func PersistLabels(ctx context.Context, tx *sql.Tx, issue *types.Issue, actor, e
 		// `bd label remove`, or filter normalizes to the padded stored value
 		// (beads-4g2h). Dedup on the TRIMMED value so '  x  ' and 'x' collapse.
 		label = strings.TrimSpace(label)
+		// beads-9jjj8: case-fold create-time labels so create matches
+		// `bd label add` (AddLabelInTx now folds) and the case-insensitive
+		// query side — otherwise `bd create -l FOO` stored 'FOO' while
+		// `bd label add X foo` stored 'foo', re-opening the coexisting-casing
+		// incoherence on the create path. Dedup below runs on the folded value.
+		label = strings.ToLower(label)
 		if label == "" {
 			continue
 		}

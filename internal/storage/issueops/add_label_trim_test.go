@@ -71,7 +71,7 @@ func TestRemoveLabelInTxTrimsWhitespace(t *testing.T) {
 	t.Parallel()
 
 	_, mock, tx := beginMockTx(t)
-	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM labels WHERE issue_id = ? AND label = ?")).
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM labels WHERE issue_id = ? AND LOWER(label) = ?")).
 		WithArgs("bd-1", "bug").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO events (id, issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?, ?)")).
