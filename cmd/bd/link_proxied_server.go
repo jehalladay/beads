@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -42,6 +43,33 @@ func runLinkProxiedServer(ctx context.Context, id1, id2, depType string) error {
 
 	uw := openDepProxiedUOW(ctx)
 	defer uw.Close(ctx)
+
+	// beads-nnsso: mirror the direct link path's honest-no-op report (and the
+	// proxied `dep add` epuz precheck). A same-type re-add is idempotent, so an
+	// unconditional "✓ Added" is a false success on a no-op — `bd link` must
+	// report "unchanged" like its documented alias `bd dep add`. Reuse the shared
+	// proxied helpers (source-is-wisp routing + edge existence). External refs are
+	// not resolvable via the local dep records, so skip the precheck for them,
+	// matching the dep add proxied path (best-effort, same-store-only).
+	if !strings.HasPrefix(id2, "external:") {
+		srcIsWisp := proxiedDepSourceIsWisp(ctx, uw, id1)
+		if proxiedDepEdgeExistsSameType(ctx, uw, id1, id2, dt, srcIsWisp) {
+			if jsonOutput {
+				return outputJSON(map[string]interface{}{
+					"status":        "unchanged",
+					"issue_id":      id1,
+					"depends_on_id": id2,
+					"type":          depType,
+				})
+			}
+			fmt.Printf("%s Dependency already present, no change: %s depends on %s (%s)\n",
+				ui.RenderPass("✓"),
+				formatFeedbackIDParen(id1, proxiedLookupTitle(ctx, uw, id1)),
+				formatFeedbackIDParen(id2, proxiedLookupTitle(ctx, uw, id2)),
+				depType)
+			return nil
+		}
+	}
 
 	dep := &types.Dependency{IssueID: id1, DependsOnID: id2, Type: dt}
 	// beads-l4hil: route the edge write by source kind, parity with the DIRECT

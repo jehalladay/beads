@@ -89,6 +89,34 @@ Examples:
 			Type:        dt,
 		}
 
+		// beads-nnsso: `bd link` is documented shorthand for `bd dep add`, but it
+		// unconditionally reported {"status":"added"} even when the identical
+		// same-type edge already existed. AddDependency is idempotent (a re-add is
+		// a benign no-op that only refreshes metadata), so a duplicate `bd link A
+		// B` printed a false "✓ Added" / JSON status:"added" while dep list showed
+		// a single edge. `dep add` fixed this on both paths (bwla direct dep.go /
+		// epuz proxied): pre-read the existing edges and report "unchanged" on a
+		// match. Mirror it here for parity — same-store-only, matching dep add's
+		// GetDependencyRecords precheck. grmih class (a mirrored path that omitted
+		// a leg the parent verb gained in a later fix).
+		if records, lookupErr := fromStore.GetDependencyRecords(ctx, fromID); lookupErr == nil {
+			for _, rec := range records {
+				if rec != nil && rec.DependsOnID == toID && rec.Type == dt {
+					if jsonOutput {
+						return outputJSON(map[string]interface{}{
+							"status":        "unchanged",
+							"issue_id":      fromID,
+							"depends_on_id": toID,
+							"type":          depType,
+						})
+					}
+					fmt.Printf("%s Dependency already present, no change: %s depends on %s (%s)\n",
+						ui.RenderPass("✓"), formatFeedbackIDParen(fromID, lookupTitle(fromID)), formatFeedbackIDParen(toID, lookupTitle(toID)), depType)
+					return nil
+				}
+			}
+		}
+
 		if err := fromStore.AddDependency(ctx, dep, actor); err != nil {
 			return HandleErrorRespectJSON("%v", err)
 		}
