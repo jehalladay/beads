@@ -29,7 +29,17 @@ import (
 //     because its branch != the CWD HEAD).
 func TestMatchGateToRun_q4gr5(t *testing.T) {
 	maxAge := 24 * time.Hour
-	gateTime := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	// Anchor gateTime relative to the wall clock, NOT a hardcoded calendar date.
+	// matchGateToRun ages out runs where now.Sub(run.CreatedAt) > maxAge using the
+	// real time.Now(); a hardcoded gateTime (e.g. 2026-07-22 12:00 with runs at
+	// +3min) passes on the day it lands and then ROTS exactly maxAge later, when
+	// the fixed run timestamps drift past the age-out window and every branch/time
+	// run is skipped -> matchGateToRun returns nil -> a pre-existing master-red
+	// that freezes the whole gate queue (beads-qe3nh). Offsetting from time.Now()
+	// keeps the +3min/+20min run offsets permanently inside maxAge while
+	// preserving each subtest's scoring intent (the time-proximity buckets depend
+	// on run.CreatedAt - gate.CreatedAt, which is unchanged by the anchor).
+	gateTime := time.Now().Add(-1 * time.Hour)
 	gate := &types.Issue{ID: "gate-1", CreatedAt: gateTime}
 
 	// ── DEFECT 1: a run adjacent in time but sharing neither branch nor commit
