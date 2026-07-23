@@ -453,7 +453,17 @@ func runFederationStatus(cmd *cobra.Command, args []string) error {
 	if federationPeer != "" {
 		peers = []string{federationPeer}
 	} else {
+		// beads-j785d: exclude "origin" from auto-discovery. origin is beads'
+		// own git-backup remote (bd dolt push/pull), NOT a federation peer.
+		// runFederationSync (auto-discovery) and doctor/federation.go already
+		// skip it; without this, `bd federation status` (no --peer) listed
+		// origin as a peer and wasted a Fetch/reachability probe on the backup
+		// remote — a peer that `bd federation sync` never touches. An explicit
+		// `--peer origin` is still honored (parity with sync).
 		for _, r := range allRemotes {
+			if r.Name == "origin" {
+				continue
+			}
 			peers = append(peers, r.Name)
 		}
 	}
@@ -701,9 +711,22 @@ func runFederationListPeers(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	remotes, err := store.ListRemotes(ctx)
+	allRemotes, err := store.ListRemotes(ctx)
 	if err != nil {
 		return HandleErrorRespectJSON("failed to list peers: %v", err)
+	}
+
+	// beads-j785d: exclude "origin" — it is beads' own git-backup remote
+	// (bd dolt push/pull), not a federation peer. sync auto-discovery and
+	// doctor already skip it; list-peers must agree so it doesn't show the
+	// backup remote under "Federation Peers" (and the empty-state message
+	// fires when only origin exists).
+	remotes := make([]storage.RemoteInfo, 0, len(allRemotes))
+	for _, r := range allRemotes {
+		if r.Name == "origin" {
+			continue
+		}
+		remotes = append(remotes, r)
 	}
 
 	if jsonOutput {
