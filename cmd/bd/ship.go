@@ -87,7 +87,17 @@ func runShip(cmd *cobra.Command, args []string) error {
 
 	issue := issues[0]
 
-	if issue.Status != types.StatusClosed && !force {
+	// beads-6yt1m: `bd ship` exports a capability whose precondition is "the
+	// work is complete." A custom done-category status (e.g. "verified:done")
+	// IS a terminal/complete outcome — beads-97gmg established that for the
+	// auto-closing-parent family, and bd ready/count/list already treat it that
+	// way — so a done-category issue must ship without --force, not be refused
+	// with "is not closed". Accept literal-closed OR a done-category status.
+	// Degraded-safe: an empty done-set (config read error / none configured)
+	// reduces to byte-identical literal-'closed' behavior. Frozen-category is
+	// deliberately excluded (parked != done), matching x463g/97gmg/ulsg4.
+	done := doneCategoryStatusNames(ctx, store)
+	if issue.Status != types.StatusClosed && !done[string(issue.Status)] && !force {
 		return HandleErrorWithHintRespectJSON(
 			fmt.Sprintf("issue %s is not closed (status: %s)", issue.ID, issue.Status),
 			"close the issue first, or use --force to override")

@@ -50,7 +50,14 @@ func runShipProxiedServer(ctx context.Context, capability string, force, dryRun 
 
 	issue := issues[0]
 
-	if issue.Status != types.StatusClosed && !force {
+	// beads-6yt1m: proxied twin of the ship.go done-category widening — accept a
+	// custom done-category status as satisfying the "work is complete" ship
+	// precondition, not just literal-closed. Uses the tx-scoped proxied done-set
+	// resolver (doneCategoryStatusSetProxied) so it reads the same config the
+	// direct path reads via doneCategoryStatusNames. Degraded-safe (empty set →
+	// literal-closed); Frozen excluded.
+	done := doneCategoryStatusSetProxied(ctx, uw)
+	if issue.Status != types.StatusClosed && !done[string(issue.Status)] && !force {
 		return HandleErrorWithHintRespectJSON(
 			fmt.Sprintf("issue %s is not closed (status: %s)", issue.ID, issue.Status),
 			"close the issue first, or use --force to override")
