@@ -154,8 +154,12 @@ func CreateIssueFromFormValues(ctx context.Context, s storage.DoltStorage, fv *c
 		// issues are created open, so any closed auto-closing parent (epic OR
 		// molecule OR wisp, per the aw9x8 shared isAutoClosingParentType) is a
 		// violation. Overridable with --force, matching `bd create --force`.
+		// beads-ei6vq: a done-category parent is terminal but not literally
+		// closed — treat it as terminal (degraded-safe; empty done-set →
+		// literal closed).
+		done := doneCategoryStatusNames(ctx, s)
 		if !fv.Force && parentIssue != nil &&
-			isAutoClosingParentType(parentIssue) && parentIssue.Status == types.StatusClosed {
+			isAutoClosingParentType(parentIssue) && parentStatusIsTerminal(parentIssue.Status, done) {
 			return nil, fmt.Errorf("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", fv.ParentID)
 		}
 		childID, err := s.GetNextChildID(ctx, fv.ParentID)
@@ -299,9 +303,12 @@ func CreateIssueFromFormValues(ctx context.Context, s storage.DoltStorage, fv *c
 		// read miss (err==nil gate): this loop does not otherwise validate the
 		// dep target's existence, so a lookup error must not newly reject the
 		// create — only a successfully-read closed auto-closing parent is barred.
+		// beads-ei6vq: a done-category parent is terminal but not literally
+		// closed — treat it as terminal (degraded-safe).
 		if !fv.Force && depType == types.DepParentChild {
+			depDone := doneCategoryStatusNames(ctx, s)
 			if parent, err := s.GetIssue(ctx, dependsOnID); err == nil &&
-				isAutoClosingParentType(parent) && parent.Status == types.StatusClosed {
+				isAutoClosingParentType(parent) && parentStatusIsTerminal(parent.Status, depDone) {
 				return nil, fmt.Errorf("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", dependsOnID)
 			}
 		}

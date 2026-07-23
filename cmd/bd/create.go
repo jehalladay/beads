@@ -507,7 +507,17 @@ var createCmd = &cobra.Command{
 			// reasoning is stale now that aw9x8/bigro/eth8/j8ekq widened the
 			// reopen/close/dep-add guards, so a closed MOLECULE/wisp root was the
 			// family straggler still creatable-under here.
-			if !forceCreate && isAutoClosingParentType(parentIssue) && parentIssue.Status == types.StatusClosed {
+			// beads-ei6vq: a parent moved to a custom done-category status is
+			// terminal (work complete) but NOT literally closed, so the literal
+			// `== StatusClosed` test was done-category-blind — the create axis
+			// was the last un-swept member of the done-category family (ulsg4
+			// did update/reopen/reparent/lint, u9lkx did dep-add). New children
+			// are always born open, so a done-category parent here recreates the
+			// forbidden terminal-parent-with-open-child state. Treat a
+			// done-category parent as terminal via parentStatusIsTerminal.
+			// Degraded-safe: an empty done-set reduces to literal `closed`.
+			done := doneCategoryStatusNames(ctx, parentLookupStore)
+			if !forceCreate && isAutoClosingParentType(parentIssue) && parentStatusIsTerminal(parentIssue.Status, done) {
 				return HandleErrorRespectJSON("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", parentID)
 			}
 
@@ -740,7 +750,10 @@ var createCmd = &cobra.Command{
 					}
 					return HandleErrorRespectJSON("failed to check parent issue: %v", err)
 				}
-				if isAutoClosingParentType(depParent) && depParent.Status == types.StatusClosed {
+				// beads-ei6vq: done-category parent is terminal but not
+				// literally closed — treat it as terminal (degraded-safe).
+				depDone := doneCategoryStatusNames(rootCtx, parentLookupStore)
+				if isAutoClosingParentType(depParent) && parentStatusIsTerminal(depParent.Status, depDone) {
 					return HandleErrorRespectJSON("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", dependsOnID)
 				}
 			}

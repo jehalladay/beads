@@ -483,8 +483,11 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string, dryRun bool, fo
 			// parent is always an already-persisted issue we can read here.
 			// Overridable with --force.
 			if !forceCreate && !dryRun && store != nil && depType == types.DepParentChild {
+				// beads-ei6vq: a done-category parent is terminal but not
+				// literally closed — treat it as terminal (degraded-safe).
+				depDone := doneCategoryStatusNames(rootCtx, store)
 				if depParent, perr := store.GetIssue(rootCtx, dependsOnID); perr == nil &&
-					isAutoClosingParentType(depParent) && depParent.Status == types.StatusClosed {
+					isAutoClosingParentType(depParent) && parentStatusIsTerminal(depParent.Status, depDone) {
 					return HandleErrorRespectJSON("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", dependsOnID)
 				}
 			}

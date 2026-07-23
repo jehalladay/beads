@@ -188,12 +188,17 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 			FatalErrorRespectJSON("open unit of work: %v", err)
 		}
 		parent, gerr := checkUW.IssueUseCase().GetIssue(ctx, in.parentID)
+		// beads-ei6vq: resolve the done-category set from the SAME UOW before
+		// closing it — a parent moved to a custom done-category status is
+		// terminal but not literally closed, so the literal `== StatusClosed`
+		// test was done-category-blind (mirrors u9lkx/ulsg4 proxied legs).
+		done := doneCategoryStatusSetProxied(ctx, checkUW)
 		checkUW.Close(ctx)
 		// beads-czu1s: widen the proxied create-under-closed-parent guard
 		// (beads-65cgh) to the shared isAutoClosingParentType (epic OR molecule
 		// OR ephemeral), mirroring the direct path (create.go) — a closed
 		// MOLECULE/wisp root was previously creatable-under on the proxied path.
-		if gerr == nil && isAutoClosingParentType(parent) && parent.Status == types.StatusClosed {
+		if gerr == nil && isAutoClosingParentType(parent) && parentStatusIsTerminal(parent.Status, done) {
 			FatalErrorRespectJSON("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", in.parentID)
 		}
 	}
