@@ -107,7 +107,7 @@ func performMergeProxied(ctx context.Context, targetID string, sourceIDs []strin
 	actor := getActor()
 
 	for _, sourceID := range sourceIDs {
-		reparented, srcOldStatus, autoClosedRoot, srcBefore, mergeErr := performMergeOneSourceProxied(ctx, targetID, sourceID, actor)
+		reparented, srcOldStatus, autoClosedRoots, srcBefore, mergeErr := performMergeOneSourceProxied(ctx, targetID, sourceID, actor)
 		if mergeErr != nil {
 			errs = append(errs, mergeErr.Error())
 			continue
@@ -121,8 +121,10 @@ func performMergeProxied(ctx context.Context, targetID string, sourceIDs []strin
 		// with performMerge (duplicates.go) and bd close — emitted AFTER the
 		// commit so a rolled-back source records no phantom audit entry.
 		auditStatusChange(sourceID, srcOldStatus, "closed", actor, fmt.Sprintf("Duplicate of %s", targetID))
-		if autoClosedRoot != "" {
-			// beads-jcrp4/zt47w parity: audit the molecule root the cascade closed.
+		for _, autoClosedRoot := range autoClosedRoots {
+			// beads-jcrp4/zt47w parity: audit each molecule root the cascade closed
+			// (a merge can close both the parent-child molecule root and the
+			// beads-415gm relates-to-linked swarm coordinator molecule).
 			auditStatusChange(autoClosedRoot, "open", "closed", actor, "all steps complete")
 		}
 
@@ -160,10 +162,10 @@ func appendStr(existing interface{}, s string) []string {
 // IDs, the source's pre-close status, any molecule root auto-closed by the
 // cascade, the source's pre-close before-image (for hook firing), and an error
 // (whole unit rolled back) — the caller records the error and moves on.
-func performMergeOneSourceProxied(ctx context.Context, targetID, sourceID, actor string) (reparented []string, oldStatus, autoClosedRoot string, before *types.Issue, err error) {
+func performMergeOneSourceProxied(ctx context.Context, targetID, sourceID, actor string) (reparented []string, oldStatus string, autoClosedRoots []string, before *types.Issue, err error) {
 	uw, uerr := uowProvider.NewUOW(ctx)
 	if uerr != nil {
-		return nil, "", "", nil, fmt.Errorf("open unit of work for %s: %w", sourceID, uerr)
+		return nil, "", nil, nil, fmt.Errorf("open unit of work for %s: %w", sourceID, uerr)
 	}
 	// On any early return before Commit, Close rolls the whole per-source unit
 	// back — preserving atomicity (no half-reparent, no closed-without-link).
@@ -176,7 +178,7 @@ func performMergeOneSourceProxied(ctx context.Context, targetID, sourceID, actor
 
 	srcIssue, srcIsWisp := proxiedResolveIssueOrWisp(ctx, uw, sourceID)
 	if srcIssue == nil {
-		return nil, "", "", nil, fmt.Errorf("failed to resolve %s: not found", sourceID)
+		return nil, "", nil, nil, fmt.Errorf("failed to resolve %s: not found", sourceID)
 	}
 	before = srcIssue
 	oldStatus = string(srcIssue.Status)
@@ -195,7 +197,7 @@ func performMergeOneSourceProxied(ctx context.Context, targetID, sourceID, actor
 		incoming, incErr = uw.DependencyUseCase().ListWithIssueMetadata(ctx, sourceID, domain.DepListFilter{Direction: domain.DepDirectionIn})
 	}
 	if incErr != nil {
-		return nil, "", "", nil, fmt.Errorf("read dependents of %s: %w", sourceID, incErr)
+		return nil, "", nil, nil, fmt.Errorf("read dependents of %s: %w", sourceID, incErr)
 	}
 
 	for _, dep := range incoming {
@@ -210,7 +212,7 @@ func performMergeOneSourceProxied(ctx context.Context, targetID, sourceID, actor
 		// target→target; just drop the stale edge to the closing loser.
 		if childID == targetID {
 			if rerr := removeDepProxied(ctx, uw, childIsWisp, childID, sourceID, actor); rerr != nil {
-				return nil, "", "", nil, fmt.Errorf("remove self-referential edge %s→%s: %w", childID, sourceID, rerr)
+				return nil, "", nil, nil, fmt.Errorf("remove self-referential edge %s→%s: %w", childID, sourceID, rerr)
 			}
 			continue
 		}
@@ -221,7 +223,7 @@ func performMergeOneSourceProxied(ctx context.Context, targetID, sourceID, actor
 		edgeMeta := lookupEdgeMetadataProxied(ctx, uw, childIsWisp, childID, sourceID, dep.DependencyType)
 
 		if rerr := removeDepProxied(ctx, uw, childIsWisp, childID, sourceID, actor); rerr != nil {
-			return nil, "", "", nil, fmt.Errorf("remove %s link %s→%s: %w", dep.DependencyType, childID, sourceID, rerr)
+			return nil, "", nil, nil, fmt.Errorf("remove %s link %s→%s: %w", dep.DependencyType, childID, sourceID, rerr)
 		}
 		migrated := &types.Dependency{
 			IssueID:     childID,
@@ -230,7 +232,7 @@ func performMergeOneSourceProxied(ctx context.Context, targetID, sourceID, actor
 			Metadata:    edgeMeta,
 		}
 		if aerr := addDepProxied(ctx, uw, childIsWisp, migrated, actor); aerr != nil {
-			return nil, "", "", nil, fmt.Errorf("move %s edge %s to %s: %w", dep.DependencyType, childID, targetID, aerr)
+			return nil, "", nil, nil, fmt.Errorf("move %s edge %s to %s: %w", dep.DependencyType, childID, targetID, aerr)
 		}
 		reparented = append(reparented, childID)
 	}
@@ -243,17 +245,17 @@ func performMergeOneSourceProxied(ctx context.Context, targetID, sourceID, actor
 	reason := fmt.Sprintf("Duplicate of %s", targetID)
 	if srcIsWisp {
 		if aerr := uw.DependencyUseCase().AddWispDependency(ctx, dupEdge, actor); aerr != nil {
-			return nil, "", "", nil, fmt.Errorf("link %s to %s: %w", sourceID, targetID, aerr)
+			return nil, "", nil, nil, fmt.Errorf("link %s to %s: %w", sourceID, targetID, aerr)
 		}
 		if _, cerr := uw.IssueUseCase().CloseWisp(ctx, sourceID, domain.CloseIssueParams{Reason: reason}, actor); cerr != nil {
-			return nil, "", "", nil, fmt.Errorf("close %s: %w", sourceID, cerr)
+			return nil, "", nil, nil, fmt.Errorf("close %s: %w", sourceID, cerr)
 		}
 	} else {
 		if aerr := uw.DependencyUseCase().AddDependency(ctx, dupEdge, actor); aerr != nil {
-			return nil, "", "", nil, fmt.Errorf("link %s to %s: %w", sourceID, targetID, aerr)
+			return nil, "", nil, nil, fmt.Errorf("link %s to %s: %w", sourceID, targetID, aerr)
 		}
 		if _, cerr := uw.IssueUseCase().CloseIssue(ctx, sourceID, domain.CloseIssueParams{Reason: reason}, actor); cerr != nil {
-			return nil, "", "", nil, fmt.Errorf("close %s: %w", sourceID, cerr)
+			return nil, "", nil, nil, fmt.Errorf("close %s: %w", sourceID, cerr)
 		}
 	}
 
@@ -262,15 +264,15 @@ func performMergeOneSourceProxied(ctx context.Context, targetID, sourceID, actor
 	// commit (a post-commit call would stage the root-close on a UOW then rolled
 	// back by the deferred Close). session="" (system action, matching the direct
 	// legs).
-	autoClosedRoot = autoCloseProxiedCompletedMolecule(ctx, uw, sourceID, actor, "", isJSONOutput())
+	autoClosedRoots = autoCloseProxiedCompletedMolecule(ctx, uw, sourceID, actor, "", isJSONOutput())
 
 	if cerr := uw.Commit(ctx, fmt.Sprintf("bd: merge %s into %s", sourceID, targetID)); cerr != nil && !isDoltNothingToCommit(cerr) {
-		return nil, "", "", nil, fmt.Errorf("commit merge %s into %s: %w", sourceID, targetID, cerr)
+		return nil, "", nil, nil, fmt.Errorf("commit merge %s into %s: %w", sourceID, targetID, cerr)
 	}
 	committed = true
 	uw.Close(ctx)
 	commandDidWrite.Store(true)
-	return reparented, oldStatus, autoClosedRoot, before, nil
+	return reparented, oldStatus, autoClosedRoots, before, nil
 }
 
 // removeDepProxied removes a dependency edge routed by the dependent (edge-owner)

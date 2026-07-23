@@ -259,9 +259,16 @@ func runGateResolveProxied(ctx context.Context, gateID, reason string) error {
 	// (autoCloseProxiedCompletedMolecule issues its CloseIssue on this UOW but
 	// does not commit — the caller owns the commit, matching close_proxied_server
 	// :321). Self-guards on not-a-step / already-closed / incomplete-progress.
-	autoCloseProxiedCompletedMolecule(ctx, uw, gateID, actor, "", jsonOutput)
+	autoClosedRoots := autoCloseProxiedCompletedMolecule(ctx, uw, gateID, actor, "", jsonOutput)
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: gate resolve %s", gateID)); err != nil && !isDoltNothingToCommit(err) {
 		return HandleErrorRespectJSON("failed to commit: %v", err)
+	}
+	// beads-415gm: post-commit audit-file trail for each molecule/swarm root the
+	// cascade auto-closed (jcrp4 ordering — after the commit that persisted the DB
+	// close). Parity with the manual gate-close audit below and the other proxied
+	// verbs (close/duplicate/human/todo/update/epic).
+	for _, root := range autoClosedRoots {
+		auditStatusChange(root, "open", "closed", actor, "all steps complete")
 	}
 
 	// beads-1jkl5: write the GC-survivable audit-FILE trail (.beads/
@@ -400,9 +407,14 @@ func closeGateProxied(gateID, oldStatus, reason string) error {
 	// step (gate check auto-resolve leg), at parity with the direct closeGate.
 	// MUST run BEFORE uw.Commit so the molecule close lands in the SAME tx (the
 	// helper issues its CloseIssue on this UOW but does not commit).
-	autoCloseProxiedCompletedMolecule(ctx, uw, gateID, actor, "", jsonOutput)
+	autoClosedRoots := autoCloseProxiedCompletedMolecule(ctx, uw, gateID, actor, "", jsonOutput)
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: gate check resolved %s", gateID)); err != nil {
 		return err
+	}
+	// beads-415gm: post-commit audit-file trail for each molecule/swarm root the
+	// cascade auto-closed (jcrp4 ordering), parity with the gate close audit below.
+	for _, root := range autoClosedRoots {
+		auditStatusChange(root, "open", "closed", actor, "all steps complete")
 	}
 	// beads-8ociu: write the GC-survivable audit-FILE trail for the auto-resolve
 	// close AFTER uw.Commit (parity with the direct leg + the manual-resolve fix

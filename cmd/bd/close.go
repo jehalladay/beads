@@ -624,7 +624,20 @@ func autoCloseCompletedMolecule(ctx context.Context, s storage.DoltStorage, clos
 
 	// Check if molecule root is already closed
 	root, err := s.GetIssue(ctx, moleculeID)
-	if err != nil || root == nil || root.Status == types.StatusClosed || !shouldAutoCloseCompletedRoot(root) {
+	if err != nil || root == nil {
+		return
+	}
+
+	// beads-415gm: a swarm work-item's parent-child parent is the EPIC, and the
+	// swarm coordinator molecule links to that epic via DepRelatesTo (not
+	// parent-child), so the parent-child walk above lands on the epic and never
+	// reaches the swarm molecule — leaving it open forever at 100%, diverging from
+	// bd mol pour's molecule auto-close. Resolve+close the relates-to-linked swarm
+	// molecule here. No-op unless root is an epic with a linked swarm (a plain pour
+	// molecule root has none), so it never touches the ordinary molecule cascade.
+	autoCloseCompletedSwarmMolecule(ctx, s, root, actorName, session)
+
+	if root.Status == types.StatusClosed || !shouldAutoCloseCompletedRoot(root) {
 		return
 	}
 
@@ -657,6 +670,63 @@ func autoCloseCompletedMolecule(ctx context.Context, s storage.DoltStorage, clos
 
 	if !jsonOutput {
 		fmt.Printf("%s Auto-closed completed molecule %s\n", ui.RenderPass("✓"), formatFeedbackID(moleculeID, root.Title))
+	}
+}
+
+// autoCloseCompletedSwarmMolecule closes the swarm coordinator molecule linked to
+// an epic once every swarm work-item under that epic is closed (100% progress),
+// mirroring the pour-molecule auto-close (beads-415gm). It is a no-op unless
+// `root` is the epic a swarm was created on: findExistingSwarm returns nil for a
+// plain pour molecule (no relates-to swarm child), so this never disturbs the
+// ordinary molecule cascade in autoCloseCompletedMolecule.
+//
+// Why the separate resolution path: a swarm work-item's parent-child parent is
+// the EPIC (swarm.go), so autoCloseCompletedMolecule's parent-child walk lands on
+// the epic; the swarm molecule is only reachable from the epic via DepRelatesTo
+// (findExistingSwarm). Completion is measured on the EPIC's children via
+// getSwarmStatus (NOT getMoleculeProgress — the swarm molecule has no
+// parent-child children of its own).
+func autoCloseCompletedSwarmMolecule(ctx context.Context, s storage.DoltStorage, root *types.Issue, actorName, session string) {
+	// A swarm coordinator links only to an epic or molecule root (swarm.go
+	// accepts both as the swarm target). findExistingSwarm returns nil for any
+	// root without a relates-to swarm child (e.g. a plain pour molecule), so this
+	// stays a no-op there; the type check just skips the lookup for leaf roots.
+	if root == nil || (root.IssueType != types.TypeEpic && root.IssueType != types.TypeMolecule) {
+		return
+	}
+
+	swarm, err := findExistingSwarm(ctx, s, root.ID)
+	if err != nil || swarm == nil || swarm.ID == root.ID {
+		return // No swarm coordinator for this root (best effort — don't fail the close).
+	}
+	if swarm.Status == types.StatusClosed || !shouldAutoCloseCompletedRoot(swarm) {
+		return
+	}
+
+	status, err := getSwarmStatus(ctx, s, root)
+	if err != nil {
+		return // Best effort.
+	}
+	// Guard on TotalIssues > 0 so an epic with no children (Progress stays 0)
+	// never spuriously closes; getSwarmStatus computes Progress only when there
+	// are children, so a completed swarm reads exactly 100.
+	if status.TotalIssues == 0 || status.Progress < 100 {
+		return // Not all swarm work-items complete yet.
+	}
+
+	oldStatus := string(swarm.Status) // guarded != closed above: a genuine open->closed transition
+	if err := s.CloseIssue(ctx, swarm.ID, "all steps complete", actorName, session); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not auto-close completed swarm molecule %s: %v\n", swarm.ID, err)
+		return
+	}
+
+	// beads-zt47w: same GC-survivable audit-file trail every auto-closed root
+	// gets, so a Dolt GC flatten can't erase the swarm molecule's close from the
+	// durable record.
+	auditStatusChange(swarm.ID, oldStatus, "closed", actorName, "all steps complete")
+
+	if !jsonOutput {
+		fmt.Printf("%s Auto-closed completed swarm molecule %s\n", ui.RenderPass("✓"), formatFeedbackID(swarm.ID, swarm.Title))
 	}
 }
 

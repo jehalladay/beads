@@ -277,9 +277,9 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, forc
 	// ordering constraint as the proxied supersede/duplicate leg, beads-26gea).
 	// session="" (system action). Guarded to the real open->closed transition,
 	// matching checkProxiedUpdateCloseGuards' condition.
-	autoClosedRoot := ""
+	var autoClosedRoots []string
 	if updated != nil && updated.Status == types.StatusClosed && current.Status != types.StatusClosed {
-		autoClosedRoot = autoCloseProxiedCompletedMolecule(ctx, uw, id, actor, "", isJSONOutput())
+		autoClosedRoots = autoCloseProxiedCompletedMolecule(ctx, uw, id, actor, "", isJSONOutput())
 	}
 
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: update %s", id)); err != nil && !isDoltNothingToCommit(err) {
@@ -291,8 +291,8 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, forc
 	// cascade auto-closed — emitted AFTER uw.Commit (the root-close is committed
 	// above), at parity with the direct autoCloseCompletedMolecule (beads-zt47w).
 	// The root was open (helper guards Status != closed).
-	if autoClosedRoot != "" {
-		auditStatusChange(autoClosedRoot, "open", "closed", actor, "all steps complete")
+	for _, root := range autoClosedRoots {
+		auditStatusChange(root, "open", "closed", actor, "all steps complete")
 	}
 
 	if err := fireProxiedUpdateHooks(ctx, current, updated); err != nil {

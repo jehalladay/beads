@@ -32,10 +32,13 @@ type closeProxiedOutcome struct {
 	before *types.Issue
 	after  *types.Issue
 	closed bool
-	// autoClosedRoot is the molecule/wisp root auto-closed by the cascade for
-	// this step ("" if none) — its GC-survivable audit-file entry is emitted
-	// post-commit (beads-jcrp4), same as the step's own close audit.
-	autoClosedRoot string
+	// autoClosedRoots are the molecule/wisp/swarm roots auto-closed by the cascade
+	// for this step (nil if none) — each root's GC-survivable audit-file entry is
+	// emitted post-commit (beads-jcrp4), same as the step's own close audit. It is
+	// a slice (beads-415gm) because a single close can auto-close TWO independent
+	// roots: the step's parent-child molecule root AND a relates-to-linked swarm
+	// coordinator molecule.
+	autoClosedRoots []string
 }
 
 func runCloseProxiedServer(cmd *cobra.Command, ctx context.Context, args []string) {
@@ -131,8 +134,8 @@ func runCloseProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 			// root-close is already committed above), at parity with the direct
 			// autoCloseCompletedMolecule (beads-zt47w) and the step's own close
 			// audit. The root was open (helper guards Status != closed).
-			if o.autoClosedRoot != "" {
-				auditStatusChange(o.autoClosedRoot, "open", "closed", actor, "all steps complete")
+			for _, root := range o.autoClosedRoots {
+				auditStatusChange(root, "open", "closed", actor, "all steps complete")
 			}
 			if err := fireProxiedCloseHooks(ctx, o.before, o.after); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: %s: %v\n", o.id, err)
@@ -335,9 +338,9 @@ func closeProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string, 
 		auditStatusChange(id, oldStatus, "closed", actor, reason)
 	}
 
-	autoClosedRoot := autoCloseProxiedCompletedMolecule(ctx, uw, id, actor, in.session, in.jsonOut)
+	autoClosedRoots := autoCloseProxiedCompletedMolecule(ctx, uw, id, actor, in.session, in.jsonOut)
 
-	return closeProxiedOutcome{id: id, before: current, after: res.Issue, closed: res.Closed, autoClosedRoot: autoClosedRoot}, true
+	return closeProxiedOutcome{id: id, before: current, after: res.Issue, closed: res.Closed, autoClosedRoots: autoClosedRoots}, true
 }
 
 func closeProxiedCommitMessage(outcomes []closeProxiedOutcome, claimed *types.Issue, cont *ContinueResult) string {
@@ -481,48 +484,111 @@ func closeProxiedContinue(ctx context.Context, uw uow.UnitOfWork, closedID strin
 	return result
 }
 
-// autoCloseProxiedCompletedMolecule stages the auto-close of a completed
-// molecule/wisp root into the caller's UOW (BEFORE its uw.Commit, so the
-// root-close lands in the same commit). It RETURNS the closed root's id (""
-// if none) so the caller can emit the GC-survivable audit-file trail for that
+// autoCloseProxiedCompletedMolecule stages the auto-close of completed
+// molecule/wisp roots into the caller's UOW (BEFORE its uw.Commit, so the
+// root-close lands in the same commit). It RETURNS the closed roots' ids (nil
+// if none) so the caller can emit the GC-survivable audit-file trail for each
 // close AFTER its uw.Commit succeeds (beads-jcrp4): audit.LogFieldChange writes
 // a cwd FILE, not a UOW op, so a pre-commit emit here would orphan the entry if
 // the deferred uw.Close rolled the staged root-close back — the same
 // post-commit ordering the source-close audit uses (r3m8v/c2pr1 lesson).
-func autoCloseProxiedCompletedMolecule(ctx context.Context, uw uow.UnitOfWork, closedStepID string, actorName, session string, jsonOut bool) string {
+//
+// It can close up to two roots: the closed step's parent-child molecule root,
+// and (beads-415gm) the relates-to-linked swarm coordinator molecule whose
+// work-items reached 100%. The two are independent — a swarm work-item's
+// parent-child ancestor is the epic (a non-auto-closing root), so the swarm leg
+// is what closes the coordinator; a plain pour molecule has no swarm child, so
+// its leg is a no-op.
+func autoCloseProxiedCompletedMolecule(ctx context.Context, uw uow.UnitOfWork, closedStepID string, actorName, session string, jsonOut bool) []string {
 	moleculeID := proxiedFindParentMolecule(ctx, uw, closedStepID)
 	if moleculeID == "" {
-		return ""
+		return nil
 	}
 
 	root, err := uw.IssueUseCase().GetIssue(ctx, moleculeID)
-	if err != nil || root == nil || root.Status == types.StatusClosed {
-		return ""
+	if err != nil || root == nil {
+		return nil
+	}
+
+	var closed []string
+
+	// beads-415gm: close the swarm coordinator molecule linked to this root (via
+	// DepRelatesTo) once its work-items are 100% complete. Runs regardless of
+	// whether the parent-child root itself auto-closes below: for a swarm the
+	// parent-child ancestor is the epic (which stays open), so this leg is the
+	// one that reaches the coordinator.
+	if swarmID := autoCloseProxiedCompletedSwarmMolecule(ctx, uw, root, actorName, session, jsonOut); swarmID != "" {
+		closed = append(closed, swarmID)
+	}
+
+	if root.Status == types.StatusClosed {
+		return closed
 	}
 	if labels, err := uw.LabelUseCase().GetLabels(ctx, moleculeID); err == nil {
 		root.Labels = labels
 	}
 	if !shouldAutoCloseCompletedRoot(root) {
-		return ""
+		return closed
 	}
 
 	progress, err := proxiedGetMoleculeProgress(ctx, uw, moleculeID)
 	if err != nil {
-		return ""
+		return closed
 	}
 	if progress.Completed < progress.Total {
-		return ""
+		return closed
 	}
 
 	params := domain.CloseIssueParams{Reason: "all steps complete", Session: session}
 	if _, err := uw.IssueUseCase().CloseIssue(ctx, moleculeID, params, actorName); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not auto-close completed molecule %s: %v\n", moleculeID, err)
-		return ""
+		return closed
 	}
 	if !jsonOut {
 		fmt.Printf("%s Auto-closed completed molecule %s\n", ui.RenderPass("✓"), formatFeedbackID(moleculeID, root.Title))
 	}
-	return moleculeID
+	closed = append(closed, moleculeID)
+	return closed
+}
+
+// autoCloseProxiedCompletedSwarmMolecule is the proxied twin of
+// autoCloseCompletedSwarmMolecule (close.go): it stages the close of the swarm
+// coordinator molecule linked to `root` via DepRelatesTo once every swarm
+// work-item is complete (getSwarmStatus.Progress >= 100), and returns its id
+// ("" if none / not complete) for the caller's post-commit audit-file trail.
+// A no-op unless `root` is an epic/molecule with a linked swarm (findExistingSwarm
+// returns nil otherwise), so it never disturbs the ordinary molecule cascade.
+func autoCloseProxiedCompletedSwarmMolecule(ctx context.Context, uw uow.UnitOfWork, root *types.Issue, actorName, session string, jsonOut bool) string {
+	if root == nil || (root.IssueType != types.TypeEpic && root.IssueType != types.TypeMolecule) {
+		return ""
+	}
+
+	s := &swarmProxiedStorage{uw: uw}
+	swarm, err := findExistingSwarm(ctx, s, root.ID)
+	if err != nil || swarm == nil || swarm.ID == root.ID {
+		return ""
+	}
+	if swarm.Status == types.StatusClosed || !shouldAutoCloseCompletedRoot(swarm) {
+		return ""
+	}
+
+	status, err := getSwarmStatus(ctx, s, root)
+	if err != nil {
+		return ""
+	}
+	if status.TotalIssues == 0 || status.Progress < 100 {
+		return ""
+	}
+
+	params := domain.CloseIssueParams{Reason: "all steps complete", Session: session}
+	if _, err := uw.IssueUseCase().CloseIssue(ctx, swarm.ID, params, actorName); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not auto-close completed swarm molecule %s: %v\n", swarm.ID, err)
+		return ""
+	}
+	if !jsonOut {
+		fmt.Printf("%s Auto-closed completed swarm molecule %s\n", ui.RenderPass("✓"), formatFeedbackID(swarm.ID, swarm.Title))
+	}
+	return swarm.ID
 }
 
 func proxiedFindParentMolecule(ctx context.Context, uw uow.UnitOfWork, issueID string) string {

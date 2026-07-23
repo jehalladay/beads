@@ -311,7 +311,7 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 	// call would stage the root-close on a UOW that then gets rolled back by the
 	// deferred Close, silently dropping it). session="" (system action, matching
 	// the direct legs).
-	autoClosedRoot := autoCloseProxiedCompletedMolecule(ctx, uw, fromID, actor, "", isJSONOutput())
+	autoClosedRoots := autoCloseProxiedCompletedMolecule(ctx, uw, fromID, actor, "", isJSONOutput())
 
 	// beads-r3m8v: capture the source's pre-close status for the GC-survivable
 	// audit-file entry emitted after the commit. fromIssue was loaded before the
@@ -345,8 +345,8 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 	// AFTER uw.Commit at parity with the source-close audit and the direct
 	// autoCloseCompletedMolecule (beads-zt47w). The root was open (helper guards
 	// Status != closed).
-	if autoClosedRoot != "" {
-		auditStatusChange(autoClosedRoot, "open", "closed", actor, "all steps complete")
+	for _, root := range autoClosedRoots {
+		auditStatusChange(root, "open", "closed", actor, "all steps complete")
 	}
 
 	// beads-usumn: fire the source's mutation hooks at parity with the DIRECT

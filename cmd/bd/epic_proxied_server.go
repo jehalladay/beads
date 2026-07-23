@@ -78,9 +78,7 @@ func runEpicCloseEligibleProxiedServer(ctx context.Context, dryRun bool) error {
 			// the root's auto-close into THIS UOW (BEFORE commitFn's uw.Commit)
 			// via the same helper the proxied close/update/supersede paths use;
 			// it returns the closed root id ("" when not a molecule step).
-			if root := autoCloseProxiedCompletedMolecule(ctx, uw, id, "system", "", isJSONOutput()); root != "" {
-				autoClosedRoots = append(autoClosedRoots, root)
-			}
+			autoClosedRoots = append(autoClosedRoots, autoCloseProxiedCompletedMolecule(ctx, uw, id, "system", "", isJSONOutput())...)
 			return nil
 		},
 		func() error {

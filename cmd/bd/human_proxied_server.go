@@ -99,17 +99,17 @@ func runHumanDismissProxiedServer(ctx context.Context, issueID, reason string) e
 	// are not molecule steps, so only cascade the issue close. The returned root id
 	// (if any) gets its GC-survivable audit-file trail AFTER uw.Commit succeeds
 	// (jcrp4 ordering: audit.LogFieldChange writes a cwd file, not a UOW op).
-	var autoClosedRoot string
+	var autoClosedRoots []string
 	if !isWisp {
-		autoClosedRoot = autoCloseProxiedCompletedMolecule(ctx, uw, resolvedID, actor, "", jsonOutput)
+		autoClosedRoots = autoCloseProxiedCompletedMolecule(ctx, uw, resolvedID, actor, "", jsonOutput)
 	}
 
 	dismissOldStatus := string(issue.Status)
 	if cerr := uw.Commit(ctx, "bd: human dismiss "+resolvedID); cerr != nil && !isDoltNothingToCommit(cerr) {
 		return HandleErrorRespectJSON("commit dismiss: %v", cerr)
 	}
-	if autoClosedRoot != "" {
-		auditStatusChange(autoClosedRoot, "open", "closed", actor, "all steps complete")
+	for _, root := range autoClosedRoots {
+		auditStatusChange(root, "open", "closed", actor, "all steps complete")
 	}
 
 	// beads-mw44m: write the GC-survivable audit-FILE trail (.beads/
@@ -209,17 +209,17 @@ func runHumanRespondProxiedServer(ctx context.Context, issueID, response string)
 	// step is a human-gate bead closes at parity with bd close. Wisps are not
 	// molecule steps → issue-close only. Root audit-file trail emitted post-commit
 	// (jcrp4 ordering).
-	var autoClosedRoot string
+	var autoClosedRoots []string
 	if !isWisp {
-		autoClosedRoot = autoCloseProxiedCompletedMolecule(ctx, uw, resolvedID, actor, "", jsonOutput)
+		autoClosedRoots = autoCloseProxiedCompletedMolecule(ctx, uw, resolvedID, actor, "", jsonOutput)
 	}
 
 	respondOldStatus := string(issue.Status)
 	if cerr := uw.Commit(ctx, "bd: human respond "+resolvedID); cerr != nil && !isDoltNothingToCommit(cerr) {
 		return HandleErrorRespectJSON("commit respond: %v", cerr)
 	}
-	if autoClosedRoot != "" {
-		auditStatusChange(autoClosedRoot, "open", "closed", actor, "all steps complete")
+	for _, root := range autoClosedRoots {
+		auditStatusChange(root, "open", "closed", actor, "all steps complete")
 	}
 
 	// beads-mw44m: write the GC-survivable audit-FILE trail for the respond close

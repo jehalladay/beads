@@ -191,7 +191,7 @@ func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string,
 		// beads-58kg8 parity: molecule/wisp/template-epic auto-close cascade,
 		// staged into this UOW BEFORE the commit so the root-close lands in the
 		// same commit; its audit-file entry is emitted post-commit below.
-		if rootID := autoCloseProxiedCompletedMolecule(ctx, uw, issueID, actorName, "", jsonOutput); rootID != "" {
+		for _, rootID := range autoCloseProxiedCompletedMolecule(ctx, uw, issueID, actorName, "", jsonOutput) {
 			autoClosedRoots = append(autoClosedRoots, autoClosed{rootID: rootID})
 		}
 
