@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -65,7 +67,7 @@ Example:
 		}
 
 		if molShowParallel {
-			return showMoleculeWithParallel(subgraph)
+			return showMoleculeWithParallel(subgraph, doneCategoryStatusSet(ctx, store))
 		}
 		return showMolecule(subgraph)
 	},
@@ -197,9 +199,52 @@ type ParallelAnalysis struct {
 	Steps          map[string]*ParallelInfo `json:"steps"`
 }
 
+// stepIsComplete reports whether a molecule step counts as terminally complete
+// for readiness/blocker analysis: a literal close OR a configured custom
+// done-category status (beads-ruc6a). done carries the DONE-category custom
+// status names (DONE-only, matching beads-x463g's resolveDoneStatusNamesInTx =
+// CustomStatusesByCategory(CategoryDone); a FROZEN-category status is parked, not
+// done, and deliberately does NOT count). A nil/empty done map is
+// degraded-safe — only StatusClosed completes, byte-identical to the pre-ruc6a
+// literal-closed behavior.
+func stepIsComplete(status types.Status, done map[string]bool) bool {
+	return status == types.StatusClosed || done[string(status)]
+}
+
+// doneCategoryStatusSet resolves the configured custom DONE-category status names
+// into a name->true set for analyzeMoleculeParallel (beads-ruc6a), reading via the
+// direct-store config accessor (the same GetCustomStatusesDetailed used by
+// list_filter.go's directConfigSource / count.go). DONE-only, matching x463g's
+// resolveDoneStatusNamesInTx: FROZEN is parked, not done. Degraded-safe — a nil
+// store or a config-read error yields an empty set (only literal-closed
+// completes), byte-identical to pre-ruc6a behavior.
+func doneCategoryStatusSet(ctx context.Context, s storage.ConfigMetadataStore) map[string]bool {
+	done := map[string]bool{}
+	if s == nil {
+		return done
+	}
+	detailed, err := s.GetCustomStatusesDetailed(ctx)
+	if err != nil {
+		return done
+	}
+	for _, cs := range detailed {
+		if cs.Category == types.CategoryDone {
+			done[cs.Name] = true
+		}
+	}
+	return done
+}
+
 // analyzeMoleculeParallel performs parallel detection on a molecule subgraph.
 // Returns analysis of which steps can run in parallel.
-func analyzeMoleculeParallel(subgraph *MoleculeSubgraph) *ParallelAnalysis {
+//
+// done carries the configured custom done-category status names (beads-ruc6a) so
+// a step blocked only by a sibling in a done-category status is reported ready,
+// matching bd ready / is_blocked / getMoleculeProgress (beads-x463g). Callers
+// resolve it via their existing config source (GetCustomStatusesDetailed direct /
+// ConfigUseCase().GetCustomStatuses proxied); a nil map keeps pre-ruc6a behavior
+// (only literal-closed completes).
+func analyzeMoleculeParallel(subgraph *MoleculeSubgraph, done map[string]bool) *ParallelAnalysis {
 	analysis := &ParallelAnalysis{
 		MoleculeID:     subgraph.Root.ID,
 		TotalSteps:     len(subgraph.Issues),
@@ -248,7 +293,9 @@ func analyzeMoleculeParallel(subgraph *MoleculeSubgraph) *ParallelAnalysis {
 				hasClosedChild := false
 				for _, childID := range children {
 					child := subgraph.IssueMap[childID]
-					if child != nil && child.Status == types.StatusClosed {
+					// beads-ruc6a: a done-category child satisfies the any-children
+					// gate exactly like a literal-closed child.
+					if child != nil && stepIsComplete(child.Status, done) {
 						hasClosedChild = true
 						break
 					}
@@ -261,7 +308,8 @@ func analyzeMoleculeParallel(subgraph *MoleculeSubgraph) *ParallelAnalysis {
 			// For all-children (and unresolved any-children), each open child blocks the gate.
 			for _, childID := range children {
 				child := subgraph.IssueMap[childID]
-				if child == nil || child.Status == types.StatusClosed {
+				// beads-ruc6a: a done-category child counts complete like a closed one.
+				if child == nil || stepIsComplete(child.Status, done) {
 					continue
 				}
 
@@ -297,7 +345,9 @@ func analyzeMoleculeParallel(subgraph *MoleculeSubgraph) *ParallelAnalysis {
 		// Check what blocks this step
 		for blockerID := range blockedBy[issue.ID] {
 			blocker := subgraph.IssueMap[blockerID]
-			if blocker != nil && blocker.Status != types.StatusClosed {
+			// beads-ruc6a: a blocker in a done-category status is complete and no
+			// longer active, matching bd ready / is_blocked (x463g).
+			if blocker != nil && !stepIsComplete(blocker.Status, done) {
 				info.BlockedBy = append(info.BlockedBy, blockerID)
 			}
 		}
@@ -330,7 +380,7 @@ func analyzeMoleculeParallel(subgraph *MoleculeSubgraph) *ParallelAnalysis {
 	// 3. They share the same blocking depth (distance from root)
 
 	// Calculate blocking depth for each step
-	depths := calculateBlockingDepths(subgraph, blockedBy)
+	depths := calculateBlockingDepths(subgraph, blockedBy, done)
 
 	// Group steps by depth - steps at same depth can potentially parallelize
 	depthGroups := make(map[int][]string)
@@ -415,7 +465,7 @@ func analyzeMoleculeParallel(subgraph *MoleculeSubgraph) *ParallelAnalysis {
 
 // calculateBlockingDepths calculates the "blocking depth" of each step.
 // Depth 0 = no blockers, Depth 1 = blocked by depth-0 steps, etc.
-func calculateBlockingDepths(subgraph *MoleculeSubgraph, blockedBy map[string]map[string]bool) map[string]int {
+func calculateBlockingDepths(subgraph *MoleculeSubgraph, blockedBy map[string]map[string]bool, done map[string]bool) map[string]int {
 	depths := make(map[string]int)
 	visited := make(map[string]bool)
 
@@ -432,9 +482,10 @@ func calculateBlockingDepths(subgraph *MoleculeSubgraph, blockedBy map[string]ma
 
 		maxBlockerDepth := -1
 		for blockerID := range blockedBy[id] {
-			// Only count open blockers
+			// Only count open blockers; beads-ruc6a: a done-category blocker is
+			// complete and doesn't contribute to blocking depth.
 			blocker := subgraph.IssueMap[blockerID]
-			if blocker != nil && blocker.Status != types.StatusClosed {
+			if blocker != nil && !stepIsComplete(blocker.Status, done) {
 				blockerDepth := calculateDepth(blockerID)
 				if blockerDepth > maxBlockerDepth {
 					maxBlockerDepth = blockerDepth
@@ -454,8 +505,8 @@ func calculateBlockingDepths(subgraph *MoleculeSubgraph, blockedBy map[string]ma
 	return depths
 }
 
-func showMoleculeWithParallel(subgraph *MoleculeSubgraph) error {
-	analysis := analyzeMoleculeParallel(subgraph)
+func showMoleculeWithParallel(subgraph *MoleculeSubgraph, done map[string]bool) error {
+	analysis := analyzeMoleculeParallel(subgraph, done)
 
 	if jsonOutput {
 		// beads-wgvo1: normalize the same three nil-able slices to [] that the

@@ -2773,7 +2773,7 @@ func TestAnalyzeMoleculeParallelNoBlocking(t *testing.T) {
 		},
 	}
 
-	analysis := analyzeMoleculeParallel(subgraph)
+	analysis := analyzeMoleculeParallel(subgraph, nil)
 
 	// All 3 should be ready (root + 2 children with no blocking deps)
 	if analysis.ReadySteps != 3 {
@@ -2842,7 +2842,7 @@ func TestAnalyzeMoleculeParallelWithBlocking(t *testing.T) {
 		},
 	}
 
-	analysis := analyzeMoleculeParallel(subgraph)
+	analysis := analyzeMoleculeParallel(subgraph, nil)
 
 	// Only root and step1 should be ready (step2 is blocked)
 	if analysis.ReadySteps != 2 {
@@ -2905,7 +2905,7 @@ func TestAnalyzeMoleculeParallelCompletedBlockers(t *testing.T) {
 		},
 	}
 
-	analysis := analyzeMoleculeParallel(subgraph)
+	analysis := analyzeMoleculeParallel(subgraph, nil)
 
 	step2Info := analysis.Steps[step2.ID]
 
@@ -2983,7 +2983,7 @@ func TestAnalyzeMoleculeParallelWaitsForChildrenOfSpawner(t *testing.T) {
 	}
 
 	t.Run("blocked-before-child-close", func(t *testing.T) {
-		analysis := analyzeMoleculeParallel(subgraph)
+		analysis := analyzeMoleculeParallel(subgraph, nil)
 		reviewInfo := analysis.Steps[review.ID]
 		if reviewInfo.IsReady {
 			t.Fatalf("review should be blocked while %s is open", implChild.ID)
@@ -3005,7 +3005,7 @@ func TestAnalyzeMoleculeParallelWaitsForChildrenOfSpawner(t *testing.T) {
 
 	t.Run("ready-after-child-close", func(t *testing.T) {
 		implChild.Status = types.StatusClosed
-		analysisAfterClose := analyzeMoleculeParallel(subgraph)
+		analysisAfterClose := analyzeMoleculeParallel(subgraph, nil)
 		if !analysisAfterClose.Steps[review.ID].IsReady {
 			t.Fatalf("review should become ready after %s closes", implChild.ID)
 		}
@@ -3049,7 +3049,7 @@ func TestAnalyzeMoleculeParallelMultipleArms(t *testing.T) {
 		},
 	}
 
-	analysis := analyzeMoleculeParallel(subgraph)
+	analysis := analyzeMoleculeParallel(subgraph, nil)
 
 	// All 3 should be ready
 	if analysis.ReadySteps != 3 {
@@ -3112,7 +3112,7 @@ func TestCalculateBlockingDepths(t *testing.T) {
 		"step3": {"step2": true},
 	}
 
-	depths := calculateBlockingDepths(subgraph, blockedBy)
+	depths := calculateBlockingDepths(subgraph, blockedBy, nil)
 
 	if depths["root"] != 0 {
 		t.Errorf("root depth = %d, want 0", depths["root"])

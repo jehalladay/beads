@@ -627,17 +627,9 @@ func proxiedGetMoleculeProgress(ctx context.Context, uw uow.UnitOfWork, molecule
 		Total:         len(subgraph.Issues) - 1,
 	}
 
-	analysis := analyzeMoleculeParallel(subgraph)
-	readyIDs := make(map[string]bool)
-	for id, info := range analysis.Steps {
-		if info.IsReady {
-			readyIDs[id] = true
-		}
-	}
-
-	// beads-bpc9y: a custom done-category status is a terminal "done" outcome,
-	// so a step in such a status must count toward Completed / render as "done"
-	// exactly like a literal-closed step — matching the cmd-side
+	// beads-bpc9y / beads-ruc6a: a custom done-category status is a terminal
+	// "done" outcome, so a step in such a status must count toward Completed /
+	// render as "done" exactly like a literal-closed step — matching the cmd-side
 	// getMoleculeProgress (beads-x463g), the storage-layer GetMoleculeProgressInTx
 	// (beads-bobpm), autoclose, and bd ready/count/list. Without this, a molecule
 	// whose steps are all in a done-category status reports Completed<Total in
@@ -646,13 +638,16 @@ func proxiedGetMoleculeProgress(ctx context.Context, uw uow.UnitOfWork, molecule
 	// done-category names once via the UOW's config use case; a nil/empty set (no
 	// config or a read error) leaves behaviour byte-identical to before (only
 	// StatusClosed completes). Degraded-safe: a config-read error just yields an
-	// empty done-set rather than failing progress accounting.
-	doneStatusNames := map[string]bool{}
-	if detailed, cerr := uw.ConfigUseCase().GetCustomStatuses(ctx); cerr == nil {
-		for _, cs := range detailed {
-			if cs.Category == types.CategoryDone {
-				doneStatusNames[cs.Name] = true
-			}
+	// empty done-set. The SAME done-set is threaded into analyzeMoleculeParallel
+	// (beads-ruc6a) so the in-memory readyIDs gate treats a done-category blocker
+	// as complete, keeping the readyIDs and the Completed count consistent.
+	doneStatusNames := doneCategoryStatusSetProxied(ctx, uw)
+
+	analysis := analyzeMoleculeParallel(subgraph, doneStatusNames)
+	readyIDs := make(map[string]bool)
+	for id, info := range analysis.Steps {
+		if info.IsReady {
+			readyIDs[id] = true
 		}
 	}
 

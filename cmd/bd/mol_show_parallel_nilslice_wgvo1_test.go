@@ -77,7 +77,7 @@ func captureShowMoleculeParallelJSON(t *testing.T, subgraph *MoleculeSubgraph) s
 	os.Stdout = w
 	defer func() { os.Stdout = oldStdout }()
 
-	runErr := showMoleculeWithParallel(subgraph)
+	runErr := showMoleculeWithParallel(subgraph, nil)
 
 	_ = w.Close()
 	out, _ := io.ReadAll(r)

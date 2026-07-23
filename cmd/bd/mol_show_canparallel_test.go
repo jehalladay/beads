@@ -62,7 +62,7 @@ func TestParallelInfoCanParallelEmptyIsNonNullArray_4mkg(t *testing.T) {
 		},
 	}
 
-	analysis := analyzeMoleculeParallel(subgraph)
+	analysis := analyzeMoleculeParallel(subgraph, nil)
 
 	// step2 is alone at its depth → in NO parallel group → CanParallel untouched.
 	info := analysis.Steps[step2.ID]
@@ -106,7 +106,7 @@ func TestParallelInfoCanParallelEmptyIsNonNullArray_4mkg(t *testing.T) {
 			{IssueID: c2.ID, DependsOnID: root2.ID, Type: types.DepParentChild},
 		},
 	}
-	a2 := analyzeMoleculeParallel(sg2)
+	a2 := analyzeMoleculeParallel(sg2, nil)
 	c1info := a2.Steps[c1.ID]
 	if c1info == nil || len(c1info.CanParallel) == 0 {
 		t.Errorf("C1.CanParallel should list its parallel peer, got %+v", c1info)

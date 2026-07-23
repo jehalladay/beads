@@ -191,7 +191,10 @@ func getMoleculeProgress(ctx context.Context, s storage.DoltStorage, moleculeID 
 	// Uses analyzeMoleculeParallel instead of GetReadyWork because GetReadyWork
 	// excludes ephemeral issues (wisp steps are ephemeral by definition).
 	// See: https://github.com/steveyegge/gastown/issues/1276 (historical reference)
-	analysis := analyzeMoleculeParallel(subgraph)
+	// beads-ruc6a: pass the done-category status names so a step blocked only by a
+	// done-category sibling reads ready, matching this function's own Completed
+	// count (x463g) and bd ready / is_blocked.
+	analysis := analyzeMoleculeParallel(subgraph, doneCategoryStatusSet(ctx, s))
 	readyIDs := make(map[string]bool)
 	for id, info := range analysis.Steps {
 		if info.IsReady {

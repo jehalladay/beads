@@ -853,7 +853,9 @@ func runMoleculeReady(_ *cobra.Command, molIDArg string) error {
 	}
 
 	// Get parallel analysis to find ready steps
-	analysis := analyzeMoleculeParallel(subgraph)
+	// beads-ruc6a: pass the configured done-category names so a step blocked only
+	// by a done-category sibling reads ready, matching bd ready / is_blocked.
+	analysis := analyzeMoleculeParallel(subgraph, doneCategoryStatusSet(ctx, store))
 
 	// Collect ready steps
 	// beads-1hibk: init non-nil so a molecule with no ready steps (all closed,

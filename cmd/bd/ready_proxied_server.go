@@ -410,7 +410,9 @@ func runReadyProxiedMolecule(ctx context.Context, uw uow.UnitOfWork, in readyInp
 		FatalErrorRespectJSON("loading molecule: %v", err)
 	}
 
-	analysis := analyzeMoleculeParallel(subgraph)
+	// beads-ruc6a: thread the configured done-category names so a step blocked
+	// only by a done-category sibling reads ready, matching the direct path.
+	analysis := analyzeMoleculeParallel(subgraph, doneCategoryStatusSetProxied(ctx, uw))
 
 	// beads-1hibk: init non-nil so a molecule with no ready steps emits
 	// "steps":[] not null under --json (no omitempty; sibling ParallelGroups
@@ -484,6 +486,30 @@ func runReadyProxiedMolecule(ctx context.Context, uw uow.UnitOfWork, in readyInp
 		}
 	}
 	fmt.Println()
+}
+
+// doneCategoryStatusSetProxied resolves the configured custom DONE-category status
+// names into a name->true set for analyzeMoleculeParallel (beads-ruc6a) via the
+// UOW's config use case — the proxied twin of doneCategoryStatusSet, matching the
+// proxiedConfigSource idiom (list_filter.go:69) and the existing bpc9y
+// getMoleculeProgress done-set in close_proxied_server.go. DONE-only (FROZEN is
+// parked, not done). Degraded-safe: a nil UOW or a config-read error yields an
+// empty set (only literal-closed completes).
+func doneCategoryStatusSetProxied(ctx context.Context, uw uow.UnitOfWork) map[string]bool {
+	done := map[string]bool{}
+	if uw == nil {
+		return done
+	}
+	detailed, err := uw.ConfigUseCase().GetCustomStatuses(ctx)
+	if err != nil {
+		return done
+	}
+	for _, cs := range detailed {
+		if cs.Category == types.CategoryDone {
+			done[cs.Name] = true
+		}
+	}
+	return done
 }
 
 func runReadyProxiedGated(ctx context.Context, uw uow.UnitOfWork, _ readyInput) {
