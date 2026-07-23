@@ -251,10 +251,24 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 			continue
 		}
 		_, depIsWisp := proxiedResolveIssueOrWisp(ctx, uw, dependentID)
+		// beads-z8c2v: recover the per-edge Metadata blob BEFORE the remove.
+		// The waits-for fanout GATE config (gate=any-children + spawner_id,
+		// types.WaitsForMeta) lives in Dependency.Metadata, but the incoming
+		// metadata-list read (GetDependentsWithMetadataInTx) DROPS it — so
+		// reconstructing `migrated` without it silently reverts a non-default
+		// gate to all-children on the target for `bd duplicate`/`bd supersede`
+		// under proxied-server mode (store==nil, the hub-connected majority).
+		// This is the PROXIED twin of the direct duplicate/supersede fixes
+		// (beads-3sq6z / beads-atsyz) + the auto-merge path (beads-706mw); the
+		// sibling proxied auto-merge already uses lookupEdgeMetadataProxied
+		// (duplicates_proxied_server.go) — mirror it here. Best-effort "" on
+		// miss matches the direct GetDependencyRecords recovery pattern.
+		edgeMeta := lookupEdgeMetadataProxied(ctx, uw, depIsWisp, dependentID, fromID, d.DependencyType)
 		migrated := &types.Dependency{
 			IssueID:     dependentID,
 			DependsOnID: toID,
 			Type:        d.DependencyType,
+			Metadata:    edgeMeta,
 		}
 		if depIsWisp {
 			if err := uw.DependencyUseCase().RemoveWispDependency(ctx, dependentID, fromID, actor); err != nil {
