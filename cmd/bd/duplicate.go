@@ -456,6 +456,23 @@ func runSupersede(cmd *cobra.Command, args []string) error {
 			if dependentID == newID {
 				continue
 			}
+			// Preserve the original edge's Metadata (waits-for gate config —
+			// gate=all-children/any-children + spawner — lives in
+			// Dependency.Metadata). GetDependentsWithMetadata drops it (it returns
+			// only Issue + DependencyType), so re-read the dependent's outbound
+			// records to recover the blob before reattaching; otherwise a migrated
+			// waits-for edge silently loses its gate config and reverts to default
+			// semantics on newID. Same recovery the auto-merge path does
+			// (beads-706mw, duplicates.go).
+			var edgeMeta string
+			if records, rerr := tx.GetDependencyRecords(ctx, dependentID); rerr == nil {
+				for _, r := range records {
+					if r.DependsOnID == oldID && r.Type == dep.DependencyType {
+						edgeMeta = r.Metadata
+						break
+					}
+				}
+			}
 			if err := tx.RemoveDependency(ctx, dependentID, oldID, actor); err != nil {
 				return fmt.Errorf("remove incoming %s %s→%s: %w", dep.DependencyType, dependentID, oldID, err)
 			}
@@ -463,6 +480,7 @@ func runSupersede(cmd *cobra.Command, args []string) error {
 				IssueID:     dependentID,
 				DependsOnID: newID,
 				Type:        dep.DependencyType,
+				Metadata:    edgeMeta,
 			}
 			if err := tx.AddDependency(ctx, migrated, actor); err != nil {
 				return fmt.Errorf("reattach incoming %s %s→%s: %w", dep.DependencyType, dependentID, newID, err)
