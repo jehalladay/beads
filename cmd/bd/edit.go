@@ -215,6 +215,14 @@ func init() {
 	editCmd.Flags().Bool("design", false, "Edit the design notes")
 	editCmd.Flags().Bool("notes", false, "Edit the notes")
 	editCmd.Flags().Bool("acceptance", false, "Edit the acceptance criteria")
+	// beads-637yc: edit opens a single field in $EDITOR, and editFieldFromFlags
+	// (shared by the direct + proxied paths) is a priority switch that returns
+	// only the first-set flag — so `bd edit X --title --design` silently edited
+	// only the title and discarded --design with rc0 and no diagnostic (the
+	// dz1t8 input-source silent-drop class). Reject >1 field flag at cobra parse
+	// time, matching create's mutually-exclusive field flags (flags.go); this is
+	// pre-store and twin-safe (covers both direct and proxied identically).
+	editCmd.MarkFlagsMutuallyExclusive("title", "description", "design", "notes", "acceptance")
 	editCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(editCmd)
 }
