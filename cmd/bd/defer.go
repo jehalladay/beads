@@ -39,6 +39,22 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		CheckReadonly("defer")
 
+		// beads-4k0d8: dedup a repeated issue ID in one batch (in-batch-dup class,
+		// sibling of the landed hzg2y label fix + fwf0y close fix). `bd defer X X`
+		// double-reports (prints "* Deferred X" twice, emits X twice in the --json
+		// array) and — worse, WITH --reason — appends the reason to the notes blob
+		// TWICE (store.AppendNotes runs per-id-occurrence inside the loop; the fs01
+		// already-deferred guard only short-circuits the pure no-op case
+		// deferUntil==nil && reason=="", so a 2nd occurrence with a mutating flag
+		// falls through and re-writes). Dedup args first-seen-order at command
+		// entry — BEFORE the beads-qvbjq positional-reason count guard below (else
+		// `bd defer X X -r r1 -r r2` passes the 2-reasons==2-args check, then dedup
+		// collapses args to [X] and silently drops r2 = the very batch-reason data
+		// loss qvbjq fixed) and BEFORE the proxied split + direct loop, so every
+		// downstream consumer sees one entry per distinct ID and does exactly one
+		// write, matching delete.go:86 uniqueStrings(issueIDs) / label.go:284.
+		args = uniqueStrings(args)
+
 		// beads-h7uhe: --force overrides the closed-parent reopen guard below,
 		// mirroring `bd reopen --force` / `bd update --status ... --force`.
 		deferForce, _ := cmd.Flags().GetBool("force")
