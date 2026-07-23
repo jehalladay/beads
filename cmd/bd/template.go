@@ -23,7 +23,14 @@ var variablePattern = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}`)
 type TemplateSubgraph struct {
 	Root         *types.Issue              // The template epic
 	Issues       []*types.Issue            // All issues in the subgraph (including root)
-	Dependencies []*types.Dependency       // All dependencies within the subgraph
+	Dependencies []*types.Dependency       // All dependencies within the subgraph (both ends in-subgraph)
+	// ExternalDeps holds dependency edges whose SOURCE is an in-subgraph issue
+	// but whose TARGET lives OUTSIDE the subgraph (cross-epic-boundary). These
+	// are deliberately excluded from Dependencies (whose invariant is both-ends-
+	// in-subgraph, relied on by graph rendering and formula conversion), but
+	// distill must be able to see them to warn that they will be dropped from a
+	// self-contained formula (beads-8tw1a). Populated by loadTemplateSubgraph.
+	ExternalDeps []*types.Dependency       // Cross-boundary edges (in-subgraph source → external target)
 	IssueMap     map[string]*types.Issue   // ID -> Issue for quick lookup
 	VarDefs      map[string]formula.VarDef // Variable definitions from formula (for defaults)
 	Phase        string                    // Recommended phase: "liquid" (pour) or "vapor" (wisp)
@@ -100,10 +107,19 @@ func loadTemplateSubgraph(ctx context.Context, s storage.DoltStorage, templateID
 			return nil, fmt.Errorf("failed to get dependencies for %s: %w", issue.ID, err)
 		}
 		for _, dep := range deps {
-			// Only include dependencies where both ends are in the subgraph
+			// Only include dependencies where both ends are in the subgraph.
 			if _, ok := subgraph.IssueMap[dep.DependsOnID]; ok {
 				subgraph.Dependencies = append(subgraph.Dependencies, dep)
+				continue
 			}
+			// beads-8tw1a: the source is in-subgraph but the target is not — a
+			// cross-epic-boundary edge. Keep it out of Dependencies (both-ends-
+			// in-subgraph invariant) but record it separately so distill can warn
+			// that it will be silently dropped from the self-contained formula.
+			// A self-dependency is impossible here (source is in the map), and the
+			// root IS in the map, so a dep on the root lands in Dependencies (and
+			// is elided later as "root becomes the formula itself"), never here.
+			subgraph.ExternalDeps = append(subgraph.ExternalDeps, dep)
 		}
 	}
 

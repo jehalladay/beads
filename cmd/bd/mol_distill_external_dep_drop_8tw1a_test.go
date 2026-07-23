@@ -19,11 +19,20 @@ import (
 // test builds the bead-comment repro: epic E, child C blocks-depends external X,
 // child C also depends on in-epic child D.
 //
-// MUTATION-VERIFY: make externalDepDrops's membership test treat every dep as
-// in-epic (e.g. `if true { continue }` before the append) → it reports zero
-// drops → the "reports exactly the external edge" and "warning names X" asserts
-// FAIL. The in-epic-preserved assert on subgraphToFormula is an independent
-// control that must stay green either way (proves we did not change the drop).
+// MUTATION-VERIFY: make externalDepDrops range over an empty slice (e.g. add
+// `return nil` at the top) → it reports zero drops → the "reports exactly the
+// external edge" and "warning names X" asserts FAIL. The in-epic-preserved
+// assert on subgraphToFormula is an independent control that must stay green
+// either way (proves we did not change the drop).
+//
+// IMPORTANT (the original 8tw1a false-green): this subgraph mirrors what
+// loadTemplateSubgraph actually produces — the cross-boundary edge C→X lives in
+// ExternalDeps, NOT Dependencies (whose invariant is both-ends-in-subgraph). The
+// prior test placed C→X in Dependencies, an UNREPRESENTATIVE shape the live
+// loader never yields, so the passing test hid the fact that externalDepDrops
+// (which scanned Dependencies) could never see a real drop. The embedded teeth
+// in mol_distill_external_dep_drop_8tw1a_embedded_test.go drive the real
+// runMolDistill / loadTemplateSubgraph path end-to-end as the true guard.
 func TestDistillWarnsOnDroppedExternalDep_8tw1a(t *testing.T) {
 	// Epic E with two children C and D. C depends on D (in-epic) AND on X
 	// (external — not among E's Issues). subgraphToFormula must preserve C→D as
@@ -37,9 +46,12 @@ func TestDistillWarnsOnDroppedExternalDep_8tw1a(t *testing.T) {
 			{ID: dID, Title: "provision db", Description: "spin up"},
 		},
 		Dependencies: []*types.Dependency{
-			// C depends on in-epic sibling D (must be preserved).
+			// C depends on in-epic sibling D (must be preserved as a step dep).
 			{IssueID: cID, DependsOnID: dID, Type: types.DepBlocks},
-			// C depends on EXTERNAL issue X (must be dropped + warned).
+		},
+		ExternalDeps: []*types.Dependency{
+			// C depends on EXTERNAL issue X (must be dropped + warned) — this is
+			// where loadTemplateSubgraph records a cross-boundary edge.
 			{IssueID: cID, DependsOnID: extID, Type: types.DepBlocks},
 		},
 	}

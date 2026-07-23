@@ -700,6 +700,77 @@ func TestTemplateSuite(t *testing.T) {
 			}
 		}
 	})
+
+	// beads-ohs3t / beads-8tw1a teeth: drive the REAL loadTemplateSubgraph path
+	// end-to-end and assert the cross-epic-boundary dependency edge is captured
+	// in subgraph.ExternalDeps (and therefore surfaced by externalDepDrops), not
+	// silently discarded. The ORIGINAL 8tw1a warning was dead code because
+	// loadTemplateSubgraph dropped a cross-boundary edge at the both-ends-in-
+	// subgraph filter, so it never reached subgraph.Dependencies (the only thing
+	// externalDepDrops used to scan) — externalDepDrops thus always returned
+	// empty and the warnDroppedExternalDeps call was unreachable. The prior unit
+	// test hand-built a subgraph literal that placed the external edge in
+	// Dependencies, an UNREPRESENTATIVE shape the live loader never produces, so
+	// it false-greened. This test creates the edge through AddDependency and lets
+	// the loader run, so it fails if the loader ever stops recording ExternalDeps.
+	//
+	// MUTATION-VERIFY: in loadTemplateSubgraph, drop the ExternalDeps append (or
+	// `continue` before it) → this test's "expected 1 external dep drop" assert
+	// FAILS. The in-epic-preserved control below stays green either way.
+	t.Run("CrossEpicDep_CapturedAsExternalDrop_ohs3t", func(t *testing.T) {
+		epic := h.createIssue("Deploy service epic", "deploy", types.TypeEpic, 1)
+		child := h.createIssue("run migration step", "apply schema", types.TypeTask, 2)
+		sibling := h.createIssue("provision db step", "spin up", types.TypeTask, 2)
+		h.addParentChild(child.ID, epic.ID)
+		h.addParentChild(sibling.ID, epic.ID)
+
+		// external issue OUTSIDE this epic (no parent-child link to the epic).
+		external := h.createIssue("shared infra ticket", "external blocker", types.TypeTask, 2)
+
+		// child depends on the in-epic sibling (must land in Dependencies) AND on
+		// the external issue (must land in ExternalDeps — the cross-boundary edge).
+		for _, dep := range []*types.Dependency{
+			{IssueID: child.ID, DependsOnID: sibling.ID, Type: types.DepBlocks},
+			{IssueID: child.ID, DependsOnID: external.ID, Type: types.DepBlocks},
+		} {
+			if err := s.AddDependency(ctx, dep, "test-user"); err != nil {
+				t.Fatalf("AddDependency %s→%s: %v", dep.IssueID, dep.DependsOnID, err)
+			}
+		}
+
+		subgraph, err := loadTemplateSubgraph(ctx, s, epic.ID)
+		if err != nil {
+			t.Fatalf("loadTemplateSubgraph failed: %v", err)
+		}
+
+		// Control (independent of the fix): the in-epic dep is preserved in
+		// Dependencies, and the external target is NOT present there — the
+		// both-ends-in-subgraph invariant is unchanged.
+		var inEpicPreserved bool
+		for _, dep := range subgraph.Dependencies {
+			if dep.IssueID == child.ID && dep.DependsOnID == sibling.ID {
+				inEpicPreserved = true
+			}
+			if dep.DependsOnID == external.ID {
+				t.Errorf("external target %s must NOT appear in Dependencies (both-ends-in-subgraph invariant); got dep %s→%s",
+					external.ID, dep.IssueID, dep.DependsOnID)
+			}
+		}
+		if !inEpicPreserved {
+			t.Errorf("in-epic dep %s→%s must be preserved in subgraph.Dependencies; got %+v",
+				child.ID, sibling.ID, subgraph.Dependencies)
+		}
+
+		// The fix: the cross-boundary edge is captured in ExternalDeps and
+		// surfaced by externalDepDrops — exactly the edge child→external.
+		drops := externalDepDrops(subgraph)
+		if len(drops) != 1 {
+			t.Fatalf("expected exactly 1 cross-epic dependency drop (child→external); got %d: %+v", len(drops), drops)
+		}
+		if drops[0].FromID != child.ID || drops[0].TargetID != external.ID {
+			t.Errorf("dropped edge should be %s→%s; got %s→%s", child.ID, external.ID, drops[0].FromID, drops[0].TargetID)
+		}
+	})
 }
 
 // TestResolveProtoIDOrTitle tests proto lookup by ID or title (bd-drcx).

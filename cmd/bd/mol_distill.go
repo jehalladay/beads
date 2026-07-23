@@ -463,32 +463,28 @@ type externalDepDrop struct {
 // subgraphToFormula drops (beads-8tw1a). subgraphToFormula only carries a
 // depends_on when the target is another child of the same epic (idToStepID
 // hit at mol_distill.go:375); a dep whose target is NOT among the epic's own
-// children (and is not the root, which becomes the formula itself) is dropped.
-// Dropping them is INTENDED — a distilled formula must be self-contained — but
-// the drop is otherwise invisible (step count unchanged, no depends_on entry),
-// which silently strips a blocker the source epic had. Surfacing them lets the
-// command warn, mirroring the orphan-var warning class. This mirrors
-// subgraphToFormula's own membership test rather than threading a second return
-// value through it, so the existing single-return callers/tests are untouched.
+// children is dropped. Dropping them is INTENDED — a distilled formula must be
+// self-contained — but the drop is otherwise invisible (step count unchanged,
+// no depends_on entry), which silently strips a blocker the source epic had.
+// Surfacing them lets the command warn, mirroring the orphan-var warning class.
+//
+// The edges are read from subgraph.ExternalDeps, which loadTemplateSubgraph
+// populates with exactly the in-subgraph-source → external-target edges it
+// excludes from Dependencies. The ORIGINAL bug (beads-8tw1a): this scanned
+// subgraph.Dependencies, whose both-ends-in-subgraph invariant means a
+// cross-boundary edge is NEVER present there — so the scan always returned
+// empty and the warning at runMolDistill was dead code. A dep on the root is
+// not a cross-boundary edge (the root is in-subgraph); loadTemplateSubgraph
+// therefore keeps a root dep in Dependencies (later elided as "root becomes the
+// formula itself"), so it can never appear in ExternalDeps.
 func externalDepDrops(subgraph *TemplateSubgraph) []externalDepDrop {
-	inEpic := make(map[string]bool, len(subgraph.Issues))
 	titleByID := make(map[string]string, len(subgraph.Issues))
 	for _, issue := range subgraph.Issues {
-		inEpic[issue.ID] = true
 		titleByID[issue.ID] = issue.Title
 	}
 
 	var drops []externalDepDrop
-	for _, dep := range subgraph.Dependencies {
-		// A dep on the root is intentionally elided (root becomes the formula
-		// itself), and in-epic deps are preserved as step depends_on — neither
-		// is a silent cross-boundary loss.
-		if dep.DependsOnID == subgraph.Root.ID {
-			continue
-		}
-		if inEpic[dep.DependsOnID] {
-			continue
-		}
+	for _, dep := range subgraph.ExternalDeps {
 		drops = append(drops, externalDepDrop{
 			FromID:    dep.IssueID,
 			FromTitle: titleByID[dep.IssueID],
