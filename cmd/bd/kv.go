@@ -164,6 +164,19 @@ Examples:
 			return HandleErrorRespectJSON("getting key: %v", err)
 		}
 
+		// beads-zmuiz: kvGetConfig collapses "row absent" to ("", nil)
+		// (GetConfigInTx maps sql.ErrNoRows -> ""), so value=="" cannot tell an
+		// explicitly-empty value from a never-set key — the old value!="" heuristic
+		// wrongly reported an existing empty-valued key as (not set)/found:false.
+		// Derive existence from GetAllConfig membership (the same source `bd kv
+		// list` reads), mirroring the beads-aj9r fix for the sibling `bd config
+		// get`; on a GetAllConfig error, fall back to the value-based guess so we
+		// never fail an otherwise-successful get.
+		found := value != ""
+		if all, allErr := kvGetAllConfig(ctx); allErr == nil {
+			_, found = all[storageKey]
+		}
+
 		if jsonOutput {
 			// beads-7qkq: a missing key is a RESULT, not an error, in --json mode
 			// — the found:false field already communicates the miss. Return rc0
@@ -176,10 +189,10 @@ Examples:
 			return outputJSON(map[string]interface{}{
 				"key":   key,
 				"value": value,
-				"found": value != "",
+				"found": found,
 			})
 		}
-		if value == "" {
+		if !found {
 			fmt.Fprintf(os.Stderr, "%s (not set)\n", key)
 			return SilentExit()
 		}
