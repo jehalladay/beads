@@ -355,7 +355,11 @@ func (s *DoltStore) AddFederationPeer(ctx context.Context, peer *storage.Federat
 		if err := issueops.AddFederationPeerInTx(ctx, tx, peer, encryptedPwd); err != nil {
 			return err
 		}
-		return issueops.AddRemoteIfNotExists(ctx, tx, peer.Name, peer.RemoteURL)
+		// beads-s5sue: reconcile the Dolt remote to the requested URL on re-add
+		// (AddRemoteIfNotExists left a preexisting remote pointing at its stale
+		// url while the federation_peers.remote_url column updated — sync/push
+		// target the Dolt remote, so a re-point silently misdirected).
+		return issueops.UpsertRemote(ctx, tx, peer.Name, peer.RemoteURL)
 	}); err != nil {
 		return fmt.Errorf("failed to add federation peer: %w", err)
 	}
