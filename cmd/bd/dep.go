@@ -1976,6 +1976,16 @@ func init() {
 	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type: well-known values are blocks|tracks|related|parent-child|discovered-from|until|caused-by|validates|relates-to|supersedes; custom types are also accepted")
 	depAddCmd.Flags().String("blocked-by", "", "Issue ID that blocks the first issue (alternative to positional arg)")
 	depAddCmd.Flags().String("depends-on", "", "Issue ID that the first issue depends on (alias for --blocked-by)")
+	// beads-bscdj: --blocked-by and --depends-on are documented ALIASES for the
+	// same depends-on target, but dep add resolves them via a priority chain that
+	// takes blocked-by first (dep.go RunE, dep_proxied_server.go RunE). So
+	// `bd dep add A --depends-on X --blocked-by Y` silently used Y and DISCARDED X
+	// with rc0 and no diagnostic — the dz1t8 input-source silent-drop class (same
+	// as 637yc bd-edit field flags, comment/note positional-vs-flag). Reject the
+	// two-alias combo at cobra parse time; this is pre-store and twin-safe (covers
+	// the direct + proxied paths identically). The positional-vs-flag conflict is
+	// already rejected in the Args validator above.
+	depAddCmd.MarkFlagsMutuallyExclusive("blocked-by", "depends-on")
 	depAddCmd.Flags().String("file", "", "Read dependency edges from JSONL file, or '-' for stdin")
 	depAddCmd.Flags().Bool("no-cycle-check", false, "Skip per-edge cycle checks for speed (bulk wiring); bulk --file adds still run one final whole-graph check before commit")
 	depAddCmd.Flags().Bool("force", false, "Override the closed-epic-parent guard (adding an open child to a closed epic); recreates a closed-epic-with-open-child state")
