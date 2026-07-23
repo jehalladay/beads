@@ -270,6 +270,18 @@ var labelAddCmd = &cobra.Command{
 		if len(issueIDs) == 0 {
 			return HandleErrorRespectJSON("no issue id given")
 		}
+		// beads-hzg2y: dedup a repeated issue id in one batch, mirroring
+		// delete.go:86 uniqueStrings(issueIDs). Without this, `bd label add X X
+		// <lbl>` processes X twice: the direct path (addLabelsHonoringNoChange)
+		// pre-reads GetLabels for both occurrences BEFORE the single post-loop
+		// commit, so the 2nd read still sees the label absent → two status:added
+		// pairs + newCount=2 (phantom double-count in JSON + the commit message),
+		// while AddLabelInTx writes once (idempotent). The proxied twin diverged
+		// the OTHER way (2nd occurrence "unchanged"). Deduping the ids at the
+		// command entry — before both the direct and proxied branches — makes the
+		// reported count reflect the single genuine write on both paths. A
+		// repeated label target is meaningless, so first-occurrence wins.
+		issueIDs = uniqueStrings(issueIDs)
 		for _, label := range labels {
 			if strings.HasPrefix(label, "provides:") {
 				return HandleErrorRespectJSON("'provides:' labels are reserved for cross-project capabilities. Hint: use 'bd ship %s' instead", strings.TrimPrefix(label, "provides:"))
@@ -387,6 +399,12 @@ var labelRemoveCmd = &cobra.Command{
 		}()
 
 		issueIDs, label := parseLabelArgs(args)
+		// beads-hzg2y: dedup a repeated issue id in one batch (see the label add
+		// path above and delete.go:86). `bd label remove X X <lbl>` otherwise
+		// processes X twice — the direct path double-prints "Removed" and the
+		// proxied twin returns RC1 on the 2nd occurrence (label already gone) —
+		// though RemoveLabelInTx acts once. First-occurrence wins.
+		issueIDs = uniqueStrings(issueIDs)
 		// beads-aocj: route to the proxied handler in proxied-server mode (see
 		// the label add path above — same nil-`store` gap and NotTemplate guard).
 		if usesProxiedServer() {
