@@ -243,6 +243,18 @@ var doneTodoCmd = &cobra.Command{
 		reason = todoDoneReasonOrDefault(reason)
 		force, _ := cmd.Flags().GetBool("force")
 
+		// beads-vam5w: dedup a repeated issue ID in one batch (in-batch-dup class,
+		// sibling of the landed delete/hzg2y label/cncgt reopen/4k0d8 defer fixes).
+		// `bd todo done X X` emits {"closed":["X","X"]} in the --json envelope: both
+		// the direct loop below AND the proxied handler iterate raw over args, and
+		// — unlike the documented parent `bd close` (dr3 already-closed guard,
+		// close.go:145) — todo done has no already-closed skip, so a repeated id
+		// re-runs CloseIssue + auditStatusChange + autoCloseCompletedMolecule on
+		// the already-closed id and appends it to closedIDs twice. Dedup
+		// first-seen-order BEFORE the proxied split so both paths close each
+		// distinct id exactly once, matching delete.go:86 uniqueStrings(issueIDs).
+		args = uniqueStrings(args)
+
 		// beads-9dsym: getStore() is nil in proxiedServerMode (see the add/list
 		// paths) — route `bd todo done` through the proxied UOW close stack so it
 		// works for hub-connected crew instead of panicking on the nil store. The
