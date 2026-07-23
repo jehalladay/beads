@@ -113,6 +113,14 @@ type ImportResult struct {
 	// the ids are reported so the otherwise-silent key loss is visible, mirroring
 	// the InvalidMetadataIDs / SkippedDependencies skip-and-report idiom.
 	MetadataKeysDropped []string
+	// ParentCloseReverted lists incoming rows whose status would have CLOSED an
+	// auto-closing parent (epic/molecule/wisp) that still has open children,
+	// bypassing the close-guard family on the STATUS axis (beads-1h993, axis B
+	// of ts7vq). The status change was reverted to the local value (all other
+	// fields still import); the ids are reported so the silent bypass is
+	// visible. This is the import twin of the countEpicOpenChildren guard on
+	// `bd close` (close.go) and `bd update --status closed` (update.go, zgku).
+	ParentCloseReverted []string
 }
 
 // ImportChange describes how an import row modified an existing local issue.
@@ -224,6 +232,24 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		return nil, err
 	}
 
+	// Close-guard bypass via import — STATUS axis (beads-1h993, axis B of
+	// beads-ts7vq): the epic/molecule/wisp close guard (countEpicOpenChildren,
+	// cmd/bd/close.go) refuses closing an auto-closing parent with open children
+	// on BOTH `bd close` and `bd update --status closed` (update.go zgku). The
+	// import upsert applies the incoming status field-wise with NO such check,
+	// so an import row that flips an auto-closing parent (with open children)
+	// to CLOSED silently plants the forbidden closed-parent-with-open-child
+	// state — and unlike the type-demote axis this needs NO flag at all
+	// (closed-status is the ordinary payload of any export/import round-trip).
+	// Mirror the demote guard: rather than aborting, leave the status UNCHANGED
+	// for the offending rows and report them, matching import's skip-and-report
+	// / preserve-on-absent model. Runs before the stale filter and batch write
+	// so it covers both the guarded and --allow-stale paths.
+	closeReverted, err := guardImportParentClose(ctx, store, issues)
+	if err != nil {
+		return nil, err
+	}
+
 	// The stale guard has two halves (bd-pkim8). This pre-filter reports the
 	// rows that are already known stale (StaleSkippedIDs) and keeps their
 	// labels/comments/dependencies out of the batch entirely. It is a separate
@@ -248,6 +274,7 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 				StaleSkippedIDs:      staleSkippedIDs,
 				InvalidMetadataIDs:   invalidMetadataIDs,
 				ParentDemoteReverted: demoteReverted,
+				ParentCloseReverted:  closeReverted,
 			}, nil
 		}
 	} else {
@@ -391,6 +418,7 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		TieKeptLocalIDs:      changePlan.TieKeptLocal,
 		ParentDemoteReverted: demoteReverted,
 		MetadataKeysDropped:  metadataKeysDropped,
+		ParentCloseReverted:  closeReverted,
 	}, nil
 }
 
@@ -817,6 +845,96 @@ func topLevelMetadataKeys(raw json.RawMessage) map[string]struct{} {
 		keys[k] = struct{}{}
 	}
 	return keys
+}
+
+// guardImportParentClose enforces the close-guard family's parent-close
+// invariant on the import STATUS-change path (beads-1h993, axis B of ts7vq).
+// For each incoming row whose status would transition an existing auto-closing
+// parent (epic/molecule/wisp) that still has open children from non-closed to
+// CLOSED — the same transition countEpicOpenChildren refuses on `bd close`
+// (close.go) and `bd update --status closed` (update.go, beads-zgku) — it
+// REVERTS the incoming status to the local value in place so the batch upsert
+// cannot plant the forbidden closed-parent-with-open-child state, and returns
+// the reverted ids so the import can report the (otherwise silent) bypass.
+// Every other field on those rows still imports; only the close is suppressed.
+// This mirrors guardImportParentDemote / restoreAbsentFieldsFromLocal's
+// revert-to-local model rather than aborting the whole import (import is
+// skip-and-report, not all-or-nothing).
+//
+// Scope note: like the direct guard, this keys on the parent's own type +
+// its currently-committed open children. It acts only on rows that update an
+// EXISTING local auto-closing parent (a genuinely-new closed parent has no
+// committed children yet, so there is nothing to leave open); a subsequent
+// direct close of that parent once children are added is still guarded by the
+// live command path. Best-effort like countEpicOpenChildren: a local-lookup
+// error is fatal (can't safely proceed without local status), a per-issue
+// dependents error yields zero open children (fail-open to the normal import).
+func guardImportParentClose(ctx context.Context, store storage.DoltStorage, issues []*types.Issue) ([]string, error) {
+	// Only rows that carry an explicit status could close a parent. Collect
+	// their ids for a single local fetch.
+	ids := make([]string, 0, len(issues))
+	seen := make(map[string]struct{}, len(issues))
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" || issue.Status == "" {
+			continue
+		}
+		if _, ok := seen[issue.ID]; ok {
+			continue
+		}
+		seen[issue.ID] = struct{}{}
+		ids = append(ids, issue.ID)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	localIssues, err := store.GetIssuesByIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("load local issues for import parent-close guard: %w", err)
+	}
+	localByID := make(map[string]*types.Issue, len(localIssues))
+	for _, local := range localIssues {
+		if local != nil && local.ID != "" {
+			localByID[local.ID] = local
+		}
+	}
+	if len(localByID) == 0 {
+		return nil, nil // every row genuinely new — no existing parent to close
+	}
+
+	var reverted []string
+	revertedSet := make(map[string]struct{}, len(issues))
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" || issue.Status == "" {
+			continue
+		}
+		local, ok := localByID[issue.ID]
+		if !ok {
+			continue // genuinely new — no existing parent to close
+		}
+		// Only a real non-closed -> closed transition of an auto-closing parent
+		// matters. Uses the LOCAL status as the source (a closed->closed
+		// re-import is a no-op) and the LOCAL type (import can't demote-and-close
+		// in one row: the demote guard already reverted any type change, and the
+		// close invariant keys on being an auto-closing parent).
+		if issue.Status != types.StatusClosed || local.Status == types.StatusClosed {
+			continue
+		}
+		if !isAutoClosingParentType(local) {
+			continue
+		}
+		if countEpicOpenChildren(ctx, store, local.ID) == 0 {
+			continue // no open children — close is safe (matches direct guard)
+		}
+		// Suppress the close: revert the incoming status to local. All other
+		// fields on this row still import.
+		issue.Status = local.Status
+		if _, dup := revertedSet[issue.ID]; !dup {
+			revertedSet[issue.ID] = struct{}{}
+			reverted = append(reverted, issue.ID)
+		}
+	}
+	return reverted, nil
 }
 
 // importChangePlan reports how the import batch relates to existing local

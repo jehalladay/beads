@@ -191,6 +191,7 @@ type importResultJSON struct {
 	SkippedDependencies  []string       `json:"skipped_dependencies,omitempty"`
 	ParentDemoteReverted []string       `json:"parent_demote_reverted,omitempty"`
 	MetadataKeysDropped  []string       `json:"metadata_keys_dropped,omitempty"`
+	ParentCloseReverted  []string       `json:"parent_close_reverted,omitempty"`
 	DryRun               bool           `json:"dry_run,omitempty"`
 }
 
@@ -309,6 +310,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 			result.InvalidMetadataIDs = append(result.InvalidMetadataIDs, previewResult.InvalidMetadataIDs...)
 			result.ParentDemoteReverted = append(result.ParentDemoteReverted, previewResult.ParentDemoteReverted...)
 			result.MetadataKeysDropped = append(result.MetadataKeysDropped, previewResult.MetadataKeysDropped...)
+			result.ParentCloseReverted = append(result.ParentCloseReverted, previewResult.ParentCloseReverted...)
 		} else {
 			result.Skipped = dedupHits
 		}
@@ -389,6 +391,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		result.InvalidMetadataIDs = append(result.InvalidMetadataIDs, importResult.InvalidMetadataIDs...)
 		result.ParentDemoteReverted = append(result.ParentDemoteReverted, importResult.ParentDemoteReverted...)
 		result.MetadataKeysDropped = append(result.MetadataKeysDropped, importResult.MetadataKeysDropped...)
+		result.ParentCloseReverted = append(result.ParentCloseReverted, importResult.ParentCloseReverted...)
 	}
 
 	if processed > 0 || result.Memories > 0 {
@@ -447,6 +450,10 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 	if len(result.MetadataKeysDropped) > 0 {
 		fmt.Fprintf(os.Stderr, "Dropped metadata keys for %d issue(s): the imported metadata object omits top-level keys the local issue has, and import REPLACES metadata verbatim (unlike `bd update --metadata`, which merges), so those keys were dropped (beads-85nml); re-import with the full metadata object or use `bd update --metadata` to merge: %s\n",
 			len(result.MetadataKeysDropped), strings.Join(result.MetadataKeysDropped, ", "))
+	}
+	if len(result.ParentCloseReverted) > 0 {
+		fmt.Fprintf(os.Stderr, "Kept parent status for %d issue(s): the imported status would close an auto-closing parent with open children (close-guard bypass, beads-1h993); close the children first or use `bd close ... --force`: %s\n",
+			len(result.ParentCloseReverted), strings.Join(result.ParentCloseReverted, ", "))
 	}
 	for _, skipped := range result.SkippedDependencies {
 		fmt.Fprintf(os.Stderr, "Skipped dependency: %s\n", skipped)
