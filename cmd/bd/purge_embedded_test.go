@@ -172,6 +172,77 @@ func TestEmbeddedPurge(t *testing.T) {
 	})
 }
 
+// TestPurgePruneJSONPreviewNoPreamble pins the beads-nx26e fix: the residual
+// leg of beads-hbn3. hbn3 routed the preview *error object* through RespectJSON
+// (JSON error on stdout under --json), but the human-facing "Found N … to <cmd>"
+// (+ "Skipping N pinned") preamble at the confirm-required (!force) site stayed
+// unguarded — so under --json it printed non-JSON text on STDOUT *before* the
+// JSON error envelope, breaking jq/parsers. This is distinct from the hbn3
+// require-filter guard test above (that path has no matches, so it never reaches
+// the preamble): here there ARE closed ephemeral beads, so preview finds
+// matches and would emit the leaking preamble.
+//
+// Mutation check: drop the `if !jsonOutput` guard around the preamble in
+// purge.go and both subtests go RED (stdout no longer parses as a single JSON
+// object because it is preceded by the "Found N …" line).
+func TestPurgePruneJSONPreviewNoPreamble(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+
+	// assertSingleJSONObject runs `bd <verb> --json <extra...>` expecting the
+	// preview (confirm-required) error path, and asserts stdout is exactly one
+	// parseable JSON object carrying the "error" key — with no preamble leaking
+	// ahead of it.
+	assertSingleJSONObject := func(t *testing.T, dir, verb string, extra ...string) {
+		t.Helper()
+		args := append([]string{verb, "--json"}, extra...)
+		cmd := exec.Command(bd, args...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err == nil {
+			t.Fatalf("expected %s --json preview to fail (confirm required); stdout=%q stderr=%q", verb, stdout.String(), stderr.String())
+		}
+		trimmed := strings.TrimSpace(stdout.String())
+		var obj map[string]any
+		if jerr := json.Unmarshal([]byte(trimmed), &obj); jerr != nil {
+			t.Fatalf("%s --json preview stdout must be a single JSON object (no 'Found N …' preamble), got stdout=%q (stderr=%q): %v", verb, stdout.String(), stderr.String(), jerr)
+		}
+		if _, ok := obj["error"]; !ok {
+			t.Errorf("%s --json preview JSON object missing 'error' key: %v", verb, obj)
+		}
+	}
+
+	t.Run("purge_json_preview_no_preamble", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "jp")
+		createAndCloseEphemeral(t, bd, dir, "nx26e purge preview 1")
+		createAndCloseEphemeral(t, bd, dir, "nx26e purge preview 2")
+		assertSingleJSONObject(t, dir, "purge")
+	})
+
+	t.Run("prune_json_preview_no_preamble", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "jr")
+		// prune targets closed NON-ephemeral beads (unlike purge), so create
+		// regular beads and close them to give prune matches.
+		for _, title := range []string{"nx26e prune preview 1", "nx26e prune preview 2"} {
+			issue := bdCreate(t, bd, dir, title)
+			cmd := exec.Command(bd, "close", issue.ID)
+			cmd.Dir = dir
+			cmd.Env = bdEnv(dir)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("close %s failed: %v\n%s", issue.ID, err, out)
+			}
+		}
+		// prune requires a filter; --pattern selects the matches so we reach the
+		// same confirm-required preamble site (shared runPurgeOrPrune).
+		assertSingleJSONObject(t, dir, "prune", "--pattern", "jr-*")
+	})
+}
+
 // TestEmbeddedPurgeConcurrent exercises purge --dry-run concurrently.
 func TestEmbeddedPurgeConcurrent(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {

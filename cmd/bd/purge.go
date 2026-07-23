@@ -222,9 +222,18 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) error {
 	}
 
 	if !force {
-		fmt.Printf("Found %d %s(s) to %s\n", len(issueIDs), scope.subjectNoun, scope.cmdName)
-		if pinnedCount > 0 {
-			fmt.Printf("Skipping %d pinned bead(s)\n", pinnedCount)
+		// beads-nx26e: residual leg of beads-hbn3. hbn3 routed the preview
+		// *error object* through RespectJSON (JSON error on stdout under --json),
+		// but left this human-facing preamble unguarded — so under --json it
+		// prints non-JSON text on stdout BEFORE the JSON error envelope, breaking
+		// jq/parsers (same 8lqh json-error-contract stdout-contamination shape).
+		// Suppress the preamble under --json; the structured error+hint below
+		// still carries the counts. Covers both prune and purge (shared fn).
+		if !jsonOutput {
+			fmt.Printf("Found %d %s(s) to %s\n", len(issueIDs), scope.subjectNoun, scope.cmdName)
+			if pinnedCount > 0 {
+				fmt.Printf("Skipping %d pinned bead(s)\n", pinnedCount)
+			}
 		}
 		hint := fmt.Sprintf("bd %s --force", scope.cmdName)
 		if olderThan != "" {
