@@ -869,6 +869,15 @@ func init() {
 	listCmd.Flags().String("parent", "", "Filter by parent issue ID (shows children of specified issue)")
 	listCmd.Flags().String("filter-parent", "", "Alias for --parent")
 	_ = listCmd.Flags().MarkHidden("filter-parent") // Only fails if flag missing (caught in tests)
+	// beads-es0kr: --filter-parent is a documented ALIAS for --parent, but the
+	// input resolver (list_input.go) takes --parent first and silently discards a
+	// DIFFERENT --filter-parent value with rc0 and no diagnostic — the dz1t8
+	// input-source silent-drop class (same as bd close reason aliases beads-5vkqz,
+	// bd dep add aliases beads-bscdj, bd edit field flags beads-637yc). Reject the
+	// two-alias conflict at cobra parse time; pre-resolve and path-agnostic. Both
+	// are non-repeatable String flags, so this only fires on the genuine
+	// conflicting-value case, never on legitimate single use of either alias.
+	listCmd.MarkFlagsMutuallyExclusive("parent", "filter-parent")
 	listCmd.Flags().Bool("no-parent", false, "Exclude child issues (show only top-level issues)")
 
 	// Molecule type filtering
