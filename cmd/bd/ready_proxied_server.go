@@ -126,6 +126,13 @@ func runBlockedProxiedServer(cmd *cobra.Command, ctx context.Context) {
 		}
 		filter.Type = blockedType
 	}
+	// beads-b3k8s: exclude persisted template protos by default (proxied twin of
+	// the direct blocked path). Applied as a post-query column-OR-label filter in
+	// GetBlockedIssuesInTx. --include-templates opts back in.
+	if inc, _ := cmd.Flags().GetBool("include-templates"); !inc {
+		isTemplate := false
+		filter.IsTemplate = &isTemplate
+	}
 
 	blocked, err := uw.IssueUseCase().GetBlockedIssues(ctx, filter)
 	if err != nil {
@@ -277,10 +284,15 @@ func runReadyProxiedClaim(ctx context.Context, uw uow.UnitOfWork, in readyInput)
 	}
 }
 
-func runReadyProxiedExplain(ctx context.Context, uw uow.UnitOfWork, _ readyInput) {
+func runReadyProxiedExplain(ctx context.Context, uw uow.UnitOfWork, in readyInput) {
+	// beads-b3k8s: exclude persisted template protos from the proxied explain view
+	// too, at parity with plain `bd ready` (gatherReadyInput default-excludes into
+	// in.filter.IsTemplate). --include-templates leaves it nil (no exclusion). Mirror
+	// it onto both the ready and blocked filters this path builds fresh.
 	filter := types.WorkFilter{
 		Status:     types.StatusOpen,
 		SortPolicy: types.SortPolicyPriority,
+		IsTemplate: in.filter.IsTemplate,
 	}
 	readyPage, err := uw.IssueUseCase().GetReadyWork(ctx, filter)
 	if err != nil {
@@ -288,7 +300,7 @@ func runReadyProxiedExplain(ctx context.Context, uw uow.UnitOfWork, _ readyInput
 	}
 	readyIssues := readyPage.Items
 
-	blockedIssues, err := uw.IssueUseCase().GetBlockedIssues(ctx, types.WorkFilter{})
+	blockedIssues, err := uw.IssueUseCase().GetBlockedIssues(ctx, types.WorkFilter{IsTemplate: in.filter.IsTemplate})
 	if err != nil {
 		FatalErrorRespectJSON("%v", err)
 	}

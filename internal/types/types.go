@@ -1508,8 +1508,14 @@ type WorkFilter struct {
 	LabelRegex    string   // Regex pattern for label matching (e.g., "tech-(debt|legacy)")
 	// beads-gqcmu: only issues with empty/missing description; parity with IssueFilter/bd list.
 	EmptyDescription bool
-	Limit            int
-	SortPolicy       SortPolicy
+	// beads-b3k8s: template-proto filtering; parity with IssueFilter/bd list/count/export.
+	// nil = any, true = only templates, false = exclude templates. The sqlbuild
+	// ready builder honors the is_template COLUMN OR the `template` LABEL (same
+	// column-vs-label root as beads-82fas / v8ck8 / pcttr) so both representations
+	// of a persisted proto are excluded from ready/blocked by default.
+	IsTemplate *bool
+	Limit      int
+	SortPolicy SortPolicy
 
 	// Parent filtering: filter to descendants of a bead/epic (recursive)
 	ParentID *string // Show all descendants of this issue

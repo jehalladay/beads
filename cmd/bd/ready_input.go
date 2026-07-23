@@ -182,6 +182,14 @@ func gatherReadyInput(cmd *cobra.Command) readyInput {
 		IncludeEphemeral: includeEphemeral,
 		ExcludeTypes:     excludeTypes,
 	}
+	// beads-b3k8s: exclude persisted template protos by default on the PROXIED
+	// ready path too (parity with bd list/count/export). Shared input path, so
+	// setting it here covers runReadyProxiedServer; the direct ready.go RunE sets
+	// it separately (same split as --priority). --include-templates opts back in.
+	if inc, _ := cmd.Flags().GetBool("include-templates"); !inc {
+		isTemplate := false
+		in.filter.IsTemplate = &isTemplate
+	}
 	if cmd.Flags().Changed("priority") {
 		// beads-57tt: parse via ValidatePriority (StringP flag) so the PROXIED
 		// ready path rejects an out-of-range/non-numeric --priority like

@@ -343,6 +343,10 @@ func readyWorkWispIssueFilter(filter types.WorkFilter) types.IssueFilter {
 		LabelRegex:          filter.LabelRegex,
 		MetadataFields:      filter.MetadataFields,
 		HasMetadataKey:      filter.HasMetadataKey,
+		// beads-b3k8s: forward the template-proto exclusion so the wisp tier
+		// applies the same column-OR-label predicate as the main ready-issues
+		// path (and bd list); same 3y8y8 parity class.
+		IsTemplate: filter.IsTemplate,
 	}
 	if filter.Status != "" {
 		s := filter.Status

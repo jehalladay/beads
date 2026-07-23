@@ -359,6 +359,24 @@ func BuildReadyWorkWhere(filter types.WorkFilter, tables FilterTables, in ReadyW
 	if filter.NoLabels {
 		whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (SELECT DISTINCT issue_id FROM %s)", tables.Labels))
 	}
+	// beads-b3k8s: template-proto exclusion, parity with bd list/count/export
+	// (filter.go:280 IsTemplate). `bd ready` and `bd blocked` never set
+	// filter.IsTemplate, so a persisted proto STEP (type=task with is_template=1,
+	// or a canonical `bd create --label template` proto with is_template=NULL but
+	// the `template` LABEL) leaked into the actionable ready/blocked lists even
+	// though list/count/export default-exclude it. Delegate to the SAME
+	// column-OR-label predicate the canonical IssueFilter builder uses so the two
+	// representations agree — the is_template COLUMN (formula-cooked protos) OR
+	// the `template` LABEL (label-defined protos). tables.Labels matches the
+	// per-table-family pattern used by the label clauses above.
+	if filter.IsTemplate != nil {
+		labelProto := fmt.Sprintf("id IN (SELECT issue_id FROM %s WHERE LOWER(label) = 'template')", tables.Labels)
+		if *filter.IsTemplate {
+			whereClauses = append(whereClauses, fmt.Sprintf("(is_template = 1 OR %s)", labelProto))
+		} else {
+			whereClauses = append(whereClauses, fmt.Sprintf("((is_template = 0 OR is_template IS NULL) AND NOT %s)", labelProto))
+		}
+	}
 
 	// Parent filtering: return all transitive descendants of parentID.
 	// GH#3396: a one-hop subquery silently dropped grandchildren despite the

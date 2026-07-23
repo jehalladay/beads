@@ -421,6 +421,25 @@ func GetBlockedIssuesInTx(ctx context.Context, tx DBTX, filter types.WorkFilter)
 		if filter.Type != "" && string(issue.IssueType) != filter.Type {
 			continue
 		}
+		// beads-b3k8s: template-proto exclusion, parity with bd ready
+		// (BuildReadyWorkWhere IsTemplate clause) / bd list/count/export. A
+		// persisted proto is the is_template COLUMN (formula-cooked) OR the
+		// `template` LABEL (canonical `bd create --label template`, is_template
+		// NULL) — GetIssuesByIDsInTx hydrates both, so match the same column-OR-
+		// label predicate here. filter.IsTemplate defaults to &false from the
+		// RunE (exclude); --include-templates leaves it nil (no exclusion).
+		if filter.IsTemplate != nil {
+			isProto := issue.IsTemplate
+			for _, label := range issue.Labels {
+				if strings.EqualFold(label, "template") {
+					isProto = true
+					break
+				}
+			}
+			if isProto != *filter.IsTemplate {
+				continue
+			}
+		}
 		results = append(results, &types.BlockedIssue{
 			Issue:          *issue,
 			BlockedByCount: len(blockerIDs),

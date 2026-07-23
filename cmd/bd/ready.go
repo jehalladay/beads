@@ -189,6 +189,14 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			IncludeEphemeral: includeEphemeral, // bd-i5k5x: allow ephemeral issues (e.g., merge-requests)
 			ExcludeTypes:     excludeTypes,
 		}
+		// beads-b3k8s: exclude persisted template protos by default (parity with
+		// bd list/count/export, list_filter.go:286). Setting IsTemplate=&false
+		// engages the column-OR-label predicate in BuildReadyWorkWhere;
+		// --include-templates opts back in (leaves it nil = no exclusion).
+		if inc, _ := cmd.Flags().GetBool("include-templates"); !inc {
+			isTemplate := false
+			filter.IsTemplate = &isTemplate
+		}
 		// Use Changed() to properly handle P0 (priority=0)
 		// beads-57tt: parse via ValidatePriority (StringP flag) so an
 		// out-of-range/non-numeric --priority is rejected here (mirrors
@@ -553,6 +561,15 @@ var blockedCmd = &cobra.Command{
 			}
 			blockedFilter.Type = blockedType
 		}
+		// beads-b3k8s: exclude persisted template protos by default (parity with
+		// bd ready / bd list). Applied as a post-query column-OR-label filter in
+		// GetBlockedIssuesInTx (issueMap already carries IsTemplate + Labels), the
+		// blocked-path analogue of the BuildReadyWorkWhere IsTemplate clause.
+		// --include-templates opts back in (leaves it nil = no exclusion).
+		if inc, _ := cmd.Flags().GetBool("include-templates"); !inc {
+			isTemplate := false
+			blockedFilter.IsTemplate = &isTemplate
+		}
 		blocked, err := store.GetBlockedIssues(ctx, blockedFilter)
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
@@ -708,7 +725,7 @@ func buildReadyIssueOutput(ctx context.Context, s storage.DoltStorage, issues []
 	return issuesWithCounts
 }
 
-func runReadyExplain(_ *cobra.Command) error {
+func runReadyExplain(cmd *cobra.Command) error {
 	ctx := rootCtx
 
 	activeStore := store
@@ -717,12 +734,23 @@ func runReadyExplain(_ *cobra.Command) error {
 		Status:     types.StatusOpen,
 		SortPolicy: types.SortPolicyPriority,
 	}
+	// beads-b3k8s: exclude persisted template protos from the explain view too,
+	// at parity with plain `bd ready` (the direct RunE default-excludes). Without
+	// this, `bd ready --explain` would still surface template-proto steps in both
+	// its ready and blocked sections while `bd ready` hides them. --include-templates
+	// opts back in on both filters.
+	var excludeTemplates *bool
+	if inc, _ := cmd.Flags().GetBool("include-templates"); !inc {
+		isTemplate := false
+		excludeTemplates = &isTemplate
+	}
+	filter.IsTemplate = excludeTemplates
 	readyIssues, err := activeStore.GetReadyWork(ctx, filter)
 	if err != nil {
 		return HandleErrorRespectJSON("%v", err)
 	}
 
-	blockedIssues, err := activeStore.GetBlockedIssues(ctx, types.WorkFilter{})
+	blockedIssues, err := activeStore.GetBlockedIssues(ctx, types.WorkFilter{IsTemplate: excludeTemplates})
 	if err != nil {
 		return HandleErrorRespectJSON("%v", err)
 	}
@@ -1007,6 +1035,7 @@ func init() {
 	readyCmd.Flags().Bool("plain", false, "Display issues as a plain numbered list")
 	readyCmd.Flags().Bool("include-deferred", false, "Include issues with future defer_until timestamps")
 	readyCmd.Flags().Bool("include-ephemeral", false, "Include ephemeral issues (wisps) in results")
+	readyCmd.Flags().Bool("include-templates", false, "Include template molecule protos in results") // beads-b3k8s: parity with bd list --include-templates
 	readyCmd.Flags().Bool("gated", false, "Find molecules ready for gate-resume dispatch")
 	readyCmd.Flags().StringSlice("exclude-type", nil, "Exclude issue types from results (comma-separated or repeatable, e.g., --exclude-type=convoy,epic)")
 	readyCmd.Flags().Bool("explain", false, "Show dependency-aware reasoning for why issues are ready or blocked")
@@ -1020,5 +1049,6 @@ func init() {
 	blockedCmd.Flags().BoolP("unassigned", "u", false, "Show only unassigned blocked issues") // beads-9tljp: parity with bd ready --unassigned
 	blockedCmd.Flags().StringP("priority", "p", "", "Filter blocked issues by priority (0-4)")  // beads-o7nxb: parity with bd ready --priority
 	blockedCmd.Flags().StringP("type", "t", "", "Filter blocked issues by type")                // beads-o7nxb: parity with bd ready --type
+	blockedCmd.Flags().Bool("include-templates", false, "Include template molecule protos in results") // beads-b3k8s: parity with bd ready/list --include-templates
 	rootCmd.AddCommand(blockedCmd)
 }
