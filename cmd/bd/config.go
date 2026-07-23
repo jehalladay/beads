@@ -1137,6 +1137,19 @@ func validateConfigValueType(key, value string) error {
 			return fmt.Errorf("invalid value %q for key %q (valid: %s)", value, key, strings.Join(allowed, ", "))
 		}
 	}
+	// federation.sovereignty is a fixed-domain enum (T1-T4, or empty for no
+	// restriction) but is NOT in enumConfigKeys because its domain is
+	// case-insensitive and empty-valid — an exact-match entry would wrongly
+	// reject lowercase "t1" and the empty "no restriction" value. Reuse the
+	// canonical validator (the same one `config validate` uses) so an
+	// out-of-domain value is rejected at set-time. Without this, a bad value
+	// persists and GetSovereignty silently defaults it to T1 (the most-open
+	// tier) on read — a silent security downgrade of a typo'd restrictive
+	// intent. Sibling of the enumConfigKeys leg (beads-m83zh/ixb4w). (beads-3sjks)
+	if key == "federation.sovereignty" && !config.IsValidSovereignty(value) {
+		return fmt.Errorf("invalid value %q for key %q (valid: %s, or empty for no restriction)",
+			value, key, strings.Join(config.ValidSovereigntyTiers(), ", "))
+	}
 	return nil
 }
 
