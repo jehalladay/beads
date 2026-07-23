@@ -176,20 +176,21 @@ func runImportInner(args []string) error {
 }
 
 type importResultJSON struct {
-	Source              string         `json:"source"`
-	Created             int            `json:"created"`
-	Updated             int            `json:"updated,omitempty"`
-	Skipped             int            `json:"skipped"`
-	DedupHits           int            `json:"dedup_skipped,omitempty"`
-	Memories            int            `json:"memories,omitempty"`
-	IDs                 []string       `json:"ids,omitempty"`
-	UpdatedIssues       []ImportChange `json:"updated_issues,omitempty"`
-	UnchangedIDs        []string       `json:"unchanged_ids,omitempty"`
-	TieKeptLocalIDs     []string       `json:"tie_kept_local_ids,omitempty"`
-	StaleSkippedIDs     []string       `json:"stale_skipped_ids,omitempty"`
-	InvalidMetadataIDs  []string       `json:"invalid_metadata_ids,omitempty"`
-	SkippedDependencies []string       `json:"skipped_dependencies,omitempty"`
-	DryRun              bool           `json:"dry_run,omitempty"`
+	Source               string         `json:"source"`
+	Created              int            `json:"created"`
+	Updated              int            `json:"updated,omitempty"`
+	Skipped              int            `json:"skipped"`
+	DedupHits            int            `json:"dedup_skipped,omitempty"`
+	Memories             int            `json:"memories,omitempty"`
+	IDs                  []string       `json:"ids,omitempty"`
+	UpdatedIssues        []ImportChange `json:"updated_issues,omitempty"`
+	UnchangedIDs         []string       `json:"unchanged_ids,omitempty"`
+	TieKeptLocalIDs      []string       `json:"tie_kept_local_ids,omitempty"`
+	StaleSkippedIDs      []string       `json:"stale_skipped_ids,omitempty"`
+	InvalidMetadataIDs   []string       `json:"invalid_metadata_ids,omitempty"`
+	SkippedDependencies  []string       `json:"skipped_dependencies,omitempty"`
+	ParentDemoteReverted []string       `json:"parent_demote_reverted,omitempty"`
+	DryRun               bool           `json:"dry_run,omitempty"`
 }
 
 func runImportFromReader(ctx context.Context, r io.Reader, source string) error {
@@ -305,6 +306,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 			result.TieKeptLocalIDs = append(result.TieKeptLocalIDs, previewResult.TieKeptLocalIDs...)
 			result.StaleSkippedIDs = append(result.StaleSkippedIDs, previewResult.StaleSkippedIDs...)
 			result.InvalidMetadataIDs = append(result.InvalidMetadataIDs, previewResult.InvalidMetadataIDs...)
+			result.ParentDemoteReverted = append(result.ParentDemoteReverted, previewResult.ParentDemoteReverted...)
 		} else {
 			result.Skipped = dedupHits
 		}
@@ -383,6 +385,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		result.TieKeptLocalIDs = append(result.TieKeptLocalIDs, importResult.TieKeptLocalIDs...)
 		result.StaleSkippedIDs = append(result.StaleSkippedIDs, importResult.StaleSkippedIDs...)
 		result.InvalidMetadataIDs = append(result.InvalidMetadataIDs, importResult.InvalidMetadataIDs...)
+		result.ParentDemoteReverted = append(result.ParentDemoteReverted, importResult.ParentDemoteReverted...)
 	}
 
 	if processed > 0 || result.Memories > 0 {
@@ -433,6 +436,10 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 	if len(result.TieKeptLocalIDs) > 0 {
 		fmt.Fprintf(os.Stderr, "Kept local state for %d issue(s) with the same updated_at but different content (use --allow-stale to overwrite): %s\n",
 			len(result.TieKeptLocalIDs), strings.Join(result.TieKeptLocalIDs, ", "))
+	}
+	if len(result.ParentDemoteReverted) > 0 {
+		fmt.Fprintf(os.Stderr, "Kept parent type for %d issue(s): the imported type would demote an auto-closing parent with open children (close-guard bypass, beads-ts7vq); close the children first or use `bd update --type ... --force`: %s\n",
+			len(result.ParentDemoteReverted), strings.Join(result.ParentDemoteReverted, ", "))
 	}
 	for _, skipped := range result.SkippedDependencies {
 		fmt.Fprintf(os.Stderr, "Skipped dependency: %s\n", skipped)

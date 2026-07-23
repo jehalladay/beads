@@ -96,6 +96,12 @@ type ImportResult struct {
 	// such rows are skipped-and-reported rather than silently poisoning the
 	// bead (beads-od9b), mirroring create/update's metadataIsJSONObject reject.
 	InvalidMetadataIDs []string
+	// ParentDemoteReverted lists incoming rows whose issue_type would have
+	// demoted an auto-closing parent (epic/molecule/wisp) with open children to
+	// a non-auto-closing type, bypassing the close-guard family (beads-ts7vq).
+	// The type change was reverted to the local value (all other fields still
+	// import); the ids are reported so the silent close-guard bypass is visible.
+	ParentDemoteReverted []string
 }
 
 // ImportChange describes how an import row modified an existing local issue.
@@ -186,6 +192,27 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		}
 	}
 
+	// Close-guard bypass via import (beads-ts7vq): the epic/molecule-demote
+	// guard (wouldRemainAutoClosingParent, cmd/bd/close.go — beads-2hkd/l7l3j)
+	// is enforced only on the `bd update --type`/close command path. The import
+	// upsert applies the incoming issue_type field-wise with NO demote check, so
+	// an import row that flips an auto-closing parent (epic/molecule/wisp) with
+	// open children to a non-auto-closing type (e.g. task) silently recreates the
+	// forbidden closed-parent-with-open-child state on the next parent close —
+	// even with --allow-stale, which requires no --force. This is the IMPORT
+	// sibling of the 2hkd/aw9x8/b0tw family (a guard the direct-single command
+	// enforces leaking on the bulk/import path). Mirror the demote invariant on
+	// the import type-change: rather than aborting the whole import (import's
+	// model is skip-and-report / preserve-on-absent, not all-or-nothing), leave
+	// the type UNCHANGED for the offending rows and report them — matching
+	// restoreAbsentFieldsFromLocal's revert-to-local posture. Runs before the
+	// stale filter and the batch write so it covers both the guarded and
+	// --allow-stale paths.
+	demoteReverted, err := guardImportParentDemote(ctx, store, issues)
+	if err != nil {
+		return nil, err
+	}
+
 	// The stale guard has two halves (bd-pkim8). This pre-filter reports the
 	// rows that are already known stale (StaleSkippedIDs) and keeps their
 	// labels/comments/dependencies out of the batch entirely. It is a separate
@@ -204,9 +231,10 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		changePlan = plan
 		if len(issues) == 0 {
 			return &ImportResult{
-				Skipped:            len(staleSkippedIDs) + len(invalidMetadataIDs),
-				StaleSkippedIDs:    staleSkippedIDs,
-				InvalidMetadataIDs: invalidMetadataIDs,
+				Skipped:              len(staleSkippedIDs) + len(invalidMetadataIDs),
+				StaleSkippedIDs:      staleSkippedIDs,
+				InvalidMetadataIDs:   invalidMetadataIDs,
+				ParentDemoteReverted: demoteReverted,
 			}, nil
 		}
 	} else {
@@ -317,17 +345,18 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		}
 	}
 	return &ImportResult{
-		Created:             createdCount,
-		Processed:           len(importedIDs),
-		Updated:             updatedCount,
-		Unchanged:           changePlan.Unchanged,
-		Skipped:             len(staleSkippedIDs) + len(invalidMetadataIDs),
-		ImportedIDs:         importedIDs,
-		StaleSkippedIDs:     staleSkippedIDs,
-		InvalidMetadataIDs:  invalidMetadataIDs,
-		SkippedDependencies: skippedDependencies,
-		UpdatedIssues:       updatedIssues,
-		TieKeptLocalIDs:     changePlan.TieKeptLocal,
+		Created:              createdCount,
+		Processed:            len(importedIDs),
+		Updated:              updatedCount,
+		Unchanged:            changePlan.Unchanged,
+		Skipped:              len(staleSkippedIDs) + len(invalidMetadataIDs),
+		ImportedIDs:          importedIDs,
+		StaleSkippedIDs:      staleSkippedIDs,
+		InvalidMetadataIDs:   invalidMetadataIDs,
+		SkippedDependencies:  skippedDependencies,
+		UpdatedIssues:        updatedIssues,
+		TieKeptLocalIDs:      changePlan.TieKeptLocal,
+		ParentDemoteReverted: demoteReverted,
 	}, nil
 }
 
@@ -563,6 +592,88 @@ func restoreAbsentFieldsFromLocal(ctx context.Context, store storage.DoltStorage
 		}
 	}
 	return nil
+}
+
+// guardImportParentDemote enforces the close-guard family's demote invariant on
+// the import type-change path (beads-ts7vq). For each incoming row whose
+// issue_type would demote an existing auto-closing parent (epic/molecule/wisp)
+// with open children to a non-auto-closing type — the same transition
+// wouldRemainAutoClosingParent refuses on `bd update --type` (beads-2hkd/l7l3j)
+// — it REVERTS the incoming issue_type to the local value in place so the batch
+// upsert cannot recreate the forbidden closed-parent-with-open-child state, and
+// returns the ids it reverted so the import can report the (otherwise silent)
+// bypass. Every other field on those rows still imports; only the type demote is
+// suppressed. This mirrors restoreAbsentFieldsFromLocal's revert-to-local model
+// rather than aborting the whole import (import is skip-and-report, not
+// all-or-nothing). Best-effort like countEpicOpenChildren: a local-lookup error
+// is fatal (the import can't safely proceed without knowing local types), but a
+// per-issue dependents error yields zero open children (fail-open to the normal
+// import), matching the guard's error posture on the direct path.
+func guardImportParentDemote(ctx context.Context, store storage.DoltStorage, issues []*types.Issue) ([]string, error) {
+	// Only rows that carry an explicit issue_type could demote. Collect their
+	// ids for a single local fetch.
+	ids := make([]string, 0, len(issues))
+	seen := make(map[string]struct{}, len(issues))
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" || issue.IssueType == "" {
+			continue
+		}
+		if _, ok := seen[issue.ID]; ok {
+			continue
+		}
+		seen[issue.ID] = struct{}{}
+		ids = append(ids, issue.ID)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	localIssues, err := store.GetIssuesByIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("load local issues for import demote-guard: %w", err)
+	}
+	localByID := make(map[string]*types.Issue, len(localIssues))
+	for _, local := range localIssues {
+		if local != nil && local.ID != "" {
+			localByID[local.ID] = local
+		}
+	}
+	if len(localByID) == 0 {
+		return nil, nil // every row genuinely new — nothing to demote
+	}
+
+	var reverted []string
+	revertedSet := make(map[string]struct{}, len(issues))
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" || issue.IssueType == "" {
+			continue
+		}
+		local, ok := localByID[issue.ID]
+		if !ok {
+			continue // genuinely new — no existing parent to demote
+		}
+		// Is this a demote of an auto-closing parent to a non-auto-closing
+		// type? (The transition test, not a bare type check — molecule->epic
+		// stays auto-closing and is NOT a demote.) Uses the LOCAL type as the
+		// source so a same-type re-import is a no-op.
+		if !isAutoClosingParentType(local) || wouldRemainAutoClosingParent(local, issue.IssueType) {
+			continue
+		}
+		if issue.IssueType == local.IssueType {
+			continue // no actual change
+		}
+		if countEpicOpenChildren(ctx, store, local.ID) == 0 {
+			continue // no open children — demote is safe (matches direct guard)
+		}
+		// Suppress the demote: revert the incoming type to local. All other
+		// fields on this row still import.
+		issue.IssueType = local.IssueType
+		if _, dup := revertedSet[issue.ID]; !dup {
+			revertedSet[issue.ID] = struct{}{}
+			reverted = append(reverted, issue.ID)
+		}
+	}
+	return reverted, nil
 }
 
 // importChangePlan reports how the import batch relates to existing local
