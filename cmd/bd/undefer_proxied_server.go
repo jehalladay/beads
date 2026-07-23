@@ -125,7 +125,14 @@ func undeferProxiedOne(ctx context.Context, id string, report func(format string
 	defer uw.Close(ctx)
 
 	issueUC := uw.IssueUseCase()
-	issue, err := issueUC.GetIssue(ctx, id)
+	// beads-kpwl9: resolve issue-or-wisp. The prior bare GetIssue guard (issues
+	// table only) rejected WISP targets outright ("Error resolving <wisp>"),
+	// while the direct path (undefer.go → ResolvePartialID, wisp-aware) undefers
+	// wisps and defer's own proxied handler (proxiedResolveIssueOrWisp) defers
+	// them — so a wisp deferred in proxied mode was stuck undeferrable. The write
+	// leg (issueUC.ApplyUpdate) already routes on isWispID, so only the guard
+	// needs the wisp fallback.
+	issue, _, err := proxiedGetIssueOrWisp(ctx, uw, id)
 	if err != nil || issue == nil {
 		report("Error resolving %s: %v", id, err)
 		return nil, "", undeferErr
