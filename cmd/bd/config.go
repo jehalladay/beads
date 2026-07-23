@@ -1107,6 +1107,17 @@ var enumConfigKeys = map[string][]string{
 	// turns that silent misconfiguration into a loud, self-correctable error.
 	"validation.on-create": {"none", "warn", "error"},
 	"validation.on-close":  {"none", "warn", "error"},
+	// validation.metadata.mode (beads-tckog): same profile as on-create/on-close
+	// — a fixed-domain enum (default "none", config.go SetDefault) read via a
+	// `switch mode { case "warn","error": return mode; default: return "none" }`
+	// in config.MetadataValidationMode(). An out-of-domain typo therefore
+	// silently degrades to "none" = metadata schema validation OFF across the
+	// storage-layer consumers (metadata_config.go, issueops/helpers.go,
+	// dolt/metadata_schema.go). It was missed by the ixb4w sweep because it lives
+	// under internal/config rather than cmd/bd. Because SetDefault provides
+	// "none", viper never returns empty for this key, so a plain exact-match
+	// allowlist entry needs no empty-valid wrinkle (unlike sovereignty/routing).
+	"validation.metadata.mode": {"none", "warn", "error"},
 }
 
 // validateConfigValueType rejects a value that does not parse as the key's
