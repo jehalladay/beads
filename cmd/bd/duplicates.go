@@ -54,14 +54,13 @@ Example:
 		// Proxied-server mode: the global `store` is nil (duplicates is not a
 		// noDbCommand), so fetch the issue set via the UOW stack (beads-igmz).
 		// The read/list path is a clean-mirror (SearchIssues is on the UOW). The
-		// --auto-merge WRITE path is NOT yet proxied: performMerge relies on
-		// store.GetDependentsWithMetadata, which has no UOW usecase (that gap is
-		// tracked separately as beads-crys) — so reject --auto-merge cleanly here
-		// rather than nil-panic.
+		// --auto-merge WRITE path is now proxied too (beads-ox2id):
+		// performMergeProxied mirrors performMerge over per-source UOWs, using the
+		// UOW incoming-dependents read (ListWithIssueMetadata + DepDirectionIn)
+		// that beads-q8hxe introduced — so the earlier "no UOW usecase for
+		// GetDependentsWithMetadata" premise (tracked as the wrong-verb bead
+		// beads-crys) no longer holds and the fail-loud reject is removed.
 		if usesProxiedServer() {
-			if autoMerge {
-				return HandleErrorRespectJSON("bd duplicates --auto-merge is not yet supported against a proxied server (beads-crys); run the suggested merge commands manually or use a direct-mode workspace")
-			}
 			allIssues, err = fetchDuplicatesIssuesProxied(ctx)
 		} else {
 			allIssues, err = store.SearchIssues(ctx, "", types.IssueFilter{})
@@ -110,7 +109,12 @@ Example:
 
 			if autoMerge || dryRun {
 				if !dryRun {
-					result := performMerge(target.ID, sources)
+					var result map[string]interface{}
+					if usesProxiedServer() {
+						result = performMergeProxied(ctx, target.ID, sources)
+					} else {
+						result = performMerge(target.ID, sources)
+					}
 					mergeResults = append(mergeResults, result)
 				}
 			}
