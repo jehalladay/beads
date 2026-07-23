@@ -1803,13 +1803,36 @@ func (u *issueUseCaseImpl) countOpenChildren(ctx context.Context, id string, use
 	if err != nil {
 		return 0, fmt.Errorf("CountOpenChildren %s: %w", id, err)
 	}
+	// beads-97gmg: a child in a custom done-category status is complete, not
+	// open — the proxied twin of countEpicOpenChildren (close.go). Degraded-safe:
+	// a config read error yields an empty done-set and reduces to the literal
+	// 'closed' test.
+	done := u.doneCategoryStatusNames(ctx)
 	open := 0
 	for _, child := range children {
-		if child.Status != types.StatusClosed {
+		if child.Status != types.StatusClosed && !done[string(child.Status)] {
 			open++
 		}
 	}
 	return open, nil
+}
+
+// doneCategoryStatusNames returns the configured custom status names in the DONE
+// category. It is the proxied/domain-layer twin of the cmd-side helper of the
+// same name (close.go), reading through cfgRepo. Degraded-safe: a config read
+// error yields an empty set so callers fall back to literal-'closed' behavior.
+func (u *issueUseCaseImpl) doneCategoryStatusNames(ctx context.Context) map[string]bool {
+	done := map[string]bool{}
+	custom, err := u.cfgRepo.GetCustomStatuses(ctx)
+	if err != nil {
+		return done
+	}
+	for _, cs := range custom {
+		if cs.Category == types.CategoryDone {
+			done[cs.Name] = true
+		}
+	}
+	return done
 }
 
 func (u *issueUseCaseImpl) GetNewlyUnblockedByClose(ctx context.Context, closedID string) ([]*types.Issue, error) {

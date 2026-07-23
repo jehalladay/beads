@@ -821,18 +821,58 @@ func resolveCloseTargets(ctx context.Context, localStore storage.DoltStorage, id
 	return results, cleanup, nil
 }
 
+// doneCategoryStatusNames returns the set of configured custom status names in
+// the DONE category (e.g. "resolved" after `bd config set status.custom
+// "resolved:done"`). A done-category status is a terminal "work complete"
+// outcome, so lifecycle sites that ask "is this child still open?" must treat it
+// like a literal close — the same way bd ready / bd count / bd list already do
+// (list_filter.go / count.go) and the way molecule completion counts it
+// (beads-x463g). Degraded-safe: a config read error yields an empty set, so
+// callers fall back to byte-identical literal-'closed' behavior rather than
+// failing the close/count. Frozen-category statuses are deliberately NOT included
+// — they are the "parked/not-done" bucket the views exclude from ready but which
+// is not a completion (matching molecule completion, which counts only Done).
+func doneCategoryStatusNames(ctx context.Context, s storage.DoltStorage) map[string]bool {
+	done := map[string]bool{}
+	detailed, err := s.GetCustomStatusesDetailed(ctx)
+	if err != nil {
+		return done
+	}
+	for _, cs := range detailed {
+		if cs.Category == types.CategoryDone {
+			done[cs.Name] = true
+		}
+	}
+	return done
+}
+
+// childCountsAsOpen reports whether a parent-child child in the given status
+// should count as an OPEN child for the auto-closing-parent close guard. A child
+// is complete if it is literally closed OR sits in a custom done-category status
+// (beads-97gmg). done is the set from doneCategoryStatusNames; an empty set
+// reduces to the literal-'closed' test.
+func childCountsAsOpen(status types.Status, done map[string]bool) bool {
+	return status != types.StatusClosed && !done[string(status)]
+}
+
 // countEpicOpenChildren returns the number of open (non-closed) children for an epic.
 // Uses GetDependentsWithMetadata to find parent-child relationships.
 // Takes an explicit store so callers can route to the store actually holding the epic
 // (relevant for contributor auto-routing where the epic lives in the planning repo).
+//
+// beads-97gmg: a child in a custom done-category status counts as complete (not
+// open), so an epic/molecule/wisp root whose only remaining children are
+// done-category can auto-close and be manually closed without --force —
+// consistent with molecule completion (x463g) and the view surfaces.
 func countEpicOpenChildren(ctx context.Context, s storage.DoltStorage, epicID string) int {
 	dependents, err := s.GetDependentsWithMetadata(ctx, epicID)
 	if err != nil {
 		return 0
 	}
+	done := doneCategoryStatusNames(ctx, s)
 	count := 0
 	for _, dep := range dependents {
-		if dep.DependencyType == types.DepParentChild && dep.Issue.Status != types.StatusClosed {
+		if dep.DependencyType == types.DepParentChild && childCountsAsOpen(dep.Issue.Status, done) {
 			count++
 		}
 	}

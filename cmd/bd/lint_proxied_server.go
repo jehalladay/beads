@@ -77,9 +77,21 @@ func (b *lintBackend) openChildIDsOfEpic(ctx context.Context, epicID string) []s
 		if err != nil {
 			return nil
 		}
+		// beads-97gmg: a done-category child is complete, matching the close
+		// guard (countEpicOpenChildren) and the direct lint helper — otherwise
+		// an epic legitimately closed with all-done-category children would be
+		// falsely flagged as a closed-epic-with-open-child inconsistency.
+		done := map[string]bool{}
+		if custom, cerr := b.uw.ConfigUseCase().GetCustomStatuses(ctx); cerr == nil {
+			for _, cs := range custom {
+				if cs.Category == types.CategoryDone {
+					done[cs.Name] = true
+				}
+			}
+		}
 		var open []string
 		for _, dep := range deps {
-			if dep.Issue.Status != types.StatusClosed {
+			if dep.Issue.Status != types.StatusClosed && !done[string(dep.Issue.Status)] {
 				open = append(open, dep.Issue.ID)
 			}
 		}

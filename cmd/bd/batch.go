@@ -986,10 +986,13 @@ func countEpicOpenChildrenExcluding(ctx context.Context, s storage.DoltStorage, 
 	if err != nil {
 		return 0, err
 	}
+	// beads-97gmg: a done-category child counts as complete, matching
+	// countEpicOpenChildren (close.go) and molecule completion.
+	done := doneCategoryStatusNames(ctx, s)
 	count := 0
 	for _, dep := range dependents {
 		if dep.DependencyType == types.DepParentChild &&
-			dep.Issue.Status != types.StatusClosed &&
+			childCountsAsOpen(dep.Issue.Status, done) &&
 			!excluded[dep.Issue.ID] {
 			count++
 		}

@@ -327,9 +327,15 @@ func openChildIDsOfEpic(ctx context.Context, s storage.DoltStorage, epicID strin
 	if err != nil {
 		return nil
 	}
+	// beads-97gmg: keep the lint's "closed epic with open children" scan in
+	// lockstep with the close guard (countEpicOpenChildren) — a done-category
+	// child counts as complete, so it is NOT an offending open child. Otherwise
+	// closing an epic whose remaining children are all done-category (now
+	// permitted) would immediately trip this lint as a false inconsistency.
+	done := doneCategoryStatusNames(ctx, s)
 	var open []string
 	for _, dep := range dependents {
-		if dep.DependencyType == types.DepParentChild && dep.Issue.Status != types.StatusClosed {
+		if dep.DependencyType == types.DepParentChild && childCountsAsOpen(dep.Issue.Status, done) {
 			open = append(open, dep.Issue.ID)
 		}
 	}
