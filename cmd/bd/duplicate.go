@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -195,58 +194,101 @@ func runDuplicate(cmd *cobra.Command, args []string) error {
 		dupOldStatus = string(dupPre.Status)
 	}
 
-	// Add a "duplicates" dependency edge (duplicate → canonical) AND close the
-	// duplicate atomically (beads-njnw): a mid-sequence failure must not leave
-	// the edge added while the issue stays open.
-	dep := &types.Dependency{
-		IssueID:     duplicateID,
-		DependsOnID: canonicalID,
-		Type:        types.DepDuplicates,
+	// beads-d5q19: migrate the duplicate's incoming STRUCTURAL edges (blocks /
+	// conditional-blocks / waits-for / parent-child — the set
+	// AffectedByDepChangeInTx acts on) to the canonical BEFORE closing it, at
+	// parity with runSupersede (beads-0c9d1) and `bd duplicates --auto-merge`
+	// (beads-706mw/zcq86, which transfers blocking edges to the canonical). The
+	// canonical is the live successor of the duplicate, exactly as the
+	// replacement is of the superseded source; without this a dependent
+	// blocked-BY the duplicate silently UNBLOCKS when the duplicate closes (the
+	// ready/blocked engine treats the closed source as satisfied) even though the
+	// canonical is not done → premature-actionable, and a child parented to the
+	// duplicate orphans onto the closed source instead of reparenting to the
+	// canonical. Provenance / knowledge edges (related / relates-to / duplicates /
+	// supersedes / discovered-from / tracks / …) are intentionally NOT migrated —
+	// they legitimately keep pointing at the historical source.
+	//
+	// The migration + duplicates edge + close run inside ONE transaction,
+	// preserving the beads-njnw atomicity (a mid-sequence failure must not leave
+	// the edge added or an incoming edge re-pointed while the issue stays open).
+	// The transaction seam also auto-routes wisp sources (pega7) and, via
+	// HookFiringStore.RunInTransaction, fires on_close after commit (usumn) — so
+	// the separate post-close EventClose leg the pre-atomic path needed is no
+	// longer required here (matching runSupersede).
+	incoming, incErr := store.GetDependentsWithMetadata(ctx, duplicateID)
+	if incErr != nil {
+		return HandleErrorRespectJSON("failed to read dependents of %s: %v", duplicateID, incErr)
 	}
-	if err := store.LinkAndClose(ctx, dep, actor); err != nil {
-		return HandleErrorRespectJSON("failed to mark duplicate: %v", err)
+
+	commitMsg := fmt.Sprintf("bd: duplicate %s of %s", duplicateID, canonicalID)
+	txErr := transact(ctx, store, commitMsg, func(tx storage.Transaction) error {
+		// Migrate incoming structural edges duplicate → canonical. Re-point each
+		// dependent from the duplicate to the canonical for the same edge type
+		// before the close, so the dependent tracks the live canonical instead of
+		// the closed source.
+		for _, dep := range incoming {
+			if !isMigratableSupersedeEdge(dep.DependencyType) {
+				continue
+			}
+			dependentID := dep.Issue.ID
+			// A self-edge to the canonical would be created if the dependent IS the
+			// canonical; skip so the canonical never depends on / parents itself.
+			if dependentID == canonicalID {
+				continue
+			}
+			if err := tx.RemoveDependency(ctx, dependentID, duplicateID, actor); err != nil {
+				return fmt.Errorf("remove incoming %s %s→%s: %w", dep.DependencyType, dependentID, duplicateID, err)
+			}
+			migrated := &types.Dependency{
+				IssueID:     dependentID,
+				DependsOnID: canonicalID,
+				Type:        dep.DependencyType,
+			}
+			if err := tx.AddDependency(ctx, migrated, actor); err != nil {
+				return fmt.Errorf("reattach incoming %s %s→%s: %w", dep.DependencyType, dependentID, canonicalID, err)
+			}
+		}
+
+		// Add the "duplicates" dependency edge (duplicate → canonical).
+		dupEdge := &types.Dependency{
+			IssueID:     duplicateID,
+			DependsOnID: canonicalID,
+			Type:        types.DepDuplicates,
+		}
+		if err := tx.AddDependency(ctx, dupEdge, actor); err != nil {
+			return fmt.Errorf("link duplicates %s→%s: %w", duplicateID, canonicalID, err)
+		}
+
+		// Close the duplicate source (preserving a meaningful reason). The
+		// hook-tracking tx records the on_close so it fires after commit.
+		if err := tx.CloseIssue(ctx, duplicateID, fmt.Sprintf("duplicate of %s", canonicalID), actor, ""); err != nil {
+			return fmt.Errorf("close duplicate %s: %w", duplicateID, err)
+		}
+		return nil
+	})
+	if txErr != nil {
+		return HandleErrorRespectJSON("failed to mark duplicate: %v", txErr)
 	}
 
 	commandDidWrite.Store(true)
 
-	// beads-r3m8v: marking a duplicate closes the source via LinkAndClose, whose
-	// DB EventClosed row survives only until a Dolt GC flatten. bd close/update
-	// ALSO write a GC-survivable audit-FILE entry (.beads/interactions.jsonl) via
-	// auditStatusChange (n4sn) — but this leg dropped it, so after a flatten a
-	// duplicated issue's close vanished from the durable record while a plainly
-	// closed issue's did not. Emit the same status field_change (audit-parity
-	// sibling of c2pr1/qeb2p on the LinkAndClose leg). LinkAndClose already
-	// committed durably, so this reflects a real transition.
+	// beads-r3m8v: the transaction seam closes via CloseIssueWithoutEventInTx,
+	// whose DB EventClosed row does not survive a Dolt GC flatten. bd close/update
+	// write a GC-survivable audit-FILE entry (.beads/interactions.jsonl); emit the
+	// same status field_change so a duplicated issue's close stays in the durable
+	// record (the tx already committed the close durably). dupOldStatus records
+	// the real prior status; the guards above reject re-linking an already-linked
+	// source, so reaching here is a genuine open→closed transition.
 	auditStatusChange(duplicateID, dupOldStatus, "closed", actor, fmt.Sprintf("duplicate of %s", canonicalID))
 
-	// beads-26gea: marking a duplicate closes the source via LinkAndClose, which
-	// (like `bd update --status closed`, beads-zzp26) bypasses the cmd-layer
-	// completed-molecule auto-close cascade `bd close` runs (close.go:223). So
-	// duplicating a molecule's FINAL step left the auto-closing root stuck OPEN.
-	// Run the SAME cascade post-close — LinkAndClose already committed the close
-	// durably, so the root's completion re-read is accurate. Identical function
-	// bd close/batch/update use, so completion detection can't drift.
+	// beads-26gea: duplicating closes the source via the transaction seam,
+	// bypassing the cmd-layer completed-molecule auto-close cascade `bd close`
+	// runs (same class as the supersede leg below and beads-zzp26). Run it
+	// post-close so duplicating a molecule's FINAL step auto-closes the completed
+	// root. Identical function bd close/batch/update use, so completion detection
+	// can't drift.
 	autoCloseCompletedMolecule(ctx, store, duplicateID, actor, "")
-
-	// beads-usumn: marking a duplicate closes the source via LinkAndClose, whose
-	// HookFiringStore decorator fires ONLY on_update (hook_decorator.go:180,
-	// "behavior-preserving" — the pre-atomic path closed via UpdateIssue). But
-	// this reaches the same terminal closed state as `bd close` (fires on_close,
-	// hook_decorator.go:149), `bd update --status closed` (beads-vn7dl), and
-	// `bd batch update status=closed` (beads-7o4av) — so on_close automation
-	// (notifications, downstream sync, GC/archival) silently did not run when an
-	// issue was closed by being marked duplicate. Fire the missing EventClose at
-	// the cmd layer, at parity with those siblings; on_update already fired inside
-	// the decorator, so this adds exactly the missing event (no double-fire). Only
-	// on a genuine open->closed transition (the guards above reject re-linking an
-	// already-linked source; dupOldStatus records the real prior status).
-	if dupOldStatus != string(types.StatusClosed) {
-		if runner := getHookRunner(); runner != nil {
-			if after, err := store.GetIssue(ctx, duplicateID); err == nil && after != nil {
-				_ = runner.RunSync(hooks.EventClose, after)
-			}
-		}
-	}
 
 	if isJSONOutput() {
 		return outputJSON(map[string]interface{}{
