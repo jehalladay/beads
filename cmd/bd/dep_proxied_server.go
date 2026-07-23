@@ -64,8 +64,19 @@ func proxiedResolveDepEndpoint(ctx context.Context, uw uow.UnitOfWork, id string
 // metadata), so without this the proxied verb printed a false "✓ Added" on a
 // no-op. A lookup error falls through (returns false) so the normal add path
 // still runs — best-effort, never blocks (matching the direct path).
-func proxiedDepEdgeExistsSameType(ctx context.Context, uw uow.UnitOfWork, fromID, toID string, dt types.DependencyType) bool {
-	recs, err := uw.DependencyUseCase().GetIssueDependencyRecords(ctx, []string{fromID})
+//
+// beads-zdg7x: the source-kind (srcIsWisp) selects which dependency table the
+// edge records live in. A wisp source's edges are in wisp_dependencies, so
+// probing GetIssueDependencyRecords (issues table) for a wisp would always
+// return empty — the precheck must query the same table the insert will write.
+func proxiedDepEdgeExistsSameType(ctx context.Context, uw uow.UnitOfWork, fromID, toID string, dt types.DependencyType, srcIsWisp bool) bool {
+	var recs map[string][]*types.Dependency
+	var err error
+	if srcIsWisp {
+		recs, err = uw.DependencyUseCase().GetWispDependencyRecords(ctx, []string{fromID})
+	} else {
+		recs, err = uw.DependencyUseCase().GetIssueDependencyRecords(ctx, []string{fromID})
+	}
 	if err != nil {
 		return false
 	}
@@ -75,6 +86,43 @@ func proxiedDepEdgeExistsSameType(ctx context.Context, uw uow.UnitOfWork, fromID
 		}
 	}
 	return false
+}
+
+// proxiedDepSourceIsWisp reports whether a dep-edge SOURCE id resolves to a
+// wisp (issue-first, then wisp fallback — the same resolution order as
+// proxiedResolveDepEndpoint). External refs are never local wisps. Used to
+// route the edge write by source kind (beads-zdg7x): the domain dep use case
+// is table-routed by an explicit useWisp flag (depRepo.Insert -> pickDepTable),
+// UNLIKE the direct store's AddDependencyInTx which auto-detects via
+// IsActiveWispInTx. So the proxied handler must decide routing itself and call
+// AddWispDependencies for a wisp source, else the edge INSERT validates
+// `SELECT issue_type FROM issues WHERE id=<wisp>` -> ErrNoRows -> "issue <wisp>
+// not found". Mirrors the duplicate/supersede proxied twin (beads-pm1kh).
+func proxiedDepSourceIsWisp(ctx context.Context, uw uow.UnitOfWork, id string) bool {
+	if IsExternalRef(id) {
+		return false
+	}
+	if issue, err := uw.IssueUseCase().GetIssue(ctx, id); err == nil && issue != nil {
+		return false
+	}
+	if wisp, err := uw.IssueUseCase().GetWisp(ctx, id); err == nil && wisp != nil {
+		return true
+	}
+	return false
+}
+
+// proxiedAddDepEdges inserts dependency edges routed by source kind
+// (beads-zdg7x). All edges in one call must share the same srcIsWisp routing;
+// callers with a single edge pass its source kind, bulk callers partition by
+// source kind first.
+func proxiedAddDepEdges(ctx context.Context, uw uow.UnitOfWork, deps []*types.Dependency, srcIsWisp, noCycleCheck bool) error {
+	opts := domain.BulkAddDepsOpts{SkipPerEdgeCycleCheck: noCycleCheck}
+	if srcIsWisp {
+		_, err := uw.DependencyUseCase().AddWispDependencies(ctx, deps, actor, opts)
+		return err
+	}
+	_, err := uw.DependencyUseCase().AddDependencies(ctx, deps, actor, opts)
+	return err
 }
 
 func proxiedWarnCycles(ctx context.Context, uw uow.UnitOfWork) {
@@ -113,10 +161,17 @@ func runDepBlocksProxiedServer(cmd *cobra.Command, ctx context.Context, blockerI
 	uw := openDepProxiedUOW(ctx)
 	defer uw.Close(ctx)
 
+	// beads-zdg7x: the blocks edge's SOURCE (dep.IssueID) is blockedID; route the
+	// insert + no-op precheck by whether blockedID is a wisp (the domain dep use
+	// case is table-routed by an explicit flag, unlike the direct store which
+	// auto-detects). Without this a `bd dep add --blocks` from a wisp blocked-id
+	// fails "issue <wisp> not found".
+	srcIsWisp := proxiedDepSourceIsWisp(ctx, uw, blockedID)
+
 	// beads-epuz: bwla honest-no-op parity for the --blocks shorthand too. The
 	// blocks edge is blockedID -> blockerID (type blocks); a same-type re-add is
 	// idempotent, so guard against a false "✓ Added".
-	if proxiedDepEdgeExistsSameType(ctx, uw, blockedID, blockerID, types.DepBlocks) {
+	if proxiedDepEdgeExistsSameType(ctx, uw, blockedID, blockerID, types.DepBlocks, srcIsWisp) {
 		if jsonOutput {
 			// beads-xcujl: align --blocks vocabulary with `dep add` (issue_id=
 			// blocked/depending=blockedID, depends_on_id=blocker=blockerID).
@@ -143,7 +198,8 @@ func runDepBlocksProxiedServer(cmd *cobra.Command, ctx context.Context, blockerI
 	// beads-2f1ly: thread --no-cycle-check into the proxied --blocks insert too
 	// (silent no-op sibling of the proxied dep-add path).
 	noCycleCheck, _ := cmd.Flags().GetBool("no-cycle-check")
-	if _, err := uw.DependencyUseCase().AddDependencies(ctx, []*types.Dependency{dep}, actor, domain.BulkAddDepsOpts{SkipPerEdgeCycleCheck: noCycleCheck}); err != nil {
+	// beads-zdg7x: route by source kind (wisp edges -> wisp_dependencies).
+	if err := proxiedAddDepEdges(ctx, uw, []*types.Dependency{dep}, srcIsWisp, noCycleCheck); err != nil {
 		FatalErrorRespectJSON("%v", err)
 	}
 
@@ -264,12 +320,22 @@ func runDepAddProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 		}
 	}
 
+	// beads-zdg7x: route the edge insert + no-op precheck by whether the SOURCE
+	// (dep.IssueID = fromID) is a wisp. The domain dep use case selects the
+	// dependency table from an explicit useWisp flag (depRepo.Insert ->
+	// pickDepTable), UNLIKE the direct store's AddDependencyInTx which
+	// auto-detects via IsActiveWispInTx. So a hub-connected crew's
+	// `bd dep add <wisp> <dep>` hit AddDependencies (useWisp=false) and the INSERT
+	// validated `SELECT ... FROM issues WHERE id=<wisp>` -> "issue <wisp> not
+	// found". Mirror the duplicate/supersede proxied twin (beads-pm1kh).
+	srcIsWisp := proxiedDepSourceIsWisp(ctx, uw, fromID)
+
 	// beads-epuz: mirror the direct path's bwla honest-no-op report. A same-type
 	// re-add is idempotent (just refreshes metadata), so an unconditional
 	// "✓ Added" is a false success on a no-op. External refs are not resolvable
 	// via the local dep records, so skip the precheck for them (best-effort,
 	// matches the direct path's same-store-only guard).
-	if !strings.HasPrefix(toID, "external:") && proxiedDepEdgeExistsSameType(ctx, uw, fromID, toID, dt) {
+	if !strings.HasPrefix(toID, "external:") && proxiedDepEdgeExistsSameType(ctx, uw, fromID, toID, dt, srcIsWisp) {
 		if jsonOutput {
 			_ = outputJSON(map[string]interface{}{
 				"status":        "unchanged",
@@ -292,7 +358,8 @@ func runDepAddProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	// proxied path already passed SkipPerEdgeCycleCheck). Read BEFORE the insert.
 	noCycleCheck, _ := cmd.Flags().GetBool("no-cycle-check")
 	dep := &types.Dependency{IssueID: fromID, DependsOnID: toID, Type: dt}
-	if _, err := uw.DependencyUseCase().AddDependencies(ctx, []*types.Dependency{dep}, actor, domain.BulkAddDepsOpts{SkipPerEdgeCycleCheck: noCycleCheck}); err != nil {
+	// beads-zdg7x: route by source kind (wisp edges -> wisp_dependencies).
+	if err := proxiedAddDepEdges(ctx, uw, []*types.Dependency{dep}, srcIsWisp, noCycleCheck); err != nil {
 		FatalErrorRespectJSON("%v", err)
 	}
 
@@ -386,10 +453,34 @@ func runDepAddBulkProxied(cmd *cobra.Command, ctx context.Context, file, default
 	}
 
 	noCycleCheck, _ := cmd.Flags().GetBool("no-cycle-check")
-	if _, err := uw.DependencyUseCase().AddDependencies(ctx, deps, actor, domain.BulkAddDepsOpts{
-		SkipPerEdgeCycleCheck: noCycleCheck,
-	}); err != nil {
-		FatalErrorRespectJSON("%v", err)
+	// beads-zdg7x: a --file batch can MIX wisp and issue sources; the domain add
+	// methods select the dependency table by a single per-batch useWisp flag
+	// (unlike the direct store's AddDependencyInTx, which auto-detects per edge
+	// via IsActiveWispInTx). So partition the edges by source kind and route each
+	// partition to the matching add — wisp sources -> wisp_dependencies, else the
+	// issues path. Otherwise a wisp-sourced edge in the batch fails "issue <wisp>
+	// not found". Preserves the caller's edge slice for output.
+	var wispDeps, issueDeps []*types.Dependency
+	for _, dep := range deps {
+		if proxiedDepSourceIsWisp(ctx, uw, dep.IssueID) {
+			wispDeps = append(wispDeps, dep)
+		} else {
+			issueDeps = append(issueDeps, dep)
+		}
+	}
+	if len(issueDeps) > 0 {
+		if _, err := uw.DependencyUseCase().AddDependencies(ctx, issueDeps, actor, domain.BulkAddDepsOpts{
+			SkipPerEdgeCycleCheck: noCycleCheck,
+		}); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
+	}
+	if len(wispDeps) > 0 {
+		if _, err := uw.DependencyUseCase().AddWispDependencies(ctx, wispDeps, actor, domain.BulkAddDepsOpts{
+			SkipPerEdgeCycleCheck: noCycleCheck,
+		}); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
 	}
 
 	if !noCycleCheck {
