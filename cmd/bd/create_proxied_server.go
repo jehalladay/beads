@@ -228,6 +228,15 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 		FatalErrorRespectJSON("%v", err)
 	}
 
+	// beads-w1vxy: fire on_create after the commit, matching the direct decorator
+	// (HookFiringStore.CreateIssue → createHookEvents). The proxied UOW use-case
+	// layer bypasses HookFiringStore, so a hub-connected crew's on_create hook
+	// never ran. result.Issue does not carry Labels (they persist via
+	// params.Labels + inheritance), so pass the merged explicit+inherited set
+	// explicitly, mirroring the direct path's issue.Labels. Best-effort (warns to
+	// stderr, does not fail the command).
+	fireProxiedCreateHooks(ctx, result.Issue, mergeCreateLabels(in.labels, result.InheritedLabels))
+
 	switch {
 	case in.jsonOutput:
 		if err := outputJSON(result.Issue); err != nil {

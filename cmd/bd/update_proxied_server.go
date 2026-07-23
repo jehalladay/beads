@@ -526,6 +526,67 @@ func fireProxiedUpdateSnapshots(ctx context.Context, snapshots ...*types.Issue) 
 	}
 }
 
+// fireProxiedCreateHooks fires the on_create shell hook (and the synthetic
+// per-label on_update stream) for a proxied create, mirroring the direct hook
+// decorator's createHookEvents (internal/storage/hook_decorator.go): the direct
+// single create routes tx.CreateIssue through HookFiringStore →
+// hookTrackingTransaction, which records createHookEvents and fires them AFTER
+// commit; the proxied single create (create_proxied_server.go
+// runCreateProxiedSingle) commits via the UOW use-case layer and skips the
+// decorator, so a hub-connected (store==nil) crew's on_create hook never ran
+// (beads-w1vxy, the create-leg sibling of beads-29tyj). Best-effort: a hook
+// failure warns to stderr but does not fail the command, matching the direct
+// decorator's fire-and-forget contract (HookFiringStore.fireHook) and the
+// proxied update/comment/dep paths (fireProxiedUpdateSnapshots). Applies to
+// wisp + non-wisp single creates alike — the direct path fires for both
+// (createHookEvents does not skip Ephemeral). NOT for markdown (direct bulk
+// CreateIssuesWithFullOptions intentionally fires no per-issue on_create,
+// markdown.go) or graph (separate sibling: direct graph fires but also carries
+// dependency-hook parity).
+// labels is the full persisted label set (explicit + parent-inherited, deduped)
+// — the proxied create struct (result.Issue) does not carry Labels, so the
+// caller passes them explicitly to mirror the direct path where
+// buildCreateIssue sets issue.Labels = mergeCreateLabels(explicit, inherited).
+func fireProxiedCreateHooks(ctx context.Context, issue *types.Issue, labels []string) {
+	if issue == nil {
+		return
+	}
+	runner, err := proxiedHookRunner(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %s: on_create hook runner: %v\n", issue.ID, err)
+		return
+	}
+	if runner == nil {
+		return
+	}
+
+	// Mirror createHookEvents: on_create receives a label-free snapshot, then
+	// on_update receives cumulative synthetic label snapshots (the legacy
+	// post-create AddLabel shape). Dedupe labels the same way.
+	deduped := make([]string, 0, len(labels))
+	seen := make(map[string]struct{}, len(labels))
+	for _, label := range labels {
+		if _, ok := seen[label]; ok {
+			continue
+		}
+		seen[label] = struct{}{}
+		deduped = append(deduped, label)
+	}
+
+	createSnapshot := *issue
+	createSnapshot.Labels = nil
+	if err := runner.RunSync(hooks.EventCreate, &createSnapshot); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %s: on_create hook: %v\n", issue.ID, err)
+	}
+	for i := range deduped {
+		updateSnapshot := *issue
+		updateSnapshot.Labels = append([]string(nil), deduped[:i+1]...)
+		if err := runner.RunSync(hooks.EventUpdate, &updateSnapshot); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s: on_update hook: %v\n", issue.ID, err)
+		}
+	}
+}
+
 func proxiedHookRunner(ctx context.Context) (*hooks.Runner, error) {
 	if hookRunner != nil {
 		return hookRunner, nil
