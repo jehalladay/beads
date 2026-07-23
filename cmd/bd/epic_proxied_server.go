@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/steveyegge/beads/internal/storage/domain"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // runEpicStatusProxiedServer shows epic closure status via the proxied
@@ -53,11 +56,23 @@ func runEpicCloseEligibleProxiedServer(ctx context.Context, dryRun bool) error {
 	// succeeds (the jcrp4 proxied-audit ordering — a pre-commit cwd-file emit
 	// would orphan on a rolled-back UOW).
 	var autoClosedRoots []string
+	// beads-5o5kp: pre-close before-images of each closed epic (and any cascade
+	// root) so their mutation hooks can fire post-commit at parity with the
+	// direct getStore().CloseIssue path (HookFiringStore, hook_decorator.go:145).
+	var closedEpicIDs []string
+	beforeByID := map[string]*types.Issue{}
 	return renderEpicCloseEligible(epics, dryRun,
 		func(id string) error {
+			// Read the pre-close (open) state BEFORE the CloseIssue below — the
+			// close is not committed until commitFn, so this reflects committed
+			// open status for the on_close open→closed transition test.
+			if before := proxiedResolveForNoOp(ctx, id); before != nil {
+				beforeByID[id] = before
+			}
 			if _, cerr := issueUC.CloseIssue(ctx, id, domain.CloseIssueParams{Reason: "All children completed"}, "system"); cerr != nil {
 				return cerr
 			}
+			closedEpicIDs = append(closedEpicIDs, id)
 			// beads-4v7eb: mirror the direct path — a close-eligible epic can be
 			// the final open step of an auto-closing molecule/wisp root. Stage
 			// the root's auto-close into THIS UOW (BEFORE commitFn's uw.Commit)
@@ -81,6 +96,17 @@ func runEpicCloseEligibleProxiedServer(ctx context.Context, dryRun bool) error {
 			// renderEpicCloseEligible chokepoint (beads-iwzua).
 			for _, root := range autoClosedRoots {
 				auditStatusChange(root, "open", "closed", "system", "all steps complete")
+			}
+			// beads-5o5kp: fire each closed epic's mutation hooks (on_update always
+			// + on_close on the open→closed transition) at parity with the direct
+			// getStore().CloseIssue path. The after-image is a fresh post-commit
+			// read; a hook error is non-fatal (the close already committed).
+			for _, id := range closedEpicIDs {
+				if after := proxiedResolveForNoOp(ctx, id); after != nil {
+					if herr := fireProxiedUpdateHooks(ctx, beforeByID[id], after); herr != nil {
+						fmt.Fprintf(os.Stderr, "warning: %s: %v\n", id, herr)
+					}
+				}
 			}
 			return nil
 		})

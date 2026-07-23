@@ -274,6 +274,17 @@ func runGateResolveProxied(ctx context.Context, gateID, reason string) error {
 	// a real open→closed transition.
 	auditStatusChange(gateID, gateOldStatus, "closed", actor, reason)
 
+	// beads-5o5kp: fire the gate's mutation hooks (on_update always + on_close on
+	// the open→closed transition) at parity with the direct gate.go resolve path
+	// (store.CloseIssue → HookFiringStore, hook_decorator.go:145). `issue` is the
+	// pre-close before-image; the after-image is a fresh post-commit read. A hook
+	// error is non-fatal (the close already committed).
+	if after := proxiedResolveForNoOp(ctx, gateID); after != nil {
+		if herr := fireProxiedUpdateHooks(ctx, issue, after); herr != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", gateID, herr)
+		}
+	}
+
 	if jsonOutput {
 		return outputJSON(map[string]interface{}{
 			"id":       gateID,
@@ -399,6 +410,18 @@ func closeGateProxied(gateID, oldStatus, reason string) error {
 	// pre-commit emit would orphan the entry on a tx rollback — r3m8v precedent).
 	// The check loop only reaches here for a resolved OPEN gate → real transition.
 	auditStatusChange(gateID, oldStatus, "closed", actor, reason)
+
+	// beads-5o5kp: fire the gate's mutation hooks at parity with the direct
+	// closeGate path (store.CloseIssue → HookFiringStore). closeGateProxied is
+	// handed oldStatus (the real prior status) rather than a full issue, so build
+	// a minimal before-image for the on_close open→closed transition test; the
+	// after-image is a fresh post-commit read. Non-fatal on hook error.
+	before := &types.Issue{ID: gateID, Status: types.Status(oldStatus)}
+	if after := proxiedResolveForNoOp(ctx, gateID); after != nil {
+		if herr := fireProxiedUpdateHooks(ctx, before, after); herr != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", gateID, herr)
+		}
+	}
 	return nil
 }
 

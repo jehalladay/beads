@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/storage/uow"
@@ -108,6 +109,10 @@ func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string,
 	type autoClosed struct{ rootID string }
 	var closedIDs []string
 	var autoClosedRoots []autoClosed
+	// beads-5o5kp: pre-close before-images per closed id, so the source's
+	// mutation hooks can fire post-commit at parity with the direct path
+	// (getStore().CloseIssue → HookFiringStore → on_close/on_update).
+	beforeByID := map[string]*types.Issue{}
 	failedCount := 0
 
 	for _, issueID := range args {
@@ -191,6 +196,9 @@ func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string,
 		}
 
 		closedIDs = append(closedIDs, issueID)
+		// beads-5o5kp: `current` was resolved BEFORE the close above, so it holds
+		// the pre-close (open) status for the on_close open→closed transition test.
+		beforeByID[issueID] = current
 	}
 
 	if len(closedIDs) > 0 {
@@ -212,6 +220,19 @@ func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string,
 		// entry, also post-commit.
 		for _, ac := range autoClosedRoots {
 			auditStatusChange(ac.rootID, "open", "closed", actorName, "all steps complete")
+		}
+
+		// beads-5o5kp: fire each closed TODO's mutation hooks (on_update always +
+		// on_close on the open→closed transition) at parity with the direct
+		// getStore().CloseIssue path (HookFiringStore, hook_decorator.go:145). The
+		// after-image is a fresh post-commit read of the committed closed state; a
+		// hook error is non-fatal (the close already committed).
+		for _, id := range closedIDs {
+			if after := proxiedResolveForNoOp(ctx, id); after != nil {
+				if herr := fireProxiedUpdateHooks(ctx, beforeByID[id], after); herr != nil {
+					fmt.Fprintf(os.Stderr, "warning: %s: %v\n", id, herr)
+				}
+			}
 		}
 	}
 

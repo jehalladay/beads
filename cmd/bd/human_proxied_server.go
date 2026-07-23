@@ -121,6 +121,17 @@ func runHumanDismissProxiedServer(ctx context.Context, issueID, reason string) e
 	// returned early, so reaching here is a real open→closed transition.
 	auditStatusChange(resolvedID, dismissOldStatus, "closed", actor, closeReason)
 
+	// beads-5o5kp: fire the dismissed bead's mutation hooks (on_update always +
+	// on_close on the open→closed transition) at parity with the direct dismiss
+	// leg (targetStore.CloseIssue → HookFiringStore, hook_decorator.go:145).
+	// `issue` is the pre-close before-image; the after-image is a fresh
+	// post-commit read. A hook error is non-fatal (the close already committed).
+	if after := proxiedResolveForNoOp(ctx, resolvedID); after != nil {
+		if herr := fireProxiedUpdateHooks(ctx, issue, after); herr != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", resolvedID, herr)
+		}
+	}
+
 	// beads-3xp23: honor --json on success at parity with the direct leg.
 	if jsonOutput {
 		return outputJSON(map[string]interface{}{
@@ -216,6 +227,17 @@ func runHumanRespondProxiedServer(ctx context.Context, issueID, response string)
 	// pre-commit emit would orphan the cwd-file entry on a tx rollback). The
 	// already-closed guard above returned early → real open→closed transition.
 	auditStatusChange(resolvedID, respondOldStatus, "closed", actor, "Responded")
+
+	// beads-5o5kp: fire the responded bead's mutation hooks (on_update always +
+	// on_close on the open→closed transition) at parity with the direct respond
+	// leg (targetStore.CloseIssue → HookFiringStore, hook_decorator.go:145).
+	// `issue` is the pre-close before-image; the after-image is a fresh
+	// post-commit read. A hook error is non-fatal (the close already committed).
+	if after := proxiedResolveForNoOp(ctx, resolvedID); after != nil {
+		if herr := fireProxiedUpdateHooks(ctx, issue, after); herr != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", resolvedID, herr)
+		}
+	}
 
 	// beads-3xp23: honor --json on success at parity with the direct leg.
 	if jsonOutput {
