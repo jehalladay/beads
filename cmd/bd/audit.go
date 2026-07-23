@@ -65,6 +65,21 @@ var auditRecordCmd = &cobra.Command{
 			auditRecordExitCode < 0 &&
 			auditRecordError == ""
 
+		// beads-7ymzp (dz1t8-class silent-input-drop): explicit --stdin combined
+		// with any field flag silently dropped the flags — the stdin JSON alone
+		// was stored, rc0, no warning. Mirror the vc commit guard (vc.go:230) and
+		// dz1t8's comment/note reject: an EXPLICIT --stdin plus a Changed() field
+		// flag is a conflicting-input error. The auto-detect leg
+		// (stdinPiped && noFieldsProvided) is unaffected — it only fires when no
+		// fields are given, so it never conflicts.
+		if auditRecordStdin {
+			for _, name := range []string{"kind", "model", "prompt", "response", "issue-id", "tool-name", "exit-code", "error"} {
+				if cmd.Flags().Changed(name) {
+					return HandleErrorRespectJSON("cannot specify both --stdin and field flags (--%s)", name)
+				}
+			}
+		}
+
 		if auditRecordStdin || (stdinPiped && noFieldsProvided) {
 			b, err := readAllLimited(os.Stdin, "stdin")
 			if err != nil {
