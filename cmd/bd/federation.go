@@ -634,18 +634,35 @@ func runFederationAddPeer(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// beads-gh0kq: report auth from the peer's STORED state, not this
+	// invocation's --user flag. Since beads-9mg09 (COALESCE credentials on
+	// re-add), a re-add of an already-authenticated peer that changes only
+	// --sovereignty or the URL PRESERVES the stored credentials — but a
+	// flag-based has_auth (federationUser != "") would then wrongly report the
+	// still-authenticated peer as credential-free on a security-adjacent
+	// surface, and automation keying on has_auth would conclude the peer lost
+	// its credentials. Read the peer back and derive auth from the stored
+	// username. Fall back to the flag if the read-back fails (e.g. the plain
+	// AddRemote path stores no federation_peers row) so first-add semantics are
+	// unchanged.
+	storedUser := federationUser
+	if peer, err := store.GetFederationPeer(ctx, name); err == nil && peer != nil {
+		storedUser = peer.Username
+	}
+	hasAuth := storedUser != ""
+
 	if jsonOutput {
 		return outputJSON(map[string]interface{}{
 			"added":       name,
 			"url":         url,
-			"has_auth":    federationUser != "",
+			"has_auth":    hasAuth,
 			"sovereignty": sov,
 		})
 	}
 
 	fmt.Printf("Added peer %s: %s\n", ui.RenderAccent(name), url)
-	if federationUser != "" {
-		fmt.Printf("  User: %s (credentials stored)\n", federationUser)
+	if hasAuth {
+		fmt.Printf("  User: %s (credentials stored)\n", storedUser)
 	}
 	if sov != "" {
 		fmt.Printf("  Sovereignty: %s\n", sov)
