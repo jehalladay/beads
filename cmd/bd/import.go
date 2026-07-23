@@ -192,6 +192,7 @@ type importResultJSON struct {
 	ParentDemoteReverted []string       `json:"parent_demote_reverted,omitempty"`
 	MetadataKeysDropped  []string       `json:"metadata_keys_dropped,omitempty"`
 	ParentCloseReverted  []string       `json:"parent_close_reverted,omitempty"`
+	ChildReopenReverted  []string       `json:"child_reopen_reverted,omitempty"`
 	DryRun               bool           `json:"dry_run,omitempty"`
 }
 
@@ -311,6 +312,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 			result.ParentDemoteReverted = append(result.ParentDemoteReverted, previewResult.ParentDemoteReverted...)
 			result.MetadataKeysDropped = append(result.MetadataKeysDropped, previewResult.MetadataKeysDropped...)
 			result.ParentCloseReverted = append(result.ParentCloseReverted, previewResult.ParentCloseReverted...)
+			result.ChildReopenReverted = append(result.ChildReopenReverted, previewResult.ChildReopenReverted...)
 		} else {
 			result.Skipped = dedupHits
 		}
@@ -392,6 +394,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		result.ParentDemoteReverted = append(result.ParentDemoteReverted, importResult.ParentDemoteReverted...)
 		result.MetadataKeysDropped = append(result.MetadataKeysDropped, importResult.MetadataKeysDropped...)
 		result.ParentCloseReverted = append(result.ParentCloseReverted, importResult.ParentCloseReverted...)
+		result.ChildReopenReverted = append(result.ChildReopenReverted, importResult.ChildReopenReverted...)
 	}
 
 	if processed > 0 || result.Memories > 0 {
@@ -454,6 +457,10 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 	if len(result.ParentCloseReverted) > 0 {
 		fmt.Fprintf(os.Stderr, "Kept parent status for %d issue(s): the imported status would close an auto-closing parent with open children (close-guard bypass, beads-1h993); close the children first or use `bd close ... --force`: %s\n",
 			len(result.ParentCloseReverted), strings.Join(result.ParentCloseReverted, ", "))
+	}
+	if len(result.ChildReopenReverted) > 0 {
+		fmt.Fprintf(os.Stderr, "Kept child status for %d issue(s): the imported status would reopen a child under a still-closed auto-closing parent (close-guard bypass, beads-gpa44); reopen the parent first or use `bd reopen ... --force`: %s\n",
+			len(result.ChildReopenReverted), strings.Join(result.ChildReopenReverted, ", "))
 	}
 	for _, skipped := range result.SkippedDependencies {
 		fmt.Fprintf(os.Stderr, "Skipped dependency: %s\n", skipped)

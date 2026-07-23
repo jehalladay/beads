@@ -121,6 +121,15 @@ type ImportResult struct {
 	// visible. This is the import twin of the countEpicOpenChildren guard on
 	// `bd close` (close.go) and `bd update --status closed` (update.go, zgku).
 	ParentCloseReverted []string
+	// ChildReopenReverted lists incoming rows that would have REOPENED a child
+	// (closed → open) whose auto-closing parent is itself still closed,
+	// bypassing the close-guard family on the child-reopen axis (beads-gpa44,
+	// axis C of ts7vq). Reopening the child recreates the forbidden
+	// closed-parent-with-open-child state the direct guard (closedEpicParents,
+	// reopen.go / update.go beads-b0tw) refuses. The status change was reverted
+	// to the local value (all other fields still import); the ids are reported
+	// so the silent bypass is visible.
+	ChildReopenReverted []string
 }
 
 // ImportChange describes how an import row modified an existing local issue.
@@ -250,6 +259,21 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		return nil, err
 	}
 
+	// Close-guard bypass via import — CHILD-REOPEN axis (beads-gpa44, axis C of
+	// beads-ts7vq): the child-reopen guard (closedEpicParents, reopen.go /
+	// update.go beads-b0tw) refuses reopening a closed child whose auto-closing
+	// parent is itself still closed — that reopen recreates the forbidden
+	// closed-parent-with-open-child state. The import upsert applies the incoming
+	// status field-wise with NO such check, so an import row that flips a child
+	// closed → open under a still-closed parent silently plants that state.
+	// Mirror the demote/close guards: leave the status UNCHANGED for the
+	// offending rows and report them. Runs before the stale filter and batch
+	// write so it covers both the guarded and --allow-stale paths.
+	childReopenReverted, err := guardImportChildReopen(ctx, store, issues)
+	if err != nil {
+		return nil, err
+	}
+
 	// The stale guard has two halves (bd-pkim8). This pre-filter reports the
 	// rows that are already known stale (StaleSkippedIDs) and keeps their
 	// labels/comments/dependencies out of the batch entirely. It is a separate
@@ -275,6 +299,7 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 				InvalidMetadataIDs:   invalidMetadataIDs,
 				ParentDemoteReverted: demoteReverted,
 				ParentCloseReverted:  closeReverted,
+				ChildReopenReverted:  childReopenReverted,
 			}, nil
 		}
 	} else {
@@ -419,6 +444,7 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		ParentDemoteReverted: demoteReverted,
 		MetadataKeysDropped:  metadataKeysDropped,
 		ParentCloseReverted:  closeReverted,
+		ChildReopenReverted:  childReopenReverted,
 	}, nil
 }
 
@@ -926,9 +952,112 @@ func guardImportParentClose(ctx context.Context, store storage.DoltStorage, issu
 		if countEpicOpenChildren(ctx, store, local.ID) == 0 {
 			continue // no open children — close is safe (matches direct guard)
 		}
-		// Suppress the close: revert the incoming status to local. All other
-		// fields on this row still import.
-		issue.Status = local.Status
+		// Suppress the close: revert the incoming status AND its coupled
+		// close-bookkeeping to local, so the reverted row keeps the closed <=>
+		// closed_at invariant (types.Issue.Validate) instead of leaving a
+		// status=open row carrying an incoming closed_at that would abort the
+		// whole import. All other fields on this row still import.
+		revertStatusWithCloseBookkeeping(issue, local)
+		if _, dup := revertedSet[issue.ID]; !dup {
+			revertedSet[issue.ID] = struct{}{}
+			reverted = append(reverted, issue.ID)
+		}
+	}
+	return reverted, nil
+}
+
+// revertStatusWithCloseBookkeeping restores the incoming issue's status and the
+// close-bookkeeping fields coupled to it (closed_at, close_reason,
+// closed_by_session) to the local values. status and closed_at are a validation
+// invariant (a closed issue must have closed_at, a non-closed issue must not —
+// types.Issue.Validate), so a guard that reverts status alone can leave the row
+// invalid (e.g. status reverted to open while the incoming line still carried
+// closed_at) and abort the entire import. Reverting the coupled set keeps the
+// reverted row consistent, matching how `bd close`/`bd reopen` maintain the
+// pair atomically on the direct path.
+func revertStatusWithCloseBookkeeping(issue, local *types.Issue) {
+	issue.Status = local.Status
+	issue.ClosedAt = local.ClosedAt
+	issue.CloseReason = local.CloseReason
+	issue.ClosedBySession = local.ClosedBySession
+}
+
+// guardImportChildReopen enforces the close-guard family's child-reopen
+// invariant on the import STATUS-change path (beads-gpa44, axis C of ts7vq).
+// For each incoming row whose status would REOPEN a child (closed → open) whose
+// auto-closing parent (epic/molecule/wisp) is itself still closed — the same
+// transition closedEpicParents refuses on `bd reopen` (reopen.go) and `bd
+// update --status open` (update.go, beads-b0tw) — it REVERTS the incoming
+// status to the local value in place so the batch upsert cannot recreate the
+// forbidden closed-parent-with-open-child state, and returns the reverted ids
+// so the import can report the (otherwise silent) bypass. Every other field on
+// those rows still imports; only the reopen is suppressed. Mirrors
+// guardImportParentClose / guardImportParentDemote's revert-to-local model.
+//
+// Scope note: like the direct guard, this keys on the child's committed
+// parent-child edges to a closed auto-closing parent. It acts only on rows that
+// reopen an EXISTING local child (a genuinely-new open child has no committed
+// closed-parent edge to violate). Best-effort like closedEpicParents: a
+// local-lookup error is fatal (can't safely proceed without local status), a
+// per-issue parent-lookup error yields no closed parents (fail-open to the
+// normal import).
+func guardImportChildReopen(ctx context.Context, store storage.DoltStorage, issues []*types.Issue) ([]string, error) {
+	// Only rows that carry an explicit status could reopen a child. Collect
+	// their ids for a single local fetch.
+	ids := make([]string, 0, len(issues))
+	seen := make(map[string]struct{}, len(issues))
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" || issue.Status == "" {
+			continue
+		}
+		if _, ok := seen[issue.ID]; ok {
+			continue
+		}
+		seen[issue.ID] = struct{}{}
+		ids = append(ids, issue.ID)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	localIssues, err := store.GetIssuesByIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("load local issues for import child-reopen guard: %w", err)
+	}
+	localByID := make(map[string]*types.Issue, len(localIssues))
+	for _, local := range localIssues {
+		if local != nil && local.ID != "" {
+			localByID[local.ID] = local
+		}
+	}
+	if len(localByID) == 0 {
+		return nil, nil // every row genuinely new — no existing child to reopen
+	}
+
+	var reverted []string
+	revertedSet := make(map[string]struct{}, len(issues))
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" || issue.Status == "" {
+			continue
+		}
+		local, ok := localByID[issue.ID]
+		if !ok {
+			continue // genuinely new — no existing closed-parent edge to violate
+		}
+		// Only a real closed -> open transition matters. Uses the LOCAL status
+		// as the source (an open->open re-import is a no-op), mirroring the
+		// direct guard's issue.Status == closed && newStatus == open condition.
+		if issue.Status != types.StatusOpen || local.Status != types.StatusClosed {
+			continue
+		}
+		if len(closedEpicParents(ctx, store, local.ID)) == 0 {
+			continue // no closed auto-closing parent — reopen is safe (matches direct guard)
+		}
+		// Suppress the reopen: revert the incoming status AND its coupled
+		// close-bookkeeping to local (see revertStatusWithCloseBookkeeping),
+		// so the reverted-to-closed row keeps its closed_at and stays valid.
+		// All other fields on this row still import.
+		revertStatusWithCloseBookkeeping(issue, local)
 		if _, dup := revertedSet[issue.ID]; !dup {
 			revertedSet[issue.ID] = struct{}{}
 			reverted = append(reverted, issue.ID)

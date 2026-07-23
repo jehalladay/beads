@@ -24,6 +24,29 @@ func (f *fakeImportIssueLookupStore) GetIssuesByIDs(_ context.Context, _ []strin
 	return f.issues, nil
 }
 
+// GetDependenciesWithMetadata is consulted by the import child-reopen guard
+// (guardImportChildReopen -> closedEpicParents, beads-gpa44) for any row that
+// transitions closed -> open. The fake carries no dependency edges, so it
+// returns none — the child-reopen guard then finds no closed parent and is a
+// no-op, which is the correct behavior for these partition/stale unit tests.
+// Without this the embedded storage.DoltStorage interface method is a nil
+// pointer that panics at call time in the default (non-cgo) gate (the dn438
+// latent-panic class).
+func (f *fakeImportIssueLookupStore) GetDependenciesWithMetadata(_ context.Context, _ string) ([]*types.IssueWithDependencyMetadata, error) {
+	return nil, nil
+}
+
+// GetCustomStatusesDetailed is reached transitively by the import child-reopen
+// guard: guardImportChildReopen -> closedEpicParents -> doneCategoryStatusNames
+// (cmd/bd/close.go) calls it on EVERY closed -> open row to resolve which custom
+// statuses are done-category. The fake defines no custom statuses, so it returns
+// none. Without this the embedded storage.DoltStorage interface method is a nil
+// pointer that panics at call time in the default (non-cgo) gate — the dn438
+// latent-panic class, one hop deeper than GetDependenciesWithMetadata (beads-gpa44).
+func (f *fakeImportIssueLookupStore) GetCustomStatusesDetailed(_ context.Context) ([]types.CustomStatus, error) {
+	return nil, nil
+}
+
 func (f *fakeImportIssueLookupStore) CreateIssuesWithFullOptions(_ context.Context, issues []*types.Issue, _ string, opts storage.BatchCreateOptions) error {
 	f.created = append(f.created, issues...)
 	f.createOpts = append(f.createOpts, opts)
