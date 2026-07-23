@@ -17,9 +17,13 @@ import (
 // signal. --stdin/--file are already MarkFlagsMutuallyExclusive, and `bd create`
 // rejects the same positional+--file clash; these verbs must too.
 //
-// Mutation check: remove the two `len(textArgs) > 0 && ...` guards in comment.go /
-// note.go and the *_conflict_* subtests go RED (the command succeeds rc0 and the
-// positional is silently dropped).
+// The canonical long-form `bd comments add <id> <text>` (a separate impl with
+// only --file) had the same silent drop and is covered here too.
+//
+// Mutation check: remove the `len(textArgs) > 0 && ...` guards in comment.go /
+// note.go (and the `fileFlag != "" && len(args) > 1` guard in comments.go) and the
+// *_rejected subtests go RED (the command succeeds rc0 and the positional is
+// silently dropped).
 func TestCommentNoteInputSourceConflict_dz1t8(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
@@ -91,4 +95,43 @@ func TestCommentNoteInputSourceConflict_dz1t8(t *testing.T) {
 			}
 		})
 	}
+
+	// beads-dz1t8: the canonical long-form `bd comments add <id> <text>` is a
+	// SEPARATE implementation (commentsAddCmd, independent of the singular
+	// `bd comment` shorthand) with only -f/--file (no --stdin). It had the same
+	// silent positional-drop when both a positional and --file were given.
+	runComments := func(t *testing.T, args ...string) (string, bool) {
+		t.Helper()
+		full := append([]string{"comments", "add"}, args...)
+		cmd := exec.Command(bd, full...)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		return string(out), err != nil
+	}
+
+	t.Run("comments_add_positional_plus_file_rejected", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "comments add file target", "--type", "task")
+		out, failed := runComments(t, issue.ID, "inline positional", "--file", fpath)
+		if !failed {
+			t.Fatalf("bd comments add <id> \"inline\" --file must be rejected (conflicting input sources), got success:\n%s", out)
+		}
+		if !strings.Contains(out, "cannot specify both positional text and --file") {
+			t.Errorf("expected a 'cannot specify both positional text and --file' error, got:\n%s", out)
+		}
+	})
+
+	t.Run("comments_add_positional_only_ok", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "comments add pos-only target", "--type", "task")
+		if out, failed := runComments(t, issue.ID, "just positional"); failed {
+			t.Fatalf("bd comments add <id> \"just positional\" (alone) must succeed, got failure:\n%s", out)
+		}
+	})
+
+	t.Run("comments_add_file_only_ok", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "comments add file-only target", "--type", "task")
+		if out, failed := runComments(t, issue.ID, "--file", fpath); failed {
+			t.Fatalf("bd comments add <id> --file (alone) must succeed, got failure:\n%s", out)
+		}
+	})
 }

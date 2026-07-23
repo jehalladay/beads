@@ -161,7 +161,18 @@ Examples:
 
 		issueID := args[0]
 
-		commentText, _ := cmd.Flags().GetString("file")
+		fileFlag, _ := cmd.Flags().GetString("file")
+
+		// beads-dz1t8: positional text alongside --file is a conflicting input
+		// source, not a fallback — the switch below silently discards the
+		// positional and stores only the file content. Reject the combo, matching
+		// the singular `bd comment`/`bd note` guards and `bd create`'s
+		// "cannot specify both title and --file" rejection.
+		if fileFlag != "" && len(args) > 1 {
+			return HandleErrorRespectJSON("cannot specify both positional text and --file")
+		}
+
+		commentText := fileFlag
 		if commentText != "" {
 			data, err := os.ReadFile(commentText) // #nosec G304 - user-provided file path is intentional
 			if err != nil {
