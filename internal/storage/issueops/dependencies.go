@@ -211,11 +211,23 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 		dep.IssueID, dep.DependsOnID).Scan(&existingType)
 	if err == nil {
 		if existingType == string(dep.Type) {
-			// Same type — idempotent; update metadata.
-			//nolint:gosec // G201: writeTable from WispTableRouting; targetCol from DepTargetKind.Column().
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET metadata = ? WHERE issue_id = ? AND %s = ?`, writeTable, targetCol),
-				metadata, dep.IssueID, dep.DependsOnID); err != nil {
-				return fmt.Errorf("failed to update dependency metadata: %w", err)
+			// Same type — idempotent. beads-xkpb4: only REFRESH metadata when the
+			// caller actually supplied a blob (dep.Metadata != ""). A re-add that
+			// carries NO metadata — e.g. `bd batch dep.add` / bulk `bd dep add
+			// --file`, neither of whose grammars can express --waits-for-gate, so
+			// they can never intend to change the gate — must PRESERVE the existing
+			// row's metadata, not overwrite it to "{}" and silently revert a
+			// waits-for gate (any-children) to the all-children default
+			// (ParseWaitsForGateMetadata returns all-children on empty). Same
+			// edge-metadata-loss class as beads-atsyz, on the write re-add path.
+			// The single-edge `bd dep add` path only avoids this incidentally, via
+			// the beads-bwla same-type pre-check.
+			if dep.Metadata != "" {
+				//nolint:gosec // G201: writeTable from WispTableRouting; targetCol from DepTargetKind.Column().
+				if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET metadata = ? WHERE issue_id = ? AND %s = ?`, writeTable, targetCol),
+					metadata, dep.IssueID, dep.DependsOnID); err != nil {
+					return fmt.Errorf("failed to update dependency metadata: %w", err)
+				}
 			}
 			return nil
 		}

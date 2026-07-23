@@ -171,12 +171,21 @@ func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dep
 	switch {
 	case err == nil:
 		if existingType == string(dep.Type) {
-			//nolint:gosec // G201: table and targetCol are hardcoded/enumerated constants
-			if _, err := r.runner.ExecContext(ctx,
-				fmt.Sprintf("UPDATE %s SET metadata = ? WHERE issue_id = ? AND %s = ?", table, targetCol),
-				metadata, dep.IssueID, dep.DependsOnID,
-			); err != nil {
-				return fmt.Errorf("db: DependencySQLRepository.Insert: refresh metadata: %w", err)
+			// beads-xkpb4: only REFRESH metadata when the caller supplied a blob
+			// (dep.Metadata != ""). A same-type re-add carrying NO metadata — e.g.
+			// `bd batch dep.add` / bulk `bd dep add --file`, whose grammars can't
+			// express --waits-for-gate — must PRESERVE the existing row's metadata,
+			// not overwrite it to "{}" and silently revert a waits-for gate to the
+			// all-children default. Mirrors the issueops path guard (same
+			// edge-metadata-loss class as beads-atsyz, write re-add side).
+			if dep.Metadata != "" {
+				//nolint:gosec // G201: table and targetCol are hardcoded/enumerated constants
+				if _, err := r.runner.ExecContext(ctx,
+					fmt.Sprintf("UPDATE %s SET metadata = ? WHERE issue_id = ? AND %s = ?", table, targetCol),
+					metadata, dep.IssueID, dep.DependsOnID,
+				); err != nil {
+					return fmt.Errorf("db: DependencySQLRepository.Insert: refresh metadata: %w", err)
+				}
 			}
 			return nil
 		}
