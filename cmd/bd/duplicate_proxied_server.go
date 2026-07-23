@@ -211,6 +211,68 @@ func runLinkAndCloseProxied(ctx context.Context, in linkAndCloseProxiedInput) er
 
 	actor := getActor()
 
+	// beads-q8hxe: migrate the source's INCOMING structural edges to the target
+	// BEFORE closing the source, at parity with the direct supersede path
+	// (duplicate.go) — this proxied helper serves BOTH verbs (duplicate +
+	// supersede), and both close fromID. Previously the proxied path closed the
+	// source without re-pointing its dependents: an incoming blocks /
+	// conditional-blocks / waits-for edge left pointing at the closed source
+	// silently unblocks the dependent (premature-actionable), and an incoming
+	// parent-child edge orphans the child on the closed source instead of
+	// reparenting to the live target — the exact regression beads-0c9d1 fixed on
+	// the DIRECT supersede path, so the hub-connected path was a bypass (dfzre:
+	// fix the class at BOTH direct + proxied). Re-point each migratable incoming
+	// edge dependent→fromID to dependent→toID inside this SAME UOW so it lands in
+	// the single commit (njnw atomicity — a mid-sequence failure rolls the whole
+	// tx back via the deferred uw.Close). Provenance / knowledge edges (related /
+	// duplicates / supersedes / discovered-from) are deliberately NOT migrated —
+	// they legitimately point at the historical source; isMigratableSupersedeEdge
+	// (exported in duplicate.go) gates the {blocks, conditional-blocks, waits-for,
+	// parent-child} set the ready/blocked + tree engines act on.
+	//
+	// The incoming read (DepDirectionIn) reaches GetDependentsWithMetadataInTx,
+	// which scans BOTH the dependencies and wisp_dependencies tables, so it
+	// catches issue- and wisp-backed dependents regardless of fromID's own kind.
+	// Each edge's remove + re-add is routed by the DEPENDENT's kind (a wisp
+	// dependent's edge lives in wisp_dependencies), mirroring the direct store's
+	// per-endpoint isActiveWisp auto-detect (pega7).
+	incoming, incErr := uw.DependencyUseCase().ListWithIssueMetadata(ctx, fromID, domain.DepListFilter{Direction: domain.DepDirectionIn})
+	if incErr != nil {
+		return HandleErrorRespectJSON("failed to read dependents of %s: %v", fromID, incErr)
+	}
+	for _, d := range incoming {
+		if !isMigratableSupersedeEdge(d.DependencyType) {
+			continue
+		}
+		dependentID := d.ID
+		// A self-edge to toID would be created if the dependent IS toID; skip so
+		// toID never depends on / parents itself.
+		if dependentID == toID {
+			continue
+		}
+		_, depIsWisp := proxiedResolveIssueOrWisp(ctx, uw, dependentID)
+		migrated := &types.Dependency{
+			IssueID:     dependentID,
+			DependsOnID: toID,
+			Type:        d.DependencyType,
+		}
+		if depIsWisp {
+			if err := uw.DependencyUseCase().RemoveWispDependency(ctx, dependentID, fromID, actor); err != nil {
+				return HandleErrorRespectJSON("remove incoming %s %s→%s: %v", d.DependencyType, dependentID, fromID, err)
+			}
+			if err := uw.DependencyUseCase().AddWispDependency(ctx, migrated, actor); err != nil {
+				return HandleErrorRespectJSON("reattach incoming %s %s→%s: %v", d.DependencyType, dependentID, toID, err)
+			}
+		} else {
+			if err := uw.DependencyUseCase().RemoveDependency(ctx, dependentID, fromID, actor); err != nil {
+				return HandleErrorRespectJSON("remove incoming %s %s→%s: %v", d.DependencyType, dependentID, fromID, err)
+			}
+			if err := uw.DependencyUseCase().AddDependency(ctx, migrated, actor); err != nil {
+				return HandleErrorRespectJSON("reattach incoming %s %s→%s: %v", d.DependencyType, dependentID, toID, err)
+			}
+		}
+	}
+
 	dep := &types.Dependency{
 		IssueID:     fromID,
 		DependsOnID: toID,
