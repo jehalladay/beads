@@ -227,6 +227,44 @@ func printFederationDivergedGuidance(peer string) {
 	fmt.Fprintln(w, "by cloning an existing one rather than running 'bd init' on each.")
 }
 
+// printFederationPKMismatchGuidance prints recovery guidance (to stderr) when a
+// federation peer merge is refused because a table's primary key set differs
+// across the merging histories or their common ancestor (beads-y19rc) — the
+// #4259 schema-fork geometry, where two towns upgraded bd independently across
+// a PK-reshaping migration while un-synced changes existed on both sides.
+// Retrying never converges. Unlike bd dolt push/pull's PK-mismatch guidance
+// (which hands out `bd dolt push --force` / `bd bootstrap`, correct for a
+// local↔remote-origin fork), the federation recovery is peer↔peer: there is no
+// single origin to force-push to, so re-converge by seeding each town from one
+// canonical town's export — mirroring printFederationDivergedGuidance.
+func printFederationPKMismatchGuidance(peer string, err error) {
+	w := os.Stderr
+	table := ancestorPKMismatchTable(err)
+	fmt.Fprintln(w, "")
+	if table != "" {
+		fmt.Fprintf(w, "Federation sync with %q was refused: table %q has different\n", peer, table)
+	} else {
+		fmt.Fprintf(w, "Federation sync with %q was refused: a table has different\n", peer)
+	}
+	fmt.Fprintln(w, "primary keys across the two towns' histories (or their common ancestor).")
+	fmt.Fprintln(w, "This is a schema fork: the towns upgraded bd (and ran schema migrations)")
+	fmt.Fprintln(w, "independently while un-synced changes existed on both sides.")
+	fmt.Fprintln(w, "Retrying will not help; these histories can no longer be merged.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Recovery (re-converge on one canonical town):")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "  1. Pick ONE town as canonical (usually the most complete/up-to-date)")
+	fmt.Fprintln(w, "     and upgrade bd there. On EACH other town, save local-only issues:")
+	fmt.Fprintln(w, "       bd export --all -o /tmp/beads-local.jsonl")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "  2. Re-seed each non-canonical town by cloning the canonical town's")
+	fmt.Fprintln(w, "     database (shared history), then re-apply the saved issues:")
+	fmt.Fprintln(w, "       bd import /tmp/beads-local.jsonl")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Tip: to avoid this, upgrade bd on one town and re-seed the others from it")
+	fmt.Fprintln(w, "rather than upgrading each independently.")
+}
+
 func runFederationSync(cmd *cobra.Command, args []string) error {
 	evt := metrics.NewCommandEvent("federation-sync")
 	defer func() {
@@ -309,6 +347,14 @@ func runFederationSync(cmd *cobra.Command, args []string) error {
 				// --json path already carries the error string via o35h0.)
 				if isDivergedHistoryErr(err) {
 					printFederationDivergedGuidance(peer)
+				} else if isAncestorPKMismatchErr(err) {
+					// beads-y19rc: sibling of the diverged-history leg above.
+					// A PK-reshaping migration run independently on each town
+					// (the #4259 fork) makes DOLT_MERGE refuse with "different
+					// primary keys". bd dolt push/pull route this SAME error to
+					// recovery guidance, but their bd-bootstrap / --force advice
+					// is local↔remote-origin specific and wrong peer↔peer.
+					printFederationPKMismatchGuidance(peer, err)
 				}
 			}
 			continue
