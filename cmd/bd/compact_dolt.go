@@ -47,11 +47,15 @@ For semantic issue compaction (summarizing closed issues), use 'bd admin compact
 For full history squash, use 'bd flatten'.
 
 How it works:
-  1. Identifies commits older than --days threshold
-  2. Creates a squashed base commit from all old history
-  3. Cherry-picks recent commits on top
-  4. Swaps main branch to the compacted version
-  5. Runs Dolt GC to reclaim space
+  1. Flushes any uncommitted working set into a commit first (so pending
+     changes under batch/off Dolt auto-commit are not lost)
+  2. Identifies commits older than --days threshold
+  3. Creates a squashed base commit from all old history
+  4. Cherry-picks recent commits (including the just-flushed one) on top
+  5. Swaps main branch to the compacted version
+  6. Runs Dolt GC to reclaim space
+
+No current data is lost — only old commit-level history (time travel).
 
 Examples:
   bd compact --dry-run               # Preview: show commit breakdown
@@ -95,6 +99,26 @@ Examples:
 		}
 		if err := ensureStoreActive(); err != nil {
 			return HandleErrorWithHintRespectJSON(err.Error(), diagHint())
+		}
+
+		// beads-f52cm: flush any uncommitted working set into a commit BEFORE we
+		// read the log and run the squash recipe. Under `dolt.auto-commit=batch`/
+		// `off`, mutations sit in the working set of main WITHOUT being committed.
+		// The Compact recipe below builds compact-tmp from committed history only
+		// (boundaryHash..initialHash + cherry-picked recentHashes, all computed
+		// from store.Log), then `DOLT_RESET('--hard','compact-tmp')` on main
+		// OVERWRITES main — silently discarding the pending working set. So
+		// `bd compact --force` with pending batch writes lost all uncommitted data.
+		// The flush MUST happen here at the caller (not inside versioncontrolops.
+		// Compact like the flatten fix) because recentHashes is computed from the
+		// log below: committing the working set now folds it into a fresh commit
+		// that store.Log then classifies as recent (date ~now), so it is preserved
+		// via cherry-pick. Mirrors the SIGTERM batch-flush semantics; CommitPending
+		// is a benign no-op on a clean working set (returns false, nil).
+		if pc, ok := storage.UnwrapStore(store).(storage.PendingCommitter); ok {
+			if _, err := pc.CommitPending(ctx, getActor()); err != nil {
+				return HandleErrorRespectJSON("failed to flush pending changes before compact: %v", err)
+			}
 		}
 
 		logEntries, logErr := store.Log(ctx, 0)

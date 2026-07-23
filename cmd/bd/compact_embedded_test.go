@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // bdCompact runs "bd compact" with the given args and returns stdout.
@@ -146,6 +148,76 @@ func TestEmbeddedCompact(t *testing.T) {
 		// Should produce some output without crashing
 		_ = stdout.String()
 	})
+}
+
+// TestEmbeddedCompactPreservesUncommittedWorkingSet is the teeth for beads-f52cm:
+// `bd compact --force` under batch/off Dolt auto-commit must NOT silently discard
+// the uncommitted working set. The Compact recipe hard-resets main to a temp
+// branch built only from committed history, so any working-set rows that were
+// never committed used to vanish. The fix flushes the working set into a commit
+// (compact_dolt.go, before store.Log) so it is folded into the compacted result.
+//
+// Repro (from the bead): batch mode, commit a few rows, leave one row
+// uncommitted in the working set, run `bd compact --days 0 --force`, then assert
+// the uncommitted row still lists. Pre-fix: it was gone.
+func TestEmbeddedCompactPreservesUncommittedWorkingSet(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "cw")
+
+	// Build committed history: create rows and commit each so there is >1 old
+	// commit for compact --days 0 to squash.
+	doltCommit := func(msg string) {
+		t.Helper()
+		cmd := exec.Command(bd, "dolt", "commit", "-m", msg)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("bd dolt commit %q failed: %v\n%s", msg, err, out)
+		}
+	}
+
+	bdCreate(t, bd, dir, "committed A", "--type", "task")
+	doltCommit("c1")
+	bdCreate(t, bd, dir, "committed B", "--type", "task")
+	doltCommit("c2")
+	bdCreate(t, bd, dir, "committed C", "--type", "task")
+	doltCommit("c3")
+
+	// Create an UNCOMMITTED row: run under batch auto-commit so the mutation stays
+	// in the working set instead of being committed.
+	uncommitted := func() *types.Issue {
+		t.Helper()
+		out, err := bdRunWithFlockRetry(t, bd, dir, "--dolt-auto-commit", "batch", "create", "--json", "UNCOMMITTED-ROW", "--type", "task")
+		if err != nil {
+			t.Fatalf("batch create failed: %v\n%s", err, out)
+		}
+		return parseIssueJSON(t, out)
+	}()
+
+	// Sanity: all 4 rows should be visible before compact (working set is part of
+	// the queryable state).
+	before := bdList(t, bd, dir, "--json")
+	if !strings.Contains(before, uncommitted.ID) {
+		t.Fatalf("precondition failed: uncommitted row %s not visible before compact:\n%s", uncommitted.ID, before)
+	}
+
+	// Compact all old history. Pre-fix this hard-reset main and dropped the
+	// uncommitted row.
+	out := bdCompact(t, bd, dir, "--days", "0", "--force")
+	if !strings.Contains(out, "Compacted") && !strings.Contains(out, "nothing to compact") && !strings.Contains(out, "Nothing to compact") && !strings.Contains(out, "Only") {
+		t.Fatalf("unexpected compact output: %s", out)
+	}
+
+	// THE ASSERTION: the uncommitted row must survive the compaction.
+	after := bdList(t, bd, dir, "--json")
+	if !strings.Contains(after, uncommitted.ID) {
+		t.Errorf("beads-f52cm regression: uncommitted working-set row %s was DISCARDED by compact --force\nafter:\n%s", uncommitted.ID, after)
+	}
 }
 
 // TestEmbeddedCompactConcurrent exercises compact --dry-run concurrently.
