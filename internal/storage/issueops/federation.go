@@ -50,10 +50,20 @@ func AddFederationPeerInTx(ctx context.Context, tx *sql.Tx, peer *storage.Federa
 	// --user is given), so an empty incoming username means "credentials not
 	// supplied on this re-add" → preserve BOTH stored fields. Gating each field
 	// independently could keep a NEW username while preserving the OLD user's
-	// password (a cross-credential mismatch). remote_url/sovereignty keep
-	// full-replace — those are not security-sensitive and an omitted flag there is
-	// an empty write the caller intends. Clearing credentials is done deliberately
-	// via remove-peer, not a bare re-add.
+	// password (a cross-credential mismatch). Clearing credentials is done
+	// deliberately via remove-peer, not a bare re-add.
+	//
+	// beads-x7ias: COALESCE sovereignty on re-add too — an empty incoming
+	// sovereignty preserves the stored tier. --sovereignty is an OPTIONAL flag
+	// (default ""), so a re-add that changes only --user/--password or the URL
+	// arrives with sovereignty="" and previously WIPED a set T1/T2/T3/T4 tier
+	// silently. Unlike remote_url (a MANDATORY positional arg — never
+	// accidentally empty), sovereignty IS a governance/policy boundary
+	// (see beads-9l21w) that is accidentally empty on any re-add not repeating
+	// the flag, so full-replace loses it. Clearing a tier is done deliberately
+	// (remove-peer, or a future explicit tier-clear), not a bare re-add.
+	// remote_url stays full-replace (beads-s5sue also reconciles the Dolt
+	// remote to it): the caller always supplies it.
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO federation_peers (name, remote_url, username, password_encrypted, sovereignty)
 		VALUES (?, ?, ?, ?, ?)
@@ -61,7 +71,7 @@ func AddFederationPeerInTx(ctx context.Context, tx *sql.Tx, peer *storage.Federa
 			remote_url = VALUES(remote_url),
 			username = IF(VALUES(username) = '', username, VALUES(username)),
 			password_encrypted = IF(VALUES(username) = '', password_encrypted, VALUES(password_encrypted)),
-			sovereignty = VALUES(sovereignty),
+			sovereignty = IF(VALUES(sovereignty) = '', sovereignty, VALUES(sovereignty)),
 			updated_at = CURRENT_TIMESTAMP
 	`, peer.Name, peer.RemoteURL, peer.Username, encryptedPwd, peer.Sovereignty)
 
