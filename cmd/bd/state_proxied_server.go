@@ -33,13 +33,30 @@ func runSetStateProxiedServer(ctx context.Context, issueID, dimension, newValue,
 	labelUC := uw.LabelUseCase()
 	depUC := uw.DependencyUseCase()
 
-	// Resolve existence (exact ID; proxied handlers don't do partial resolution).
-	if _, gerr := issueUC.GetIssue(ctx, issueID); gerr != nil {
-		return HandleErrorRespectJSON("resolving %s: %v", issueID, gerr)
+	// beads-b2fz7: resolve issue-or-wisp (exact ID; proxied handlers don't do
+	// partial resolution). The prior bare GetIssue guard rejected WISP targets
+	// outright ("resolving <wisp>: not found"), while both the direct path
+	// (store.* auto-routes on isActiveWisp) AND this file's own READ leg
+	// (proxiedStateLabels → GetWispLabels) treat a wisp as a first-class state
+	// target. Mirror the read leg: fall back to the wisps table so the WRITE leg
+	// reaches parity. IsWisp is a FLAG (Ephemeral||NoHistory), not the ID pattern,
+	// so the minted child event bead is a regular issue — only the label ops (and
+	// the initial read) need wisp routing.
+	issue, isWisp, err := proxiedGetIssueOrWisp(ctx, uw, issueID)
+	if err != nil {
+		return HandleErrorRespectJSON("resolving %s: %v", issueID, err)
 	}
-	fullID := issueID
+	if issue == nil {
+		return HandleErrorRespectJSON("resolving %s: not found", issueID)
+	}
+	fullID := issue.ID
 
-	labels, err := labelUC.GetLabels(ctx, fullID)
+	var labels []string
+	if isWisp {
+		labels, err = labelUC.GetWispLabels(ctx, fullID)
+	} else {
+		labels, err = labelUC.GetLabels(ctx, fullID)
+	}
 	if err != nil {
 		return HandleErrorRespectJSON("%v", err)
 	}
@@ -128,16 +145,32 @@ func runSetStateProxiedServer(ctx context.Context, issueID, dimension, newValue,
 
 	// beads-brk7c: remove every existing label for this dimension (including
 	// stale siblings), not just the first match.
+	// beads-b2fz7: route to the wisp label table for wisp targets — the read leg
+	// (GetWispLabels above) already does; without this the guard would pass but
+	// the writes would land in the wrong (issues) label table, silently failing
+	// to update wisp state (a state list/set-state disagreement).
 	for _, oldLabel := range oldLabels {
 		if oldLabel == newLabel {
 			continue // (re)added below; skip redundant remove/add churn
 		}
-		if err := labelUC.RemoveLabel(ctx, fullID, oldLabel, actor); err != nil {
-			WarnError("failed to remove old label %s: %v", oldLabel, err)
+		var rerr error
+		if isWisp {
+			rerr = labelUC.RemoveWispLabel(ctx, fullID, oldLabel, actor)
+		} else {
+			rerr = labelUC.RemoveLabel(ctx, fullID, oldLabel, actor)
+		}
+		if rerr != nil {
+			WarnError("failed to remove old label %s: %v", oldLabel, rerr)
 		}
 	}
-	if err := labelUC.AddLabel(ctx, fullID, newLabel, actor); err != nil {
-		return HandleErrorRespectJSON("adding label: %v", err)
+	var aerr error
+	if isWisp {
+		aerr = labelUC.AddWispLabel(ctx, fullID, newLabel, actor)
+	} else {
+		aerr = labelUC.AddLabel(ctx, fullID, newLabel, actor)
+	}
+	if aerr != nil {
+		return HandleErrorRespectJSON("adding label: %v", aerr)
 	}
 
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: set-state %s %s=%s", fullID, dimension, newValue)); err != nil && !isDoltNothingToCommit(err) {
