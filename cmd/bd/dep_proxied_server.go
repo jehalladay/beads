@@ -541,6 +541,16 @@ func runDepRemoveProxiedServer(_ *cobra.Command, ctx context.Context, args []str
 	uw := openDepProxiedUOW(ctx)
 	defer uw.Close(ctx)
 
+	// beads-63dwu: route the precheck and the removal to the wisp-backed tables
+	// for a wisp SOURCE. The domain remove path is flag-routed
+	// (RemoveDependency -> removeDep(useWisp=false), RemoveWispDependency ->
+	// removeDep(useWisp=true)) UNLIKE the direct store's Delete which
+	// auto-detects via IsActiveWispInTx. Without this, a wisp-source edge (which
+	// lives in wisp_dependencies) is invisible to GetIssueDependencyRecords, so
+	// the w2tk precheck fires "no dependency to remove" and the edge can never
+	// be removed on a hub-connected crew. Remove-path mirror of beads-zdg7x.
+	srcIsWisp := proxiedDepSourceIsWisp(ctx, uw, fromID)
+
 	// beads-byh6: mirror the direct path's w2tk guard. RemoveDependency is
 	// idempotent-nil (the domain removeDep discards depRepo.Delete's count and
 	// returns nil whether or not an edge existed), so without a precheck a
@@ -549,7 +559,13 @@ func runDepRemoveProxiedServer(_ *cobra.Command, ctx context.Context, args []str
 	// is gone (the direct path guards this at cmd/bd/dep.go). Keep the
 	// idempotent contract for programmatic callers; only the CLI verb reports
 	// the distinction.
-	depRecords, lookupErr := uw.DependencyUseCase().GetIssueDependencyRecords(ctx, []string{fromID})
+	var depRecords map[string][]*types.Dependency
+	var lookupErr error
+	if srcIsWisp {
+		depRecords, lookupErr = uw.DependencyUseCase().GetWispDependencyRecords(ctx, []string{fromID})
+	} else {
+		depRecords, lookupErr = uw.DependencyUseCase().GetIssueDependencyRecords(ctx, []string{fromID})
+	}
 	if lookupErr != nil {
 		FatalErrorRespectJSON("checking dependency %s -> %s: %v", fromID, toID, lookupErr)
 	}
@@ -573,8 +589,14 @@ func runDepRemoveProxiedServer(_ *cobra.Command, ctx context.Context, args []str
 		FatalErrorRespectJSON("cannot remove a relates-to link with 'dep remove' (it is bidirectional); use 'bd dep unrelate %s %s'", fromID, toID)
 	}
 
-	if err := uw.DependencyUseCase().RemoveDependency(ctx, fromID, toID, actor); err != nil {
-		FatalErrorRespectJSON("%v", err)
+	if srcIsWisp {
+		if err := uw.DependencyUseCase().RemoveWispDependency(ctx, fromID, toID, actor); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
+	} else {
+		if err := uw.DependencyUseCase().RemoveDependency(ctx, fromID, toID, actor); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
 	}
 
 	fromTitle := proxiedLookupTitle(ctx, uw, fromID)
