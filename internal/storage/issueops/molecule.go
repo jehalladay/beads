@@ -90,19 +90,39 @@ func GetMoleculeProgressInTx(ctx context.Context, tx *sql.Tx, moleculeID string)
 			_ = statusRows.Close()
 		}
 
+		// beads-bobpm: a custom done-category status is a terminal "done"
+		// outcome, so a step in such a status must count toward Completed
+		// exactly like a literal-closed step — matching the cmd-side
+		// getMoleculeProgress (beads-x463g), autoclose, and bd ready/count/list.
+		// Resolve the done-category names once; a nil/empty set (no config or a
+		// resolution error) leaves counting byte-identical to pre-bobpm (only
+		// types.StatusClosed completes). Degraded-safe: a config read error just
+		// yields an empty done-set rather than failing progress accounting.
+		doneStatusNames := map[string]bool{}
+		if detailed, cerr := ResolveCustomStatusesDetailedInTx(ctx, tx); cerr == nil {
+			for _, cs := range detailed {
+				if cs.Category == types.CategoryDone {
+					doneStatusNames[cs.Name] = true
+				}
+			}
+		}
+
 		for _, childID := range childIDs {
 			info, ok := childMap[childID]
 			if !ok {
 				continue
 			}
 			stats.Total++
-			switch types.Status(info.status) {
-			case types.StatusClosed:
+			switch {
+			case types.Status(info.status) == types.StatusClosed || doneStatusNames[info.status]:
 				stats.Completed++
 				// beads-tcx7: track earliest/latest closure timestamps across
-				// closed children so the rate/ETA computation has its two
-				// endpoints. Skip rows whose closed_at is NULL (defensive: a
-				// closed issue should always carry one, but old data may not).
+				// completed children so the rate/ETA computation has its two
+				// endpoints. Skip rows whose closed_at is NULL — defensive for
+				// literal-closed rows, and expected for a done-category step
+				// (a non-'closed' status typically carries no closed_at), which
+				// still counts toward Completed but simply cannot anchor a rate
+				// endpoint. (beads-bobpm.)
 				if info.closedAt.Valid {
 					t := info.closedAt.Time
 					if stats.FirstClosed == nil || t.Before(*stats.FirstClosed) {
@@ -114,7 +134,7 @@ func GetMoleculeProgressInTx(ctx context.Context, tx *sql.Tx, moleculeID string)
 						stats.LastClosed = &lt
 					}
 				}
-			case types.StatusInProgress:
+			case types.Status(info.status) == types.StatusInProgress:
 				stats.InProgress++
 				if stats.CurrentStepID == "" {
 					stats.CurrentStepID = childID
