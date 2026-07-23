@@ -413,6 +413,17 @@ func init() {
 	_ = closeCmd.Flags().MarkHidden("message") // Hidden alias for agent/CLI ergonomics
 	closeCmd.Flags().String("comment", "", "Alias for --reason")
 	_ = closeCmd.Flags().MarkHidden("comment") // Hidden alias for agent/CLI ergonomics
+	// beads-5vkqz: --resolution/--message/--comment are documented ALIASES for
+	// --reason, and collectCloseReasonFlags resolves them by first-match priority
+	// (reason > resolution > message > comment). So `bd close X --reason A
+	// --resolution B` silently used A and DISCARDED B with rc0 and no diagnostic
+	// — the dz1t8 input-source silent-drop class (same as 637yc bd-edit field
+	// flags, bscdj dep-add aliases, comment/note positional-vs-flag). Reject >1
+	// DIFFERENT alias at cobra parse time; pre-store and path-agnostic. Repeating
+	// a SINGLE member (e.g. `--reason a --reason b` for per-issue batch reasons)
+	// is one member set N times, NOT a conflict, so batch close is unaffected.
+	// The --reason-file vs alias conflict is guarded separately (resolveReasonFile).
+	closeCmd.MarkFlagsMutuallyExclusive("reason", "resolution", "message", "comment")
 	closeCmd.Flags().String("reason-file", "", "Read close reason from file (use - for stdin)")
 	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues or unsatisfied gates")
 	closeCmd.Flags().Bool("continue", false, "Auto-advance to next step in molecule")
