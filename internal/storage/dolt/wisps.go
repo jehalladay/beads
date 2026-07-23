@@ -635,12 +635,24 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	`, targetCol), dep.IssueID, dep.DependsOnID).Scan(&existingType)
 	if err == nil {
 		if existingType == string(dep.Type) {
-			// Same type — idempotent; update metadata in case it changed
-			//nolint:gosec // G201: targetCol from DepTargetKind.Column()
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-				UPDATE wisp_dependencies SET metadata = ? WHERE issue_id = ? AND %s = ?
-			`, targetCol), metadata, dep.IssueID, dep.DependsOnID); err != nil {
-				return fmt.Errorf("failed to update wisp dependency metadata: %w", err)
+			// Same type — idempotent. beads-dh21c: only REFRESH metadata when the
+			// caller actually supplied a blob (dep.Metadata != ""). A re-add that
+			// carries NO metadata must PRESERVE the existing row's metadata, not
+			// overwrite it — `metadata` was coerced to "{}" above when dep.Metadata
+			// was empty, so an unconditional UPDATE silently reverts an existing
+			// {"gate":"any-children"} waits-for edge to the all-children default
+			// (ParseWaitsForGateMetadata returns all-children on empty). This is the
+			// wisp-source (DoltStore) leg of the beads-xkpb4 edge-metadata-clobber
+			// class; the issue-source AddDependencyInTx + domain/db Insert legs carry
+			// the same guard. Guard on dep.Metadata (the caller's intent), not the
+			// coerced local `metadata`.
+			if dep.Metadata != "" {
+				//nolint:gosec // G201: targetCol from DepTargetKind.Column()
+				if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+					UPDATE wisp_dependencies SET metadata = ? WHERE issue_id = ? AND %s = ?
+				`, targetCol), metadata, dep.IssueID, dep.DependsOnID); err != nil {
+					return fmt.Errorf("failed to update wisp dependency metadata: %w", err)
+				}
 			}
 			return wrapTransactionError("commit add wisp dependency", tx.Commit())
 		}
