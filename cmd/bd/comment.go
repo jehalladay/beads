@@ -42,6 +42,20 @@ Examples:
 		stdinFlag, _ := cmd.Flags().GetBool("stdin")
 		fileFlag, _ := cmd.Flags().GetString("file")
 
+		// beads-dz1t8: positional text alongside --stdin/--file is a conflicting
+		// input source, not a fallback. The switch below silently prefers the flag
+		// and DROPS the positional arg — a user who typed both loses their inline
+		// text with no signal. --stdin/--file are already MarkFlagsMutuallyExclusive
+		// (a hard error), and `bd create` rejects the same positional+--file clash
+		// ("cannot specify both title and --file flag", create.go); reject here too
+		// so a single input source is unambiguous rather than one silently winning.
+		if len(textArgs) > 0 && stdinFlag {
+			return HandleErrorRespectJSON("cannot specify both positional text and --stdin")
+		}
+		if len(textArgs) > 0 && fileFlag != "" {
+			return HandleErrorRespectJSON("cannot specify both positional text and --file")
+		}
+
 		var commentText string
 		switch {
 		case stdinFlag:
