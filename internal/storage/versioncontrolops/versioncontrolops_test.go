@@ -873,6 +873,9 @@ func TestFlatten_FullSequence(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"commit_hash"}).AddRow("root"))
 	mock.ExpectQuery("SELECT COUNT.*FROM dolt_log").
 		WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(5))
+	// beads-1yh3g: clean working set (dolt_status empty) → no flush commit.
+	mock.ExpectQuery("SELECT 1 FROM dolt_status LIMIT 1").
+		WillReturnRows(sqlmock.NewRows([]string{"n"}))
 	// Best-effort pre-delete of any stale flatten-tmp (beads-wmup) runs first.
 	mock.ExpectExec("CALL DOLT_BRANCH.*-D.*flatten-tmp").WillReturnResult(sqlmock.NewResult(0, 0))
 	// Then the flatten steps in order.
@@ -890,12 +893,76 @@ func TestFlatten_FullSequence(t *testing.T) {
 	assertMet(t, mock)
 }
 
+// TestFlatten_FlushesDirtyWorkingSet pins beads-1yh3g: when the working set is
+// dirty (dolt_status non-empty, as under `dolt.auto-commit=batch`/`off` with
+// pending mutations), Flatten must first COMMIT the working set so the pending
+// data is folded into the squash. Without this flush the recipe creates
+// flatten-tmp from a HEAD that excludes the working set, then hard-resets main
+// to it — silently discarding all uncommitted data.
+//
+// Mutation check: remove the `if !workingSetClean {…} flush` block in flatten.go
+// and this test goes RED (the expected "flush working set" DOLT_COMMIT never
+// runs, so sqlmock's ordered expectation is unmet).
+func TestFlatten_FlushesDirtyWorkingSet(t *testing.T) {
+	db, mock := newMock(t)
+	mock.ExpectQuery("SELECT commit_hash FROM dolt_log ORDER BY date ASC LIMIT 1").
+		WillReturnRows(sqlmock.NewRows([]string{"commit_hash"}).AddRow("root"))
+	mock.ExpectQuery("SELECT COUNT.*FROM dolt_log").
+		WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(5))
+	// beads-1yh3g: dirty working set → dolt_status returns a row → flush commit.
+	mock.ExpectQuery("SELECT 1 FROM dolt_status LIMIT 1").
+		WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(1))
+	// The flush commit of the pending working set (before the squash recipe).
+	mock.ExpectExec("CALL DOLT_COMMIT.*-Am.*flush pending working set").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	// Then the normal recipe: pre-delete, create, checkout, soft-reset, commit,
+	// checkout main, hard-reset, delete.
+	mock.ExpectExec("CALL DOLT_BRANCH.*-D.*flatten-tmp").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CALL DOLT_BRANCH.*flatten-tmp").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CALL DOLT_CHECKOUT.*flatten-tmp").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CALL DOLT_RESET.*--soft").WithArgs("root").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CALL DOLT_COMMIT").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CALL DOLT_CHECKOUT.*main").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CALL DOLT_RESET.*--hard").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CALL DOLT_BRANCH.*-D").WillReturnResult(sqlmock.NewResult(0, 0))
+
+	if err := Flatten(context.Background(), db); err != nil {
+		t.Fatalf("Flatten with dirty working set: %v", err)
+	}
+	assertMet(t, mock)
+}
+
+// TestFlatten_FlushError pins that a failure committing the pending working set
+// (beads-1yh3g flush step) aborts flatten with the wrapped error and does NOT
+// proceed to the destructive hard-reset recipe (which would lose the data).
+func TestFlatten_FlushError(t *testing.T) {
+	db, mock := newMock(t)
+	mock.ExpectQuery("SELECT commit_hash FROM dolt_log ORDER BY date ASC LIMIT 1").
+		WillReturnRows(sqlmock.NewRows([]string{"commit_hash"}).AddRow("root"))
+	mock.ExpectQuery("SELECT COUNT.*FROM dolt_log").
+		WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(5))
+	mock.ExpectQuery("SELECT 1 FROM dolt_status LIMIT 1").
+		WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(1))
+	mock.ExpectExec("CALL DOLT_COMMIT.*-Am.*flush pending working set").
+		WillReturnError(errors.New("commit boom"))
+	// No further steps: flatten must bail before the pre-delete/create branch.
+
+	err := Flatten(context.Background(), db)
+	if err == nil || !strings.Contains(err.Error(), "flush working set") {
+		t.Errorf("expected 'flush working set' error, got %v", err)
+	}
+	assertMet(t, mock)
+}
+
 func TestFlatten_StepError(t *testing.T) {
 	db, mock := newMock(t)
 	mock.ExpectQuery("SELECT commit_hash FROM dolt_log ORDER BY date ASC LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{"commit_hash"}).AddRow("root"))
 	mock.ExpectQuery("SELECT COUNT.*FROM dolt_log").
 		WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(3))
+	// beads-1yh3g: clean working set → no flush commit.
+	mock.ExpectQuery("SELECT 1 FROM dolt_status LIMIT 1").
+		WillReturnRows(sqlmock.NewRows([]string{"n"}))
 	// Pre-delete of any stale temp branch.
 	mock.ExpectExec("CALL DOLT_BRANCH.*-D.*flatten-tmp").WillReturnResult(sqlmock.NewResult(0, 0))
 	// create temp branch fails.
@@ -920,6 +987,9 @@ func TestFlatten_CleanupOnStepErrorAfterBranchCreate(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"commit_hash"}).AddRow("root"))
 	mock.ExpectQuery("SELECT COUNT.*FROM dolt_log").
 		WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(3))
+	// beads-1yh3g: clean working set → no flush commit.
+	mock.ExpectQuery("SELECT 1 FROM dolt_status LIMIT 1").
+		WillReturnRows(sqlmock.NewRows([]string{"n"}))
 	// Pre-delete stale temp.
 	mock.ExpectExec("CALL DOLT_BRANCH.*-D.*flatten-tmp").WillReturnResult(sqlmock.NewResult(0, 0))
 	// create temp branch SUCCEEDS (branchCreated = true).

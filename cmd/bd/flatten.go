@@ -22,14 +22,16 @@ var flattenCmd = &cobra.Command{
 	Long: `Nuclear option: squash ALL Dolt commit history into a single commit.
 
 This uses the Tim Sehn recipe:
-  1. Create a new branch from the current state
-  2. Soft-reset to the initial commit (preserving all data)
-  3. Commit everything as a single snapshot
-  4. Swap main branch to the new flattened branch
-  5. Run Dolt GC to reclaim space from old history
+  1. Flush any uncommitted working set into a commit first
+  2. Create a new branch from the current state
+  3. Soft-reset to the initial commit (preserving all data)
+  4. Commit everything as a single snapshot
+  5. Swap main branch to the new flattened branch
+  6. Run Dolt GC to reclaim space from old history
 
-This is irreversible — all commit history is lost. The resulting database
-has exactly one commit containing all current data.
+This is irreversible — all commit HISTORY is lost, but no current data is
+lost: pending changes under batch/off Dolt auto-commit are flushed first,
+so the resulting single commit contains all current data.
 
 Use this when:
   - Your .beads/dolt directory has grown very large

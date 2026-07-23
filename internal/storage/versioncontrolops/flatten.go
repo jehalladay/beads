@@ -7,6 +7,7 @@ import (
 
 // Flatten squashes all Dolt commit history into a single commit using
 // the Tim Sehn recipe:
+//  0. Flush any uncommitted working set into a commit (see beads-1yh3g below)
 //  1. Create a temp branch from current state
 //  2. Checkout temp branch
 //  3. Soft-reset to the initial (oldest) commit, collapsing all history
@@ -14,6 +15,8 @@ import (
 //  5. Checkout main
 //  6. Hard-reset main to the flattened branch
 //  7. Delete temp branch
+//
+// All current data is preserved; only commit-level history (time travel) is lost.
 //
 // Callers should run DoltGC afterward to reclaim disk space from orphaned history.
 //
@@ -44,6 +47,25 @@ func Flatten(ctx context.Context, conn DBConn) (retErr error) {
 			return fmt.Errorf("flatten step %q: %w", name, err)
 		}
 		return nil
+	}
+
+	// beads-1yh3g: flush any uncommitted working set into a commit BEFORE the
+	// squash recipe runs. Under `dolt.auto-commit=batch`/`off`, mutations sit in
+	// the working set of the current branch (main) without being committed. The
+	// recipe below creates flatten-tmp from main's HEAD (which does NOT include
+	// the uncommitted working set — DOLT_CHECKOUT to flatten-tmp carries a clean
+	// tree), squashes that clean state, then `DOLT_RESET('--hard', 'flatten-tmp')`
+	// on main OVERWRITES main — silently discarding the pending working set. So
+	// `bd flatten --force` with pending batch writes lost all uncommitted data.
+	// Committing it here first folds it into the squash (mirrors the SIGTERM
+	// batch-flush semantics), so no data is lost. DOLT_COMMIT('-Am') on a clean
+	// working set is a benign no-op ("nothing to commit"), so guard on
+	// workingSetClean to avoid the error and skip the extra commit on the common
+	// clean path.
+	if !workingSetClean(ctx, conn) {
+		if err := execSQL("flush working set", "CALL DOLT_COMMIT('-Am', 'flatten: flush pending working set before squash')"); err != nil {
+			return err
+		}
 	}
 
 	// A prior flatten that failed mid-way can leave the temp branch behind;
