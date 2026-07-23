@@ -34,13 +34,33 @@ func AddFederationPeerInTx(ctx context.Context, tx *sql.Tx, peer *storage.Federa
 		return fmt.Errorf("invalid peer name: %w", err)
 	}
 
+	// beads-9mg09: COALESCE the credential pair on a re-add (ON DUPLICATE KEY
+	// UPDATE) instead of full-replacing it. add-peer has full-replace upsert
+	// semantics but a partial-flag UX and no separate update-peer verb, so a
+	// re-add that OMITS --user (e.g. only to change --sovereignty or the URL)
+	// arrives here with Username:"" / encryptedPwd:nil and previously WIPED the
+	// stored credentials. They are live-consumed — withPeerCredentials
+	// (dolt/credentials.go) reads them on EVERY authenticated federation op and
+	// only authenticates when they are non-empty — so the wipe silently downgraded
+	// an authenticated peer to credential-free (fail-open on a security boundary),
+	// with no warning.
+	//
+	// username+password are treated as ONE UNIT keyed on username presence: the
+	// CLI only ever stores a password alongside a username (it prompts for one when
+	// --user is given), so an empty incoming username means "credentials not
+	// supplied on this re-add" → preserve BOTH stored fields. Gating each field
+	// independently could keep a NEW username while preserving the OLD user's
+	// password (a cross-credential mismatch). remote_url/sovereignty keep
+	// full-replace — those are not security-sensitive and an omitted flag there is
+	// an empty write the caller intends. Clearing credentials is done deliberately
+	// via remove-peer, not a bare re-add.
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO federation_peers (name, remote_url, username, password_encrypted, sovereignty)
 		VALUES (?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			remote_url = VALUES(remote_url),
-			username = VALUES(username),
-			password_encrypted = VALUES(password_encrypted),
+			username = IF(VALUES(username) = '', username, VALUES(username)),
+			password_encrypted = IF(VALUES(username) = '', password_encrypted, VALUES(password_encrypted)),
 			sovereignty = VALUES(sovereignty),
 			updated_at = CURRENT_TIMESTAMP
 	`, peer.Name, peer.RemoteURL, peer.Username, encryptedPwd, peer.Sovereignty)
