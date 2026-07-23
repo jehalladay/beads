@@ -93,6 +93,23 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 			}
 		}
 
+		// beads-qh4dy: dedup a repeated issue id in one batch, mirroring
+		// delete.go:86 uniqueStrings(issueIDs) + beads-hzg2y (label add/remove).
+		// `bd update X X --append-notes foo` iterates args and calls the
+		// non-idempotent issueStore.AppendNotes (a server-side CONCAT_WS) per
+		// occurrence, so X's note body gets "foo" appended TWICE — real data
+		// duplication, unlike the idempotent close/label writes (which only
+		// over-count). beads-1d32 added a pre-resolve guard against the
+		// retry-after-partial-fail double-append but not the in-batch dup. Dedup
+		// the ids here, before the usesProxiedServer() dispatch, so the one fix
+		// covers BOTH the direct and proxied update paths (matching the a0nmp /
+		// 5x84h shared guards above). Guarded on len>1 to leave the empty-args ->
+		// last-touched path (below) untouched; first occurrence wins; distinct
+		// ids and idempotent flags (--priority/--add-label) are unaffected.
+		if len(args) > 1 {
+			args = uniqueStrings(args)
+		}
+
 		if usesProxiedServer() {
 			runUpdateProxiedServer(cmd, rootCtx, args)
 			return nil
