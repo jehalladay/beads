@@ -392,11 +392,16 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 		}
 	}
 
-	// b0tw: refuse reopening a closed child whose parent epic is itself closed
-	// (a real closed->open transition), which would recreate the
-	// closed-epic-with-open-child state.
+	// b0tw: refuse reopening a closed child whose parent epic is itself closed,
+	// which would recreate the closed-epic-with-open-child state.
+	//
+	// beads-h7uhe (proxied twin): widened from the narrow newStatus == StatusOpen
+	// gate to any reopen-equivalent transition (was closed, target NOT closed) so
+	// closed->deferred / closed->in_progress (incl. the proxied `bd defer` path,
+	// which routes through applyUpdateProxiedOne -> here) enforce the closed-parent
+	// guard identically to closed->open. Mirrors the direct update.go widen.
 	if newStatus, ok := fields["status"].(string); ok &&
-		types.Status(newStatus) == types.StatusOpen && current.Status == types.StatusClosed {
+		current.Status == types.StatusClosed && types.Status(newStatus) != types.StatusClosed {
 		if closedEpics := proxiedClosedEpicParents(ctx, uw, id, isWisp); len(closedEpics) > 0 {
 			return fmt.Errorf("cannot reopen %s: its parent %v is closed; reopen the parent first or use --force to override", id, closedEpics)
 		}
@@ -409,11 +414,18 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 		// reusing the SAME helpers the proxied reopen path uses
 		// (reopen_proxied_server.go), so the closed->open legs can't diverge across
 		// backends.
-		if supersedes := proxiedSupersededByTargets(ctx, uw, id, isWisp); len(supersedes) > 0 {
-			return fmt.Errorf("cannot reopen %s: it is superseded by %v; remove the supersedes link (bd dep remove %s <target> --type supersedes) or use --force to override", id, supersedes, id)
-		}
-		if dups := proxiedDuplicatesTargets(ctx, uw, id, isWisp); len(dups) > 0 {
-			return fmt.Errorf("cannot reopen %s: it is a duplicate of %v; remove the duplicates link (bd dep remove %s <target> --type duplicates) or use --force to override", id, dups, id)
+		//
+		// beads-h7uhe: these two stay scoped to the closed->OPEN target (unlike the
+		// closedEpicParents guard above, widened to any out-of-closed transition).
+		// Their harm — reappearing in `bd ready` — is status=open-only, matching the
+		// direct path and `bd reopen`.
+		if types.Status(newStatus) == types.StatusOpen {
+			if supersedes := proxiedSupersededByTargets(ctx, uw, id, isWisp); len(supersedes) > 0 {
+				return fmt.Errorf("cannot reopen %s: it is superseded by %v; remove the supersedes link (bd dep remove %s <target> --type supersedes) or use --force to override", id, supersedes, id)
+			}
+			if dups := proxiedDuplicatesTargets(ctx, uw, id, isWisp); len(dups) > 0 {
+				return fmt.Errorf("cannot reopen %s: it is a duplicate of %v; remove the duplicates link (bd dep remove %s <target> --type duplicates) or use --force to override", id, dups, id)
+			}
 		}
 	}
 

@@ -717,11 +717,20 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 			// silently recreates the closed-epic-with-open-child state — the same
 			// invariant the close-guard family enforces, bypassed at the child
 			// status->open transition rather than at epic close. Mirrors the
-			// `bd reopen` guard. Only a real closed->open transition triggers it
-			// (issue was closed, new status is open) and it is overridable with
-			// --force, matching `bd close --force`.
+			// `bd reopen` guard. Overridable with --force, matching `bd close --force`.
+			//
+			// beads-h7uhe: the guard was gated narrowly on newStatus == StatusOpen,
+			// so ANY OTHER non-closed transition out of closed (closed->deferred,
+			// closed->in_progress, closed->blocked) reopened a closed child while
+			// SKIPPING the guard — recreating the exact forbidden closed-parent-with-
+			// non-closed-child state (lint: "✗ closed epic with N open child"). `bd
+			// update --status open` refused but `--status deferred` on the SAME issue
+			// succeeded: inconsistent enforcement on the same reopen semantics. Widen
+			// the predicate to any reopen-equivalent transition (was closed, target is
+			// NOT closed) so all four out-of-closed legs enforce it identically. An
+			// already-closed re-close (newStatus == closed) is a no-op, untouched.
 			if newStatus, ok := updates["status"].(string); ok && !forceFlag &&
-				types.Status(newStatus) == types.StatusOpen && issue.Status == types.StatusClosed {
+				issue.Status == types.StatusClosed && types.Status(newStatus) != types.StatusClosed {
 				if closedEpics := closedEpicParents(ctx, issueStore, result.ResolvedID); len(closedEpics) > 0 {
 					reportUpdateItemError("cannot reopen %s: its parent %v is closed; reopen the parent first or use --force to override", id, closedEpics)
 					closeIfUnmutated(result)
@@ -738,15 +747,23 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 				// those reopen guards exist to prevent. Mirror both here (same
 				// messages/hints, same --force override) so the closed->open legs
 				// don't diverge.
-				if supersedes := supersededByTargets(ctx, issueStore, result.ResolvedID); len(supersedes) > 0 {
-					reportUpdateItemError("cannot reopen %s: it is superseded by %v; remove the supersedes link (bd dep remove %s <target> --type supersedes) or use --force to override", id, supersedes, id)
-					closeIfUnmutated(result)
-					continue
-				}
-				if dups := duplicatesTargets(ctx, issueStore, result.ResolvedID); len(dups) > 0 {
-					reportUpdateItemError("cannot reopen %s: it is a duplicate of %v; remove the duplicates link (bd dep remove %s <target> --type duplicates) or use --force to override", id, dups, id)
-					closeIfUnmutated(result)
-					continue
+				//
+				// beads-h7uhe: these two stay scoped to the closed->OPEN target (unlike
+				// the closedEpicParents guard above, widened to any out-of-closed
+				// transition). Their harm is a superseded/duplicate issue reappearing in
+				// `bd ready` as actionable — a status=open-only effect (deferred /
+				// in_progress do not surface in `bd ready`), matching `bd reopen`'s scope.
+				if types.Status(newStatus) == types.StatusOpen {
+					if supersedes := supersededByTargets(ctx, issueStore, result.ResolvedID); len(supersedes) > 0 {
+						reportUpdateItemError("cannot reopen %s: it is superseded by %v; remove the supersedes link (bd dep remove %s <target> --type supersedes) or use --force to override", id, supersedes, id)
+						closeIfUnmutated(result)
+						continue
+					}
+					if dups := duplicatesTargets(ctx, issueStore, result.ResolvedID); len(dups) > 0 {
+						reportUpdateItemError("cannot reopen %s: it is a duplicate of %v; remove the duplicates link (bd dep remove %s <target> --type duplicates) or use --force to override", id, dups, id)
+						closeIfUnmutated(result)
+						continue
+					}
 				}
 			}
 

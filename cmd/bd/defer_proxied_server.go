@@ -21,7 +21,7 @@ import (
 // date keeps status=open, beads-jy4r9 leg A), optional defer_until, and an
 // optional reason appended to notes. Mirrors beads-1zuh (relate/unrelate) and
 // beads-qwez (assign/tag).
-func runDeferProxiedServer(ctx context.Context, args []string, deferUntil *time.Time, inPast bool, reason string) error {
+func runDeferProxiedServer(ctx context.Context, args []string, deferUntil *time.Time, inPast bool, reason string, force bool) error {
 	deferredCount := 0
 	alreadyDeferredCount := 0
 	var deferred []*types.Issue
@@ -87,7 +87,11 @@ func runDeferProxiedServer(ctx context.Context, args []string, deferUntil *time.
 			in.auditReason = reason
 		}
 
-		issue, ok := applyUpdateProxiedOne(ctx, id, in, false)
+		// beads-h7uhe: thread `bd defer --force` through so the closed-parent
+		// reopen guard in checkProxiedUpdateCloseGuards can be overridden on the
+		// proxied path too (it already covers proxied defer since defer routes
+		// through applyUpdateProxiedOne → the widened guard).
+		issue, ok := applyUpdateProxiedOne(ctx, id, in, force)
 		if !ok {
 			// applyUpdateProxiedOne already printed the per-item error to stderr.
 			continue

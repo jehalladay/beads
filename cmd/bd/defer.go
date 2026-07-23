@@ -37,6 +37,10 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		CheckReadonly("defer")
 
+		// beads-h7uhe: --force overrides the closed-parent reopen guard below,
+		// mirroring `bd reopen --force` / `bd update --status ... --force`.
+		deferForce, _ := cmd.Flags().GetBool("force")
+
 		evt := metrics.NewCommandEvent("defer")
 		defer func() {
 			if c := metrics.Global(); c != nil {
@@ -98,7 +102,7 @@ Examples:
 		// which routes via usesProxiedServer(). Parse --until/--reason first so
 		// the past-date warning + reason validation still fire identically.
 		if usesProxiedServer() {
-			return runDeferProxiedServer(rootCtx, args, deferUntil, inPast, reason)
+			return runDeferProxiedServer(rootCtx, args, deferUntil, inPast, reason, deferForce)
 		}
 
 		ctx := rootCtx
@@ -167,6 +171,24 @@ Examples:
 							ui.RenderInfoIcon(), formatFeedbackID(fullID, issue.Title))
 					}
 					continue
+				}
+				// Child-reopen close-guard bypass (beads-h7uhe): `bd defer` on a
+				// CLOSED child clears closed_at/close_reason and flips it to
+				// deferred (or open for a past --until) — a real reopen. But defer
+				// wrote directly via UpdateIssue with NO closedEpicParents check,
+				// so deferring a closed child of a closed auto-closing parent
+				// silently recreated the forbidden closed-parent-with-non-closed-
+				// child state (lint: "✗ closed epic with N open child"). `bd
+				// reopen` / `bd update --status open|deferred` all refuse this;
+				// defer was the last unguarded reopen side-door. Mirror the same
+				// guard (same message + --force override). Only a real out-of-
+				// closed transition triggers it; a defer of an open/deferred issue
+				// is unaffected.
+				if !deferForce && issue.Status == types.StatusClosed {
+					if closedEpics := closedEpicParents(ctx, store, fullID); len(closedEpics) > 0 {
+						fmt.Fprintf(os.Stderr, "cannot reopen %s: its parent %v is closed; reopen the parent first or use --force to override\n", fullID, closedEpics)
+						continue
+					}
 				}
 				// NOTE: the --reason append is NOT folded into `updates["notes"]`
 				// here. A client-side read (issue.Notes) → concat → whole-blob write
@@ -260,6 +282,9 @@ func init() {
 	// Time-based scheduling flag (GH#820)
 	deferCmd.Flags().String("until", "", "Defer until specific time (e.g., +1h, tomorrow, next monday)")
 	deferCmd.Flags().String("reason", "", "Record why this issue is being deferred (appended to notes)")
+	// beads-h7uhe: override the closed-parent reopen guard (deferring a closed
+	// child of a closed auto-closing parent), mirroring `bd reopen --force`.
+	deferCmd.Flags().BoolP("force", "f", false, "Override the closed-parent reopen guard")
 	deferCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(deferCmd)
 }
