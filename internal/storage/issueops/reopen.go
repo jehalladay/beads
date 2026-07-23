@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -32,10 +33,33 @@ func ReopenIssueInTx(ctx context.Context, tx DBTX, id, reason, actor string) (*R
 
 	now := time.Now().UTC()
 
+	// beads-7us7e: a custom done-category status (e.g. "resolved:done") is a
+	// terminal/complete outcome everywhere else in the x463g class (views exclude
+	// it; is_blocked/ready treat a done-category blocker as unblocking; molecule
+	// progress + the close guard + ship count it complete). reopen's purpose is
+	// terminal->open, so it MUST apply to a done-category status exactly as to
+	// literal-closed — refusing it IS the divergence (PM-blessed). Widen the CAS's
+	// terminal-status match from `status = 'closed'` to `status IN (closed, <done
+	// names>)`. FROZEN is excluded (parked != done). ManageClosedAt shows a
+	// done-category status carries closed_at IS NULL, so clearing the close
+	// columns here is invariant-safe (status=closed <=> closed_at!=NULL holds).
+	// Degraded-safe: an empty done-set reduces the IN clause to a single
+	// 'closed' bind = byte-identical to the pre-7us7e behavior.
+	terminalStatuses := []interface{}{string(types.StatusClosed)}
+	if detailed, cerr := ResolveCustomStatusesDetailedInTx(ctx, tx); cerr == nil {
+		for _, cs := range detailed {
+			if cs.Category == types.CategoryDone {
+				terminalStatuses = append(terminalStatuses, cs.Name)
+			}
+		}
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(terminalStatuses)), ",")
+
+	updateArgs := append([]interface{}{types.StatusOpen, now, id}, terminalStatuses...)
 	result, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE %s SET status = ?, closed_at = NULL, close_reason = '', closed_by_session = '', defer_until = NULL, updated_at = ?
-		WHERE id = ? AND status = ?
-	`, issueTable), types.StatusOpen, now, id, types.StatusClosed)
+		WHERE id = ? AND status IN (%s)
+	`, issueTable, placeholders), updateArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reopen issue: %w", err)
 	}
@@ -55,7 +79,18 @@ func ReopenIssueInTx(ctx context.Context, tx DBTX, id, reason, actor string) (*R
 		if qerr != nil {
 			return nil, fmt.Errorf("failed to check issue existence: %w", qerr)
 		}
-		if types.Status(status) != types.StatusClosed {
+		// Not in a terminal status (open / in_progress / blocked / deferred):
+		// an idempotent no-op, matching the pre-7us7e already-open handling. A
+		// terminal status here (in the IN set) with 0 rows would be an impossible
+		// concurrent-write race, preserved as an error (was `status != closed`).
+		isTerminal := false
+		for _, s := range terminalStatuses {
+			if status == s.(string) {
+				isTerminal = true
+				break
+			}
+		}
+		if !isTerminal {
 			return &ReopenResult{IsWisp: isWisp, AlreadyOpen: true}, nil
 		}
 		return nil, fmt.Errorf("failed to reopen issue: %s", id)

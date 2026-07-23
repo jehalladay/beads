@@ -165,7 +165,13 @@ func reopenProxiedOne(ctx context.Context, uw uow.UnitOfWork, id, reason string,
 	// beads-3ii21: use the canonical full id for downstream exact-ID ops (parent/
 	// supersede/dup guards, reopen), so a bare-hash/partial arg works.
 	id = current.ID
-	if current.Status != types.StatusClosed {
+	// beads-7us7e: a custom done-category status is a terminal/complete outcome
+	// (see the direct-path reopen.go guard) — reopen must apply to it exactly as
+	// to literal-closed. Widen the terminal test in lockstep with the direct path
+	// so a hub-connected crew gets the same behavior. FROZEN excluded (parked !=
+	// done); degraded-safe (empty done-set => literal-'closed' only).
+	doneStatuses := doneCategoryStatusSetProxied(ctx, uw)
+	if current.Status != types.StatusClosed && !doneStatuses[string(current.Status)] {
 		// beads-efyts/hxc2: an already-open reopen is an idempotent no-op SUCCESS,
 		// distinct from a non-closed-non-open (in_progress/deferred/blocked) status
 		// where reopen deliberately does not apply. The already-open case reflects

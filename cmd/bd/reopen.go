@@ -101,13 +101,24 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 			issueStore := result.Store
 			issue := result.Issue
 
-			// reopen only applies to closed issues (see command help). Guard
-			// every non-closed status, not just already-open: reopening an
+			// reopen only applies to TERMINAL issues (see command help). Guard
+			// every non-terminal status, not just already-open: reopening an
 			// in_progress/blocked/deferred bead would silently revert it to
 			// open and emit a misleading "Reopened" event for work that was
-			// never closed. Treat all non-closed states as a no-op with a
+			// never closed. Treat all non-terminal states as a no-op with a
 			// clear message (matching the long-standing already-open behavior).
-			if issue.Status != types.StatusClosed {
+			//
+			// beads-7us7e: a custom done-category status (e.g. "resolved:done")
+			// is a terminal/complete outcome everywhere else in the x463g class
+			// (views exclude it; is_blocked/ready treat it as unblocking; the
+			// close guard + molecule progress + ship count it complete). reopen's
+			// purpose is terminal->open, so it MUST apply to a done-category
+			// status exactly as to literal-closed — refusing it here (short-
+			// circuiting before the store) IS the divergence. FROZEN is excluded
+			// (parked != done). Degraded-safe: an empty done-set reduces this to
+			// the literal-'closed' test, byte-identical to the pre-7us7e guard.
+			doneStatuses := doneCategoryStatusNames(ctx, issueStore)
+			if issue.Status != types.StatusClosed && !doneStatuses[string(issue.Status)] {
 				if issue.Status == types.StatusOpen {
 					// beads-hxc2: an already-open reopen is an idempotent no-op
 					// SUCCESS — the issue is already in reopen's target state, so
