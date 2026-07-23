@@ -53,12 +53,65 @@ func registerCommonIssueFlags(cmd *cobra.Command) {
 	cmd.Flags().String("external-ref", "", "External reference (e.g., 'gh-9', 'jira-ABC', Linear URL)")
 }
 
+// descriptionConsumesStdin reports whether the resolved description flags will
+// read from stdin ("-"): via --stdin, --body-file -, --description-file -, or
+// --description/--body/--message set to "-". The registerCommonIssueFlags
+// mutexes guarantee at most one description source is stdin at a time, so a
+// single OR across the aliases is exact.
+func descriptionConsumesStdin(cmd *cobra.Command) bool {
+	if stdinFlag, _ := cmd.Flags().GetBool("stdin"); stdinFlag {
+		return true
+	}
+	for _, name := range []string{"body-file", "description-file", "description", "body", "message"} {
+		if cmd.Flags().Changed(name) {
+			if v, _ := cmd.Flags().GetString(name); v == "-" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// designConsumesStdin reports whether --design-file resolves to stdin ("-").
+// (--design is an inline string, never a stdin source.)
+func designConsumesStdin(cmd *cobra.Command) bool {
+	if !cmd.Flags().Changed("design-file") {
+		return false
+	}
+	v, _ := cmd.Flags().GetString("design-file")
+	return v == "-"
+}
+
+// checkStdinConsumerConflict enforces that at most ONE flag reads from stdin
+// ("-"). beads-sz8ae: the registerCommonIssueFlags mutexes cover
+// stdin<->description-sources and design<->design-file, but NOT the
+// description-side stdin sources against --design-file. So `--stdin --design-file
+// -` (or --body-file -/--description-file - combined with --design-file -) drained
+// os.Stdin for the description (getDescriptionFlag), leaving getDesignFlag's
+// readBodyFile("-") to read the now-empty stream → design silently "", RC=0, no
+// diagnostic. This is a runtime check (not a blanket cobra mutex) so the legit
+// combos survive: --stdin + --design-file <realpath> (only description reads
+// stdin) and --design-file - + inline --description (only design reads stdin).
+func checkStdinConsumerConflict(cmd *cobra.Command) error {
+	if descriptionConsumesStdin(cmd) && designConsumesStdin(cmd) {
+		return HandleErrorRespectJSON("cannot read both description and design from stdin (only one flag may consume stdin '-')")
+	}
+	return nil
+}
+
 // getDescriptionFlag retrieves the description value, checking --body-file, --description-file,
 // --description, and --body (in that order of precedence).
 // Supports reading from stdin via --description=- or --body=- (useful when description
 // contains apostrophes or other characters that are hard to escape in shell).
 // Returns the value, whether any flag was explicitly changed, and any error.
 func getDescriptionFlag(cmd *cobra.Command) (string, bool, error) {
+	// beads-sz8ae: reject two stdin("-") consumers before any drain. This runs
+	// at the earliest stdin consumer (getDescriptionFlag precedes getDesignFlag
+	// in every create/update path), so one guard covers all call sites.
+	if err := checkStdinConsumerConflict(cmd); err != nil {
+		return "", false, err
+	}
+
 	if stdinFlag, _ := cmd.Flags().GetBool("stdin"); stdinFlag {
 		content, err := readBodyFile("-")
 		if err != nil {
