@@ -753,6 +753,12 @@ func guardBatchDepAdds(ctx context.Context, s storage.DoltStorage, ops []batchOp
 		return nil
 	}
 
+	// beads-u9lkx: done-category-aware both legs (parentStatusIsTerminal /
+	// childCountsAsOpen), matching the single + bulk --file dep-add guards and the
+	// rest of the closed-parent-with-open-child family. Degraded-safe: an empty
+	// done-set reduces to the prior literal-'closed' committed-status checks.
+	done := doneCategoryStatusNames(ctx, s)
+
 	// Order-independent sets of the batch's status transitions, so an edge
 	// added alongside a reopen-of-parent / close-of-child is judged against the
 	// batch's net effect, not just committed state.
@@ -779,13 +785,15 @@ func guardBatchDepAdds(ctx context.Context, s storage.DoltStorage, ops []batchOp
 			continue
 		}
 
-		// Parent closed at commit time: closed now (and not reopened here) or
-		// being closed in this batch.
-		parentClosed := (parentIssue.Status == types.StatusClosed && !willReopen[parent]) ||
+		// Parent terminal at commit time: closed/done-category now (and not
+		// reopened here) or being closed in this batch (beads-u9lkx: a done-category
+		// parent is terminal too).
+		parentClosed := (parentStatusIsTerminal(parentIssue.Status, done) && !willReopen[parent]) ||
 			willClose[parent]
 		// Child open at commit time: open now (and not closed here) or being
-		// reopened in this batch.
-		childOpen := (childIssue.Status != types.StatusClosed && !willClose[child]) ||
+		// reopened in this batch (beads-u9lkx: a done-category child counts as
+		// complete, not open).
+		childOpen := (childCountsAsOpen(childIssue.Status, done) && !willClose[child]) ||
 			willReopen[child]
 
 		if isAutoClosingParentType(parentIssue) && parentClosed && childOpen {

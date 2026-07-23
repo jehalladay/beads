@@ -313,9 +313,14 @@ func runDepAddProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	if !depForce && dt == types.DepParentChild && !strings.HasPrefix(toID, "external:") {
 		parent := proxiedResolveDepEndpoint(ctx, uw, toID)
 		child := proxiedResolveDepEndpoint(ctx, uw, fromID)
+		// beads-u9lkx: done-category-aware both legs (parentStatusIsTerminal /
+		// childCountsAsOpen), matching the direct path and the rest of the family;
+		// the proxied done-set comes from the UOW config use case. Degraded-safe:
+		// an empty done-set reduces to the literal-'closed' guard.
+		done := doneCategoryStatusSetProxied(ctx, uw)
 		if parent != nil && child != nil &&
-			isAutoClosingParentType(parent) && parent.Status == types.StatusClosed &&
-			child.Status != types.StatusClosed {
+			isAutoClosingParentType(parent) && parentStatusIsTerminal(parent.Status, done) &&
+			childCountsAsOpen(child.Status, done) {
 			FatalErrorRespectJSON("cannot add %s as a child of closed parent %s: it would leave the closed parent with an open child; reopen the parent, close the child first, or use --force to override", fromID, toID)
 		}
 	}
@@ -438,6 +443,10 @@ func runDepAddBulkProxied(cmd *cobra.Command, ctx context.Context, file, default
 	// single-path error text.
 	depForce, _ := cmd.Flags().GetBool("force")
 	if !depForce {
+		// beads-u9lkx: done-category-aware both legs, matching the proxied-single +
+		// direct paths. Resolve the done-set once for the batch. Degraded-safe:
+		// empty done-set reduces to the literal-'closed' guard.
+		done := doneCategoryStatusSetProxied(ctx, uw)
 		for _, dep := range deps {
 			if dep.Type != types.DepParentChild || strings.HasPrefix(dep.DependsOnID, "external:") {
 				continue
@@ -445,8 +454,8 @@ func runDepAddBulkProxied(cmd *cobra.Command, ctx context.Context, file, default
 			parent := proxiedResolveDepEndpoint(ctx, uw, dep.DependsOnID)
 			child := proxiedResolveDepEndpoint(ctx, uw, dep.IssueID)
 			if parent != nil && child != nil &&
-				isAutoClosingParentType(parent) && parent.Status == types.StatusClosed &&
-				child.Status != types.StatusClosed {
+				isAutoClosingParentType(parent) && parentStatusIsTerminal(parent.Status, done) &&
+				childCountsAsOpen(child.Status, done) {
 				FatalErrorRespectJSON("cannot add %s as a child of closed parent %s: it would leave the closed parent with an open child; reopen the parent, close the child first, or use --force to override", dep.IssueID, dep.DependsOnID)
 			}
 		}

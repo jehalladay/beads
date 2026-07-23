@@ -466,9 +466,19 @@ Examples:
 		if !depForce && dt == types.DepParentChild && !isExternalRef {
 			parent, perr := fromStore.GetIssue(ctx, toID)
 			child, cerr := fromStore.GetIssue(ctx, fromID)
+			// beads-u9lkx: a parent in a custom done-category status is terminal too,
+			// and a done-category child counts as complete — so the guard must key on
+			// parentStatusIsTerminal/childCountsAsOpen, not literal StatusClosed. The
+			// rest of the closed-parent-with-open-child family (close/reopen/lint) was
+			// made done-category-aware (ulsg4/97gmg/h7uhe) but the dep-add guard was
+			// left blind on BOTH legs: a done-category parent bypassed the guard (the
+			// one un-plugged path to reach the inconsistency lint now flags), and a
+			// done-category child was wrongly refused. Degraded-safe: an empty
+			// done-set reduces to byte-identical literal-'closed' behavior.
+			done := doneCategoryStatusNames(ctx, fromStore)
 			if perr == nil && cerr == nil && parent != nil && child != nil &&
-				isAutoClosingParentType(parent) && parent.Status == types.StatusClosed &&
-				child.Status != types.StatusClosed {
+				isAutoClosingParentType(parent) && parentStatusIsTerminal(parent.Status, done) &&
+				childCountsAsOpen(child.Status, done) {
 				return HandleErrorRespectJSON("cannot add %s as a child of closed parent %s: it would leave the closed parent with an open child; reopen the parent, close the child first, or use --force to override", fromID, toID)
 			}
 		}
@@ -825,9 +835,13 @@ func validateBulkDepEdges(ctx context.Context, edges []bulkDepEdge, force bool) 
 			!strings.HasPrefix(current.DependsOnID, "external:") && current.Store != nil {
 			parent, perr := current.Store.GetIssue(ctx, current.DependsOnID)
 			child, cerr := current.Store.GetIssue(ctx, current.IssueID)
+			// beads-u9lkx: done-category-aware both legs, matching the single path
+			// (parentStatusIsTerminal / childCountsAsOpen). Degraded-safe: empty
+			// done-set reduces to the literal-'closed' guard.
+			done := doneCategoryStatusNames(ctx, current.Store)
 			if perr == nil && cerr == nil && parent != nil && child != nil &&
-				isAutoClosingParentType(parent) && parent.Status == types.StatusClosed &&
-				child.Status != types.StatusClosed {
+				isAutoClosingParentType(parent) && parentStatusIsTerminal(parent.Status, done) &&
+				childCountsAsOpen(child.Status, done) {
 				errs = append(errs, fmt.Sprintf("line %d: cannot add %s as a child of closed parent %s: it would leave the closed parent with an open child; reopen the parent, close the child first, or use --force to override", edge.Line, current.IssueID, current.DependsOnID))
 				resolved = append(resolved, current)
 				continue
