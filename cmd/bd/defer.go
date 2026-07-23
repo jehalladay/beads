@@ -108,9 +108,28 @@ Examples:
 				}
 			}
 		}
+
+		// beads-4k0d8: dedup a repeated issue ID in one batch (in-batch-dup class,
+		// sibling of the landed hzg2y label fix + fwf0y close fix). `bd defer X X`
+		// double-reports (prints "* Deferred X" twice, emits X twice in the --json
+		// array) and — worse, WITH --reason — appends the reason to the notes blob
+		// TWICE (store.AppendNotes runs per-id-occurrence inside the loop; the fs01
+		// already-deferred guard only short-circuits the pure no-op case
+		// deferUntil==nil && reason=="", so a 2nd occurrence with a mutating flag
+		// falls through and re-writes). Dedup args first-seen-order BEFORE both the
+		// proxied split and the direct loop so both paths do exactly one write per
+		// distinct ID, matching delete.go:86 uniqueStrings(issueIDs) / label.go:284.
+		//
+		// beads-4k0d8/qvbjq composition: this dedup MUST run BEFORE qvbjq's
+		// count-mismatch guard below. Otherwise `bd defer X X -r a -r b` passes a
+		// 2-reasons-for-2-args check, then the dedup shrinks args to 1 and the loop
+		// silently drops reason "b" — the exact last-wins data loss qvbjq fixed.
+		args = uniqueStrings(args)
+
 		if len(reasons) > 1 && len(reasons) != len(args) {
 			// Same shape as resolveCloseReasons' count-mismatch guard: reject an
-			// ambiguous N-reasons-for-M-IDs batch rather than guessing.
+			// ambiguous N-reasons-for-M-IDs batch rather than guessing. Runs after
+			// the beads-4k0d8 dedup so the arg count is the DISTINCT-ID count.
 			return HandleErrorRespectJSON("got %d defer reasons for %d issue IDs; provide exactly one shared reason or one reason per issue", len(reasons), len(args))
 		}
 
