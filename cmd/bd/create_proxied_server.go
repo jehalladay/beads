@@ -513,9 +513,23 @@ func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput
 		commitMsg = fmt.Sprintf("bd: graph-apply %d nodes", len(plan.Nodes))
 	}
 
+	// beads-pma90: capture each created node's snapshot (with labels + deps)
+	// BEFORE Commit so the create hooks can fire after — the direct graph path
+	// (graph_apply.go executeGraphApply → tx.CreateIssues + tx.AddDependency)
+	// fires per-node on_create (+ synthetic per-label on_update) and per-edge
+	// on_update via the HookFiringStore decorator (createHookEvents +
+	// dependencyHookEvents), but the proxied UOW use-case layer (ApplyIssueGraph /
+	// ApplyWispGraph) fires nothing. GraphApplyResult carries only the ID map, so
+	// re-read each issue in-tx (mirrors beads-29tyj captureProxiedHookSnapshot).
+	graphSnapshots := captureProxiedGraphCreateSnapshots(ctx, uw, result.IDs, in.ephemeral)
+
 	if err := uw.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
 		FatalErrorRespectJSON("commit: %v", err)
 	}
+
+	// beads-pma90: fire the create hooks after the commit (parity with the direct
+	// decorator's fire-after-commit contract).
+	fireProxiedGraphCreateSnapshots(ctx, graphSnapshots)
 
 	if in.jsonOutput {
 		if err := outputJSON(GraphApplyResult{IDs: result.IDs}); err != nil {
@@ -533,6 +547,91 @@ func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput
 	sort.Strings(keys)
 	for _, k := range keys {
 		fmt.Printf("  %s -> %s\n", k, result.IDs[k])
+	}
+}
+
+// captureProxiedGraphCreateSnapshots re-reads each created graph node (with
+// labels + dependency records) in-tx before Commit, in deterministic node-ID
+// order, so beads-pma90 can fire the create hooks after the commit. Mirrors the
+// direct graph path, where HookFiringStore.hookTrackingTransaction accumulates
+// createHookEvents (per node) + dependencyHookEvents (per persisted edge).
+func captureProxiedGraphCreateSnapshots(ctx context.Context, uw uow.UnitOfWork, ids map[string]string, ephemeral bool) []*types.Issue {
+	if uw == nil || len(ids) == 0 {
+		return nil
+	}
+	// Fire in a stable order (by resolved issue ID) so hook side effects are
+	// deterministic across runs.
+	resolved := make([]string, 0, len(ids))
+	for _, id := range ids {
+		resolved = append(resolved, id)
+	}
+	sort.Strings(resolved)
+
+	snapshots := make([]*types.Issue, 0, len(resolved))
+	for _, id := range resolved {
+		// beads-pma90: an ephemeral (wisp) graph writes to the wisps table, and
+		// captureProxiedHookSnapshot re-reads via IssueUseCase.GetIssue (which
+		// reads the ISSUES table only) — so a wisp node would capture nil and
+		// never fire its on_create hook. Read wisps from the wisps table so the
+		// ephemeral graph branch fires on_create at parity with the direct path
+		// (createHookEvents does not skip Ephemeral).
+		snap := captureProxiedGraphNodeSnapshot(ctx, uw, id, ephemeral)
+		if snap == nil {
+			continue
+		}
+		// captureProxiedHookSnapshot (via IssueUseCase.GetIssue) does not hydrate
+		// labels, but the synthetic per-label on_update stream in
+		// fireProxiedCreateHooks needs them — read them in-tx explicitly so a
+		// labeled graph node fires its on_update stream (createHookEvents parity).
+		if len(snap.Labels) == 0 {
+			if labels, lerr := uw.LabelUseCase().GetLabels(ctx, id); lerr == nil {
+				snap.Labels = labels
+			}
+		}
+		snapshots = append(snapshots, snap)
+	}
+	return snapshots
+}
+
+// captureProxiedGraphNodeSnapshot re-reads a single created graph node in-tx,
+// selecting the wisps table for an ephemeral graph (parity with the direct
+// path, which persists wisp nodes to the wisps table). Mirrors
+// captureProxiedHookSnapshot for the non-wisp case but is wisp-aware so a
+// `bd create --graph --ephemeral` node fires its on_create hook (beads-pma90).
+func captureProxiedGraphNodeSnapshot(ctx context.Context, uw uow.UnitOfWork, id string, ephemeral bool) *types.Issue {
+	if uw == nil {
+		return nil
+	}
+	if !ephemeral {
+		return captureProxiedHookSnapshot(ctx, uw, id, true)
+	}
+	snapshot, err := uw.IssueUseCase().GetWisp(ctx, id)
+	if err != nil || snapshot == nil {
+		return nil
+	}
+	if recs, derr := uw.DependencyUseCase().GetIssueDependencyRecords(ctx, []string{id}); derr == nil {
+		snapshot.Dependencies = recs[id]
+	}
+	return snapshot
+}
+
+// fireProxiedGraphCreateSnapshots fires, per created graph node, the on_create
+// hook (+ synthetic per-label on_update stream) and then a per-dependency-edge
+// on_update, matching the direct decorator's createHookEvents +
+// dependencyHookEvents (beads-pma90). Best-effort: hook failures warn to stderr
+// and never fail the command (the direct decorator's fire-and-forget contract).
+func fireProxiedGraphCreateSnapshots(ctx context.Context, snapshots []*types.Issue) {
+	for _, snap := range snapshots {
+		if snap == nil {
+			continue
+		}
+		fireProxiedCreateHooks(ctx, snap, snap.Labels)
+		// Per-dependency-edge on_update, mirroring dependencyHookEvents: the direct
+		// graph path fires one on_update per persisted dependency edge the node
+		// carries (hook_decorator.go:335).
+		for range snap.Dependencies {
+			fireProxiedUpdateSnapshots(ctx, snap)
+		}
 	}
 }
 
