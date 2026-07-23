@@ -791,6 +791,16 @@ func init() {
 	listCmd.Flags().StringP("status", "s", "", "Filter by stored status (open, in_progress, blocked, deferred, closed). Comma-separated for multiple: --status open,in_progress. Note: repeating -s/--status silently overwrites the previous value — always use the comma-separated form for multi-status filters.")
 	listCmd.Flags().String("state", "", "Alias for --status")
 	_ = listCmd.Flags().MarkHidden("state")
+	// beads-6iu7i: --state is a documented ALIAS for --status, but the input
+	// resolver (list_input.go:102-104) takes --status first and silently discards
+	// a DIFFERENT --state value with rc0 and no diagnostic — the dz1t8
+	// input-source silent-drop class (same as --parent/--filter-parent es0kr,
+	// bd close reason aliases beads-5vkqz, bd dep add aliases beads-bscdj). Reject
+	// the two-alias conflict at cobra parse time; pre-resolve and path-agnostic.
+	// Both are non-repeatable String flags, so this only fires on the genuine
+	// conflicting-value case; the comma-separated single-flag multi-status form
+	// (--status open,in_progress) is unaffected since it sets only one flag.
+	listCmd.MarkFlagsMutuallyExclusive("status", "state")
 	registerPriorityFlag(listCmd, "")
 	listCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
 	listCmd.Flags().StringP("type", "t", "", "Filter by type (bug, feature, task, epic, chore, decision, merge-request, molecule, gate, convoy). Aliases: mr→merge-request, feat→feature, mol→molecule, dec/adr→decision")
