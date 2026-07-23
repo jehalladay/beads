@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/storage/uow"
@@ -21,7 +22,7 @@ import (
 // date keeps status=open, beads-jy4r9 leg A), optional defer_until, and an
 // optional reason appended to notes. Mirrors beads-1zuh (relate/unrelate) and
 // beads-qwez (assign/tag).
-func runDeferProxiedServer(ctx context.Context, args []string, deferUntil *time.Time, inPast bool, reason string, force bool) error {
+func runDeferProxiedServer(ctx context.Context, args []string, deferUntil *time.Time, inPast bool, reasons []string, force bool) error {
 	deferredCount := 0
 	alreadyDeferredCount := 0
 	var deferred []*types.Issue
@@ -40,7 +41,10 @@ func runDeferProxiedServer(ctx context.Context, args []string, deferUntil *time.
 		}
 	}
 
-	for _, id := range args {
+	for i, id := range args {
+		// beads-qvbjq: the reason for THIS id — "" when none given, reasons[0]
+		// broadcast, else reasons[i] positional (mirrors the direct path).
+		reason := strings.TrimSpace(reasonForDeferIndex(reasons, i))
 		// Genuine re-defer (new --until or --reason) is a real change and must
 		// still succeed; only a bare re-defer of an already-deferred issue is the
 		// idempotent no-op we short-circuit.

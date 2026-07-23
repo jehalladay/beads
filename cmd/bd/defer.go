@@ -30,7 +30,9 @@ Examples:
   bd defer bd-abc                  # Defer a single issue (status-based)
   bd defer bd-abc --until=tomorrow # Defer until specific time
   bd defer bd-abc --reason="waiting on API access"
-  bd defer bd-abc bd-def           # Defer multiple issues`,
+  bd defer bd-abc bd-def           # Defer multiple issues
+  bd defer bd-abc bd-def --reason="q3"        # One reason shared by all IDs
+  bd defer bd-abc bd-def -r r1 -r r2          # Reasons map positionally (bd-abc→r1, bd-def→r2)`,
 	Args:          cobra.MinimumNArgs(1),
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -88,11 +90,28 @@ Examples:
 			}
 			deferUntil = &t
 		}
-		reason, _ := cmd.Flags().GetString("reason")
-		reason = strings.TrimSpace(reason)
-		if cmd.Flags().Changed("reason") && reason == "" {
-			// beads-v02z: same --json error contract as the --until path above.
-			return HandleErrorRespectJSON("reason cannot be empty")
+		// beads-qvbjq: --reason is repeatable and maps POSITIONALLY, matching
+		// `bd close`/`bd done` (closeReasonFlagValue). Previously defer read a
+		// single GetString("reason") = cobra last-wins, so `bd defer A B --reason
+		// r1 --reason r2` silently dropped r1 and applied r2 to BOTH — batch data
+		// loss with zero signal. Now: one --reason broadcasts to all IDs; N
+		// --reason map one-per-ID; a count that is neither 1 nor len(IDs) errors
+		// (reasonForCloseIndex + the same count-mismatch rule as resolveCloseReasons).
+		reasons := collectDeferReasons(cmd)
+		if cmd.Flags().Changed("reason") {
+			// beads-v02z: an explicitly-provided empty/whitespace --reason is an
+			// error (not a silent drop), preserving the --json error contract on
+			// every positional slot, not just a lone reason.
+			for _, r := range reasons {
+				if strings.TrimSpace(r) == "" {
+					return HandleErrorRespectJSON("reason cannot be empty")
+				}
+			}
+		}
+		if len(reasons) > 1 && len(reasons) != len(args) {
+			// Same shape as resolveCloseReasons' count-mismatch guard: reject an
+			// ambiguous N-reasons-for-M-IDs batch rather than guessing.
+			return HandleErrorRespectJSON("got %d defer reasons for %d issue IDs; provide exactly one shared reason or one reason per issue", len(reasons), len(args))
 		}
 
 		// beads-aocj: route to the proxied handler in proxied-server mode.
@@ -102,7 +121,7 @@ Examples:
 		// which routes via usesProxiedServer(). Parse --until/--reason first so
 		// the past-date warning + reason validation still fire identically.
 		if usesProxiedServer() {
-			return runDeferProxiedServer(rootCtx, args, deferUntil, inPast, reason, deferForce)
+			return runDeferProxiedServer(rootCtx, args, deferUntil, inPast, reasons, deferForce)
 		}
 
 		ctx := rootCtx
@@ -123,7 +142,12 @@ Examples:
 			return HandleErrorWithHint("database not initialized", diagHint())
 		}
 
-		for _, id := range args {
+		for i, id := range args {
+			// beads-qvbjq: the reason for THIS id — reasons[0] when a single
+			// --reason broadcasts, else reasons[i] positionally. Trimmed to match
+			// defer's prior stored-reason behavior (empties already rejected above
+			// when --reason was explicitly provided).
+			reason := strings.TrimSpace(reasonForDeferIndex(reasons, i))
 			fullID, err := utils.ResolvePartialID(ctx, store, id)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
@@ -281,10 +305,47 @@ Examples:
 func init() {
 	// Time-based scheduling flag (GH#820)
 	deferCmd.Flags().String("until", "", "Defer until specific time (e.g., +1h, tomorrow, next monday)")
-	deferCmd.Flags().String("reason", "", "Record why this issue is being deferred (appended to notes)")
+	// beads-qvbjq: repeatable + positional --reason, sharing close's
+	// closeReasonFlagValue (append-on-Set) so `bd defer A B -r r1 -r r2` maps
+	// r1→A, r2→B instead of cobra last-wins dropping r1 silently. A single
+	// --reason still broadcasts to every ID (see reasonForDeferIndex).
+	deferCmd.Flags().VarP(&closeReasonFlagValue{}, "reason", "r", "Record why this issue is being deferred (appended to notes); repeat once per ID to map positionally")
 	// beads-h7uhe: override the closed-parent reopen guard (deferring a closed
 	// child of a closed auto-closing parent), mirroring `bd reopen --force`.
 	deferCmd.Flags().BoolP("force", "f", false, "Override the closed-parent reopen guard")
 	deferCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(deferCmd)
+}
+
+// collectDeferReasons pulls the repeated --reason values off defer's
+// closeReasonFlagValue (beads-qvbjq). Unlike close's collectCloseReasonFlags it
+// keeps EMPTY entries so the RunE can distinguish "no --reason given" (len 0 →
+// no notes append, defer's overwhelmingly common case) from "--reason=''
+// explicitly given" (rejected with the empty-reason JSON error, beads-v02z).
+// Empty/whitespace-only stored reasons are dropped later by the per-index trim,
+// matching defer's prior `reason == ""` skip.
+func collectDeferReasons(cmd *cobra.Command) []string {
+	flag := cmd.Flags().Lookup("reason")
+	if flag == nil {
+		return nil
+	}
+	if v, ok := flag.Value.(interface{ Values() []string }); ok {
+		return v.Values()
+	}
+	return nil
+}
+
+// reasonForDeferIndex returns the reason for the i-th deferred ID: "" when no
+// --reason was given, reasons[0] when a single --reason broadcasts to all IDs,
+// else reasons[i] positionally (beads-qvbjq, mirroring reasonForCloseIndex but
+// tolerating the empty case defer allows).
+func reasonForDeferIndex(reasons []string, i int) string {
+	switch {
+	case len(reasons) == 0:
+		return ""
+	case len(reasons) == 1:
+		return reasons[0]
+	default:
+		return reasons[i]
+	}
 }
