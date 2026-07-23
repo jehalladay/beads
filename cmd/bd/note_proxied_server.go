@@ -28,17 +28,19 @@ func runNoteProxiedServer(ctx context.Context, id, noteText string) {
 	defer uw.Close(ctx)
 
 	issueUC := uw.IssueUseCase()
-	current, err := issueUC.GetIssue(ctx, id)
-	if err != nil || current == nil {
-		wispCurrent, wispErr := issueUC.GetWisp(ctx, id)
-		if wispErr == nil && wispCurrent != nil {
-			current = wispCurrent
-		} else if err != nil {
-			FatalErrorRespectJSON("resolving %s: %v", id, err)
-		} else {
-			FatalErrorRespectJSON("issue %s not found", id)
-		}
+	// beads-mrz0u: resolve bare-hash/partial/truncated IDs via the shared helper
+	// (beads-3ii21) so a hub-connected crew's `bd note <partial>` works like the
+	// direct path (note.go → resolveAndGetIssueForMutation → ResolvePartialID),
+	// then rebind id to the canonical ID for the downstream ApplyUpdate/Commit/
+	// SetLastTouchedID exact-ID ops.
+	current, _, err := proxiedGetIssueOrWisp(ctx, uw, id)
+	if err != nil {
+		FatalErrorRespectJSON("resolving %s: %v", id, err)
 	}
+	if current == nil {
+		FatalErrorRespectJSON("issue %s not found", id)
+	}
+	id = current.ID
 
 	if verr := validateIssueUpdatable(id, current); verr != nil {
 		FatalErrorRespectJSON("%s", verr)

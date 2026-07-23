@@ -26,18 +26,19 @@ func runCommentsListProxiedServer(ctx context.Context, issueID string, localTime
 	}
 	defer uw.Close(ctx)
 
-	// Resolve issue vs wisp so comments come from the right table, and so a
-	// nonexistent ID errors like the direct path rather than silently returning
-	// an empty list.
-	issueUC := uw.IssueUseCase()
-	isWisp := false
-	if _, gerr := issueUC.GetIssue(ctx, issueID); gerr != nil {
-		if _, werr := issueUC.GetWisp(ctx, issueID); werr == nil {
-			isWisp = true
-		} else {
-			return HandleErrorRespectJSON("resolving %s: %v", issueID, gerr)
-		}
+	// beads-mrz0u: resolve bare-hash/partial IDs via the shared helper (beads-3ii21)
+	// so a hub-connected crew's `bd comments <partial>` works like the direct path,
+	// then rebind issueID to the canonical ID. Resolves issue vs wisp so comments
+	// come from the right table, and so a nonexistent ID errors like the direct
+	// path rather than silently returning an empty list.
+	resolved, isWisp, gerr := proxiedGetIssueOrWisp(ctx, uw, issueID)
+	if gerr != nil {
+		return HandleErrorRespectJSON("resolving %s: %v", issueID, gerr)
 	}
+	if resolved == nil {
+		return HandleErrorRespectJSON("issue %s not found", issueID)
+	}
+	issueID = resolved.ID
 
 	var comments []*types.Comment
 	if isWisp {

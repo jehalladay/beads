@@ -29,13 +29,18 @@ func runHistoryProxiedServer(ctx context.Context, issueID string) error {
 
 	issueUC := uw.IssueUseCase()
 
-	// Verify the issue exists first (issue or wisp), so a nonexistent ID errors
-	// rc!=0 like show/comments/children — matching the direct path.
-	if _, gerr := issueUC.GetIssue(ctx, issueID); gerr != nil {
-		if _, werr := issueUC.GetWisp(ctx, issueID); werr != nil {
-			return HandleErrorRespectJSON("resolving %s: %v", issueID, gerr)
-		}
+	// beads-mrz0u: resolve bare-hash/partial IDs via the shared helper (beads-3ii21)
+	// so a hub-connected crew's `bd history <partial>` works like the direct path,
+	// then rebind issueID to the canonical ID for History(). Verifies existence
+	// (issue or wisp) so a nonexistent ID errors rc!=0 like show/comments/children.
+	issue, _, gerr := proxiedGetIssueOrWisp(ctx, uw, issueID)
+	if gerr != nil {
+		return HandleErrorRespectJSON("resolving %s: %v", issueID, gerr)
 	}
+	if issue == nil {
+		return HandleErrorRespectJSON("issue %s not found", issueID)
+	}
+	issueID = issue.ID
 
 	history, err := issueUC.History(ctx, issueID)
 	if err != nil {

@@ -64,6 +64,21 @@ func (u *fakeRelateHealIssueUC) GetIssue(_ context.Context, id string) (*types.I
 	return &types.Issue{ID: id, IssueType: types.TypeTask, Status: types.StatusOpen}, nil
 }
 
+// SearchIssues honors the exact-ID fast path that proxiedResolvePartialID
+// (beads-mrz0u) now runs BEFORE the relate logic — utils.ResolvePartialIDVia
+// first queries SearchIssues with an exact IDs filter. The handler resolves
+// both args via this path, so the fake must model a store that resolves a
+// full ID to itself; otherwise resolution falls through to GetConfig and this
+// stub-free fake panics. Returning the requested ID leaves the downstream
+// heal/no-op logic under test operating on the same canonical IDs as before.
+func (u *fakeRelateHealIssueUC) SearchIssues(_ context.Context, _ string, filter types.IssueFilter) (domain.SearchPage, error) {
+	var items []*types.Issue
+	for _, id := range filter.IDs {
+		items = append(items, &types.Issue{ID: id, IssueType: types.TypeTask, Status: types.StatusOpen})
+	}
+	return domain.SearchPage{Items: items}, nil
+}
+
 // fakeRelateHealDepUC returns an ASYMMETRIC records map (only id1->id2 present)
 // and records the deps passed to AddDependencies so the test can assert the heal.
 type fakeRelateHealDepUC struct {

@@ -131,7 +131,9 @@ func undeferProxiedOne(ctx context.Context, id string, report func(format string
 	// wisps and defer's own proxied handler (proxiedResolveIssueOrWisp) defers
 	// them — so a wisp deferred in proxied mode was stuck undeferrable. The write
 	// leg (issueUC.ApplyUpdate) already routes on isWispID, so only the guard
-	// needs the wisp fallback.
+	// needs the wisp fallback. proxiedGetIssueOrWisp resolves partial/bare-hash
+	// IDs internally (proxiedResolvePartialID), so it also covers beads-mrz0u's
+	// undefer-by-bare-hash case — a strict superset of the partial-ID-only leg.
 	issue, _, err := proxiedGetIssueOrWisp(ctx, uw, id)
 	if err != nil || issue == nil {
 		report("Error resolving %s: %v", id, err)

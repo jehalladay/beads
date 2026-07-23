@@ -22,14 +22,19 @@ func runCommentsAddProxiedServer(ctx context.Context, issueID, author, commentTe
 	}
 	defer uw.Close(ctx)
 
-	// Verify the issue exists (issue or wisp) so a nonexistent ID errors
-	// distinctly, matching the direct path's resolveAndGetIssueForMutation.
-	issueUC := uw.IssueUseCase()
-	if _, gerr := issueUC.GetIssue(ctx, issueID); gerr != nil {
-		if _, werr := issueUC.GetWisp(ctx, issueID); werr != nil {
-			return HandleErrorRespectJSON("resolving %s: %v", issueID, gerr)
-		}
+	// beads-mrz0u: resolve bare-hash/partial IDs via the shared helper (beads-3ii21)
+	// so a hub-connected crew's `bd comments add <partial>` works like the direct
+	// path (comments.go routing → resolveAndGetIssueForMutation), then rebind
+	// issueID to the canonical ID for AddComment/Commit. Verifies existence (issue
+	// or wisp) so a nonexistent ID errors distinctly.
+	resolved, _, gerr := proxiedGetIssueOrWisp(ctx, uw, issueID)
+	if gerr != nil {
+		return HandleErrorRespectJSON("resolving %s: %v", issueID, gerr)
 	}
+	if resolved == nil {
+		return HandleErrorRespectJSON("issue %s not found", issueID)
+	}
+	issueID = resolved.ID
 
 	comment, err := uw.CommentUseCase().AddComment(ctx, issueID, author, commentText)
 	if err != nil {

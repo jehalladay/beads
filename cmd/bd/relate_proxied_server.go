@@ -16,14 +16,27 @@ import (
 // DependencyUseCase, so `bd dep relate` works for hub-connected (proxied) crew
 // instead of failing "storage is nil".
 func runRelateProxiedServer(ctx context.Context, args []string) error {
-	id1, id2 := args[0], args[1]
+	uw := openDepProxiedUOW(ctx)
+	defer uw.Close(ctx)
+
+	// beads-mrz0u: resolve bare-hash/partial IDs via the shared helper (beads-3ii21)
+	// BEFORE the self-relate check, mirroring the direct path (relate.go resolves
+	// both args via utils.ResolvePartialID, THEN rejects id1==id2) — two distinct
+	// partials can resolve to the same canonical ID, which must be a self-relate
+	// rejection. Downstream AddDependencies / the no-op guards then use the
+	// canonical IDs.
+	id1, err := proxiedResolvePartialID(ctx, uw, args[0])
+	if err != nil {
+		return HandleErrorRespectJSON("failed to resolve %s: %v", args[0], err)
+	}
+	id2, err := proxiedResolvePartialID(ctx, uw, args[1])
+	if err != nil {
+		return HandleErrorRespectJSON("failed to resolve %s: %v", args[1], err)
+	}
 
 	if id1 == id2 {
 		return HandleErrorRespectJSON("cannot relate an issue to itself")
 	}
-
-	uw := openDepProxiedUOW(ctx)
-	defer uw.Close(ctx)
 
 	if err := proxiedIssuesExist(ctx, uw, id1, id2); err != nil {
 		return err
@@ -91,10 +104,21 @@ func runRelateProxiedServer(ctx context.Context, args []string) error {
 // no-op unrelate of a never-related pair fails loud instead of a false
 // "✓ Unlinked".
 func runUnrelateProxiedServer(ctx context.Context, args []string) error {
-	id1, id2 := args[0], args[1]
-
 	uw := openDepProxiedUOW(ctx)
 	defer uw.Close(ctx)
+
+	// beads-mrz0u: resolve bare-hash/partial IDs via the shared helper (beads-3ii21),
+	// mirroring the direct path (runUnrelate resolves both args via
+	// utils.ResolvePartialID). Downstream existence/no-op guards + RemoveDependency
+	// then use the canonical IDs.
+	id1, err := proxiedResolvePartialID(ctx, uw, args[0])
+	if err != nil {
+		return HandleErrorRespectJSON("failed to resolve %s: %v", args[0], err)
+	}
+	id2, err := proxiedResolvePartialID(ctx, uw, args[1])
+	if err != nil {
+		return HandleErrorRespectJSON("failed to resolve %s: %v", args[1], err)
+	}
 
 	if err := proxiedIssuesExist(ctx, uw, id1, id2); err != nil {
 		return err
