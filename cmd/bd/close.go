@@ -98,6 +98,46 @@ the flags appear in the command line.`,
 			resolvedIDs = append(resolvedIDs, r.ResolvedID)
 		}
 
+		// beads-fwf0y: dedup a repeated id in one batch (`bd close X X`), keeping
+		// the first occurrence. The close loop below hydrates every result's Issue
+		// snapshot in resolveCloseTargets BEFORE the first CloseIssue write fires,
+		// so the dr3 already-closed guard (issue.Status == StatusClosed) checks a
+		// STALE snapshot for the 2nd occurrence of X (still status=open) → it prints
+		// a phantom 2nd "✓ Closed" glyph (with a reason never stored) and
+		// double-counts closedIssues[] under --json, even though only one write
+		// lands (the 2nd CloseIssue is a no-op). The DB stays correct; the
+		// reporting/JSON partition is corrupted. dr3 guards CROSS-invocation
+		// already-closed; this is the IN-BATCH dup dr3 is blind to. Dedup the three
+		// index-parallel slices together — resolvedIDs, results, and per-issue
+		// reasons (len==len(args) form) — so reasonForCloseIndex stays aligned; a
+		// single shared reason (len==1) is index-independent and untouched.
+		if len(resolvedIDs) > 1 {
+			seen := make(map[string]bool, len(resolvedIDs))
+			perIssueReasons := len(reasons) == len(resolvedIDs)
+			dedupIDs := resolvedIDs[:0:0]
+			dedupResults := make([]*RoutedResult, 0, len(results))
+			var dedupReasons []string
+			if perIssueReasons {
+				dedupReasons = make([]string, 0, len(reasons))
+			}
+			for i, rid := range resolvedIDs {
+				if seen[rid] {
+					continue
+				}
+				seen[rid] = true
+				dedupIDs = append(dedupIDs, rid)
+				dedupResults = append(dedupResults, results[i])
+				if perIssueReasons {
+					dedupReasons = append(dedupReasons, reasons[i])
+				}
+			}
+			resolvedIDs = dedupIDs
+			results = dedupResults
+			if perIssueReasons {
+				reasons = dedupReasons
+			}
+		}
+
 		// Track which stores were mutated so routed closes can commit before
 		// cleanup closes the routed handle. Deduped by pointer.
 		mutatedStores := map[storage.DoltStorage][]string{}
