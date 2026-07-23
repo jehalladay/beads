@@ -775,6 +775,26 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 				regularUpdates["status"] = string(types.StatusOpen)
 			}
 
+			// beads-l2lb7: the INVERSE leg of GH#3233. `bd update --status
+			// open|in_progress` explicitly transitions an issue to a ready-visible
+			// status, but the ready predicate (ready.go: `defer_until IS NULL OR
+			// defer_until <= UTC_TIMESTAMP()`) still hides the row while a stale
+			// FUTURE defer_until lingers — leaving a self-contradictory
+			// status=open-but-invisible-to-`bd ready` state. `bd defer` sets both
+			// status=deferred AND defer_until=<future>; flipping only the status
+			// column back doesn't undo the schedule. Clear the stale future
+			// defer_until when the caller sets a ready-visible status and did NOT
+			// themselves touch defer_until (a concurrent --defer wins — its value
+			// is already in regularUpdates). Guarded on a genuine future
+			// defer_until so a plain status change with no defer is untouched.
+			if newStatus, ok := regularUpdates["status"].(string); ok {
+				if _, deferTouched := updates["defer_until"]; !deferTouched &&
+					(types.Status(newStatus) == types.StatusOpen || types.Status(newStatus) == types.StatusInProgress) &&
+					issue.DeferUntil != nil && issue.DeferUntil.After(time.Now()) {
+					regularUpdates["defer_until"] = nil
+				}
+			}
+
 			// beads-6qo8t: `bd update --status closed` reaches the same terminal
 			// state as `bd close`, whose help this path claims to mirror, but left
 			// close_reason NULL while `bd close` defaults it to "Closed"
