@@ -150,6 +150,23 @@ func runMergeSlotCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// beads-nqp3z: MergeSlotCreate is idempotent — MergeSlotCreateImpl returns
+	// the existing slot without writing when one already exists (proven by
+	// TestMergeSlotCreateImpl_Idempotent: 0 CreateIssue calls on that path). But
+	// this verb unconditionally reported "✓ Created merge slot" (text) / JSON
+	// with no created-vs-existing signal, so a 2nd `bd merge-slot create` falsely
+	// claimed creation on a no-op and a --json caller could not distinguish a
+	// fresh create from a pre-existing slot. Pre-read the slot so the report is
+	// honest: "exists"/"already present" on the no-op, "created"/"Created" on a
+	// genuine write. Same false-success-on-no-op fix as beads-nnsso (bd link
+	// "added"→"unchanged") and the honest-no-op dep add (bwla/epuz). Contained to
+	// the CLI layer — the impl signature is unchanged.
+	slotID := storage.MergeSlotID(rootCtx, store)
+	preExisted := false
+	if existing, lookupErr := store.GetIssue(rootCtx, slotID); lookupErr == nil && existing != nil {
+		preExisted = true
+	}
+
 	issue, err := store.MergeSlotCreate(rootCtx, actor)
 	if err != nil {
 		return HandleErrorRespectJSON("%v", err)
@@ -159,13 +176,18 @@ func runMergeSlotCreate(cmd *cobra.Command, args []string) error {
 
 	if jsonOutput {
 		result := map[string]interface{}{
-			"id":     issue.ID,
-			"status": string(issue.Status),
+			"id":      issue.ID,
+			"status":  string(issue.Status),
+			"created": !preExisted,
 		}
 		return outputJSON(result)
 	}
 
-	fmt.Printf("%s Created merge slot: %s\n", ui.RenderPass("✓"), issue.ID)
+	if preExisted {
+		fmt.Printf("%s Merge slot already present, no change: %s\n", ui.RenderPass("✓"), issue.ID)
+	} else {
+		fmt.Printf("%s Created merge slot: %s\n", ui.RenderPass("✓"), issue.ID)
+	}
 	return nil
 }
 
