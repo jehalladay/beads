@@ -366,7 +366,13 @@ func analyzeEpicForSwarm(ctx context.Context, s SwarmStorage, epic *types.Issue)
 					// confirmed blocking → treated as non-blocking, matching bd ready's
 					// EXISTS-false behavior for a dangling ref.
 					if ext, gerr := s.GetIssue(ctx, dep.DependsOnID); gerr == nil && ext != nil {
-						if issueops.IsActiveBlockerByState(dep.Type, ext.Status, ext.CloseReason) {
+						// beads-x463g: SwarmStorage exposes no config accessor, so
+						// custom done-category status names can't be resolved here
+						// without widening the interface (which cascades to every
+						// swarm test fake). Pass nil doneStatuses — byte-identical
+						// pre-x463g behavior — and defer swarm done-awareness to a
+						// follow-up (same split precedent as r7sh3/k0ln4 vs a3hm).
+						if issueops.IsActiveBlockerByState(dep.Type, ext.Status, ext.CloseReason, nil) {
 							node.ExternalBlocked = true
 						}
 					}
@@ -893,7 +899,10 @@ func getSwarmStatus(ctx context.Context, s SwarmStorage, epic *types.Issue) (*Sw
 			// blocking → treated as non-blocking, matching bd ready's EXISTS-false
 			// behavior for a dangling ref.
 			if ext, gerr := s.GetIssue(ctx, dep.DependsOnID); gerr == nil && ext != nil {
-				if issueops.IsActiveBlockerByState(dep.Type, ext.Status, ext.CloseReason) {
+				// beads-x463g: nil doneStatuses (identity behavior) — SwarmStorage
+				// has no config accessor; swarm done-awareness deferred to a
+				// follow-up bead (see analyzeEpicForSwarm site above).
+				if issueops.IsActiveBlockerByState(dep.Type, ext.Status, ext.CloseReason, nil) {
 					externalBlockers[issue.ID] = append(externalBlockers[issue.ID], dep.DependsOnID)
 				}
 			}

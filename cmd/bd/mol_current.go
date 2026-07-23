@@ -187,6 +187,22 @@ func getMoleculeProgress(ctx context.Context, s storage.DoltStorage, moleculeID 
 		Total:         len(subgraph.Issues) - 1, // Exclude root
 	}
 
+	// beads-x463g: a custom done-category status is a terminal "done" outcome,
+	// so a step in such a status must count toward molecule Completed exactly
+	// like a literal-closed step (the same way bd ready / bd count / bd list
+	// treat done-category as terminal). Resolve the done-category names once;
+	// nil/empty (no config or resolution error) → byte-identical pre-x463g
+	// counting (only types.StatusClosed completes). Degraded-safe: a config
+	// read error just leaves the done-set empty rather than failing progress.
+	doneStatusNames := map[string]bool{}
+	if detailed, cerr := s.GetCustomStatusesDetailed(ctx); cerr == nil {
+		for _, cs := range detailed {
+			if cs.Category == types.CategoryDone {
+				doneStatusNames[cs.Name] = true
+			}
+		}
+	}
+
 	// Compute step readiness from within-molecule dependencies.
 	// Uses analyzeMoleculeParallel instead of GetReadyWork because GetReadyWork
 	// excludes ephemeral issues (wisp steps are ephemeral by definition).
@@ -217,15 +233,17 @@ func getMoleculeProgress(ctx context.Context, s storage.DoltStorage, moleculeID 
 			Issue: issue,
 		}
 
-		switch issue.Status {
-		case types.StatusClosed:
+		switch {
+		case issue.Status == types.StatusClosed || doneStatusNames[string(issue.Status)]:
+			// beads-x463g: literal-closed OR a custom done-category status both
+			// count as a completed step (terminal done outcome).
 			step.Status = "done"
 			progress.Completed++
-		case types.StatusInProgress:
+		case issue.Status == types.StatusInProgress:
 			step.Status = "current"
 			step.IsCurrent = true
 			progress.CurrentStep = issue
-		case types.StatusBlocked:
+		case issue.Status == types.StatusBlocked:
 			step.Status = "blocked"
 		default:
 			// Check if ready (unblocked)

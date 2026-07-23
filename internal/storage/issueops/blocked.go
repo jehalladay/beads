@@ -240,11 +240,16 @@ func GetDescendantIDsInTx(ctx context.Context, tx DBTX, rootID string, maxDepth 
 func GetBlockedIssuesInTx(ctx context.Context, tx DBTX, filter types.WorkFilter) ([]*types.BlockedIssue, error) {
 	var blockedIDList []string
 	blockedSet := make(map[string]bool)
+	// beads-x463g: resolve done-category custom status names once so the subject
+	// row-gate and the conditional-blocks attribution below treat a done-category
+	// row like closed/pinned, matching activeBlockerSQL / the is_blocked
+	// recompute. nil on error / no config = byte-identical pre-x463g gate.
+	doneStatuses := resolveDoneStatusNamesInTx(ctx, tx)
 	for _, table := range []string{"issues", "wisps"} {
-		//nolint:gosec // G201: table is one of two hardcoded values.
+		//nolint:gosec // G201: table is one of two hardcoded values; the done-status fragment is a constant IN-list of validated names.
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 			SELECT id FROM %s
-			WHERE is_blocked = 1 AND status <> 'closed' AND status <> 'pinned'
+			WHERE is_blocked = 1 AND status <> 'closed' AND status <> 'pinned'`+rowNotDoneClause(table, doneStatuses)+`
 		`, table))
 		if err != nil {
 			if optionalBlockedTable(table) && isTableNotExistError(err) {
@@ -309,9 +314,9 @@ func GetBlockedIssuesInTx(ctx context.Context, tx DBTX, filter types.WorkFilter)
 			// target is open (unchanged): the predicate returns false for
 			// waits-for, so keep the open-check as the base and only widen the
 			// conditional-blocks case.
-			active := ts.status != types.StatusClosed && ts.status != types.StatusPinned
+			active := ts.status != types.StatusClosed && ts.status != types.StatusPinned && !IsDoneStatusName(ts.status, doneStatuses)
 			if rec.depType == string(types.DepConditionalBlocks) {
-				active = isActiveConditionalOrHardBlocker(types.DepConditionalBlocks, ts)
+				active = isActiveConditionalOrHardBlocker(types.DepConditionalBlocks, ts, doneStatuses)
 			}
 			if !active {
 				continue

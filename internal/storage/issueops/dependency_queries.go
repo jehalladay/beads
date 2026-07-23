@@ -292,6 +292,11 @@ func queryBlockedByInfo(
 	blockedByMap map[string][]string,
 	parentMap map[string]string,
 ) error {
+	// beads-x463g: resolve the done-category custom status names once so the
+	// reason-aware conditional-blocks check below agrees with activeBlockerSQL /
+	// bd ready on done-category targets. nil on error / no config = pre-x463g
+	// behavior.
+	doneStatuses := resolveDoneStatusNamesInTx(ctx, tx)
 	for start := 0; start < len(issueIDs); start += queryBatchSize {
 		end := start + queryBatchSize
 		if end > len(issueIDs) {
@@ -362,11 +367,14 @@ func queryBlockedByInfo(
 				// Reason-aware: keep only while this edge is still an active
 				// blocker (open OR success-closed target), matching bd ready /
 				// activeBlockerSQL — never over-signal a failure-closed target.
-				if !isActiveConditionalOrHardBlocker(depType, stateByID[row.blockerID]) {
+				// beads-x463g: a done-category target counts as a success-close,
+				// so the edge stays active (handled inside the mirror).
+				if !isActiveConditionalOrHardBlocker(depType, stateByID[row.blockerID], doneStatuses) {
 					continue
 				}
-			} else if stateByID[row.blockerID].status == types.StatusClosed {
-				// 'blocks'/'parent-child': any close unblocks (unchanged).
+			} else if st := stateByID[row.blockerID].status; st == types.StatusClosed || IsDoneStatusName(st, doneStatuses) {
+				// 'blocks'/'parent-child': any close unblocks; beads-x463g: a
+				// done-category target unblocks the same way a literal close does.
 				continue
 			}
 			if depType == types.DepParentChild {
@@ -585,22 +593,50 @@ func loadStatusAndReasonByIDInTx(ctx context.Context, tx DBTX, ids []string) (ma
 	return stateByID, nil
 }
 
+// IsDoneStatusName reports whether a target's status is one of the configured
+// done-category custom status names (beads-x463g). Linear scan over the tiny
+// done-status list; a nil/empty list always returns false, so a caller that
+// passes no done statuses (the default, no custom statuses configured) behaves
+// byte-identically to the pre-x463g literal path. Exported for the proxied
+// display path (internal/storage/domain/db) which resolves the same done-status
+// set via ResolveDoneStatusNamesInTx and must apply the identical predicate to
+// keep the SQL↔Go lockstep.
+func IsDoneStatusName(status types.Status, doneStatuses []string) bool {
+	for _, d := range doneStatuses {
+		if string(status) == d {
+			return true
+		}
+	}
+	return false
+}
+
 // isActiveConditionalOrHardBlocker is the Go mirror of activeBlockerSQL: given a
 // dependency edge type and the target's current state, reports whether that edge
 // should still hold the dependent blocked. Kept in lockstep with activeBlockerSQL
 // (blocked_state.go / blocked_consistency.go) so the --suggest-next display and
 // the authoritative is_blocked recompute agree on conditional-blocks close
 // semantics (beads-a3hm).
-func isActiveConditionalOrHardBlocker(depType types.DependencyType, ts targetState) bool {
-	open := ts.status != types.StatusClosed && ts.status != types.StatusPinned
+//
+// beads-x463g: doneStatuses carries the resolved done-category custom status
+// names so this mirror agrees with activeBlockerSQL's done handling — a
+// done-category target is treated exactly like a literal success-close: it is
+// NOT "open" (so a 'blocks' edge unblocks, like any close) AND it counts as a
+// non-failure close (so a 'conditional-blocks' edge stays blocked, like a
+// success close). An empty doneStatuses leaves the pre-x463g semantics
+// byte-identical, preserving the a3hm lockstep for the default config.
+func isActiveConditionalOrHardBlocker(depType types.DependencyType, ts targetState, doneStatuses []string) bool {
+	done := IsDoneStatusName(ts.status, doneStatuses)
+	open := ts.status != types.StatusClosed && ts.status != types.StatusPinned && !done
 	switch depType {
 	case types.DepBlocks:
 		return open
 	case types.DepConditionalBlocks:
 		// Blocks while the target is open, and ALSO while it is closed with a
 		// non-failure (success) reason — a success close means "B runs only if
-		// A fails" is never satisfied, so B stays blocked.
-		return open || (ts.status == types.StatusClosed && !types.IsFailureClose(ts.closeReason))
+		// A fails" is never satisfied, so B stays blocked. A done-category close
+		// is a success close for this purpose.
+		successClose := (ts.status == types.StatusClosed && !types.IsFailureClose(ts.closeReason)) || done
+		return open || successClose
 	default:
 		return false
 	}
@@ -617,8 +653,14 @@ func isActiveConditionalOrHardBlocker(depType types.DependencyType, ts targetSta
 // the target is open OR closed-with-success. 'parent-child'/'waits-for' and
 // loose edges return false (waits-for is gate-evaluated, not status-resolved —
 // see WaitsForGateBlockedSQL).
-func IsActiveBlockerByState(depType types.DependencyType, status types.Status, closeReason string) bool {
-	return isActiveConditionalOrHardBlocker(depType, targetState{status: status, closeReason: closeReason})
+//
+// beads-x463g: doneStatuses carries the resolved done-category custom status
+// names (via ResolveDoneStatusNamesInTx) so a done-category target satisfies a
+// 'blocks' edge and keeps a 'conditional-blocks' edge blocked, matching the SQL
+// authority. Pass nil when no done statuses are configured (or where they cannot
+// be resolved) for byte-identical pre-x463g behavior.
+func IsActiveBlockerByState(depType types.DependencyType, status types.Status, closeReason string, doneStatuses []string) bool {
+	return isActiveConditionalOrHardBlocker(depType, targetState{status: status, closeReason: closeReason}, doneStatuses)
 }
 
 // WaitsForGateBlockedSQL exposes the waits-for fanout-gate predicate (the exact
@@ -649,6 +691,12 @@ func GetNewlyUnblockedByCloseInTx(ctx context.Context, tx DBTX, closedIssueID st
 		return nil, fmt.Errorf("load closed issue state: %w", err)
 	}
 	includeConditional := types.IsFailureClose(closedState[closedIssueID].closeReason)
+
+	// beads-x463g: resolve done-category custom status names once so the
+	// remaining-blocker active check (isActiveConditionalOrHardBlocker) and the
+	// candidate open-filter below agree with activeBlockerSQL / bd ready on
+	// done-category targets. nil on error / no config = pre-x463g behavior.
+	doneStatuses := resolveDoneStatusNamesInTx(ctx, tx)
 
 	candidateTypes := "type = 'blocks'"
 	if includeConditional {
@@ -698,7 +746,9 @@ func GetNewlyUnblockedByCloseInTx(ctx context.Context, tx DBTX, closedIssueID st
 	activeCandidateIDs := candidateIDs[:0]
 	for _, id := range candidateIDs {
 		status, ok := candidateStatusByID[id]
-		if !ok || status == types.StatusClosed || status == types.StatusPinned {
+		// beads-x463g: a done-category candidate is complete — never surface it
+		// as "newly unblocked", the same as a closed/pinned candidate.
+		if !ok || status == types.StatusClosed || status == types.StatusPinned || IsDoneStatusName(status, doneStatuses) {
 			continue
 		}
 		activeCandidateIDs = append(activeCandidateIDs, id)
@@ -769,7 +819,7 @@ func GetNewlyUnblockedByCloseInTx(ctx context.Context, tx DBTX, closedIssueID st
 		for candidateID, edges := range remainingByCandidate {
 			for _, e := range edges {
 				ts, ok := stateByID[e.blockerID]
-				if ok && isActiveConditionalOrHardBlocker(e.depType, ts) {
+				if ok && isActiveConditionalOrHardBlocker(e.depType, ts, doneStatuses) {
 					stillBlocked[candidateID] = true
 					break
 				}
@@ -869,6 +919,10 @@ func IsBlockedInTx(ctx context.Context, tx DBTX, issueID string) (bool, []string
 	if err != nil {
 		return false, nil, fmt.Errorf("check blocker status: %w", err)
 	}
+	// beads-x463g: resolve done-category custom status names so the base
+	// open-check and the conditional-blocks mirror below treat a done-category
+	// blocker like a literal close. nil on error / no config = pre-x463g.
+	doneStatuses := resolveDoneStatusNamesInTx(ctx, tx)
 	var blockers []string
 	for _, e := range edges {
 		ts, ok := statusByID[e.dependsOnID]
@@ -882,9 +936,9 @@ func IsBlockedInTx(ctx context.Context, tx DBTX, issueID string) (bool, []string
 		// (unchanged): isActiveConditionalOrHardBlocker returns false for
 		// waits-for, so keep the open-check as the base and only widen the
 		// conditional-blocks case (a blanket swap would regress waits-for).
-		active := ts.status != types.StatusClosed && ts.status != types.StatusPinned
+		active := ts.status != types.StatusClosed && ts.status != types.StatusPinned && !IsDoneStatusName(ts.status, doneStatuses)
 		if e.depType == string(types.DepConditionalBlocks) {
-			active = isActiveConditionalOrHardBlocker(types.DepConditionalBlocks, ts)
+			active = isActiveConditionalOrHardBlocker(types.DepConditionalBlocks, ts, doneStatuses)
 		}
 		if !active {
 			continue

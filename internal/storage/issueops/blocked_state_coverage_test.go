@@ -15,7 +15,7 @@ import (
 func TestMarkBlockedTemplateForIssues(t *testing.T) {
 	t.Parallel()
 
-	got := markBlockedTemplateForIssues()
+	got := markBlockedTemplateForIssues(nil)
 
 	for _, want := range []string{
 		"UPDATE issues i SET i.is_blocked = 1, i.updated_at = i.updated_at",
@@ -64,7 +64,7 @@ func TestMarkBlockedTemplateForIssues(t *testing.T) {
 func TestUnmarkBlockedTemplateForIssues(t *testing.T) {
 	t.Parallel()
 
-	got := unmarkBlockedTemplateForIssues()
+	got := unmarkBlockedTemplateForIssues(nil)
 
 	for _, want := range []string{
 		"UPDATE issues i SET i.is_blocked = 0, i.updated_at = i.updated_at",
@@ -93,7 +93,7 @@ func TestUnmarkBlockedTemplateForIssues(t *testing.T) {
 func TestMarkBlockedTemplateForWisps(t *testing.T) {
 	t.Parallel()
 
-	got := markBlockedTemplateForWisps()
+	got := markBlockedTemplateForWisps(nil)
 
 	for _, want := range []string{
 		"UPDATE wisps w SET w.is_blocked = 1, w.updated_at = w.updated_at",
@@ -122,7 +122,7 @@ func TestMarkBlockedTemplateForWisps(t *testing.T) {
 func TestUnmarkBlockedTemplateForWisps(t *testing.T) {
 	t.Parallel()
 
-	got := unmarkBlockedTemplateForWisps()
+	got := unmarkBlockedTemplateForWisps(nil)
 
 	for _, want := range []string{
 		"UPDATE wisps w SET w.is_blocked = 0, w.updated_at = w.updated_at",
@@ -237,10 +237,10 @@ func TestBlockedPassEmptyShortCircuits(t *testing.T) {
 		name string
 		fn   func() (int64, error)
 	}{
-		{"recompute issues", func() (int64, error) { return recomputeIsBlockedPassForIssuesInTx(ctx, tx, nil) }},
-		{"mark issues", func() (int64, error) { return markIsBlockedPassForIssuesInTx(ctx, tx, nil) }},
-		{"recompute wisps", func() (int64, error) { return recomputeIsBlockedPassForWispsInTx(ctx, tx, nil) }},
-		{"mark wisps", func() (int64, error) { return markIsBlockedPassForWispsInTx(ctx, tx, nil) }},
+		{"recompute issues", func() (int64, error) { return recomputeIsBlockedPassForIssuesInTx(ctx, tx, nil, nil) }},
+		{"mark issues", func() (int64, error) { return markIsBlockedPassForIssuesInTx(ctx, tx, nil, nil) }},
+		{"recompute wisps", func() (int64, error) { return recomputeIsBlockedPassForWispsInTx(ctx, tx, nil, nil) }},
+		{"mark wisps", func() (int64, error) { return markIsBlockedPassForWispsInTx(ctx, tx, nil, nil) }},
 	} {
 		n, err := tc.fn()
 		if err != nil || n != 0 {

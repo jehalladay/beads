@@ -17,7 +17,7 @@ import (
 func TestShouldBeBlockedDisjunction(t *testing.T) {
 	t.Parallel()
 
-	got := shouldBeBlockedDisjunction("i", "dependencies")
+	got := shouldBeBlockedDisjunction("i", "dependencies", nil)
 
 	// Every leg keys off the row alias and joins through the dep table.
 	for _, want := range []string{
@@ -47,7 +47,7 @@ func TestShouldBeBlockedDisjunction(t *testing.T) {
 	}
 
 	// The wisps alias variant substitutes the wisp dep table / target column.
-	wispGot := shouldBeBlockedDisjunction("w", "wisp_dependencies")
+	wispGot := shouldBeBlockedDisjunction("w", "wisp_dependencies", nil)
 	if !strings.Contains(wispGot, "FROM wisp_dependencies d") || !strings.Contains(wispGot, "WHERE d.issue_id = w.id") {
 		t.Errorf("wisp variant did not substitute alias/dep table:\n%s", wispGot)
 	}
@@ -59,7 +59,7 @@ func TestShouldBeBlockedDisjunction(t *testing.T) {
 func TestCountStaleIsBlockedSQL(t *testing.T) {
 	t.Parallel()
 
-	got := countStaleIsBlockedSQL("issues", "i", "dependencies")
+	got := countStaleIsBlockedSQL("issues", "i", "dependencies", nil)
 
 	for _, want := range []string{
 		"SELECT COUNT(*) FROM issues i",
@@ -76,7 +76,7 @@ func TestCountStaleIsBlockedSQL(t *testing.T) {
 
 	// The disjunction appears twice: once in the mark branch, once (negated) in
 	// the unmark branch.
-	disj := shouldBeBlockedDisjunction("i", "dependencies")
+	disj := shouldBeBlockedDisjunction("i", "dependencies", nil)
 	if n := strings.Count(normalizeWS(got), normalizeWS(disj)); n != 2 {
 		t.Errorf("disjunction appears %d times in count-stale SQL, want 2", n)
 	}

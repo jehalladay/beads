@@ -100,15 +100,16 @@ func recomputeIsBlockedCounting(ctx context.Context, tx DBTX, issueIDs, wispIDs 
 	if len(issueIDs) == 0 && len(wispIDs) == 0 {
 		return 0, nil
 	}
+	doneStatuses := resolveDoneStatusNamesInTx(ctx, tx)
 	var total int64
 	for {
 		var changed int64
-		n, err := recomputeIsBlockedPassForIssuesInTx(ctx, tx, issueIDs)
+		n, err := recomputeIsBlockedPassForIssuesInTx(ctx, tx, issueIDs, doneStatuses)
 		if err != nil {
 			return total, err
 		}
 		changed += n
-		n, err = recomputeIsBlockedPassForWispsInTx(ctx, tx, wispIDs)
+		n, err = recomputeIsBlockedPassForWispsInTx(ctx, tx, wispIDs, doneStatuses)
 		if err != nil {
 			return total, err
 		}
@@ -133,14 +134,15 @@ func recomputeIsBlockedCounting(ctx context.Context, tx DBTX, issueIDs, wispIDs 
 // --fix, zero means consistent.
 func CountIsBlockedInconsistenciesInTx(ctx context.Context, tx DBTX) (int64, error) {
 	var total int64
+	doneStatuses := resolveDoneStatusNamesInTx(ctx, tx)
 
-	n, err := countRows(ctx, tx, countStaleIsBlockedSQL("issues", "i", "dependencies"))
+	n, err := countRows(ctx, tx, countStaleIsBlockedSQL("issues", "i", "dependencies", doneStatuses))
 	if err != nil {
 		return 0, fmt.Errorf("count stale is_blocked issues: %w", err)
 	}
 	total += n
 
-	n, err = countRows(ctx, tx, countStaleIsBlockedSQL("wisps", "w", "wisp_dependencies"))
+	n, err = countRows(ctx, tx, countStaleIsBlockedSQL("wisps", "w", "wisp_dependencies", doneStatuses))
 	if err != nil {
 		if isTableNotExistError(err) {
 			return total, nil
@@ -167,17 +169,22 @@ func CountIsBlockedInconsistenciesInTx(ctx context.Context, tx DBTX) (int64, err
 // two callers.
 //
 //nolint:gosec // G201: table, alias, and depTable are constant; only the constant gate SQL is interpolated.
-func countStaleIsBlockedSQL(table, alias, depTable string) string {
-	disjunction := shouldBeBlockedDisjunction(alias, depTable)
+func countStaleIsBlockedSQL(table, alias, depTable string, doneStatuses []string) string {
+	disjunction := shouldBeBlockedDisjunction(alias, depTable, doneStatuses)
+	// beads-x463g: mirror the row-eligibility gates in the mark/unmark templates
+	// so a converged DB still counts 0 (the lockstep invariant). A done-category
+	// row is treated like closed/pinned: excluded from the mark-eligible branch
+	// (rowNotDoneClause) and admitted to the unmark-eligible branch
+	// (rowOrDoneClause). Both fragments contain no '%' so they are Sprintf-safe.
 	return fmt.Sprintf(`
 		SELECT COUNT(*) FROM %[1]s %[2]s
 		WHERE
 		  ( %[2]s.is_blocked = 0
-		    AND %[2]s.status <> 'closed' AND %[2]s.status <> 'pinned'
+		    AND %[2]s.status <> 'closed' AND %[2]s.status <> 'pinned'`+rowNotDoneClause(alias, doneStatuses)+`
 		    AND ( %[3]s ) )
 		  OR
 		  ( %[2]s.is_blocked = 1
-		    AND ( %[2]s.status = 'closed' OR %[2]s.status = 'pinned'
+		    AND ( %[2]s.status = 'closed' OR %[2]s.status = 'pinned'`+rowOrDoneClause(alias, doneStatuses)+`
 		          OR NOT ( %[3]s ) ) )
 	`, table, alias, disjunction)
 }
@@ -188,7 +195,7 @@ func countStaleIsBlockedSQL(table, alias, depTable string) string {
 // the mark/unmark templates in blocked_state.go; the lockstep test keeps the
 // two from drifting. alias is the row's table alias, depTable its dependency
 // table; the joined target tables (issues/wisps) are the same for both.
-func shouldBeBlockedDisjunction(alias, depTable string) string {
+func shouldBeBlockedDisjunction(alias, depTable string, doneStatuses []string) string {
 	//nolint:gosec // G201: alias and depTable are constant; waitsForGateBlockedSQL is a constant template.
 	return fmt.Sprintf(`
 		    EXISTS (
@@ -222,7 +229,7 @@ func shouldBeBlockedDisjunction(alias, depTable string) string {
 		      WHERE d.issue_id = %[1]s.id AND d.type = 'waits-for'
 		        AND (%[3]s)
 		    )
-	`, alias, depTable, waitsForGateBlockedSQL, activeBlockerSQL("d", "t"))
+	`, alias, depTable, waitsForGateBlockedSQL, activeBlockerSQL("d", "t", doneStatuses))
 }
 
 // countRows runs a single COUNT(*) query and returns the scalar.

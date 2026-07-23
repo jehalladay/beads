@@ -57,20 +57,48 @@ const waitsForGateBlockedSQL = `
 		)
 `
 
+// resolveDoneStatusNamesInTx returns the configured custom-status names in the
+// DONE category (beads-x463g). It resolves the effective custom statuses once
+// per is_blocked recompute/count entry point and hands the names down to the
+// SQL builders so a done-category target satisfies dependencies like a literal
+// close. On any resolution error it returns nil (degraded-safe): an empty set
+// yields byte-identical SQL to the pre-x463g path, preserving the bd-hpmw
+// lockstep and the coverage assertions. With no custom statuses configured
+// (the default) the result is empty for the same reason.
+func resolveDoneStatusNamesInTx(ctx context.Context, tx DBTX) []string {
+	statuses, err := ResolveCustomStatusesDetailedInTx(ctx, tx)
+	if err != nil {
+		return nil
+	}
+	done := types.CustomStatusesByCategory(statuses, types.CategoryDone)
+	return types.CustomStatusNames(done)
+}
+
+// ResolveDoneStatusNamesInTx is the exported form of resolveDoneStatusNamesInTx
+// for out-of-package callers on the same transaction (the proxied display path
+// in internal/storage/domain/db) that thread the done-category names into
+// IsActiveBlockerByState to keep the SQL↔Go lockstep (beads-x463g / bd-hpmw).
+// Like the unexported form it returns nil on any resolution error (degraded-safe
+// = pre-x463g behavior).
+func ResolveDoneStatusNamesInTx(ctx context.Context, tx DBTX) []string {
+	return resolveDoneStatusNamesInTx(ctx, tx)
+}
+
 func RecomputeIsBlockedInTx(ctx context.Context, tx DBTX, issueIDs, wispIDs []string) error {
 	if len(issueIDs) == 0 && len(wispIDs) == 0 {
 		return nil
 	}
+	doneStatuses := resolveDoneStatusNamesInTx(ctx, tx)
 	for {
 		var changed int64
 
-		n, err := recomputeIsBlockedPassForIssuesInTx(ctx, tx, issueIDs)
+		n, err := recomputeIsBlockedPassForIssuesInTx(ctx, tx, issueIDs, doneStatuses)
 		if err != nil {
 			return err
 		}
 		changed += n
 
-		n, err = recomputeIsBlockedPassForWispsInTx(ctx, tx, wispIDs)
+		n, err = recomputeIsBlockedPassForWispsInTx(ctx, tx, wispIDs, doneStatuses)
 		if err != nil {
 			return err
 		}
@@ -86,16 +114,17 @@ func MarkIsBlockedInTx(ctx context.Context, tx DBTX, issueIDs, wispIDs []string)
 	if len(issueIDs) == 0 && len(wispIDs) == 0 {
 		return nil
 	}
+	doneStatuses := resolveDoneStatusNamesInTx(ctx, tx)
 	for {
 		var changed int64
 
-		n, err := markIsBlockedPassForIssuesInTx(ctx, tx, issueIDs)
+		n, err := markIsBlockedPassForIssuesInTx(ctx, tx, issueIDs, doneStatuses)
 		if err != nil {
 			return err
 		}
 		changed += n
 
-		n, err = markIsBlockedPassForWispsInTx(ctx, tx, wispIDs)
+		n, err = markIsBlockedPassForWispsInTx(ctx, tx, wispIDs, doneStatuses)
 		if err != nil {
 			return err
 		}
@@ -116,19 +145,19 @@ func RecomputeIsBlockedForWispIDsInTx(ctx context.Context, tx DBTX, ids []string
 }
 
 //nolint:gosec // G201: SQL templates are constant; only IN-clause placeholders are formatted in.
-func recomputeIsBlockedPassForIssuesInTx(ctx context.Context, tx DBTX, ids []string) (int64, error) {
+func recomputeIsBlockedPassForIssuesInTx(ctx context.Context, tx DBTX, ids, doneStatuses []string) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
 
-	return runMarkUnmarkBatchedInTx(ctx, tx, markBlockedTemplateForIssues(), unmarkBlockedTemplateForIssues(), ids)
+	return runMarkUnmarkBatchedInTx(ctx, tx, markBlockedTemplateForIssues(doneStatuses), unmarkBlockedTemplateForIssues(doneStatuses), ids)
 }
 
-func markIsBlockedPassForIssuesInTx(ctx context.Context, tx DBTX, ids []string) (int64, error) {
+func markIsBlockedPassForIssuesInTx(ctx context.Context, tx DBTX, ids, doneStatuses []string) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	return runMarkBatchedInTx(ctx, tx, markBlockedTemplateForIssues(), ids)
+	return runMarkBatchedInTx(ctx, tx, markBlockedTemplateForIssues(doneStatuses), ids)
 }
 
 // The mark/unmark templates explicitly assign updated_at to itself:
@@ -138,12 +167,12 @@ func markIsBlockedPassForIssuesInTx(ctx context.Context, tx DBTX, ids []string) 
 // clones that recomputed the same flip at different times, bd-578h9.19) and
 // makes stale-guard/conflict-guard consumers treat the row as user-edited.
 // An explicit assignment suppresses the ON UPDATE clause.
-func markBlockedTemplateForIssues() string {
+func markBlockedTemplateForIssues(doneStatuses []string) string {
 	return fmt.Sprintf(`
 		UPDATE issues i SET i.is_blocked = 1, i.updated_at = i.updated_at
 		WHERE i.id IN (%%s)
 		  AND i.is_blocked = 0
-		  AND i.status <> 'closed' AND i.status <> 'pinned'
+		  AND i.status <> 'closed' AND i.status <> 'pinned'`+rowNotDoneClause("i", doneStatuses)+`
 		  AND (
 		    EXISTS (
 		      SELECT 1 FROM dependencies d
@@ -177,16 +206,16 @@ func markBlockedTemplateForIssues() string {
 		        AND (%s)
 		    )
 		  )
-	`, activeBlockerSQL("d", "t"), activeBlockerSQL("d", "t"), waitsForGateBlockedSQL)
+	`, activeBlockerSQL("d", "t", doneStatuses), activeBlockerSQL("d", "t", doneStatuses), waitsForGateBlockedSQL)
 }
 
-func unmarkBlockedTemplateForIssues() string {
+func unmarkBlockedTemplateForIssues(doneStatuses []string) string {
 	return fmt.Sprintf(`
 		UPDATE issues i SET i.is_blocked = 0, i.updated_at = i.updated_at
 		WHERE i.id IN (%%s)
 		  AND i.is_blocked = 1
 		  AND (
-		    i.status = 'closed' OR i.status = 'pinned'
+		    i.status = 'closed' OR i.status = 'pinned'`+rowOrDoneClause("i", doneStatuses)+`
 		    OR (
 		      NOT EXISTS (
 		        SELECT 1 FROM dependencies d
@@ -221,31 +250,31 @@ func unmarkBlockedTemplateForIssues() string {
 		      )
 		    )
 		  )
-	`, activeBlockerSQL("d", "t"), activeBlockerSQL("d", "t"), waitsForGateBlockedSQL)
+	`, activeBlockerSQL("d", "t", doneStatuses), activeBlockerSQL("d", "t", doneStatuses), waitsForGateBlockedSQL)
 }
 
 //nolint:gosec // G201: SQL templates are constant; only IN-clause placeholders are formatted in.
-func recomputeIsBlockedPassForWispsInTx(ctx context.Context, tx DBTX, ids []string) (int64, error) {
+func recomputeIsBlockedPassForWispsInTx(ctx context.Context, tx DBTX, ids, doneStatuses []string) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
 
-	return runMarkUnmarkBatchedInTx(ctx, tx, markBlockedTemplateForWisps(), unmarkBlockedTemplateForWisps(), ids)
+	return runMarkUnmarkBatchedInTx(ctx, tx, markBlockedTemplateForWisps(doneStatuses), unmarkBlockedTemplateForWisps(doneStatuses), ids)
 }
 
-func markIsBlockedPassForWispsInTx(ctx context.Context, tx DBTX, ids []string) (int64, error) {
+func markIsBlockedPassForWispsInTx(ctx context.Context, tx DBTX, ids, doneStatuses []string) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	return runMarkBatchedInTx(ctx, tx, markBlockedTemplateForWisps(), ids)
+	return runMarkBatchedInTx(ctx, tx, markBlockedTemplateForWisps(doneStatuses), ids)
 }
 
-func markBlockedTemplateForWisps() string {
+func markBlockedTemplateForWisps(doneStatuses []string) string {
 	return fmt.Sprintf(`
 		UPDATE wisps w SET w.is_blocked = 1, w.updated_at = w.updated_at
 		WHERE w.id IN (%%s)
 		  AND w.is_blocked = 0
-		  AND w.status <> 'closed' AND w.status <> 'pinned'
+		  AND w.status <> 'closed' AND w.status <> 'pinned'`+rowNotDoneClause("w", doneStatuses)+`
 		  AND (
 		    EXISTS (
 		      SELECT 1 FROM wisp_dependencies d
@@ -279,16 +308,16 @@ func markBlockedTemplateForWisps() string {
 		        AND (%s)
 		    )
 		  )
-	`, activeBlockerSQL("d", "t"), activeBlockerSQL("d", "t"), waitsForGateBlockedSQL)
+	`, activeBlockerSQL("d", "t", doneStatuses), activeBlockerSQL("d", "t", doneStatuses), waitsForGateBlockedSQL)
 }
 
-func unmarkBlockedTemplateForWisps() string {
+func unmarkBlockedTemplateForWisps(doneStatuses []string) string {
 	return fmt.Sprintf(`
 		UPDATE wisps w SET w.is_blocked = 0, w.updated_at = w.updated_at
 		WHERE w.id IN (%%s)
 		  AND w.is_blocked = 1
 		  AND (
-		    w.status = 'closed' OR w.status = 'pinned'
+		    w.status = 'closed' OR w.status = 'pinned'`+rowOrDoneClause("w", doneStatuses)+`
 		    OR (
 		      NOT EXISTS (
 		        SELECT 1 FROM wisp_dependencies d
@@ -323,7 +352,7 @@ func unmarkBlockedTemplateForWisps() string {
 		      )
 		    )
 		  )
-	`, activeBlockerSQL("d", "t"), activeBlockerSQL("d", "t"), waitsForGateBlockedSQL)
+	`, activeBlockerSQL("d", "t", doneStatuses), activeBlockerSQL("d", "t", doneStatuses), waitsForGateBlockedSQL)
 }
 
 //nolint:gosec // G201: callers pass constant templates; only IN-clause placeholders are formatted in.

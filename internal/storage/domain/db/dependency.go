@@ -568,6 +568,13 @@ func (r *dependencySQLRepositoryImpl) GetBlockingInfo(ctx context.Context, issue
 	table := pickDepTable(opts.UseWispsTable)
 	idPlaceholders, idArgs := buildInPlaceholders(issueIDs)
 
+	// beads-x463g: resolve the done-category custom status names once (r.runner
+	// satisfies issueops.DBTX) so the conditional-blocks and any-close checks
+	// below treat a done-category target like a literal close, matching
+	// activeBlockerSQL / bd ready on the proxied path. nil on error / no config =
+	// byte-identical pre-x463g behavior.
+	doneStatuses := issueops.ResolveDoneStatusNamesInTx(ctx, r.runner)
+
 	// beads-h7u56/dqje3: the proxied display blocked-indicator must count the
 	// SAME blocking-edge families the authority (is_blocked / bd ready / bd
 	// blocked) counts, or bd list under-signals a genuinely-blocked issue as
@@ -617,12 +624,14 @@ func (r *dependencySQLRepositoryImpl) GetBlockingInfo(ctx context.Context, issue
 		if depType == types.DepConditionalBlocks {
 			// Reason-aware: keep only while still an active blocker (open OR
 			// success-closed target), matching bd ready / activeBlockerSQL.
+			// beads-x463g: a done-category target counts as a success-close.
 			st := stateByID[row.dependsOnID]
-			if !issueops.IsActiveBlockerByState(depType, st.status, st.closeReason) {
+			if !issueops.IsActiveBlockerByState(depType, st.status, st.closeReason, doneStatuses) {
 				continue
 			}
-		} else if stateByID[row.dependsOnID].status == types.StatusClosed {
-			// 'blocks'/'parent-child': any close unblocks (unchanged).
+		} else if st := stateByID[row.dependsOnID].status; st == types.StatusClosed || issueops.IsDoneStatusName(st, doneStatuses) {
+			// 'blocks'/'parent-child': any close unblocks; beads-x463g: a
+			// done-category target unblocks the same way a literal close does.
 			continue
 		}
 		if row.depType == "parent-child" {
@@ -632,7 +641,8 @@ func (r *dependencySQLRepositoryImpl) GetBlockingInfo(ctx context.Context, issue
 		}
 	}
 	for _, row := range inRows {
-		if stateByID[row.dependsOnID].status == types.StatusClosed {
+		// beads-x463g: a done-category blocker unblocks like a literal close.
+		if st := stateByID[row.dependsOnID].status; st == types.StatusClosed || issueops.IsDoneStatusName(st, doneStatuses) {
 			continue
 		}
 		info.Blocks[row.dependsOnID] = append(info.Blocks[row.dependsOnID], row.issueID)
