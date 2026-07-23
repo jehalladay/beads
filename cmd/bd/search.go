@@ -147,6 +147,20 @@ type searchParams struct {
 func parseSearchQuery(cmd *cobra.Command, args []string) (string, error) {
 	queryFlag, _ := cmd.Flags().GetString("query")
 	var query string
+	// beads-hnqan: --query is a documented alternative to the positional query
+	// arg, but the first-match resolution below takes the positional and would
+	// silently DISCARD a DIFFERENT --query value with rc0 and no diagnostic —
+	// the dz1t8 input-source silent-drop class. Reject the conflict loudly,
+	// mirroring bd create's identical guard (create.go: "cannot specify
+	// different titles as both positional argument and --title flag"). A
+	// matching value is tolerated (harmless duplicate), only a genuine
+	// difference is an error.
+	if len(args) > 0 && queryFlag != "" {
+		positional := strings.Join(args, " ")
+		if positional != queryFlag {
+			return "", HandleErrorRespectJSON("cannot specify different queries as both positional argument and --query flag\n  Positional: %q\n  --query:    %q", positional, queryFlag)
+		}
+	}
 	if len(args) > 0 {
 		query = strings.Join(args, " ")
 	} else if queryFlag != "" {
