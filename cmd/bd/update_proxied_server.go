@@ -477,10 +477,16 @@ func fireProxiedUpdateHooks(ctx context.Context, before, after *types.Issue) err
 // (fireDependencyHookByID for dep.IssueID) and relate/unrelate (both endpoints,
 // one per AddDependency) — but the proxied UOW use-case layer does not, so a
 // hub-connected crew's on_update hooks silently never ran for these verbs.
-// Best-effort and behavior-preserving with the decorator's GetIssue-only
-// re-fetch: skip (return nil) if the id can't be loaded as an issue (e.g. a wisp
-// GetIssue can't reach — the direct fireHookByID skips there too), and enrich
-// with the dependency records when withDeps so an on_update hook body sees the
+// Best-effort and behavior-preserving with the decorator's re-fetch, which is
+// WISP-AWARE: the direct fireHookByID / fireDependencyHookByID re-fetch via
+// DoltStore.GetIssue → issueops.GetIssueInTx, which falls back to the wisps
+// table on an issues-table miss (get_issue.go GetIssueInTxSplit). The proxied
+// use-case GetIssue reads the issues table only (issueRepo.Get
+// IssueTableOpts{UseWispsTable:false}) — so a WISP target (comment/dep/relate
+// all resolve issue-OR-wisp) would capture nil here and silently skip its
+// on_update hook while the direct path fires it (beads-vv8cj). Fall back to
+// GetWisp on an issues-table miss to mirror the direct re-fetch. Enrich with the
+// dependency records when withDeps so an on_update hook body sees the
 // post-mutation edge set (matching dependencySnapshot).
 func captureProxiedHookSnapshot(ctx context.Context, uw uow.UnitOfWork, id string, withDeps bool) *types.Issue {
 	if uw == nil {
@@ -488,7 +494,13 @@ func captureProxiedHookSnapshot(ctx context.Context, uw uow.UnitOfWork, id strin
 	}
 	snapshot, err := uw.IssueUseCase().GetIssue(ctx, id)
 	if err != nil || snapshot == nil {
-		return nil
+		// beads-vv8cj: the id may be a wisp (separate table). Mirror the direct
+		// decorator's wisp-aware re-fetch so proxied wisp hooks fire at parity.
+		if wisp, werr := uw.IssueUseCase().GetWisp(ctx, id); werr == nil && wisp != nil {
+			snapshot = wisp
+		} else {
+			return nil
+		}
 	}
 	if withDeps {
 		if recs, derr := uw.DependencyUseCase().GetIssueDependencyRecords(ctx, []string{id}); derr == nil {
