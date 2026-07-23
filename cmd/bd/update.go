@@ -601,51 +601,70 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 			// `bd update --status closed` silently bypasses both. Only runs on a
 			// real open->closed transition (already-closed is a no-op close) and
 			// is overridable with --force, matching `bd close --force`.
-			if newStatus, ok := updates["status"].(string); ok && newStatus == "closed" &&
-				!forceFlag && issue.Status != types.StatusClosed {
-				// Close guard: prevent closing an auto-closing parent (epic OR
-				// molecule/wisp root, beads-6b9pz) with open children. bigro
-				// (@cf791b036) widened the close.go forward guard from bare
-				// TypeEpic to the shared isAutoClosingParentType predicate but
-				// left this update-status=closed twin bare; a molecule/wisp root
-				// could still be closed with open children via `bd update`.
-				// countEpicOpenChildren counts any parent-child open child
-				// regardless of parent type, so it works for those roots unchanged.
-				if isAutoClosingParentType(issue) {
-					if openChildren := countEpicOpenChildren(ctx, issueStore, result.ResolvedID); openChildren > 0 {
-						reportUpdateItemError("cannot close %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
+			// beads-ulsg4: a forward transition into a terminal state is not only
+			// a literal close — moving an auto-closing parent to a custom
+			// done-category status reaches the same "complete" state that the
+			// views/lifecycle already treat as done (x463g/97gmg), so it must
+			// enforce the same close-integrity invariants. The guard previously
+			// fired ONLY on newStatus=="closed", so `bd update --status resolved`
+			// on a done-category-configured status silently created the forbidden
+			// terminal-parent-with-open-child state (the WORST leg: no --force
+			// prompt, and lint can't even detect it post-hoc). done is empty on a
+			// config-read error → degraded to the prior literal-'closed' behavior.
+			// parentStatusIsTerminal(issue.Status, done) replaces the old
+			// `issue.Status != StatusClosed` no-op skip so a terminal->terminal
+			// move (e.g. done-category -> closed) is still a no-op. done is
+			// computed lazily — only when the update actually carries a status
+			// change — so a non-status update (title/priority/…) pays no extra
+			// config read.
+			if newStatusRaw, hasStatus := updates["status"].(string); hasStatus && !forceFlag {
+				done := doneCategoryStatusNames(ctx, issueStore)
+				if (newStatusRaw == "closed" || done[newStatusRaw]) &&
+					!parentStatusIsTerminal(issue.Status, done) {
+					// Close guard: prevent closing an auto-closing parent (epic OR
+					// molecule/wisp root, beads-6b9pz) with open children. bigro
+					// (@cf791b036) widened the close.go forward guard from bare
+					// TypeEpic to the shared isAutoClosingParentType predicate but
+					// left this update-status=closed twin bare; a molecule/wisp root
+					// could still be closed with open children via `bd update`.
+					// countEpicOpenChildren counts any parent-child open child
+					// regardless of parent type, so it works for those roots unchanged.
+					if isAutoClosingParentType(issue) {
+						if openChildren := countEpicOpenChildren(ctx, issueStore, result.ResolvedID); openChildren > 0 {
+							reportUpdateItemError("cannot close %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
+							closeIfUnmutated(result)
+							continue
+						}
+					}
+					// Blocked close guard: prevent closing an issue with open blockers.
+					blocked, blockers, err := issueStore.IsBlocked(ctx, result.ResolvedID)
+					if err != nil {
+						reportUpdateItemError("Error checking blockers for %s: %v", id, err)
 						closeIfUnmutated(result)
 						continue
 					}
-				}
-				// Blocked close guard: prevent closing an issue with open blockers.
-				blocked, blockers, err := issueStore.IsBlocked(ctx, result.ResolvedID)
-				if err != nil {
-					reportUpdateItemError("Error checking blockers for %s: %v", id, err)
-					closeIfUnmutated(result)
-					continue
-				}
-				if blocked && len(blockers) > 0 {
-					reportUpdateItemError("cannot close %s: blocked by open issues %v (use --force to override)", id, blockers)
-					closeIfUnmutated(result)
-					continue
-				}
-				// Gate-satisfaction close guard (beads-l9f7j): `bd close`
-				// (close.go:178) and `bd batch` (beads-zpq1f) REJECT closing an
-				// issue whose machine-checkable gate (timer / gh:pr* / gh:run*)
-				// is unsatisfied; the single-update close leg silently bypassed
-				// it — the FOURTH close-side-effect axis on the close-parity
-				// matrix (alongside molecule-autoclose/zzp26, audit/n4sn, and the
-				// zgku/2hkd/b0tw/a8a1b integrity guards). checkGateSatisfaction
-				// self-short-circuits to nil on a non-machine-checkable gate
-				// (close.go), so no isMachineCheckableGate pre-check is needed.
-				// Sanitize the error for display: a gh:pr/gh:run gate embeds
-				// untrusted external SCM data (PR title / workflow name) that can
-				// carry terminal escapes (beads-pbt8m, 7n9y sink class).
-				if err := checkGateSatisfaction(issue); err != nil {
-					reportUpdateItemError("cannot close %s: %s", id, ui.SanitizeForTerminal(err.Error()))
-					closeIfUnmutated(result)
-					continue
+					if blocked && len(blockers) > 0 {
+						reportUpdateItemError("cannot close %s: blocked by open issues %v (use --force to override)", id, blockers)
+						closeIfUnmutated(result)
+						continue
+					}
+					// Gate-satisfaction close guard (beads-l9f7j): `bd close`
+					// (close.go:178) and `bd batch` (beads-zpq1f) REJECT closing an
+					// issue whose machine-checkable gate (timer / gh:pr* / gh:run*)
+					// is unsatisfied; the single-update close leg silently bypassed
+					// it — the FOURTH close-side-effect axis on the close-parity
+					// matrix (alongside molecule-autoclose/zzp26, audit/n4sn, and the
+					// zgku/2hkd/b0tw/a8a1b integrity guards). checkGateSatisfaction
+					// self-short-circuits to nil on a non-machine-checkable gate
+					// (close.go), so no isMachineCheckableGate pre-check is needed.
+					// Sanitize the error for display: a gh:pr/gh:run gate embeds
+					// untrusted external SCM data (PR title / workflow name) that can
+					// carry terminal escapes (beads-pbt8m, 7n9y sink class).
+					if err := checkGateSatisfaction(issue); err != nil {
+						reportUpdateItemError("cannot close %s: %s", id, ui.SanitizeForTerminal(err.Error()))
+						closeIfUnmutated(result)
+						continue
+					}
 				}
 			}
 
@@ -927,8 +946,19 @@ append), so that update pre-resolves all IDs and is atomic like close.`,
 					// per aw9x8/czu1s) so a closed MOLECULE/wisp root is caught
 					// too — the reparent-axis sibling of the czu1s create-axis
 					// widen. Error text "closed epic"→"closed parent".
+					//
+					// beads-ulsg4: a parent in a custom done-category status is
+					// terminal too (parentStatusIsTerminal) — reparenting an open
+					// child under a done-category parent recreates the same
+					// forbidden state as under a literal-closed parent. The done-set
+					// is computed locally in this reparent branch (the forward-close
+					// leg's `done` is scoped to its own status-`if` block); a
+					// reparent update never carries a status change, so this is the
+					// only place it is needed here. Degraded-safe: empty on
+					// config-read error → literal-'closed' behavior.
+					done := doneCategoryStatusNames(ctx, issueStore)
 					if !forceFlag && isAutoClosingParentType(parentIssue) &&
-						parentIssue.Status == types.StatusClosed && issue.Status != types.StatusClosed {
+						parentStatusIsTerminal(parentIssue.Status, done) && issue.Status != types.StatusClosed {
 						reportUpdateItemError("cannot reparent %s under closed parent %s: the parent is closed and %s is open (would create a closed parent with an open child); reopen the parent first or use --force to override", id, newParent, id)
 						closeIfUnmutated(result)
 						continue

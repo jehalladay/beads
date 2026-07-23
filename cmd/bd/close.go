@@ -866,6 +866,22 @@ func childCountsAsOpen(status types.Status, done map[string]bool) bool {
 	return status != types.StatusClosed && !done[string(status)]
 }
 
+// parentStatusIsTerminal reports whether a parent in the given status should be
+// treated as CLOSED/complete for the "closed parent has no open children"
+// invariant — a literal closed status OR a custom done-category status
+// (beads-ulsg4). It is the parent-side mirror of childCountsAsOpen: 97gmg made
+// the CHILD count done-aware, but the PARENT-status triggers across the close
+// guard family (forward-update / reopen / reparent / lint) stayed literal
+// StatusClosed, so a parent moved to a custom done-category status was treated as
+// neither-closed-nor-open and bypassed every guard — strictly worse than the
+// literal-closed case (lint even skips it via its `!= StatusClosed` scan). done
+// is the set from doneCategoryStatusNames; an empty set reduces to the literal
+// 'closed' test, so the fix is degraded-safe. Frozen-category is deliberately
+// EXCLUDED (parked != done), matching 97gmg/x463g and the view surfaces.
+func parentStatusIsTerminal(status types.Status, done map[string]bool) bool {
+	return status == types.StatusClosed || done[string(status)]
+}
+
 // countEpicOpenChildren returns the number of open (non-closed) children for an epic.
 // Uses GetDependentsWithMetadata to find parent-child relationships.
 // Takes an explicit store so callers can route to the store actually holding the epic
@@ -906,16 +922,23 @@ func countEpicOpenChildren(ctx context.Context, s storage.DoltStorage, epicID st
 // auto-close on last-step close — otherwise reopening a step of an auto-closed
 // molecule/wisp root bypasses the guard. (Name kept for its many callers; the
 // error text says "parent" not "parent epic".)
+//
+// beads-ulsg4: a parent in a custom done-category status is terminal too (via
+// parentStatusIsTerminal), so reopening a child under a done-category parent is
+// guarded exactly like a literal-closed parent — the parent-status completion of
+// 97gmg's child-count widen. Degraded-safe: an empty done-set (config read
+// error) reduces to the prior literal-'closed' behavior.
 func closedEpicParents(ctx context.Context, s storage.DoltStorage, childID string) []string {
 	deps, err := s.GetDependenciesWithMetadata(ctx, childID)
 	if err != nil {
 		return nil
 	}
+	done := doneCategoryStatusNames(ctx, s)
 	var parents []string
 	for _, dep := range deps {
 		if dep.DependencyType == types.DepParentChild &&
 			isAutoClosingParentType(&dep.Issue) &&
-			dep.Issue.Status == types.StatusClosed {
+			parentStatusIsTerminal(dep.Issue.Status, done) {
 			parents = append(parents, dep.Issue.ID)
 		}
 	}

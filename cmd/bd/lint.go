@@ -349,9 +349,15 @@ func openChildIDsOfEpic(ctx context.Context, s storage.DoltStorage, epicID strin
 // template --status/--type filter, since a closed epic is invisible under the
 // default --status=open scan). Returns one InconsistencyResult per offending epic.
 func scanClosedEpicsWithOpenChildren(ctx context.Context, b *lintBackend, issues []*types.Issue) []InconsistencyResult {
+	// beads-ulsg4: a parent in a custom done-category status is terminal too, so
+	// lint must flag a done-category epic that still has open children — the
+	// close/reopen/reparent guards now treat it as closed, so lint (the post-hoc
+	// detector) MUST match or the guard-bypass becomes undetectable. Degraded-safe:
+	// an empty done-set reduces to the prior literal-'closed' scan.
+	done := b.doneCategoryStatusSet(ctx)
 	var results []InconsistencyResult
 	for _, issue := range issues {
-		if issue.IssueType != types.TypeEpic || issue.Status != types.StatusClosed {
+		if issue.IssueType != types.TypeEpic || !parentStatusIsTerminal(issue.Status, done) {
 			continue
 		}
 		openChildren := b.openChildIDsOfEpic(ctx, issue.ID)
@@ -378,9 +384,27 @@ func closedEpicsToScan(ctx context.Context, b *lintBackend, explicitIssues []*ty
 	if hadArgs {
 		return explicitIssues
 	}
-	closed := types.StatusClosed
 	epic := types.TypeEpic
-	closedEpics, err := b.searchIssues(ctx, types.IssueFilter{Status: &closed, IssueType: &epic})
+	// beads-ulsg4: also scan epics in a custom done-category status — they are
+	// terminal (the close-guard family now treats them so), so a done-category
+	// epic with open children is a real inconsistency lint must surface. Query
+	// via the Statuses OR-filter (closed + every configured done-category name);
+	// an empty done-set falls back to a single-status closed query, byte-identical
+	// to before.
+	done := b.doneCategoryStatusSet(ctx)
+	if len(done) == 0 {
+		closed := types.StatusClosed
+		closedEpics, err := b.searchIssues(ctx, types.IssueFilter{Status: &closed, IssueType: &epic})
+		if err != nil {
+			return nil
+		}
+		return closedEpics
+	}
+	statuses := []types.Status{types.StatusClosed}
+	for name := range done {
+		statuses = append(statuses, types.Status(name))
+	}
+	closedEpics, err := b.searchIssues(ctx, types.IssueFilter{Statuses: statuses, IssueType: &epic})
 	if err != nil {
 		return nil
 	}

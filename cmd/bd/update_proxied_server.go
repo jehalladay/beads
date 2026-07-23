@@ -309,50 +309,66 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput, forc
 func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id string, current *types.Issue, isWisp bool, fields map[string]any, reparent *string) error {
 	// zgku: refuse closing an epic with open children on a real open->closed
 	// transition (already-closed is a no-op close).
-	if newStatus, ok := fields["status"].(string); ok && newStatus == "closed" &&
-		current.Status != types.StatusClosed {
-		// beads-6b9pz: widen from bare TypeEpic to the shared
-		// isAutoClosingParentType predicate (epic OR molecule/wisp root),
-		// matching bigro's close.go forward-guard widening. CountOpenChildren/
-		// CountOpenWispChildren count parent-child children regardless of type.
-		if isAutoClosingParentType(current) {
-			var openChildren int
+	//
+	// beads-ulsg4: a forward transition into a custom done-category status
+	// reaches the SAME terminal "complete" state the views/lifecycle already
+	// treat as done (x463g/97gmg), so it must enforce the same close-integrity
+	// invariants — the proxied twin of the direct update.go forward widen. The
+	// guard previously fired ONLY on newStatus=="closed", so a hub-connected crew
+	// could `bd update --status resolved` an auto-closing parent with open
+	// children and silently create the forbidden terminal-parent-with-open-child
+	// state (the WORST leg: no --force prompt, undetectable by lint post-hoc).
+	// parentStatusIsTerminal(current.Status, done) replaces the old
+	// `!= StatusClosed` skip so a terminal->terminal move stays a no-op. done is
+	// computed lazily (only when the update carries a status change); empty on a
+	// config-read error → degraded to the prior literal-'closed' behavior.
+	if newStatus, ok := fields["status"].(string); ok {
+		done := doneCategoryStatusSetProxied(ctx, uw)
+		if (newStatus == "closed" || done[newStatus]) &&
+			!parentStatusIsTerminal(current.Status, done) {
+			// beads-6b9pz: widen from bare TypeEpic to the shared
+			// isAutoClosingParentType predicate (epic OR molecule/wisp root),
+			// matching bigro's close.go forward-guard widening. CountOpenChildren/
+			// CountOpenWispChildren count parent-child children regardless of type.
+			if isAutoClosingParentType(current) {
+				var openChildren int
+				var err error
+				if isWisp {
+					openChildren, err = uw.IssueUseCase().CountOpenWispChildren(ctx, id)
+				} else {
+					openChildren, err = uw.IssueUseCase().CountOpenChildren(ctx, id)
+				}
+				if err == nil && openChildren > 0 {
+					return fmt.Errorf("cannot close %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
+				}
+			}
+			// zgku: refuse closing an issue that is blocked by open issues.
+			var blocked bool
+			var blockers []string
 			var err error
 			if isWisp {
-				openChildren, err = uw.IssueUseCase().CountOpenWispChildren(ctx, id)
+				blocked, blockers, err = uw.DependencyUseCase().IsWispBlocked(ctx, id)
 			} else {
-				openChildren, err = uw.IssueUseCase().CountOpenChildren(ctx, id)
+				blocked, blockers, err = uw.DependencyUseCase().IsBlocked(ctx, id)
 			}
-			if err == nil && openChildren > 0 {
-				return fmt.Errorf("cannot close %s: %d open child issue(s); close children first or use --force to override", id, openChildren)
+			if err != nil {
+				return fmt.Errorf("Error checking blockers for %s: %v", id, err)
 			}
-		}
-		// zgku: refuse closing an issue that is blocked by open issues.
-		var blocked bool
-		var blockers []string
-		var err error
-		if isWisp {
-			blocked, blockers, err = uw.DependencyUseCase().IsWispBlocked(ctx, id)
-		} else {
-			blocked, blockers, err = uw.DependencyUseCase().IsBlocked(ctx, id)
-		}
-		if err != nil {
-			return fmt.Errorf("Error checking blockers for %s: %v", id, err)
-		}
-		if blocked && len(blockers) > 0 {
-			return fmt.Errorf("cannot close %s: blocked by open issues %v (use --force to override)", id, blockers)
-		}
-		// Gate-satisfaction close guard (beads-l9f7j): proxied twin of the
-		// direct update.go gate guard — `bd close` (close.go:178) / its proxied
-		// twin (close_proxied_server.go:276) / `bd batch` (beads-zpq1f) all
-		// REJECT closing an issue with an unsatisfied machine-checkable gate
-		// (timer / gh:pr* / gh:run*); the proxied update close leg bypassed it,
-		// the SAME twin-divergence the zgku/2hkd/b0tw guards above closed.
-		// checkGateSatisfaction self-short-circuits on a non-machine-checkable
-		// gate. Sanitize the error: a gh:pr/gh:run gate embeds untrusted SCM
-		// data that can carry terminal escapes (beads-pbt8m, 7n9y sink class).
-		if err := checkGateSatisfaction(current); err != nil {
-			return fmt.Errorf("cannot close %s: %s", id, ui.SanitizeForTerminal(err.Error()))
+			if blocked && len(blockers) > 0 {
+				return fmt.Errorf("cannot close %s: blocked by open issues %v (use --force to override)", id, blockers)
+			}
+			// Gate-satisfaction close guard (beads-l9f7j): proxied twin of the
+			// direct update.go gate guard — `bd close` (close.go:178) / its proxied
+			// twin (close_proxied_server.go:276) / `bd batch` (beads-zpq1f) all
+			// REJECT closing an issue with an unsatisfied machine-checkable gate
+			// (timer / gh:pr* / gh:run*); the proxied update close leg bypassed it,
+			// the SAME twin-divergence the zgku/2hkd/b0tw guards above closed.
+			// checkGateSatisfaction self-short-circuits on a non-machine-checkable
+			// gate. Sanitize the error: a gh:pr/gh:run gate embeds untrusted SCM
+			// data that can carry terminal escapes (beads-pbt8m, 7n9y sink class).
+			if err := checkGateSatisfaction(current); err != nil {
+				return fmt.Errorf("cannot close %s: %s", id, ui.SanitizeForTerminal(err.Error()))
+			}
 		}
 	}
 
@@ -412,10 +428,16 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 	// beads-hxtzy: widened from bare TypeEpic to the shared isAutoClosingParentType
 	// (epic OR molecule OR ephemeral/wisp) so a closed MOLECULE/wisp root is caught,
 	// mirroring the direct update.go widen. Error text "closed epic"→"closed parent".
+	//
+	// beads-ulsg4: a parent in a custom done-category status is terminal too
+	// (parentStatusIsTerminal over the proxied done-set), so reparenting an open
+	// child under a done-category parent recreates the same forbidden state as
+	// under a literal-closed parent — the proxied twin of the direct reparent
+	// widen. Degraded-safe: empty done-set → literal-'closed' behavior.
 	if reparent != nil && *reparent != "" && current != nil && current.Status != types.StatusClosed {
 		parent, err := uw.IssueUseCase().GetIssue(ctx, *reparent)
-		if err == nil && parent != nil &&
-			isAutoClosingParentType(parent) && parent.Status == types.StatusClosed {
+		if err == nil && parent != nil && isAutoClosingParentType(parent) &&
+			parentStatusIsTerminal(parent.Status, doneCategoryStatusSetProxied(ctx, uw)) {
 			return fmt.Errorf("cannot reparent %s under closed parent %s: the parent is closed and %s is open (would create a closed parent with an open child); reopen the parent first or use --force to override", id, *reparent, id)
 		}
 	}
@@ -428,16 +450,24 @@ func checkProxiedUpdateCloseGuards(ctx context.Context, uw uow.UnitOfWork, id st
 // cmd/bd/close.go closedEpicParents over the UOW. beads-aw9x8: uses the shared
 // isAutoClosingParentType so the proxied reopen/update guards fire for a closed
 // molecule/ephemeral root too, in lockstep with the direct path.
+//
+// beads-ulsg4: a parent in a custom done-category status is terminal too
+// (parentStatusIsTerminal over the proxied done-set), so a child reopen under a
+// done-category parent is guarded exactly like under a literal-closed parent —
+// the proxied twin of the direct closedEpicParents widen. Degraded-safe: an
+// empty done-set (nil UOW / config-read error) reduces to the prior
+// literal-'closed' behavior.
 func proxiedClosedEpicParents(ctx context.Context, uw uow.UnitOfWork, id string, isWisp bool) []string {
 	deps, err := proxiedListDeps(ctx, uw, id, isWisp, domain.DepListFilter{Direction: domain.DepDirectionOut})
 	if err != nil {
 		return nil
 	}
+	done := doneCategoryStatusSetProxied(ctx, uw)
 	var parents []string
 	for _, dep := range deps {
 		if dep.DependencyType == types.DepParentChild &&
 			isAutoClosingParentType(&dep.Issue) &&
-			dep.Issue.Status == types.StatusClosed {
+			parentStatusIsTerminal(dep.Issue.Status, done) {
 			parents = append(parents, dep.Issue.ID)
 		}
 	}

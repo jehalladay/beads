@@ -68,6 +68,33 @@ func (b *lintBackend) searchIssues(ctx context.Context, filter types.IssueFilter
 // direct helper and countEpicOpenChildren's posture. The proxied leg uses the
 // same DepParentChild/DepDirectionIn listing as `bd show --children` (a child
 // depends ON its parent, so children are the epic's dependents).
+// doneCategoryStatusSet returns the set of custom done-category status names for
+// the backend's config source (beads-ulsg4). It is the backend-routed sibling of
+// close.go's doneCategoryStatusNames (direct) — the lint's closed-epic scan must
+// treat a parent in a custom done-category status as terminal too, in lockstep
+// with the close/reopen/reparent guards, or lint would MISS a done-category
+// parent that still has open children (strictly worse than the literal-closed
+// case it already flags). Degraded-safe: a nil UOW/store or a config-read error
+// yields an empty set → the scan reduces to the prior literal-'closed' behavior.
+// Frozen-category is EXCLUDED (parked != done), matching 97gmg/x463g.
+func (b *lintBackend) doneCategoryStatusSet(ctx context.Context) map[string]bool {
+	done := map[string]bool{}
+	if b.uw != nil {
+		if custom, cerr := b.uw.ConfigUseCase().GetCustomStatuses(ctx); cerr == nil {
+			for _, cs := range custom {
+				if cs.Category == types.CategoryDone {
+					done[cs.Name] = true
+				}
+			}
+		}
+		return done
+	}
+	if store != nil {
+		return doneCategoryStatusNames(ctx, store)
+	}
+	return done
+}
+
 func (b *lintBackend) openChildIDsOfEpic(ctx context.Context, epicID string) []string {
 	if b.uw != nil {
 		deps, err := proxiedListDeps(ctx, b.uw, epicID, false, domain.DepListFilter{
