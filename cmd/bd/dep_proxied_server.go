@@ -154,9 +154,16 @@ func runDepBlocksProxiedServer(cmd *cobra.Command, ctx context.Context, blockerI
 	blockerTitle := proxiedLookupTitle(ctx, uw, blockerID)
 	blockedTitle := proxiedLookupTitle(ctx, uw, blockedID)
 
+	// beads-29tyj: capture the mutated issue (the blocked/depending side, matching
+	// the direct decorator's fireDependencyHookByID(dep.IssueID)) before Commit.
+	after := captureProxiedHookSnapshot(ctx, uw, blockedID, true)
+
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: dep add %s %s", blockedID, blockerID)); err != nil && !isDoltNothingToCommit(err) {
 		FatalErrorRespectJSON("failed to commit: %v", err)
 	}
+
+	// beads-29tyj: fire on_update after commit (parity with the direct path).
+	fireProxiedUpdateSnapshots(ctx, after)
 
 	if jsonOutput {
 		// beads-xcujl: align --blocks vocabulary with `dep add` (issue_id=
@@ -296,9 +303,16 @@ func runDepAddProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	fromTitle := proxiedLookupTitle(ctx, uw, fromID)
 	toTitle := proxiedLookupTitle(ctx, uw, toID)
 
+	// beads-29tyj: capture the mutated issue (fromID = dep.IssueID) before Commit
+	// so on_update can fire after, matching the direct decorator.
+	after := captureProxiedHookSnapshot(ctx, uw, fromID, true)
+
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: dep add %s %s", fromID, toID)); err != nil && !isDoltNothingToCommit(err) {
 		FatalErrorRespectJSON("failed to commit: %v", err)
 	}
+
+	// beads-29tyj: fire on_update after commit (parity with the direct path).
+	fireProxiedUpdateSnapshots(ctx, after)
 
 	if jsonOutput {
 		_ = outputJSON(map[string]interface{}{
@@ -382,9 +396,27 @@ func runDepAddBulkProxied(cmd *cobra.Command, ctx context.Context, file, default
 		proxiedWarnCycles(ctx, uw)
 	}
 
+	// beads-29tyj: capture the post-add snapshot for each DISTINCT mutated issue
+	// (dep.IssueID) before Commit, so on_update fires once per affected issue
+	// after commit — matching the direct decorator's per-edge fireDependencyHookByID.
+	var bulkSnapshots []*types.Issue
+	seenSnapshot := make(map[string]bool, len(deps))
+	for _, dep := range deps {
+		if seenSnapshot[dep.IssueID] {
+			continue
+		}
+		seenSnapshot[dep.IssueID] = true
+		if s := captureProxiedHookSnapshot(ctx, uw, dep.IssueID, true); s != nil {
+			bulkSnapshots = append(bulkSnapshots, s)
+		}
+	}
+
 	if err := uw.Commit(ctx, fmt.Sprintf("dependency: add %d edges", len(deps))); err != nil && !isDoltNothingToCommit(err) {
 		FatalErrorRespectJSON("failed to commit: %v", err)
 	}
+
+	// beads-29tyj: fire on_update after commit (parity with the direct path).
+	fireProxiedUpdateSnapshots(ctx, bulkSnapshots...)
 
 	if jsonOutput {
 		out := make([]map[string]interface{}, 0, len(deps))
@@ -457,9 +489,16 @@ func runDepRemoveProxiedServer(_ *cobra.Command, ctx context.Context, args []str
 	fromTitle := proxiedLookupTitle(ctx, uw, fromID)
 	toTitle := proxiedLookupTitle(ctx, uw, toID)
 
+	// beads-29tyj: capture the mutated issue (fromID) before Commit so on_update
+	// fires after, matching the direct decorator's RemoveDependency hook.
+	after := captureProxiedHookSnapshot(ctx, uw, fromID, true)
+
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: dep remove %s %s", fromID, toID)); err != nil && !isDoltNothingToCommit(err) {
 		FatalErrorRespectJSON("failed to commit: %v", err)
 	}
+
+	// beads-29tyj: fire on_update after commit (parity with the direct path).
+	fireProxiedUpdateSnapshots(ctx, after)
 
 	if jsonOutput {
 		_ = outputJSON(map[string]interface{}{

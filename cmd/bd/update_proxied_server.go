@@ -468,6 +468,52 @@ func fireProxiedUpdateHooks(ctx context.Context, before, after *types.Issue) err
 	return nil
 }
 
+// captureProxiedHookSnapshot reads the post-mutation issue snapshot from within
+// the still-open UOW (BEFORE Commit) so the on_update hook can fire with it
+// AFTER the commit, mirroring the direct hookTrackingTransaction (beads-29tyj):
+// snapshots are captured in-tx via GetIssue and the hooks fire post-commit. The
+// direct hook decorator fires on_update for comment-add
+// (HookFiringStore.AddIssueComment), dependency add/remove
+// (fireDependencyHookByID for dep.IssueID) and relate/unrelate (both endpoints,
+// one per AddDependency) — but the proxied UOW use-case layer does not, so a
+// hub-connected crew's on_update hooks silently never ran for these verbs.
+// Best-effort and behavior-preserving with the decorator's GetIssue-only
+// re-fetch: skip (return nil) if the id can't be loaded as an issue (e.g. a wisp
+// GetIssue can't reach — the direct fireHookByID skips there too), and enrich
+// with the dependency records when withDeps so an on_update hook body sees the
+// post-mutation edge set (matching dependencySnapshot).
+func captureProxiedHookSnapshot(ctx context.Context, uw uow.UnitOfWork, id string, withDeps bool) *types.Issue {
+	if uw == nil {
+		return nil
+	}
+	snapshot, err := uw.IssueUseCase().GetIssue(ctx, id)
+	if err != nil || snapshot == nil {
+		return nil
+	}
+	if withDeps {
+		if recs, derr := uw.DependencyUseCase().GetIssueDependencyRecords(ctx, []string{id}); derr == nil {
+			snapshot.Dependencies = recs[id]
+		}
+	}
+	return snapshot
+}
+
+// fireProxiedUpdateSnapshots fires the on_update hook for each captured snapshot
+// after a proxied mutation commits (beads-29tyj). Best-effort: a hook failure
+// warns to stderr but does not fail the command, matching the direct decorator's
+// fire-and-forget contract (HookFiringStore.fireHook) and the existing proxied
+// update path (applyUpdateProxiedOne).
+func fireProxiedUpdateSnapshots(ctx context.Context, snapshots ...*types.Issue) {
+	for _, s := range snapshots {
+		if s == nil {
+			continue
+		}
+		if err := fireProxiedUpdateHooks(ctx, nil, s); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", s.ID, err)
+		}
+	}
+}
+
 func proxiedHookRunner(ctx context.Context) (*hooks.Runner, error) {
 	if hookRunner != nil {
 		return hookRunner, nil

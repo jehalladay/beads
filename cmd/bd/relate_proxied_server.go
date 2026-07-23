@@ -66,9 +66,17 @@ func runRelateProxiedServer(ctx context.Context, args []string) error {
 		return HandleErrorRespectJSON("%v", err)
 	}
 
+	// beads-29tyj: capture both endpoints before Commit — the direct path adds two
+	// AddDependency edges, each firing on_update for its IssueID via the decorator.
+	afterA := captureProxiedHookSnapshot(ctx, uw, id1, true)
+	afterB := captureProxiedHookSnapshot(ctx, uw, id2, true)
+
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: relate %s <-> %s", id1, id2)); err != nil && !isDoltNothingToCommit(err) {
 		return HandleErrorRespectJSON("failed to commit: %v", err)
 	}
+
+	// beads-29tyj: fire on_update for both endpoints after commit (parity).
+	fireProxiedUpdateSnapshots(ctx, afterA, afterB)
 
 	if jsonOutput {
 		result := map[string]interface{}{"id1": id1, "id2": id2, "related": true}
@@ -109,9 +117,17 @@ func runUnrelateProxiedServer(ctx context.Context, args []string) error {
 		return HandleErrorRespectJSON("failed to remove relates-to %s -> %s: %v", id2, id1, err)
 	}
 
+	// beads-29tyj: capture both endpoints before Commit — the direct path's two
+	// RemoveDependency calls each fire on_update for their IssueID via the decorator.
+	afterA := captureProxiedHookSnapshot(ctx, uw, id1, true)
+	afterB := captureProxiedHookSnapshot(ctx, uw, id2, true)
+
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: unrelate %s <-> %s", id1, id2)); err != nil && !isDoltNothingToCommit(err) {
 		return HandleErrorRespectJSON("failed to commit: %v", err)
 	}
+
+	// beads-29tyj: fire on_update for both endpoints after commit (parity).
+	fireProxiedUpdateSnapshots(ctx, afterA, afterB)
 
 	if jsonOutput {
 		result := map[string]interface{}{"id1": id1, "id2": id2, "unrelated": true}

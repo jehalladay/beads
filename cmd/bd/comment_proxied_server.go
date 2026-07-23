@@ -44,9 +44,17 @@ func runCommentProxiedServer(ctx context.Context, issueID, author, commentText s
 		return HandleErrorRespectJSON("adding comment: %v", err)
 	}
 
+	// beads-29tyj: capture the post-add snapshot before Commit so the on_update
+	// hook can fire after — the direct path fires on_update via
+	// HookFiringStore.AddIssueComment, but the proxied UOW use-case layer does not.
+	after := captureProxiedHookSnapshot(ctx, uw, resolvedID, false)
+
 	if cerr := uw.Commit(ctx, "bd: comment "+resolvedID); cerr != nil && !isDoltNothingToCommit(cerr) {
 		return HandleErrorRespectJSON("failed to commit: %v", cerr)
 	}
+
+	// beads-29tyj: fire on_update after the commit (parity with the direct decorator).
+	fireProxiedUpdateSnapshots(ctx, after)
 
 	SetLastTouchedID(resolvedID)
 
