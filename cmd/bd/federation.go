@@ -608,7 +608,16 @@ func runFederationAddPeer(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if federationUser != "" {
+	// A sovereignty tier is policy state persisted in the federation_peers row
+	// (schema 0015: `sovereignty` column + index), independent of auth. Route
+	// through AddFederationPeer whenever EITHER --user OR --sovereignty is set,
+	// so the tier is actually persisted — the plain AddRemote path only creates
+	// a Dolt remote and would silently drop the tier while the output below
+	// echoes it back as stored (beads-pib1g). Symmetric-inverse of beads-af5te,
+	// which routed remove-peer through the credential-aware method. An empty
+	// username/password is tolerated (username is nullable; encryptPassword("")
+	// returns nil), so a sovereignty-only peer stores cleanly.
+	if federationUser != "" || sov != "" {
 		peer := &storage.FederationPeer{
 			Name:        name,
 			RemoteURL:   url,
