@@ -226,6 +226,16 @@ func runSwarmCreateProxied(ctx context.Context, inputRef, coordinator string, fo
 	var epicID string
 	var epicTitle string
 
+	// beads-0l9wv: accumulate the minted issues + dependency targets so the
+	// on_create / on_update hooks fire after the single UOW commit, at parity
+	// with the direct path (swarm.go), whose store.RunInTransaction routes
+	// tx.CreateIssue → createHookEvents (on_create per minted issue) and
+	// tx.AddDependency → fireDependencyHookByID (on_update for dep.IssueID). The
+	// proxied path mints through the RAW UOW use-case (issueUC.CreateIssue /
+	// depUC.AddDependency), which bypasses HookFiringStore.
+	var createdForHooks []*types.Issue
+	var depTargetIDsForHooks []string
+
 	if issue.IssueType == types.TypeEpic || issue.IssueType == "molecule" {
 		epicID = issue.ID
 		epicTitle = issue.Title
@@ -248,6 +258,7 @@ func runSwarmCreateProxied(ctx context.Context, inputRef, coordinator string, fo
 			return HandleErrorRespectJSON("failed to create wrapper epic: %v", cerr)
 		}
 		wrapperEpic = res.Issue
+		createdForHooks = append(createdForHooks, wrapperEpic)
 
 		dep := &types.Dependency{
 			IssueID:     issue.ID,
@@ -258,6 +269,9 @@ func runSwarmCreateProxied(ctx context.Context, inputRef, coordinator string, fo
 		if derr := depUC.AddDependency(ctx, dep, actor); derr != nil {
 			return HandleErrorRespectJSON("failed to link issue to epic: %v", derr)
 		}
+		// beads-0l9wv: the direct path fires on_update for the parent-child
+		// dependency's IssueID (the wrapped issue) via tx.AddDependency.
+		depTargetIDsForHooks = append(depTargetIDsForHooks, issue.ID)
 
 		epicID = wrapperEpic.ID
 		epicTitle = wrapperEpic.Title
@@ -330,6 +344,7 @@ func runSwarmCreateProxied(ctx context.Context, inputRef, coordinator string, fo
 		return HandleErrorRespectJSON("failed to create swarm molecule: %v", err)
 	}
 	swarmMol = res.Issue
+	createdForHooks = append(createdForHooks, swarmMol)
 
 	dep := &types.Dependency{
 		IssueID:     swarmMol.ID,
@@ -340,6 +355,17 @@ func runSwarmCreateProxied(ctx context.Context, inputRef, coordinator string, fo
 	if err := depUC.AddDependency(ctx, dep, actor); err != nil {
 		return HandleErrorRespectJSON("failed to link swarm to epic: %v", err)
 	}
+	// beads-0l9wv: the direct path fires on_update for the relates-to
+	// dependency's IssueID (the swarm molecule) via tx.AddDependency.
+	depTargetIDsForHooks = append(depTargetIDsForHooks, swarmMol.ID)
+
+	// beads-0l9wv: capture the dependency-target on_update snapshots BEFORE the
+	// commit (matching the 29tyj proxied dep-add pattern — the snapshot read
+	// runs on the open UOW), so they can be fired after the commit succeeds.
+	var depSnapshotsForHooks []*types.Issue
+	for _, targetID := range depTargetIDsForHooks {
+		depSnapshotsForHooks = append(depSnapshotsForHooks, captureProxiedHookSnapshot(ctx, uw, targetID, true))
+	}
 
 	commitMsg := fmt.Sprintf("bd: create swarm %s for epic %s", swarmMol.ID, epicID)
 	if err := uw.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
@@ -347,6 +373,22 @@ func runSwarmCreateProxied(ctx context.Context, inputRef, coordinator string, fo
 	}
 
 	commandDidWrite.Store(true)
+
+	// beads-0l9wv: fire on_create for each minted issue (wrapper epic when
+	// auto-wrapped + the swarm molecule) and on_update for each dependency
+	// target, AFTER the commit — matching the direct path's post-commit
+	// hookTrackingTransaction firing (swarm.go via HookFiringStore). The proxied
+	// mints (issueUC.CreateIssue / depUC.AddDependency) bypass the decorator, so
+	// a hub-connected (proxiedServerMode, store==nil) crew's on_create/on_update
+	// automation would otherwise silently never run on swarm create. swarmMol /
+	// wrapperEpic carry no Labels (the struct literals set none), so pass nil —
+	// fireProxiedCreateHooks then fires a single label-free on_create, mirroring
+	// createHookEvents for a label-free issue. Best-effort: hook failures warn to
+	// stderr but do not fail the command (fire-and-forget contract).
+	for _, created := range createdForHooks {
+		fireProxiedCreateHooks(ctx, created, nil)
+	}
+	fireProxiedUpdateSnapshots(ctx, depSnapshotsForHooks...)
 
 	if jsonOutput {
 		return outputJSON(map[string]interface{}{
