@@ -90,9 +90,20 @@ func runLinkProxiedServer(ctx context.Context, id1, id2, depType string) error {
 	fromTitle := proxiedLookupTitle(ctx, uw, id1)
 	toTitle := proxiedLookupTitle(ctx, uw, id2)
 
+	// beads-af741: capture the mutated (depending) side before Commit so on_update
+	// can fire after — parity with the direct decorator (HookFiringStore.AddDependency
+	// fires fireDependencyHookByID(dep.IssueID)) and with proxied `bd dep add`
+	// (beads-29tyj). Without this, a hub-connected crew's on_update automation
+	// silently never ran for `bd link` (only the no-op/unchanged path skips it,
+	// which returned earlier). withDeps=true matches the proxied dep-add capture.
+	after := captureProxiedHookSnapshot(ctx, uw, id1, true)
+
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: link %s %s", id1, id2)); err != nil && !isDoltNothingToCommit(err) {
 		return HandleErrorRespectJSON("failed to commit: %v", err)
 	}
+
+	// beads-af741: fire on_update after commit (parity with the direct path).
+	fireProxiedUpdateSnapshots(ctx, after)
 
 	SetLastTouchedID(id1)
 
