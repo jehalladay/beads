@@ -70,12 +70,31 @@ func runRenameProxiedServer(ctx context.Context, oldID, newID string, force bool
 	// into refWarning and committed the rename + an arbitrary partial suffix of
 	// ref-rewrites at RC=0, re-introducing the exact pre-uorhi dangling-ref bug on
 	// the proxied path.
-	if err := updateReferencesInAllIssuesProxied(ctx, uw, oldID, newID); err != nil {
+	rewrittenIDs, err := updateReferencesInAllIssuesProxied(ctx, uw, oldID, newID)
+	if err != nil {
 		return HandleErrorRespectJSON("failed to update references (rename rolled back): %v", err)
 	}
 
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: rename %s -> %s", oldID, newID)); err != nil && !isDoltNothingToCommit(err) {
 		return HandleErrorRespectJSON("failed to commit: %v", err)
+	}
+
+	// beads-rlthr: fire on_update for every issue whose body a ref-rewrite touched,
+	// at parity with the DIRECT path — rename.go's updateReferencesInAllIssuesTx
+	// runs each per-issue rewrite through the HookFiringStore hook-tracked
+	// transaction (hook_decorator.go hookTrackingTransaction.UpdateIssue ->
+	// pendingHook{EventUpdate}), which fires on_update per rewritten issue
+	// post-commit. The proxied helper writes each rewrite via uw.IssueUseCase().
+	// UpdateIssue (no decorator), so a hub-connected (proxiedServerMode, store==nil)
+	// crew's on_update automation silently never ran for the ref-rewritten issues.
+	// Fire post-commit via a fresh read (single-snapshot: a ref-rewrite is a pure
+	// on_update transition, no close), mirroring the fs73t/elq6a idiom. The renamed
+	// row itself (RenameIssueID) and comment-body rewrites are CLEAN-NEG — neither
+	// path fires on_update — so only body-field rewrites are fired here.
+	for _, id := range rewrittenIDs {
+		if after := proxiedResolveForNoOp(ctx, id); after != nil {
+			fireProxiedUpdateSnapshots(ctx, after)
+		}
 	}
 
 	if jsonOutput {
@@ -95,12 +114,17 @@ func runRenameProxiedServer(ctx context.Context, oldID, newID string, force bool
 // updateReferencesInAllIssues (cmd/bd/rename.go): rewrite word-boundary text
 // references to oldID across every issue's title/description/design/notes/
 // acceptance_criteria via the use-case, best-effort.
-func updateReferencesInAllIssuesProxied(ctx context.Context, uw uow.UnitOfWork, oldID, newID string) error {
+//
+// Returns the IDs of issues whose body fields were rewritten so the caller can
+// fire on_update for each post-commit (beads-rlthr) — parity with the DIRECT
+// path's hook-tracked transaction, which fires on_update per rewritten issue.
+func updateReferencesInAllIssuesProxied(ctx context.Context, uw uow.UnitOfWork, oldID, newID string) ([]string, error) {
 	issueUC := uw.IssueUseCase()
 	page, err := issueUC.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
-		return fmt.Errorf("failed to list issues: %w", err)
+		return nil, fmt.Errorf("failed to list issues: %w", err)
 	}
+	var rewrittenIDs []string
 
 	// beads-1nvr5: share the direct path's id-charclass boundary rewriter so
 	// the two rename paths can never diverge. The old `\b`...`\b` matched inside
@@ -133,8 +157,13 @@ func updateReferencesInAllIssuesProxied(ctx context.Context, uw uow.UnitOfWork, 
 
 		if len(updates) > 0 {
 			if err := issueUC.UpdateIssue(ctx, issue.ID, updates, actor); err != nil {
-				return fmt.Errorf("failed to update references in %s: %w", issue.ID, err)
+				return nil, fmt.Errorf("failed to update references in %s: %w", issue.ID, err)
 			}
+			// beads-rlthr: this issue's body was rewritten → record it so the
+			// caller fires on_update after commit (direct-path parity). Only
+			// body-field rewrites fire on_update; comment-body rewrites below do
+			// not (CLEAN-NEG, matching the direct path).
+			rewrittenIDs = append(rewrittenIDs, issue.ID)
 		}
 
 		// beads-g8qfo: rewrite id refs inside comment bodies too — the comments
@@ -144,16 +173,16 @@ func updateReferencesInAllIssuesProxied(ctx context.Context, uw uow.UnitOfWork, 
 		// rename, so the issue comment table (not wisp_comments) is correct.
 		comments, cerr := uw.CommentUseCase().GetCommentsForIssue(ctx, issue.ID)
 		if cerr != nil {
-			return fmt.Errorf("failed to read comments for %s: %w", issue.ID, cerr)
+			return nil, fmt.Errorf("failed to read comments for %s: %w", issue.ID, cerr)
 		}
 		for _, c := range comments {
 			if v, ok := rewrite(c.Text); ok {
 				if err := uw.CommentUseCase().UpdateIssueCommentText(ctx, c.ID, v); err != nil {
-					return fmt.Errorf("failed to update comment reference in %s: %w", issue.ID, err)
+					return nil, fmt.Errorf("failed to update comment reference in %s: %w", issue.ID, err)
 				}
 			}
 		}
 	}
 
-	return nil
+	return rewrittenIDs, nil
 }
