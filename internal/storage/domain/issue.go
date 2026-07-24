@@ -1020,6 +1020,10 @@ func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams,
 		result.PostCreateWrites = true
 	}
 
+	// beads-7pwkl: resolve the DONE-category status set once for the dep-loop
+	// guard below (the proxied/domain twin of the cmd-side ei6vq fix). Cheap
+	// enough to resolve unconditionally; the guard itself is Force-gated.
+	depGuardDone := u.doneCategoryStatusNames(ctx)
 	for _, spec := range params.Dependencies {
 		// beads-p1p9n: a parent-child edge supplied via Dependencies (proxied
 		// `--deps parent-child:<id>` and markdown `parent-child:`) links a child
@@ -1028,9 +1032,11 @@ func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams,
 		// open child under a CLOSED auto-closing parent (epic/molecule/wisp) leaked
 		// silently over the proxied+markdown paths. Mirror the guard: refuse unless
 		// params.Force. Reads via u.get (wisp-table aware) like the graph guard.
+		// beads-7pwkl: treat a done-category parent status as terminal too, not
+		// just literal 'closed' — empty done-set is degraded-safe (literal-closed).
 		if !params.Force && spec.Type == types.DepParentChild && !spec.SwapDirection {
 			parent, perr := u.get(ctx, spec.TargetID, useWisp)
-			if perr == nil && parent.IsAutoClosingParentType() && parent.Status == types.StatusClosed {
+			if perr == nil && parent.IsAutoClosingParentType() && parentStatusIsTerminal(parent.Status, depGuardDone) {
 				return result, fmt.Errorf("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", spec.TargetID)
 			}
 		}
@@ -1104,6 +1110,13 @@ func (u *issueUseCaseImpl) ApplyWispGraph(ctx context.Context, plan GraphPlan, a
 func (u *issueUseCaseImpl) applyGraph(ctx context.Context, plan GraphPlan, actor string, useWisp bool) (GraphApplyResult, error) {
 	keyToID := make(map[string]string, len(plan.Nodes))
 	pendingAssignees := make(map[int]string, len(plan.Nodes))
+
+	// beads-7pwkl: resolve the DONE-category status set once for the two
+	// closed-parent guards below (edge-loop Pass 3 + node.ParentID Pass 4).
+	// A done-category parent is terminal, not just literal 'closed'; empty
+	// done-set is degraded-safe (literal-closed). Domain/proxied twin of the
+	// cmd-side ei6vq/99lgm fix.
+	graphGuardDone := u.doneCategoryStatusNames(ctx)
 
 	// Pass 1 — create every node as a top-level issue. We deliberately do
 	// not pass ParentID to u.create: graph nodes with parent_key/parent_id
@@ -1221,7 +1234,7 @@ func (u *issueUseCaseImpl) applyGraph(ctx context.Context, plan GraphPlan, actor
 		// is unaffected. Reads via u.get (wisp-table aware) like the Pass 4 read.
 		if !plan.Force && depType == types.DepParentChild {
 			parent, perr := u.get(ctx, toID, useWisp)
-			if perr == nil && parent.IsAutoClosingParentType() && parent.Status == types.StatusClosed {
+			if perr == nil && parent.IsAutoClosingParentType() && parentStatusIsTerminal(parent.Status, graphGuardDone) {
 				child, cerr := u.get(ctx, fromID, useWisp)
 				if cerr == nil && child.Status != types.StatusClosed {
 					return GraphApplyResult{}, fmt.Errorf("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", toID)
@@ -1262,7 +1275,7 @@ func (u *issueUseCaseImpl) applyGraph(ctx context.Context, plan GraphPlan, actor
 			// choice. A miss (perr != nil) fails open to the normal link — an
 			// existing cross-table parent is best-effort, like the single path.
 			parent, perr := u.get(ctx, parentID, useWisp)
-			if perr == nil && parent.IsAutoClosingParentType() && parent.Status == types.StatusClosed {
+			if perr == nil && parent.IsAutoClosingParentType() && parentStatusIsTerminal(parent.Status, graphGuardDone) {
 				return GraphApplyResult{}, fmt.Errorf("cannot create a child under closed parent %s (its status is closed; reopen the parent first or use --force to override)", parentID)
 			}
 		}
@@ -1815,6 +1828,15 @@ func (u *issueUseCaseImpl) countOpenChildren(ctx context.Context, id string, use
 		}
 	}
 	return open, nil
+}
+
+// parentStatusIsTerminal reports whether a parent status counts as terminal for
+// the closed-parent-with-open-child guard: literally closed, or a configured
+// custom done-category status. It is the domain-layer twin of the cmd-side
+// helper of the same name (close.go, beads-ei6vq). An empty done-set makes this
+// byte-identical to the literal '== StatusClosed' test (degraded-safe).
+func parentStatusIsTerminal(status types.Status, done map[string]bool) bool {
+	return status == types.StatusClosed || done[string(status)]
 }
 
 // doneCategoryStatusNames returns the configured custom status names in the DONE

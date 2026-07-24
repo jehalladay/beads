@@ -207,7 +207,17 @@ func (f *fakeIssueRepo) Get(_ context.Context, id string, opts IssueTableOpts) (
 	if f.getErr != nil {
 		return nil, f.getErr
 	}
-	return f.getIssues[id], nil
+	if iss, ok := f.getIssues[id]; ok {
+		return iss, nil
+	}
+	// Fall back to issues minted via Insert (get-after-insert), matching the
+	// real store: applyGraph reads back a child it just created in Pass 1.
+	for _, iss := range f.inserted {
+		if iss.ID == id {
+			return iss, nil
+		}
+	}
+	return nil, nil
 }
 func (f *fakeIssueRepo) AsOf(context.Context, string, string) (*types.Issue, error) {
 	return f.asOfIssue, f.asOfErr
