@@ -51,7 +51,8 @@ func TestProxiedShowLabelSink_sanitize_35asp(t *testing.T) {
 
 	stdout := bdProxiedShowRaw(t, bd, p.dir, issue.ID)
 	assertNoRawEscapes(t, stdout, "proxied bd show detail-view LABELS line")
-	if !strings.Contains(stdout, "ShowLblEND") {
+	// Labels are case-folded at write (beads-9jjj8) → visible text lowercased.
+	if !strings.Contains(strings.ToLower(stdout), "showlblend") {
 		t.Errorf("proxied bd show dropped/garbled visible label text: %q", stdout)
 	}
 }

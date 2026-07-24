@@ -4,48 +4,29 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 )
 
-var (
-	initPermissionTestBD     string
-	initPermissionTestBDOnce sync.Once
-	initPermissionTestBDErr  error
-)
-
+// buildBDForInitPermissionTests returns a bd binary for the permission-repair
+// subprocess tests. It delegates to buildBDForInitTests, which (a) honors a
+// pre-built binary via BEADS_TEST_BD_BINARY, (b) reuses ../../bd when present,
+// and (c) forces CGO_ENABLED=1 (these tests drive `bd init`, which needs an
+// embedded-Dolt/CGO build) — all behind a package-wide sync.Once.
+//
+// Previously this had its own sync.Once + per-suite `go build` that (1) did NOT
+// honor BEADS_TEST_BD_BINARY-set prebuilt binaries the way the gate expects,
+// (2) omitted CGO_ENABLED=1 (spurious failures when the ambient env is
+// CGO_ENABLED=0, e.g. the refinery clone — beads-0xjb), and (3) shelled out a
+// redundant full bd build under load, which panicked and pushed the cmd/bd gate
+// suite past its timeout (beads-dmpti). Delegating collapses to one shared,
+// prebuilt-aware build.
 func buildBDForInitPermissionTests(t *testing.T) string {
 	t.Helper()
-	initPermissionTestBDOnce.Do(func() {
-		prebuilt, err := findPrebuiltBDBinary()
-		if err != nil {
-			initPermissionTestBDErr = err
-			return
-		}
-		if prebuilt != "" {
-			initPermissionTestBD = prebuilt
-			return
-		}
-		tmpDir, err := testTempDir("bd-init-permissions-test-*")
-		if err != nil {
-			initPermissionTestBDErr = fmt.Errorf("failed to create temp dir: %w", err)
-			return
-		}
-		initPermissionTestBD = filepath.Join(tmpDir, "bd")
-		cmd := exec.Command("go", "build", "-tags", "gms_pure_go", "-o", initPermissionTestBD, ".")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			initPermissionTestBDErr = fmt.Errorf("go build failed: %v\n%s", err, out)
-		}
-	})
-	if initPermissionTestBDErr != nil {
-		t.Fatalf("failed to build bd binary: %v", initPermissionTestBDErr)
-	}
-	return initPermissionTestBD
+	return buildBDForInitTests(t)
 }
 
 // TestInitRepairsPermissiveBeadsDir is the init-path regression test for

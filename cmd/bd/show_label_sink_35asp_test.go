@@ -44,7 +44,11 @@ func TestShowLabelSink_sanitize_35asp(t *testing.T) {
 	if strings.ContainsRune(s, '\x07') {
 		t.Errorf("bd show leaked a raw BEL (\\x07) — LABELS line not sanitized (beads-35asp): %q", s)
 	}
-	if !strings.Contains(s, "ShowLblEND") {
+	// Labels are case-folded at write (beads-9jjj8), so the stored/rendered
+	// visible text is lowercased ("showlblend"). Assert case-insensitively:
+	// the security teeth are the ESC/BEL leak checks above; here we only
+	// require the alphanumeric visible text to survive unbroken.
+	if !strings.Contains(strings.ToLower(s), "showlblend") {
 		t.Errorf("bd show dropped/garbled visible label text (beads-35asp): %q", s)
 	}
 }

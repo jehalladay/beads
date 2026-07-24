@@ -54,7 +54,10 @@ func TestShowWatchLabelSink_sanitize_35asp(t *testing.T) {
 	_ = cmd.Run() // expected to be killed by the timeout; we only inspect stdout
 
 	s := stdout.String()
-	if !strings.Contains(s, "WatchLbl") {
+	// Labels are case-folded at write (beads-9jjj8), so the rendered visible
+	// text is lowercased ("watchlblend"); match case-insensitively.
+	lower := strings.ToLower(s)
+	if !strings.Contains(lower, "watchlbl") {
 		t.Fatalf("bd show --watch produced no LABELS render to inspect (got %q, stderr %q)", s, stderr.String())
 	}
 	if strings.ContainsRune(s, '\x1b') {
@@ -63,7 +66,7 @@ func TestShowWatchLabelSink_sanitize_35asp(t *testing.T) {
 	if strings.ContainsRune(s, '\x07') {
 		t.Errorf("bd show --watch leaked a raw BEL (\\x07) — LABELS line not sanitized (beads-35asp): %q", s)
 	}
-	if !strings.Contains(s, "WatchLblEND") {
+	if !strings.Contains(lower, "watchlblend") {
 		t.Errorf("bd show --watch dropped/garbled visible label text (beads-35asp): %q", s)
 	}
 }
