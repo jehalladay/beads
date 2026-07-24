@@ -135,6 +135,24 @@ func GetEpicsEligibleForClosureInTx(ctx context.Context, tx DBTX) ([]*types.Epic
 		epicIssueMap[issue.ID] = issue
 	}
 
+	// beads-g29sj: a custom done-category status is a terminal "done" outcome, so
+	// a child in such a status must count toward closure eligibility exactly like
+	// a literal-closed child — matching molecule progress (beads-bobpm), autoclose,
+	// and bd ready/count/list (beads-x463g). Epic close-eligibility was the
+	// straggler of that done-category vein: it keyed on the LITERAL StatusClosed,
+	// so an epic whose children are ALL done-category reported EligibleForClose:false
+	// and never auto-closed. Resolve the done-category names once; a nil/empty set
+	// (no config or a resolution error) leaves counting byte-identical to the
+	// pre-g29sj behavior (only types.StatusClosed completes) — degraded-safe.
+	doneStatusNames := map[string]bool{}
+	if detailed, cerr := ResolveCustomStatusesDetailedInTx(ctx, tx); cerr == nil {
+		for _, cs := range detailed {
+			if cs.Category == types.CategoryDone {
+				doneStatusNames[cs.Name] = true
+			}
+		}
+	}
+
 	// Step 5: Build results from cached data
 	var results []*types.EpicStatus
 	for _, epicID := range epicIDs {
@@ -148,7 +166,8 @@ func GetEpicsEligibleForClosureInTx(ctx context.Context, tx DBTX) ([]*types.Epic
 		totalChildren := len(children)
 		closedChildren := 0
 		for _, childID := range children {
-			if status, ok := childStatusMap[childID]; ok && types.Status(status) == types.StatusClosed {
+			if status, ok := childStatusMap[childID]; ok &&
+				(types.Status(status) == types.StatusClosed || doneStatusNames[status]) {
 				closedChildren++
 			}
 		}
