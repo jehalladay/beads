@@ -147,7 +147,7 @@ func displayStaleIssues(issues []*types.Issue, days int, truncated bool, effecti
 }
 func init() {
 	staleCmd.Flags().IntP("days", "d", 30, "Issues not updated in this many days")
-	staleCmd.Flags().StringP("status", "s", "", "Filter by status (open|in_progress|blocked|deferred)")
+	staleCmd.Flags().StringP("status", "s", "", "Filter by status: open|in_progress|blocked|deferred|closed|pinned|hooked (plus any status.custom values, or 'all' for no filter)")
 	staleCmd.Flags().IntP("limit", "n", 50, "Maximum issues to show")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(staleCmd)
