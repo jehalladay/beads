@@ -469,7 +469,7 @@ func applyCountIncludeInfra(filter *types.IssueFilter, issueType string, cfg lis
 
 func init() {
 	// Filter flags (same as list command)
-	countCmd.Flags().StringP("status", "s", "", "Filter by stored status (open, in_progress, blocked, deferred, closed). Note: dependency-blocked issues use 'bd blocked'")
+	countCmd.Flags().StringP("status", "s", "", "Filter by stored status ("+statusFilterHelpList()+"). Note: dependency-blocked issues use 'bd blocked'")
 	// beads-vcpq: mirror bd list's priority flag (StringP + ValidatePriority)
 	// so the documented P0-P4 syntax is accepted, not just bare 0-4. An IntP
 	// flag rejected "P2" with a raw cobra ParseInt error before any beads code

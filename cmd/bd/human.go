@@ -599,7 +599,7 @@ func init() {
 	humanCmd.AddCommand(humanStatsCmd)
 
 	// Add flags for subcommands
-	humanListCmd.Flags().StringP("status", "s", "", "Filter by status (open, closed, etc.)")
+	humanListCmd.Flags().StringP("status", "s", "", "Filter by status ("+statusFilterHelpList()+")")
 	humanRespondCmd.Flags().StringP("response", "r", "", "Response text (required)")
 	_ = humanRespondCmd.MarkFlagRequired("response")
 	humanDismissCmd.Flags().StringP("reason", "", "", "Reason for dismissal (optional)")

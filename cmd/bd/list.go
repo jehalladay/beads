@@ -788,7 +788,7 @@ func runListCore(cmd *cobra.Command, _ []string) error {
 }
 
 func init() {
-	listCmd.Flags().StringP("status", "s", "", "Filter by stored status (open, in_progress, blocked, deferred, closed). Comma-separated for multiple: --status open,in_progress. Note: repeating -s/--status silently overwrites the previous value — always use the comma-separated form for multi-status filters.")
+	listCmd.Flags().StringP("status", "s", "", "Filter by stored status ("+statusFilterHelpList()+"). Comma-separated for multiple: --status open,in_progress. Note: repeating -s/--status silently overwrites the previous value — always use the comma-separated form for multi-status filters.")
 	listCmd.Flags().String("state", "", "Alias for --status")
 	_ = listCmd.Flags().MarkHidden("state")
 	// beads-6iu7i: --state is a documented ALIAS for --status, but the input

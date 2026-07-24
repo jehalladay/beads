@@ -359,3 +359,32 @@ func validStatusList(customStatusNames []string) string {
 	}
 	return validList
 }
+
+// builtinStatusHelpValues lists every built-in status the shared --status
+// validator (types.Status.IsValidWithCustom, used by list/count/search/human
+// list/migrate-issues/dep-tree) accepts. Derived from the types.Status
+// constants so the flag help cannot drift behind the enum the way it did for
+// beads-mfo0q/3no17/o3wh0. Custom (status.custom) values are also accepted at
+// runtime but cannot be enumerated statically at flag-registration time.
+var builtinStatusHelpValues = []types.Status{
+	types.StatusOpen,
+	types.StatusInProgress,
+	types.StatusBlocked,
+	types.StatusDeferred,
+	types.StatusClosed,
+	types.StatusPinned,
+	types.StatusHooked,
+}
+
+// statusFilterHelpList renders the accepted --status values for flag help
+// (beads-vhpam). It intentionally reads from builtinStatusHelpValues, not a
+// literal, so adding a new built-in status surfaces in every command's help.
+func statusFilterHelpList() string {
+	parts := make([]string, len(builtinStatusHelpValues))
+	for i, s := range builtinStatusHelpValues {
+		parts[i] = string(s)
+	}
+	// 'all' is a sentinel that clears the filter (accepted by every sibling),
+	// plus any repo-configured status.custom values.
+	return strings.Join(parts, "|") + "|all (plus any status.custom values)"
+}
