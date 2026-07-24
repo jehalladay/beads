@@ -55,6 +55,15 @@ func runTodoAddProxiedServer(ctx context.Context, issue *types.Issue) error {
 	// add, matching the proxied create path (create_proxied_server.go, beads-gw7s).
 	SetLastTouchedID(result.Issue.ID)
 
+	// beads-bmvfn: fire on_create after the commit, matching the direct decorator
+	// (HookFiringStore.CreateIssue → createHookEvents) and the proxied create path
+	// (create_proxied_server.go, beads-w1vxy). The proxied UOW use-case layer
+	// bypasses HookFiringStore, so a hub-connected crew's `bd todo add` on_create
+	// hook never ran. `bd todo add` has no --label flag, so the issue carries no
+	// explicit labels — pass result.Issue.Labels (a bare on_create, no synthetic
+	// per-label on_update). Best-effort (warns to stderr, does not fail the command).
+	fireProxiedCreateHooks(ctx, result.Issue, result.Issue.Labels)
+
 	if jsonOutput {
 		// beads-s2oy parity: outputJSON for schema_version + BD_JSON_ENVELOPE.
 		return outputJSON(result.Issue)

@@ -39,6 +39,16 @@ func runQuickProxiedServer(ctx context.Context, issue *types.Issue, labels []str
 
 	commandDidWrite.Store(true)
 
+	// beads-bmvfn: fire on_create after the commit, matching the direct decorator
+	// (HookFiringStore.CreateIssue → createHookEvents) and the proxied create path
+	// (create_proxied_server.go, beads-w1vxy). The proxied UOW use-case layer
+	// bypasses HookFiringStore, so a hub-connected crew's `bd q`/`bd quick`
+	// on_create hook never ran. result.Issue does not carry Labels (they persist
+	// via params.Labels + inheritance), so pass the merged explicit+inherited set
+	// explicitly, mirroring the direct path's issue.Labels. Best-effort (warns to
+	// stderr, does not fail the command).
+	fireProxiedCreateHooks(ctx, result.Issue, mergeCreateLabels(labels, result.InheritedLabels))
+
 	// beads-zykg2: under --json emit the full issue object, matching the direct
 	// path (quick.go → outputJSON(issue), beads-j54e) and the proxied create path
 	// (create_proxied_server.go). Previously this printed only result.Issue.ID
