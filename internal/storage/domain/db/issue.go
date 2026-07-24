@@ -221,6 +221,30 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 			}
 		}
 
+		// beads-9vy58: clear a stale FUTURE defer_until when the status flips to a
+		// ready-visible status (open|in_progress), the DOMAIN/proxied twin of the
+		// direct-path beads-l2lb7 clear (cmd/bd/update.go regularUpdates block,
+		// which the proxied path never reaches — usesProxiedServer() dispatches
+		// before it). `bd defer` sets status=deferred AND defer_until=<future>;
+		// flipping only the status column back to open leaves the ready predicate
+		// (ready_work.go: defer_until IS NULL OR defer_until <= UTC_TIMESTAMP())
+		// still hiding the row, a self-contradictory status=open-but-invisible-to-
+		// `bd ready` state. The sibling status-transition side effects (closed_at
+		// h3iv, close_reason 6qo8t, started_at hfb4) were mirrored into this block
+		// but the defer-clear was missed. Only when the caller did NOT set
+		// defer_until explicitly (a concurrent --defer wins — its value is already
+		// in updates) and only on a genuine FUTURE defer_until, mirroring l2lb7's
+		// DeferUntil.After(now) guard so a plain status change with no stale
+		// schedule is untouched.
+		if _, callerSetDefer := updates["defer_until"]; !callerSetDefer && oldIssue != nil {
+			newStatus := coerceStatus(updates["status"])
+			if (newStatus == types.StatusOpen || newStatus == types.StatusInProgress) &&
+				oldIssue.DeferUntil != nil && oldIssue.DeferUntil.After(time.Now()) {
+				setClauses = append(setClauses, "defer_until = ?")
+				args = append(args, nil)
+			}
+		}
+
 		// beads-y20w2: the pinned COLUMN (--pinned) is a prune/purge protection
 		// marker managed SOLELY by --pinned/--no-pinned, orthogonal to the
 		// "pinned" STATUS (beads-9ynk). Entering the pinned STATUS never sets the
