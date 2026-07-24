@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/ui"
 	"golang.org/x/term"
 )
@@ -588,6 +589,17 @@ func runFederationAddPeer(cmd *cobra.Command, args []string) error {
 
 	name := args[0]
 	url := args[1]
+
+	// beads-jkbyt: validate the peer name at the command layer so BOTH routes
+	// are guarded — the AddFederationPeer branch (--user/--sovereignty) already
+	// validates inside AddFederationPeerInTx, but the plain AddRemote branch
+	// below does not. Without this, `add-peer origin <url>` would clobber the
+	// backing "origin" Dolt remote that bd dolt push/pull target. ValidatePeerName
+	// rejects the reserved name; AddRemote itself stays permissive because
+	// legitimate origin setup uses it directly.
+	if err := issueops.ValidatePeerName(name); err != nil {
+		return HandleErrorRespectJSON("invalid peer name: %v", err)
+	}
 
 	password := federationPassword
 	if federationUser != "" && password == "" {

@@ -13,6 +13,14 @@ import (
 // validPeerNameRegex matches valid peer names (alphanumeric, hyphens, underscores).
 var validPeerNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
 
+// reservedPeerName is the Dolt remote name bd itself owns for the local↔remote
+// git-backed issue-sync path (bd dolt push/pull target dolt_remotes.origin).
+// A federation peer named "origin" would route through AddFederationPeer ->
+// UpsertRemote / AddRemote and CLOBBER that backing remote (remove+re-add at
+// the peer's URL), silently misdirecting the primary sync path — and beads-j785d
+// then hides such a peer from status/list-peers/sync, making it un-diagnosable.
+const reservedPeerName = "origin"
+
 // ValidatePeerName checks that a peer name is safe for use as a Dolt remote name.
 func ValidatePeerName(name string) error {
 	if name == "" {
@@ -23,6 +31,9 @@ func ValidatePeerName(name string) error {
 	}
 	if !validPeerNameRegex.MatchString(name) {
 		return fmt.Errorf("peer name must start with a letter and contain only alphanumeric characters, hyphens, and underscores")
+	}
+	if strings.EqualFold(name, reservedPeerName) {
+		return fmt.Errorf("peer name %q is reserved for the backing git remote and cannot be used for a federation peer", name)
 	}
 	return nil
 }

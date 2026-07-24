@@ -134,6 +134,11 @@ func TestValidatePeerName(t *testing.T) {
 		{name: "starts with hyphen", peer: "-abc", wantErr: true},
 		{name: "invalid character", peer: "a.b", wantErr: true},
 		{name: "space", peer: "a b", wantErr: true},
+		// beads-jkbyt: "origin" is reserved for the backing git remote that
+		// bd dolt push/pull target; a peer by that name would clobber it.
+		{name: "reserved origin", peer: "origin", wantErr: true},
+		{name: "reserved origin uppercase", peer: "ORIGIN", wantErr: true},
+		{name: "reserved origin mixed case", peer: "Origin", wantErr: true},
 	}
 
 	for _, tt := range tests {
