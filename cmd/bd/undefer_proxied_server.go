@@ -161,5 +161,23 @@ func undeferProxiedOne(ctx context.Context, id string, report func(format string
 		report("Error committing undefer %s: %v", fullID, err)
 		return nil, "", undeferErr
 	}
+
+	// beads-60dko: fire on_update after the commit, matching the
+	// direct path (undefer.go → store.UpdateIssue via HookFiringStore →
+	// on_update for the deferred→open transition) and the proxied defer twin
+	// (defer_proxied_server.go routes through applyUpdateProxiedOne →
+	// fireProxiedUpdateHooks). Unlike defer, undefer writes via
+	// issueUC.ApplyUpdate DIRECTLY (the UOW use-case layer), which BYPASSES both
+	// HookFiringStore and the shared applyUpdateProxiedOne firing helper — so a
+	// hub-connected (proxiedServerMode, store==nil) crew's on_update automation
+	// silently never ran on undefer, unlike a native crew and unlike proxied
+	// defer. `issue` is the pre-undefer (deferred) before-image resolved above;
+	// `updated` is the post-undefer (open) after-image from ApplyUpdate (which is
+	// wisp-aware — it routes on isWispID). No on_close fires (after.Status=open).
+	// Best-effort: a hook error warns to stderr but does not fail the command,
+	// matching the decorator's fire-and-forget contract.
+	if herr := fireProxiedUpdateHooks(ctx, issue, updated); herr != nil {
+		fmt.Fprintf(os.Stderr, "warning: %s: %v\n", fullID, herr)
+	}
 	return updated, fullID, undeferOK
 }
