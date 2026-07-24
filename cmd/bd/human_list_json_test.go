@@ -93,7 +93,7 @@ func TestHumanStatsJSONContract(t *testing.T) {
 		{ID: "bd-2", Status: "closed", CloseReason: "Responded"},
 		{ID: "bd-3", Status: "closed", CloseReason: "Dismissed: stale"},
 	}
-	stats := computeHumanStats(issues)
+	stats := computeHumanStats(issues, nil)
 
 	out := captureStdout(t, func() error {
 		return outputJSON(stats)

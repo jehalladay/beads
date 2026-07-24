@@ -531,7 +531,13 @@ Example:
 			return HandleErrorRespectJSON("getting human bead stats: %v", err)
 		}
 
-		stats := computeHumanStats(issues)
+		// beads-wcr98: resolve custom done-category statuses so a human bead in a
+		// custom terminal status (category=done, not the literal "closed") counts
+		// as complete rather than falling to the Pending default forever. Degrades
+		// safe — a config-read error yields an empty set = byte-identical
+		// literal-"closed" behavior (same helper bd close / count / mol use).
+		done := doneCategoryStatusNames(ctx, store)
+		stats := computeHumanStats(issues, done)
 		// beads-vath: honor --json — the RunE previously called printHumanStats
 		// unconditionally, so `bd human stats --json` emitted the plaintext
 		// "Human Beads Stats" table with rc=0 and a script consuming --json got
@@ -554,25 +560,29 @@ type humanStats struct {
 	Dismissed int `json:"dismissed"`
 }
 
-func computeHumanStats(issues []*types.Issue) humanStats {
+// computeHumanStats buckets human-needed beads into pending / responded /
+// dismissed. A bead is "complete" (responded or dismissed) if it is literally
+// "closed" OR sits in a custom done-category status (done, from
+// doneCategoryStatusNames — beads-wcr98); every other status is pending. A nil
+// or empty done set reduces to byte-identical literal-"closed" behavior.
+func computeHumanStats(issues []*types.Issue, done map[string]bool) humanStats {
 	var s humanStats
 	s.Total = len(issues)
-	closed := 0
+	complete := 0
 
 	for _, issue := range issues {
-		switch issue.Status {
-		case "closed":
-			closed++
+		if issue.Status == types.StatusClosed || done[string(issue.Status)] {
+			complete++
 			if strings.Contains(strings.ToLower(issue.CloseReason), "dismiss") {
 				s.Dismissed++
 			}
-		default:
-			// All non-closed statuses (open, in_progress, blocked, hooked, etc.) are pending
+		} else {
+			// All non-terminal statuses (open, in_progress, blocked, hooked, etc.) are pending
 			s.Pending++
 		}
 	}
 
-	s.Responded = closed - s.Dismissed
+	s.Responded = complete - s.Dismissed
 	return s
 }
 
