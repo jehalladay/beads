@@ -200,6 +200,13 @@ func (u *labelUseCaseImpl) setMany(ctx context.Context, id string, labels []stri
 		if err != nil {
 			return fmt.Errorf("set labels: %w", err)
 		}
+		// beads-ukeeh: fold the desired keys to lower-case (twin of the direct
+		// SetLabelsInTx fold, beads-9jjj8). Insert/Delete below now store/match
+		// folded, and List returns folded rows, so diffing against a verbatim
+		// desired key would spuriously delete+reinsert a label that differs only
+		// in case (e.g. desired 'FOO' vs stored 'foo'). Fold here so the set diff
+		// treats case-variants as identical, matching the direct path.
+		l = strings.ToLower(l)
 		if l != "" {
 			desired[l] = true
 		}

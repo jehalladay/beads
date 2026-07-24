@@ -39,6 +39,15 @@ func (r *labelSQLRepositoryImpl) Insert(ctx context.Context, issueID, label, act
 	if label == "" {
 		return fmt.Errorf("db: LabelSQLRepository.Insert: label must not be empty")
 	}
+	// beads-ukeeh (domain/proxied twin of the direct issueops.AddLabelInTx fold,
+	// beads-9jjj8): fold the label to lower-case before the write. The label
+	// query/filter side is case-INSENSITIVE (LOWER(label)=LOWER(?) throughout
+	// sqlbuild), so storing verbatim let 'FOO' and 'foo' coexist and made an
+	// issue findable by `--label foo` yet un-removable by `label remove foo` on a
+	// hub-connected (proxied) crew. Folding here matches the direct path so both
+	// modes store the same canonical casing. Empty-after-fold is impossible
+	// (ToLower does not empty a non-empty string), so the empty guard above holds.
+	label = strings.ToLower(label)
 	table := pickLabelTable(opts.UseWispsTable)
 	//nolint:gosec // G201: table is one of two hardcoded constants
 	res, err := r.runner.ExecContext(ctx,
@@ -76,10 +85,16 @@ func (r *labelSQLRepositoryImpl) Delete(ctx context.Context, issueID, label, act
 	if label == "" {
 		return fmt.Errorf("db: LabelSQLRepository.Delete: label must not be empty")
 	}
+	// beads-ukeeh (domain/proxied twin of issueops.RemoveLabelInTx, beads-9jjj8):
+	// fold the input AND match on LOWER(label) so remove is case-insensitive like
+	// the query side, and so legacy mixed-case rows (stored before the Insert fold
+	// above) are still clearable. A case-EXACT DELETE could not remove a 'FOO'
+	// surfaced by `--label foo`.
+	label = strings.ToLower(label)
 	table := pickLabelTable(opts.UseWispsTable)
 	//nolint:gosec // G201: table is one of two hardcoded constants
 	res, err := r.runner.ExecContext(ctx,
-		fmt.Sprintf("DELETE FROM %s WHERE issue_id = ? AND label = ?", table),
+		fmt.Sprintf("DELETE FROM %s WHERE issue_id = ? AND LOWER(label) = ?", table),
 		issueID, label,
 	)
 	if err != nil {
