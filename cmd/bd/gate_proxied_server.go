@@ -181,10 +181,29 @@ func runGateCreateProxied(ctx context.Context, blocksID, gateType, reason, await
 		return HandleErrorRespectJSON("adding blocking dependency: %v", err)
 	}
 
+	// beads-4ufjf: capture the blocked target's on_update snapshot BEFORE the
+	// commit (matching the 29tyj proxied dep-add pattern — the snapshot read runs
+	// on the open UOW), so it can be fired after the commit succeeds. The direct
+	// path (gate.go store.RunInTransaction) fires on_update for the dependency's
+	// IssueID (targetIssue) via tx.AddDependency.
+	targetSnapshot := captureProxiedHookSnapshot(ctx, uw, targetIssue.ID, true)
+
 	commitMsg := fmt.Sprintf("bd: create gate %s blocking %s", gate.ID, targetIssue.ID)
 	if err := uw.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
 		return HandleErrorRespectJSON("failed to commit: %v", err)
 	}
+
+	// beads-4ufjf: fire on_create for the minted gate + on_update for the blocked
+	// target, AFTER the commit — matching the direct path's post-commit
+	// hookTrackingTransaction firing (gate.go via HookFiringStore). The proxied
+	// mints (issueUC.CreateIssue / depUC.AddDependency) bypass the decorator, so a
+	// hub-connected (proxiedServerMode, store==nil) crew's on_create/on_update
+	// automation would otherwise silently never run on gate create. The gate
+	// struct literal sets no Labels, so pass nil — fireProxiedCreateHooks fires a
+	// single label-free on_create, mirroring createHookEvents for a label-free
+	// issue. Best-effort: hook failures warn to stderr but do not fail the command.
+	fireProxiedCreateHooks(ctx, gate, nil)
+	fireProxiedUpdateSnapshots(ctx, targetSnapshot)
 
 	if jsonOutput {
 		return outputJSON(gate)
