@@ -26,12 +26,15 @@ type reopenProxiedOutcome struct {
 	alreadyOpen bool
 }
 
-func runReopenProxiedServer(cmd *cobra.Command, ctx context.Context, args []string) {
+func runReopenProxiedServer(cmd *cobra.Command, ctx context.Context, args []string, reasons []string) {
 	if len(args) == 0 {
 		FatalErrorRespectJSON("no issue ID provided")
 	}
-	reason, _ := cmd.Flags().GetString("reason")
-	reason = normalizeReopenReason(reason)
+	// beads-fy8xp: reasons is the positional --reason slice (collected +
+	// count-guarded by the caller before the usesProxiedServer split, so the
+	// count-mismatch rule fires identically on both paths). Per-ID reason is
+	// resolved inside the loop via reasonForReopenIndex; the direct path does the
+	// same. A single --reason broadcasts; N map one-per-ID.
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	// --force overrides the closed-epic-parent guard on the proxied path exactly
 	// as it does on the direct path (beads-6fns).
@@ -68,7 +71,11 @@ func runReopenProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 		fmt.Fprintf(os.Stderr, format+"\n", a...)
 	}
 
-	for _, id := range args {
+	for i, id := range args {
+		// beads-fy8xp: per-ID reason, normalized so a whitespace-only positional
+		// slot collapses to no-reason (reopen's --reason is optional), matching
+		// the direct path (reopen.go).
+		reason := normalizeReopenReason(reasonForReopenIndex(reasons, i))
 		outcome, ok := reopenProxiedOne(ctx, uw, id, reason, force, reportReopenItemError)
 		if !ok {
 			hasError = true

@@ -57,13 +57,29 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 		// ids are unaffected; a repeated reopen target is meaningless.
 		args = uniqueStrings(args)
 
+		// beads-fy8xp: --reason is repeatable and maps POSITIONALLY, matching
+		// `bd close`/`bd defer` (closeReasonFlagValue). Previously reopen read a
+		// single GetString("reason") = cobra last-wins, so `bd reopen A B --reason
+		// r1 --reason r2` silently dropped r1 and applied r2 to BOTH — batch data
+		// loss with zero signal (the qvbjq sibling qvbjq scoped only to
+		// close+defer; reopen + todo done were the two unfixed siblings). Now: one
+		// --reason broadcasts to all IDs; N --reason map one-per-ID; a count that
+		// is neither 1 nor len(IDs) errors. Collected + count-guarded BEFORE the
+		// usesProxiedServer split so both paths share the same rule. reopen's
+		// --reason stays OPTIONAL: a whitespace-only value collapses to no-reason
+		// (normalizeReopenReason) rather than erroring, so no empty-reason guard
+		// here (unlike defer's beads-v02z contract). The dedup above runs first so
+		// the count-guard sees the deduped arg count (4k0d8 composition rule).
+		reasons := collectReopenReasons(cmd)
+		if len(reasons) > 1 && len(reasons) != len(args) {
+			return HandleErrorRespectJSON("got %d reopen reasons for %d issue IDs; provide exactly one shared reason or one reason per issue", len(reasons), len(args))
+		}
+
 		if usesProxiedServer() {
-			runReopenProxiedServer(cmd, rootCtx, args)
+			runReopenProxiedServer(cmd, rootCtx, args, reasons)
 			return nil
 		}
 
-		reason, _ := cmd.Flags().GetString("reason")
-		reason = normalizeReopenReason(reason)
 		forceFlag, _ := cmd.Flags().GetBool("force")
 		ctx := rootCtx
 
@@ -89,7 +105,12 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 			}
 			fmt.Fprintf(os.Stderr, format+"\n", a...)
 		}
-		for _, id := range args {
+		for i, id := range args {
+			// beads-fy8xp: the reason for THIS id — reasons[0] when a single
+			// --reason broadcasts, else reasons[i] positionally. Normalized so a
+			// whitespace-only positional slot collapses to no-reason (reopen's
+			// --reason is optional), matching the prior single-reason behavior.
+			reason := normalizeReopenReason(reasonForReopenIndex(reasons, i))
 			// Resolve with prefix routing (supports cross-rig reopens like `bd reopen xe-5ls`)
 			result, err := resolveAndGetIssueForMutation(ctx, store, id)
 			if err != nil {
@@ -284,10 +305,47 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 }
 
 func init() {
-	reopenCmd.Flags().StringP("reason", "r", "", "Reason for reopening")
+	// beads-fy8xp: repeatable + positional --reason, sharing close's
+	// closeReasonFlagValue (append-on-Set) so `bd reopen A B -r r1 -r r2` maps
+	// r1→A, r2→B instead of cobra last-wins dropping r1 silently. A single
+	// --reason still broadcasts to every ID (see reasonForReopenIndex).
+	reopenCmd.Flags().VarP(&closeReasonFlagValue{}, "reason", "r", "Reason for reopening; repeat once per ID to map positionally")
 	reopenCmd.Flags().Bool("force", false, "Override the reopen guards: the closed-epic-parent guard (recreates a closed-epic-with-open-child state), the superseded-issue guard (reopens an issue that is superseded by another), and the duplicate-issue guard (reopens an issue that is a duplicate of another)")
 	reopenCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(reopenCmd)
+}
+
+// collectReopenReasons pulls the repeated --reason values off reopen's
+// closeReasonFlagValue (beads-fy8xp). Unlike close's collectCloseReasonFlags it
+// keeps EMPTY/whitespace entries so the count-guard sees the true positional
+// count (a `--reason ""` slot still occupies a position) — the per-index
+// normalizeReopenReason later collapses a whitespace-only slot to no-reason,
+// matching reopen's optional-reason semantics (no empty-reason error, unlike
+// defer's beads-v02z).
+func collectReopenReasons(cmd *cobra.Command) []string {
+	flag := cmd.Flags().Lookup("reason")
+	if flag == nil {
+		return nil
+	}
+	if v, ok := flag.Value.(interface{ Values() []string }); ok {
+		return v.Values()
+	}
+	return nil
+}
+
+// reasonForReopenIndex returns the reason for the i-th reopened ID: "" when no
+// --reason was given, reasons[0] when a single --reason broadcasts to all IDs,
+// else reasons[i] positionally (beads-fy8xp, mirroring reasonForCloseIndex but
+// tolerating the empty case reopen's optional reason allows).
+func reasonForReopenIndex(reasons []string, i int) string {
+	switch {
+	case len(reasons) == 0:
+		return ""
+	case len(reasons) == 1:
+		return reasons[0]
+	default:
+		return reasons[i]
+	}
 }
 
 // supersededByTargets returns the IDs of issues that supersede issueID (i.e.

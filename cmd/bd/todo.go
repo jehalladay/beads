@@ -221,6 +221,39 @@ func todoDoneReasonOrDefault(reason string) string {
 	return reason
 }
 
+// collectTodoDoneReasons pulls the repeated --reason values off `bd todo done`'s
+// closeReasonFlagValue (beads-fy8xp). Keeps EMPTY/whitespace entries so the
+// count-guard sees the true positional count (a `--reason ""` slot still
+// occupies a position); the per-index todoDoneReasonOrDefault collapses a
+// whitespace-only slot to the "Completed" default (07sko), so no empty-reason
+// error is raised (todo done's reason is optional, unlike defer's v02z).
+func collectTodoDoneReasons(cmd *cobra.Command) []string {
+	flag := cmd.Flags().Lookup("reason")
+	if flag == nil {
+		return nil
+	}
+	if v, ok := flag.Value.(interface{ Values() []string }); ok {
+		return v.Values()
+	}
+	return nil
+}
+
+// reasonForTodoDoneIndex returns the raw reason for the i-th closed ID: "" when
+// no --reason was given, reasons[0] when a single --reason broadcasts to all
+// IDs, else reasons[i] positionally (beads-fy8xp, mirroring reasonForCloseIndex
+// but tolerating the empty case todo done's optional reason allows — the caller
+// wraps it in todoDoneReasonOrDefault for the "Completed" fallback).
+func reasonForTodoDoneIndex(reasons []string, i int) string {
+	switch {
+	case len(reasons) == 0:
+		return ""
+	case len(reasons) == 1:
+		return reasons[0]
+	default:
+		return reasons[i]
+	}
+}
+
 var doneTodoCmd = &cobra.Command{
 	Use:           "done <id> [<id>...]",
 	Short:         "Mark TODO(s) as done",
@@ -239,9 +272,21 @@ var doneTodoCmd = &cobra.Command{
 
 		ctx := rootCtx
 
-		reason, _ := cmd.Flags().GetString("reason")
-		reason = todoDoneReasonOrDefault(reason)
 		force, _ := cmd.Flags().GetBool("force")
+
+		// beads-fy8xp: --reason is repeatable and maps POSITIONALLY, matching
+		// `bd close`/`bd defer` (closeReasonFlagValue). Previously `bd todo done`
+		// read a single GetString("reason") = cobra last-wins, so `bd todo done A
+		// B --reason r1 --reason r2` silently dropped r1 and applied r2 to BOTH —
+		// batch data loss with zero signal (the qvbjq sibling: qvbjq scoped only
+		// to close+defer; reopen + todo done were the two unfixed siblings). Now:
+		// one --reason broadcasts to all IDs; N --reason map one-per-ID; a count
+		// that is neither 1 nor len(IDs) errors. Collected here; the count-guard
+		// runs AFTER the dedup below so it sees the deduped arg count (4k0d8
+		// composition rule). A whitespace-only positional slot collapses to the
+		// "Completed" default per-ID (todoDoneReasonOrDefault), preserving beads-
+		// 07sko; todo done's reason is optional so there is no empty-reason error.
+		reasons := collectTodoDoneReasons(cmd)
 
 		// beads-vam5w: dedup a repeated issue ID in one batch (in-batch-dup class,
 		// sibling of the landed delete/hzg2y label/cncgt reopen/4k0d8 defer fixes).
@@ -255,6 +300,15 @@ var doneTodoCmd = &cobra.Command{
 		// distinct id exactly once, matching delete.go:86 uniqueStrings(issueIDs).
 		args = uniqueStrings(args)
 
+		// beads-fy8xp: count-guard AFTER the dedup so an ambiguous
+		// N-reasons-for-M-IDs batch is rejected against the DEDUPED id count (the
+		// 4k0d8 composition rule: `bd todo done X X -r a -r b` would otherwise pass
+		// a 2==2 check, then dedup to [X] and silently drop b). Same shape as
+		// resolveCloseReasons' guard.
+		if len(reasons) > 1 && len(reasons) != len(args) {
+			return HandleErrorRespectJSON("got %d close reasons for %d issue IDs; provide exactly one shared reason or one reason per issue", len(reasons), len(args))
+		}
+
 		// beads-9dsym: getStore() is nil in proxiedServerMode (see the add/list
 		// paths) — route `bd todo done` through the proxied UOW close stack so it
 		// works for hub-connected crew instead of panicking on the nil store. The
@@ -262,14 +316,18 @@ var doneTodoCmd = &cobra.Command{
 		// three bd-close pre-close guards + --force (beads-k96re), the audit-file
 		// trail + completed-molecule auto-close cascade (beads-58kg8), the
 		// {"closed":[...],"reason":...} --json shape, and the partial-failure exit
-		// code (beads-xi35). Reason/force are parsed above, before the split.
+		// code (beads-xi35). Reasons/force are parsed above, before the split.
 		if usesProxiedServer() {
-			return runTodoDoneProxiedServer(ctx, args, reason, force)
+			return runTodoDoneProxiedServer(ctx, args, reasons, force)
 		}
 
 		var closedIDs []string
 		failedCount := 0
-		for _, issueID := range args {
+		for i, issueID := range args {
+			// beads-fy8xp: the reason for THIS id — reasons[0] when a single
+			// --reason broadcasts, else reasons[i] positionally; a whitespace-only
+			// or absent slot falls through to the "Completed" default (07sko).
+			reason := todoDoneReasonOrDefault(reasonForTodoDoneIndex(reasons, i))
 			issue, err := getStore().GetIssue(ctx, issueID)
 			if err != nil {
 				// beads-scl2z: `bd todo done` ALWAYS emits its {"closed":[...],
@@ -362,9 +420,15 @@ var doneTodoCmd = &cobra.Command{
 
 		if jsonOutput {
 			// beads-s2oy: outputJSON for schema_version + BD_JSON_ENVELOPE.
+			// beads-fy8xp: the envelope's scalar "reason" is representative — the
+			// shared reason when one --reason broadcast (the unchanged common
+			// case), "Completed" when none, or the first positional reason when N
+			// were mapped one-per-ID (per-ID reasons are applied to the store; the
+			// scalar echoes a single value for backward-compat with the existing
+			// {"closed":[...],"reason":...} shape).
 			if err := outputJSON(map[string]interface{}{
 				"closed": closedIDs,
-				"reason": reason,
+				"reason": todoDoneReasonOrDefault(reasonForTodoDoneIndex(reasons, 0)),
 			}); err != nil {
 				return err
 			}
@@ -402,7 +466,12 @@ func init() {
 
 	listTodosCmd.Flags().Bool("all", false, "Show all TODOs including completed")
 
-	doneTodoCmd.Flags().String("reason", "", "Reason for closing (default: Completed)")
+	// beads-fy8xp: repeatable + positional --reason, sharing close's
+	// closeReasonFlagValue (append-on-Set) so `bd todo done A B -r r1 -r r2`
+	// maps r1→A, r2→B instead of cobra last-wins dropping r1 silently. A single
+	// --reason still broadcasts to every ID (see reasonForTodoDoneIndex); no
+	// reason falls through to the "Completed" default (07sko).
+	doneTodoCmd.Flags().VarP(&closeReasonFlagValue{}, "reason", "r", "Reason for closing (default: Completed); repeat once per ID to map positionally")
 	// beads-k96re: mirror `bd close --force` so the blocker/open-child/gate
 	// guards can be deliberately overridden, matching the wrapped command.
 	doneTodoCmd.Flags().BoolP("force", "f", false, "Override pre-close guards (open blockers, open children, unsatisfied gates)")

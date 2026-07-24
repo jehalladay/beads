@@ -91,7 +91,7 @@ func runTodoListProxiedServer(ctx context.Context, filter types.IssueFilter) err
 // audit-file trail, and run the completed-molecule/wisp/template-epic auto-close
 // cascade (beads-58kg8). Per-item failures print to stderr and set the partial
 // exit code (beads-xi35); the --json shape is {"closed":[...],"reason":...}.
-func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string, force bool) error {
+func runTodoDoneProxiedServer(ctx context.Context, args []string, reasons []string, force bool) error {
 	if uowProvider == nil {
 		return HandleErrorRespectJSON("proxied-server UOW provider not initialized")
 	}
@@ -113,9 +113,18 @@ func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string,
 	// mutation hooks can fire post-commit at parity with the direct path
 	// (getStore().CloseIssue → HookFiringStore → on_close/on_update).
 	beforeByID := map[string]*types.Issue{}
+	// beads-fy8xp: per-ID reason (default-resolved), captured so the post-commit
+	// audit-file trail records each id's OWN reason (the per-index value the
+	// direct path also uses), not one shared reason across the batch.
+	reasonByID := map[string]string{}
 	failedCount := 0
 
-	for _, issueID := range args {
+	for i, issueID := range args {
+		// beads-fy8xp: the reason for THIS id — reasons[0] when a single --reason
+		// broadcasts, else reasons[i] positionally; whitespace-only/absent falls
+		// through to the "Completed" default (07sko), at parity with the direct
+		// path (todo.go).
+		reason := todoDoneReasonOrDefault(reasonForTodoDoneIndex(reasons, i))
 		current, isWisp := proxiedResolveIssueOrWisp(ctx, uw, issueID)
 		if current == nil {
 			// beads-scl2z (proxied twin): route per-id failures through the
@@ -199,6 +208,9 @@ func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string,
 		// beads-5o5kp: `current` was resolved BEFORE the close above, so it holds
 		// the pre-close (open) status for the on_close open→closed transition test.
 		beforeByID[issueID] = current
+		// beads-fy8xp: record THIS id's reason (keyed by the canonical full id) so
+		// the post-commit audit-file trail below emits the per-ID reason.
+		reasonByID[issueID] = reason
 	}
 
 	if len(closedIDs) > 0 {
@@ -214,7 +226,7 @@ func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string,
 		// already-closed issue would have been an AlreadyClosed no-op; the direct
 		// path assumes open here too).
 		for _, id := range closedIDs {
-			auditStatusChange(id, "open", "closed", actorName, reason)
+			auditStatusChange(id, "open", "closed", actorName, reasonByID[id])
 		}
 		// beads-jcrp4 parity: the auto-closed molecule/wisp root's own audit-file
 		// entry, also post-commit.
@@ -239,9 +251,13 @@ func runTodoDoneProxiedServer(ctx context.Context, args []string, reason string,
 	if jsonOutput {
 		// beads-s2oy parity: outputJSON for schema_version + BD_JSON_ENVELOPE, and
 		// the exact direct-path shape {"closed":[...],"reason":...}.
+		// beads-fy8xp: the envelope's scalar "reason" is representative (see the
+		// direct-path todo.go note) — the shared reason when one --reason
+		// broadcast, "Completed" when none, or the first positional reason when N
+		// were mapped one-per-ID; per-ID reasons are applied to the store above.
 		if err := outputJSON(map[string]interface{}{
 			"closed": closedIDs,
-			"reason": reason,
+			"reason": todoDoneReasonOrDefault(reasonForTodoDoneIndex(reasons, 0)),
 		}); err != nil {
 			return err
 		}
