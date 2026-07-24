@@ -70,13 +70,40 @@ func runRenameProxiedServer(ctx context.Context, oldID, newID string, force bool
 	// into refWarning and committed the rename + an arbitrary partial suffix of
 	// ref-rewrites at RC=0, re-introducing the exact pre-uorhi dangling-ref bug on
 	// the proxied path.
-	if err := updateReferencesInAllIssuesProxied(ctx, uw, oldID, newID); err != nil {
+	rewrittenIDs, err := updateReferencesInAllIssuesProxied(ctx, uw, oldID, newID)
+	if err != nil {
 		return HandleErrorRespectJSON("failed to update references (rename rolled back): %v", err)
+	}
+
+	// beads-rlthr: capture the post-rewrite snapshots of every issue whose BODY
+	// fields were ref-rewritten, BEFORE Commit closes the UOW, so the on_update
+	// hook can fire for each AFTER the commit — the proxied twin of the direct
+	// path, where those same per-issue field rewrites go through
+	// hookTrackingTransaction.UpdateIssue and fire EventUpdate post-commit
+	// (hook_decorator.go:501). The proxied path routed the rewrites through the
+	// undecorated issueUC.UpdateIssue, so a hub-connected (store==nil) crew's
+	// on_update automation silently never ran for issues whose bodies a rename
+	// rewrote. Sibling of beads-fs73t (gate) / beads-elq6a (undefer). CLEAN-NEG:
+	// the renamed row itself (UpdateIssueID is undecorated on both paths) and
+	// comment-body rewrites (UpdateCommentText fires no hook on either path) — so
+	// only the field-rewrite ids are collected.
+	updateSnapshots := make([]*types.Issue, 0, len(rewrittenIDs))
+	for _, id := range rewrittenIDs {
+		if snap := captureProxiedHookSnapshot(ctx, uw, id, false); snap != nil {
+			updateSnapshots = append(updateSnapshots, snap)
+		}
 	}
 
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: rename %s -> %s", oldID, newID)); err != nil && !isDoltNothingToCommit(err) {
 		return HandleErrorRespectJSON("failed to commit: %v", err)
 	}
+
+	// beads-rlthr: fire on_update for the ref-rewritten issues after the commit
+	// lands (best-effort, matching the direct decorator's fire-and-forget and the
+	// existing proxied update path). A post-commit fire is required — a pre-commit
+	// call would be rolled back by the deferred uw.Close (same ordering as
+	// applyUpdateProxiedOne / the proxied create-hook path).
+	fireProxiedUpdateSnapshots(ctx, updateSnapshots...)
 
 	if jsonOutput {
 		out := map[string]interface{}{
@@ -95,12 +122,20 @@ func runRenameProxiedServer(ctx context.Context, oldID, newID string, force bool
 // updateReferencesInAllIssues (cmd/bd/rename.go): rewrite word-boundary text
 // references to oldID across every issue's title/description/design/notes/
 // acceptance_criteria via the use-case, best-effort.
-func updateReferencesInAllIssuesProxied(ctx context.Context, uw uow.UnitOfWork, oldID, newID string) error {
+//
+// beads-rlthr: returns the IDs of issues whose BODY FIELDS were rewritten (the
+// len(updates)>0 rows), so the caller can fire on_update for each after commit —
+// the proxied twin of the direct path's per-issue tx.UpdateIssue → EventUpdate.
+// Comment-body-only rewrites are NOT included (UpdateIssueCommentText is
+// undecorated on both paths → fires no hook — CLEAN-NEG).
+func updateReferencesInAllIssuesProxied(ctx context.Context, uw uow.UnitOfWork, oldID, newID string) ([]string, error) {
 	issueUC := uw.IssueUseCase()
 	page, err := issueUC.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
-		return fmt.Errorf("failed to list issues: %w", err)
+		return nil, fmt.Errorf("failed to list issues: %w", err)
 	}
+
+	var rewrittenIDs []string
 
 	// beads-1nvr5: share the direct path's id-charclass boundary rewriter so
 	// the two rename paths can never diverge. The old `\b`...`\b` matched inside
@@ -133,8 +168,12 @@ func updateReferencesInAllIssuesProxied(ctx context.Context, uw uow.UnitOfWork, 
 
 		if len(updates) > 0 {
 			if err := issueUC.UpdateIssue(ctx, issue.ID, updates, actor); err != nil {
-				return fmt.Errorf("failed to update references in %s: %w", issue.ID, err)
+				return nil, fmt.Errorf("failed to update references in %s: %w", issue.ID, err)
 			}
+			// beads-rlthr: this field rewrite is the proxied analog of the direct
+			// path's hook-decorated tx.UpdateIssue — record it so the caller fires
+			// on_update for this issue after the commit lands.
+			rewrittenIDs = append(rewrittenIDs, issue.ID)
 		}
 
 		// beads-g8qfo: rewrite id refs inside comment bodies too — the comments
@@ -144,16 +183,16 @@ func updateReferencesInAllIssuesProxied(ctx context.Context, uw uow.UnitOfWork, 
 		// rename, so the issue comment table (not wisp_comments) is correct.
 		comments, cerr := uw.CommentUseCase().GetCommentsForIssue(ctx, issue.ID)
 		if cerr != nil {
-			return fmt.Errorf("failed to read comments for %s: %w", issue.ID, cerr)
+			return nil, fmt.Errorf("failed to read comments for %s: %w", issue.ID, cerr)
 		}
 		for _, c := range comments {
 			if v, ok := rewrite(c.Text); ok {
 				if err := uw.CommentUseCase().UpdateIssueCommentText(ctx, c.ID, v); err != nil {
-					return fmt.Errorf("failed to update comment reference in %s: %w", issue.ID, err)
+					return nil, fmt.Errorf("failed to update comment reference in %s: %w", issue.ID, err)
 				}
 			}
 		}
 	}
 
-	return nil
+	return rewrittenIDs, nil
 }
