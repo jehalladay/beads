@@ -93,9 +93,19 @@ func runShipProxiedServer(ctx context.Context, capability string, force, dryRun 
 		return HandleErrorRespectJSON("adding label: %v", err)
 	}
 
+	// beads-shipk: capture the post-label snapshot before Commit so on_update
+	// can fire after (parity with the direct decorator — HookFiringStore.AddLabel
+	// fires on_update when the direct `bd ship` adds provides:<cap>). ship targets
+	// a permanent bead (issue, not wisp), so withDeps=false.
+	after := captureProxiedHookSnapshot(ctx, uw, issue.ID, false)
+
 	if err := uw.Commit(ctx, fmt.Sprintf("bd: ship %s", capability)); err != nil && !isDoltNothingToCommit(err) {
 		return HandleErrorRespectJSON("failed to commit: %v", err)
 	}
+
+	// beads-shipk: fire on_update after the commit (parity with the direct
+	// decorator). Best-effort — a hook failure must not fail the ship.
+	fireProxiedUpdateSnapshots(ctx, after)
 
 	if jsonOutput {
 		return outputJSON(map[string]interface{}{
