@@ -15,6 +15,57 @@ import (
 	"github.com/steveyegge/beads/internal/ui"
 )
 
+// formulaVarDefsMetaKey is the reserved root-proto Metadata key under which a
+// persisted proto's variable definitions (enum/pattern/type/required) are
+// stashed at cook time (beads-7ykga). Pour/wisp/bond enforce var validation
+// via ValidateVarValues only when subgraph.VarDefs is populated; the ephemeral
+// (formula-name) path fills it via cookFormulaToSubgraphWithVars, but the
+// DB-proto path (loadTemplateSubgraph) had no VarDefs source, so out-of-enum
+// --var values silently landed in durable issues. Stashing the defs here (a
+// JSON-encoded string value, so root.Metadata stays a valid map[string]string
+// for the graph_apply/list_format readers) lets loadTemplateSubgraph rehydrate
+// subgraph.VarDefs and fire the SAME gate on the DB-proto path.
+const formulaVarDefsMetaKey = "formula_vardefs"
+
+// marshalVarDefsIntoMetadata folds a formula's variable definitions into the
+// root proto Issue.Metadata under formulaVarDefsMetaKey, preserving any
+// existing metadata keys. No-op when the formula defines no vars.
+func marshalVarDefsIntoMetadata(rootIssue *types.Issue, vars map[string]*formula.VarDef) error {
+	if len(vars) == 0 {
+		return nil
+	}
+	// Normalize to value-typed map[string]VarDef (matches TemplateSubgraph.VarDefs).
+	defs := make(map[string]formula.VarDef, len(vars))
+	for name, def := range vars {
+		if def != nil {
+			defs[name] = *def
+		}
+	}
+	if len(defs) == 0 {
+		return nil
+	}
+	defsJSON, err := json.Marshal(defs)
+	if err != nil {
+		return fmt.Errorf("marshaling formula var defs: %w", err)
+	}
+	// Metadata is a map[string]string by convention (graph_apply/list_format
+	// readers assume it); store the defs as a JSON-encoded STRING value under
+	// the reserved key so those readers keep working.
+	meta := make(map[string]string)
+	if len(rootIssue.Metadata) > 0 {
+		if err := json.Unmarshal(rootIssue.Metadata, &meta); err != nil {
+			return fmt.Errorf("re-parsing proto metadata: %w", err)
+		}
+	}
+	meta[formulaVarDefsMetaKey] = string(defsJSON)
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("marshaling proto metadata: %w", err)
+	}
+	rootIssue.Metadata = json.RawMessage(metaJSON)
+	return nil
+}
+
 // stepTypeToIssueType converts a formula step type string to a types.IssueType.
 // Returns types.TypeTask for empty or unrecognized types.
 func stepTypeToIssueType(stepType string) types.IssueType {
@@ -974,6 +1025,14 @@ func collectCookPlan(f *formula.Formula, protoID string) *cookPlan {
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
+	// beads-7ykga: stash the formula's variable definitions on the root proto so
+	// the DB-proto pour/wisp/bond path (loadTemplateSubgraph) can rehydrate
+	// subgraph.VarDefs and enforce enum/pattern/type validation. Best-effort:
+	// collectCookPlan is a pure builder with no error return, and a marshal
+	// failure here (map[string]VarDef -> JSON) is not expected; on the off chance
+	// it fails we leave root.Metadata untouched rather than corrupt the plan —
+	// the pre-persist runtime gate (8m9o7) still validates at cook time.
+	_ = marshalVarDefsIntoMetadata(rootIssue, f.Vars)
 	plan.issues = append(plan.issues, rootIssue)
 	plan.labels = append(plan.labels, struct{ issueID, label string }{protoID, MoleculeLabel})
 

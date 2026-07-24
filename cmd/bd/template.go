@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -12,6 +13,36 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
+
+// extractVarDefsFromMetadata rehydrates the formula variable definitions stashed
+// on a persisted root proto's Metadata under formulaVarDefsMetaKey (see
+// marshalVarDefsIntoMetadata in cook.go). Returns nil (not an empty map) when
+// the proto carries no stashed defs, so the pour/wisp/bond validation gate
+// (`if subgraph.VarDefs != nil`) stays OFF for protos cooked before beads-7ykga
+// or from var-less formulas — preserving prior behavior for those. Best-effort:
+// any parse failure yields nil rather than an error, since a garbled stash must
+// not block instantiation of an otherwise-valid proto.
+func extractVarDefsFromMetadata(meta json.RawMessage) map[string]formula.VarDef {
+	if len(meta) == 0 {
+		return nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal(meta, &m); err != nil {
+		return nil
+	}
+	raw, ok := m[formulaVarDefsMetaKey]
+	if !ok || raw == "" {
+		return nil
+	}
+	defs := make(map[string]formula.VarDef)
+	if err := json.Unmarshal([]byte(raw), &defs); err != nil {
+		return nil
+	}
+	if len(defs) == 0 {
+		return nil
+	}
+	return defs
+}
 
 // BeadsTemplateLabel is the label used to identify Beads-based templates
 const BeadsTemplateLabel = "template"
@@ -93,6 +124,14 @@ func loadTemplateSubgraph(ctx context.Context, s storage.DoltStorage, templateID
 		Issues:   []*types.Issue{root},
 		IssueMap: map[string]*types.Issue{root.ID: root},
 	}
+
+	// beads-7ykga: rehydrate variable definitions stashed on the root proto at
+	// cook time (see marshalVarDefsIntoMetadata / formulaVarDefsMetaKey). Without
+	// this, subgraph.VarDefs stays nil on the DB-proto path, so the pour/wisp/bond
+	// enum/pattern/type validation gate (`if subgraph.VarDefs != nil`) is skipped
+	// and out-of-enum --var values land in durable issues. Best-effort: a proto
+	// cooked before this change (or with no vars) simply has no defs to rehydrate.
+	subgraph.VarDefs = extractVarDefsFromMetadata(root.Metadata)
 
 	// Recursively load all children (with cycle detection, GH#2719)
 	visited := map[string]bool{root.ID: true}
