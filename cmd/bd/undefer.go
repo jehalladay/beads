@@ -28,6 +28,20 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		CheckReadonly("undefer")
 
+		// beads-yn8r5: dedup a repeated issue id in one batch, mirroring
+		// delete.go:86 uniqueStrings(issueIDs) + beads-qh4dy (update). Without
+		// this, `bd undefer X X` undefers X on the first pass and then re-resolves
+		// the now-open X on the second pass, hitting the not-deferred no-op branch
+		// below — emitting a spurious "X is not deferred" advisory (text) and a
+		// phantom stderr item-error (--json) about the id THIS SAME command just
+		// undeferred. Dedup here, before the usesProxiedServer() dispatch, so the
+		// one guard covers BOTH the direct and proxied (undefer_proxied_server.go)
+		// paths. In-batch-dup class, sibling of beads-fwf0y (close), beads-4k0d8
+		// (defer), beads-qh4dy (update).
+		if len(args) > 1 {
+			args = uniqueStrings(args)
+		}
+
 		// beads-fszd/1zuh: route to the proxied handler in proxied-server mode.
 		// Without this, undefer uses the direct global store — nil under
 		// proxiedServerMode — and returned "database not initialized" for

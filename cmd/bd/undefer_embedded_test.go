@@ -215,6 +215,99 @@ func TestEmbeddedUndefer(t *testing.T) {
 	})
 }
 
+// TestEmbeddedUndeferInBatchDuplicateID guards beads-yn8r5: `bd undefer X X`
+// (the same id repeated in one batch) must undefer the target exactly once and
+// NOT emit a spurious "X is not deferred" advisory about the id the same command
+// just undeferred. It is the in-batch-duplicate-id class sibling of beads-fwf0y
+// (close), beads-4k0d8 (defer), and beads-qh4dy (update, fixed). Prior to the
+// fix, undefer.go looped raw args with no dedup, so a repeated id undeferred on
+// the first pass and then hit the not-deferred idempotent-no-op branch on the
+// second pass — emitting a confusing false-negative advisory (text) and a
+// phantom stderr item-error (--json) for a single logical target that fully
+// succeeded.
+func TestEmbeddedUndeferInBatchDuplicateID(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "ub")
+
+	t.Run("text_no_spurious_not_deferred_advisory", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "dup undefer text", "--type", "task")
+		bdDefer(t, bd, dir, issue.ID)
+
+		cmd := exec.Command(bd, "undefer", issue.ID, issue.ID)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("undefer X X should succeed, got error: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+		combined := stdout.String() + stderr.String()
+		// The id was undeferred by this same command — it must not then be
+		// reported as "not deferred".
+		if strings.Contains(combined, "not deferred") {
+			t.Errorf("a repeated id produced a spurious 'not deferred' advisory for the id this command just undeferred:\n%s", combined)
+		}
+		// Exactly one "Undeferred" report for one logical target.
+		if n := strings.Count(stdout.String(), "Undeferred"); n != 1 {
+			t.Errorf("expected exactly 1 'Undeferred' report for a duplicated id, got %d\nstdout:\n%s", n, stdout.String())
+		}
+		if s := getIssueStatus(t, bd, dir, issue.ID); s != "open" {
+			t.Errorf("expected status=open after undefer, got %q", s)
+		}
+	})
+
+	t.Run("json_no_phantom_stderr_error", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "dup undefer json", "--type", "task")
+		bdDefer(t, bd, dir, issue.ID)
+
+		cmd := exec.Command(bd, "undefer", issue.ID, issue.ID, "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("undefer X X --json should succeed, got error: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+		// A single logical target that fully succeeded must not leak a phantom
+		// per-item error to stderr.
+		if strings.Contains(stderr.String(), "not deferred") {
+			t.Errorf("a repeated id leaked a phantom 'not deferred' item-error to stderr under --json for a just-undeferred id:\n%s", stderr.String())
+		}
+		// stdout array should carry exactly one entry for one logical target.
+		out := stdout.String()
+		start := strings.Index(out, "[")
+		if start < 0 {
+			t.Fatalf("no JSON array in undefer --json stdout:\n%s", out)
+		}
+		var arr []map[string]interface{}
+		if jerr := json.Unmarshal([]byte(out[start:]), &arr); jerr != nil {
+			t.Fatalf("failed to parse undefer --json array: %v\nraw:\n%s", jerr, out[start:])
+		}
+		if len(arr) != 1 {
+			t.Errorf("expected --json array length 1 for a duplicated id, got %d\nraw:\n%s", len(arr), out[start:])
+		}
+	})
+
+	t.Run("distinct_ids_still_undefer_each", func(t *testing.T) {
+		a := bdCreate(t, bd, dir, "distinct undefer a", "--type", "task")
+		b := bdCreate(t, bd, dir, "distinct undefer b", "--type", "task")
+		bdDefer(t, bd, dir, a.ID, b.ID)
+
+		out := bdUndefer(t, bd, dir, a.ID, b.ID)
+		if !strings.Contains(out, a.ID) || !strings.Contains(out, b.ID) {
+			t.Errorf("expected both distinct IDs in output: %s", out)
+		}
+		for _, id := range []string{a.ID, b.ID} {
+			if s := getIssueStatus(t, bd, dir, id); s != "open" {
+				t.Errorf("expected %s status=open, got %q", id, s)
+			}
+		}
+	})
+}
+
 // TestEmbeddedUndeferConcurrent exercises undefer operations concurrently.
 func TestEmbeddedUndeferConcurrent(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
