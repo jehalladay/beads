@@ -432,27 +432,23 @@ func ComputeAdaptiveLength(numIssues int, cfg AdaptiveIDConfig) int {
 	return cfg.MaxLength
 }
 
-// GetCustomStatusesTx reads custom statuses from config within a transaction.
+// GetCustomStatusesTx reads the configured custom status NAMES within a
+// transaction. It delegates to ResolveCustomStatusesDetailedInTx (the
+// category-aware resolver used everywhere else) and projects to names, so the
+// batch create/import validation path sees the SAME parsed names as the direct
+// update/create paths and the store-level GetCustomStatuses (beads-efq11).
+//
+// The prior implementation read the raw `status.custom` config string and did a
+// naive JSON/comma split that did NOT strip the ":category" suffix, so a stored
+// value like "resolved:done,parked:frozen" produced the literal names
+// ["resolved:done","parked:frozen"] and any batch/import row carrying a plain
+// custom status ("resolved"/"parked") was rejected as an invalid status.
 func GetCustomStatusesTx(ctx context.Context, tx DBTX) ([]string, error) {
-	var raw string
-	err := tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "status.custom").Scan(&raw)
-	if err == sql.ErrNoRows || raw == "" {
-		return nil, nil
-	}
+	detailed, err := ResolveCustomStatusesDetailedInTx(ctx, tx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read status.custom config: %w", err)
+		return nil, err
 	}
-	var statuses []string
-	if err := json.Unmarshal([]byte(raw), &statuses); err != nil {
-		// Try comma-separated fallback
-		for _, s := range strings.Split(raw, ",") {
-			s = strings.TrimSpace(s)
-			if s != "" {
-				statuses = append(statuses, s)
-			}
-		}
-	}
-	return statuses, nil
+	return types.CustomStatusNames(detailed), nil
 }
 
 // GetCustomTypesTx reads custom types from config within a transaction.
