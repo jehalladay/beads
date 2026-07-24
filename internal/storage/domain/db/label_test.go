@@ -42,6 +42,15 @@ func (s *testSuite) TestLabelSQLRepository() {
 		s.Run("ListReadsFromWispLabels", s.labelWispListIsolated)
 		s.Run("ListByIssueIDsReadsFromWispLabels", s.labelWispBulkIsolated)
 	})
+	// beads-y3tm3: DOMAIN twin of the DIRECT-path case-fold coherence fix
+	// (beads-9jjj8). Insert must fold to lower at write and Delete must match
+	// on LOWER(label), or a hub-connected (proxied) crew re-introduces the
+	// three-way add/query/remove case divergence 9jjj8 closed.
+	s.Run("CaseFoldCoherence_y3tm3", func() {
+		s.Run("InsertFoldsStoredLower", s.labelInsertFoldsLower)
+		s.Run("NoCoexistingCaseVariants", s.labelInsertNoCoexistCase)
+		s.Run("DeleteIsCaseInsensitive", s.labelDeleteCaseInsensitive)
+	})
 }
 
 func (s *testSuite) labelRepo() domain.LabelSQLRepository {
