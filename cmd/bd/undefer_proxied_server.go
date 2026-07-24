@@ -161,5 +161,16 @@ func undeferProxiedOne(ctx context.Context, id string, report func(format string
 		report("Error committing undefer %s: %v", fullID, err)
 		return nil, "", undeferErr
 	}
+
+	// beads-elq6a: fire on_update after commit for the deferred->open transition,
+	// at parity with the DIRECT undefer (store.UpdateIssue -> HookFiringStore
+	// decorator fires on_update) and the proxied defer TWIN (routes through
+	// applyUpdateProxiedOne -> fireProxiedUpdateHooks). undeferProxiedOne takes a
+	// bespoke ApplyUpdate+Commit path that skips the shared firing helper, so
+	// without this a hub-connected (proxiedServerMode) crew's on_update automation
+	// silently never ran for `bd undefer`. `updated` is the post-mutation snapshot
+	// ApplyUpdate re-fetched inside the (now committed) UOW.
+	fireProxiedUpdateSnapshots(ctx, updated)
+
 	return updated, fullID, undeferOK
 }
