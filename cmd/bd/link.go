@@ -147,7 +147,7 @@ Examples:
 }
 
 func init() {
-	linkCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks|tracks|related|parent-child|discovered-from)")
+	linkCmd.Flags().StringP("type", "t", "blocks", "Dependency type (closed enum; unknown types are rejected): blocks|parent-child|conditional-blocks|waits-for|related|discovered-from|replies-to|relates-to|duplicates|supersedes|authored-by|assigned-to|approved-by|attests|tracks|until|caused-by|validates|delegated-from")
 	linkCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(linkCmd)
 }
