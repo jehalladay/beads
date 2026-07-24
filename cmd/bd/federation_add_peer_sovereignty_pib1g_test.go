@@ -15,6 +15,10 @@ type federationAddPeerFakeStore struct {
 	storage.DoltStorage
 	addRemoteCalls         []string
 	addFederationPeerPeers []*storage.FederationPeer
+	// beads-81a3n: remove-peer dispatch recorders (methods in
+	// federation_remove_peer_reserved_name_81a3n_test.go).
+	removeFederationPeerCalls []string
+	removeRemoteCalls         []string
 }
 
 func (f *federationAddPeerFakeStore) AddRemote(_ context.Context, name, _ string) error {

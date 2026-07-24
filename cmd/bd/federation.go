@@ -681,6 +681,16 @@ func runFederationRemovePeer(cmd *cobra.Command, args []string) error {
 
 	name := args[0]
 
+	// beads-81a3n: reject the reserved "origin" name symmetrically with add-peer
+	// (beads-jkbyt). RemoveFederationPeer removes the underlying Dolt remote
+	// best-effort (RemoveRemote below), so `remove-peer origin` would DELETE the
+	// backing "origin" remote that bd dolt push/pull depend on. Post-jkbyt there
+	// is no legitimate "origin" peer to remove, so refuse it before any store
+	// dispatch. (RemoveRemote itself stays permissive for internal cleanup.)
+	if err := issueops.ValidatePeerName(name); err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
+
 	// RemoveFederationPeer deletes the federation_peers credential row (added by
 	// add-peer --user/--password) AND removes the underlying Dolt remote best-effort.
 	// Calling RemoveRemote alone (beads-af5te) left the encrypted credential row
