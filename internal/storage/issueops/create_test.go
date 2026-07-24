@@ -750,6 +750,60 @@ func TestPersistDependenciesSkipsMalformedJSONMetadataWithActionableReason(t *te
 	}
 }
 
+// TestPersistDependenciesSkipsUnknownTypeWithActionableReason is the beads-p4pvr
+// containment (dep-type leg): every command-layer entry point (dep add,
+// create --deps, link, bd batch — the last added by beads-cqk1) rejects an
+// unknown/non-well-known dependency type via DependencyType.IsWellKnown(), but
+// import only checked IsValid() (non-empty, <=32 chars). So a crafted/drifted
+// import row with type "bogus_type" landed as a PHANTOM edge: dep list DISPLAYS
+// it, but dependency_count=0 and readiness ignores it (no query recognizes the
+// type). Under SkipDependencyValidationErrors the unknown-type edge must be
+// skipped with a reason naming the type, before any target lookup — mirroring
+// the empty-type guard (beads-3rk4).
+func TestPersistDependenciesSkipsUnknownTypeWithActionableReason(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+	issue := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "target",
+			Type:        "bogus_type", // IsValid() true (non-empty, <=32) but not well-known
+		}},
+	}
+	var skipped []string
+
+	// No mock.ExpectQuery: the unknown-type guard must fire before any lookup.
+
+	result, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{issue}, "tester", storage.BatchCreateOptions{
+		SkipDependencyValidationErrors: true,
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			skipped = append(skipped, issueID+" -> "+dependsOnID+": "+reason)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = %v, want nil", err)
+	}
+	if len(result.ChangedTables) != 0 {
+		t.Fatalf("ChangedTables = %#v, want none", result.ChangedTables)
+	}
+	if len(skipped) != 1 {
+		t.Fatalf("skipped = %#v, want exactly one skipped edge", skipped)
+	}
+	if !strings.Contains(skipped[0], "bogus_type") {
+		t.Errorf("skipped reason should name the unknown dependency type; got: %s", skipped[0])
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 // TestPersistDependenciesErrorsOnMalformedJSONMetadataWhenNotSkipping asserts the
 // strict (non-import-tolerant) contract: without SkipDependencyValidationErrors a
 // malformed-metadata edge is a hard error naming the edge, mirroring the empty-
@@ -776,6 +830,42 @@ func TestPersistDependenciesErrorsOnMalformedJSONMetadataWhenNotSkipping(t *test
 	}
 	if !strings.Contains(err.Error(), "metadata") || !strings.Contains(err.Error(), "JSON") {
 		t.Errorf("error should name the malformed metadata / JSON; got: %v", err)
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// TestPersistDependenciesErrorsOnUnknownTypeWhenNotSkipping asserts the strict
+// (non-import-tolerant) contract: without SkipDependencyValidationErrors an
+// unknown-type edge is a hard error, mirroring dep add / link / create / batch
+// which all gate on IsWellKnown() (beads-p4pvr).
+func TestPersistDependenciesErrorsOnUnknownTypeWhenNotSkipping(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+	issue := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "target",
+			Type:        "bogus_type",
+		}},
+	}
+
+	// No mock.ExpectQuery: the unknown-type guard must fire before any lookup.
+
+	_, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{issue}, "tester", storage.BatchCreateOptions{})
+	if err == nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = nil, want error for unknown dependency type")
+	}
+	if !strings.Contains(err.Error(), "bogus_type") {
+		t.Errorf("error should name the unknown dependency type; got: %v", err)
 	}
 
 	mock.ExpectRollback()
@@ -848,6 +938,118 @@ func TestPersistDependenciesMalformedMetadataDoesNotAbortValidEdges(t *testing.T
 	mock.ExpectCommit()
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// TestPersistDependenciesSkipsBogusWaitsForGateWithActionableReason is the
+// beads-p4pvr second family member (waits-for gate leg): the command layer
+// (create_deps.go buildWaitsFor, create.go) rejects a --waits-for-gate value
+// that is not all-children/any-children, but import stored the gate value
+// VERBATIM from dep metadata. A waits-for edge with {"gate":"bogus-gate-value"}
+// sails through import; on read ParseWaitsForGateMetadata silently coerces the
+// unrecognized gate to all-children — a silent semantic flip. Under
+// SkipDependencyValidationErrors the bogus-gate edge must be skipped with a
+// reason naming the gate, before any target lookup.
+func TestPersistDependenciesSkipsBogusWaitsForGateWithActionableReason(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+	issue := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "target",
+			Type:        types.DepWaitsFor,
+			Metadata:    `{"gate":"bogus-gate-value"}`,
+		}},
+	}
+	var skipped []string
+
+	// No mock.ExpectQuery: the bogus-gate guard must fire before any lookup.
+
+	result, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{issue}, "tester", storage.BatchCreateOptions{
+		SkipDependencyValidationErrors: true,
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			skipped = append(skipped, issueID+" -> "+dependsOnID+": "+reason)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = %v, want nil", err)
+	}
+	if len(result.ChangedTables) != 0 {
+		t.Fatalf("ChangedTables = %#v, want none", result.ChangedTables)
+	}
+	if len(skipped) != 1 {
+		t.Fatalf("skipped = %#v, want exactly one skipped edge", skipped)
+	}
+	if !strings.Contains(skipped[0], "bogus-gate-value") {
+		t.Errorf("skipped reason should name the invalid waits-for gate; got: %s", skipped[0])
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// TestPersistDependenciesAcceptsValidWaitsForGate guards against over-rejection:
+// a waits-for edge carrying a valid gate (any-children) — or a non-waits-for
+// edge whose metadata happens to hold a "gate" key — must NOT be skipped. Only
+// waits-for edges with an unrecognized gate value are rejected (beads-p4pvr).
+func TestPersistDependenciesAcceptsValidWaitsForGate(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+
+	target := &types.Issue{ID: "target", IssueType: types.TypeTask}
+	source := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "target",
+			Type:        types.DepWaitsFor,
+			Metadata:    `{"gate":"any-children"}`,
+		}},
+	}
+	var skipped []string
+
+	// Target existence lookup + the dependency INSERT must both proceed — the
+	// valid gate must not short-circuit the edge. Mirrors the gnopw teeth's
+	// query sequence (wisps check → issues check → INSERT).
+	mock.ExpectQuery("SELECT 1 FROM wisps WHERE id = \\? LIMIT 1").
+		WithArgs("target").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT 1 FROM issues WHERE id = \\?").
+		WithArgs("target").
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	mock.ExpectExec("INSERT INTO dependencies").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	result, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{target, source}, "tester", storage.BatchCreateOptions{
+		SkipDependencyValidationErrors: true,
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			skipped = append(skipped, issueID+" -> "+dependsOnID+": "+reason)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = %v, want nil", err)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("skipped = %#v, want no skipped edge for a valid any-children gate", skipped)
+	}
+	if len(result.ChangedTables) == 0 {
+		t.Fatalf("ChangedTables = %#v, want the dependency edge persisted", result.ChangedTables)
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)

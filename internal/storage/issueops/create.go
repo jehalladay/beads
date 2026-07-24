@@ -832,12 +832,62 @@ func PersistDependenciesWithOptionsResult(ctx context.Context, tx *sql.Tx, issue
 			// metadata itself; only import/bulk accepts caller-supplied metadata.
 			// Validate well-formedness here, mirroring the IsValid + gate-value
 			// skips, so one bad edge skips-with-reason instead of failing the run.
+			// This must run BEFORE the waits-for gate check below, which unmarshals
+			// dep.Metadata and would silently ignore malformed JSON (json.Unmarshal
+			// err != nil path), letting it through to the 1105 abort.
 			if strings.TrimSpace(dep.Metadata) != "" && !json.Valid([]byte(dep.Metadata)) {
 				if opts.SkipDependencyValidationErrors {
 					recordSkippedDependency(opts, dep, "invalid dependency metadata: not well-formed JSON")
 					continue
 				}
 				return result, fmt.Errorf("dependency %s -> %s has invalid metadata: not well-formed JSON", dep.IssueID, dep.DependsOnID)
+			}
+
+			// Every command-layer dep path (dep add, create --deps, link, and
+			// bd batch — the last at parity via beads-cqk1) rejects a
+			// non-well-known dependency type via DependencyType.IsWellKnown().
+			// Import once only checked IsValid() (non-empty, <=32), so a
+			// crafted/drifted row with an unknown type landed as a PHANTOM edge:
+			// dep list DISPLAYS it, but dependency_count=0 and readiness ignore
+			// it (no query recognizes the type) — a view-vs-count split-brain
+			// (beads-p4pvr). Reject here, mirroring the empty-type guard above,
+			// so import stays consistent with the interactive paths. This is
+			// stricter than the issue-type federation "trust the chain" model
+			// (ValidateForImport) deliberately: dep types are a closed enum with
+			// no custom-type config, and an unrecognized type is inert (never
+			// blocks), so a "trusted" bogus type is silently lost, not honored.
+			if !dep.Type.IsWellKnown() {
+				if opts.SkipDependencyValidationErrors {
+					recordSkippedDependency(opts, dep, fmt.Sprintf("unknown dependency type %q: not a recognized dependency type", dep.Type))
+					continue
+				}
+				return result, fmt.Errorf("dependency %s -> %s has unknown type %q: not a recognized dependency type", dep.IssueID, dep.DependsOnID, dep.Type)
+			}
+
+			// A waits-for edge carries its gate in dep.Metadata's "gate" key.
+			// The command layer (create_deps.go buildWaitsFor, create.go) rejects
+			// any gate value other than all-children/any-children, but import
+			// stored the metadata VERBATIM. A bogus gate then coerces to
+			// all-children on read (ParseWaitsForGateMetadata) — a silent
+			// semantic flip. Reject an unrecognized gate on waits-for edges at
+			// import parity with the command layer (beads-p4pvr). Only waits-for
+			// edges are gate-bearing; other types may legitimately carry a
+			// "gate"-named metadata key with different semantics, so scope the
+			// check to DepWaitsFor. dep.Metadata is guaranteed well-formed here
+			// (json.Valid guard above), so the Unmarshal below cannot fail on
+			// malformed input.
+			if dep.Type == types.DepWaitsFor && strings.TrimSpace(dep.Metadata) != "" {
+				var gateMeta types.WaitsForMeta
+				if err := json.Unmarshal([]byte(dep.Metadata), &gateMeta); err == nil &&
+					gateMeta.Gate != "" &&
+					gateMeta.Gate != types.WaitsForAllChildren &&
+					gateMeta.Gate != types.WaitsForAnyChildren {
+					if opts.SkipDependencyValidationErrors {
+						recordSkippedDependency(opts, dep, fmt.Sprintf("invalid waits-for gate %q: valid values are all-children, any-children", gateMeta.Gate))
+						continue
+					}
+					return result, fmt.Errorf("dependency %s -> %s has invalid waits-for gate %q: valid values are all-children, any-children", dep.IssueID, dep.DependsOnID, gateMeta.Gate)
+				}
 			}
 
 			// A cross-prefix target (source and target have different ID
