@@ -3,6 +3,7 @@ package issueops
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -815,6 +816,28 @@ func PersistDependenciesWithOptionsResult(ctx context.Context, tx *sql.Tx, issue
 					continue
 				}
 				return result, fmt.Errorf("dependency %s -> %s has invalid type %q: must be non-empty and at most 32 characters", dep.IssueID, dep.DependsOnID, dep.Type)
+			}
+
+			// The edge's metadata is persisted verbatim into a Dolt JSON column
+			// (the INSERT below). Unlike issue.Metadata — which every create path
+			// validates as well-formed JSON before persisting (storage.Validate
+			// MetadataReadable / ValidateMetadataIfConfigured) — dep.Metadata was
+			// never checked here, so a malformed-JSON edge (e.g. a truncated
+			// `{"gate":"any-children"` from a hand-edited or corrupted JSONL) hit
+			// the JSON column and returned Dolt Error 1105 ("Invalid JSON text").
+			// That error is NOT a SkipDependencyValidationErrors skip — it aborts
+			// the whole ExecContext, so the batch transaction rolls back and ZERO
+			// issues import even though only one edge was bad (beads-u47yy). The
+			// interactive path never hits this because dep add builds the gate
+			// metadata itself; only import/bulk accepts caller-supplied metadata.
+			// Validate well-formedness here, mirroring the IsValid + gate-value
+			// skips, so one bad edge skips-with-reason instead of failing the run.
+			if strings.TrimSpace(dep.Metadata) != "" && !json.Valid([]byte(dep.Metadata)) {
+				if opts.SkipDependencyValidationErrors {
+					recordSkippedDependency(opts, dep, "invalid dependency metadata: not well-formed JSON")
+					continue
+				}
+				return result, fmt.Errorf("dependency %s -> %s has invalid metadata: not well-formed JSON", dep.IssueID, dep.DependsOnID)
 			}
 
 			// A cross-prefix target (source and target have different ID

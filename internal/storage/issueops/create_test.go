@@ -697,6 +697,163 @@ func TestPersistDependenciesErrorsOnEmptyTypeWhenNotSkipping(t *testing.T) {
 	}
 }
 
+// TestPersistDependenciesSkipsMalformedJSONMetadataWithActionableReason is the
+// beads-u47yy teeth: dep.Metadata is persisted verbatim into a Dolt JSON column,
+// so a malformed-JSON payload (e.g. a truncated `{"gate":"any-children"`) hit the
+// column and returned Dolt Error 1105, which aborts the whole ExecContext and
+// rolls back the batch — ZERO issues import despite only one bad edge. Under
+// SkipDependencyValidationErrors the malformed edge must skip-with-reason before
+// the INSERT is ever reached. Mutation-verify: delete the json.Valid guard and
+// this expectation goes unmet (the guard is load-bearing, not decorative).
+func TestPersistDependenciesSkipsMalformedJSONMetadataWithActionableReason(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+	issue := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "target",
+			Type:        types.DepRelated,
+			Metadata:    `{"gate":"any-children"`, // truncated: not well-formed JSON
+		}},
+	}
+	var skipped []string
+
+	// No mock.ExpectQuery: the metadata guard must fire before any lookup/INSERT.
+
+	result, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{issue}, "tester", storage.BatchCreateOptions{
+		SkipDependencyValidationErrors: true,
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			skipped = append(skipped, issueID+" -> "+dependsOnID+": "+reason)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = %v, want nil", err)
+	}
+	if len(result.ChangedTables) != 0 {
+		t.Fatalf("ChangedTables = %#v, want none", result.ChangedTables)
+	}
+	if len(skipped) != 1 {
+		t.Fatalf("skipped = %#v, want exactly one skipped edge", skipped)
+	}
+	if !strings.Contains(skipped[0], "metadata") || !strings.Contains(skipped[0], "JSON") {
+		t.Errorf("skipped reason should name the malformed metadata / JSON; got: %s", skipped[0])
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// TestPersistDependenciesErrorsOnMalformedJSONMetadataWhenNotSkipping asserts the
+// strict (non-import-tolerant) contract: without SkipDependencyValidationErrors a
+// malformed-metadata edge is a hard error naming the edge, mirroring the empty-
+// type / bad-gate guards (beads-u47yy).
+func TestPersistDependenciesErrorsOnMalformedJSONMetadataWhenNotSkipping(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+	issue := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "target",
+			Type:        types.DepRelated,
+			Metadata:    `{"gate":"any-children"`, // truncated: not well-formed JSON
+		}},
+	}
+
+	// No mock.ExpectQuery: the metadata guard must fire before any lookup/INSERT.
+
+	_, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{issue}, "tester", storage.BatchCreateOptions{})
+	if err == nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = nil, want error for malformed metadata")
+	}
+	if !strings.Contains(err.Error(), "metadata") || !strings.Contains(err.Error(), "JSON") {
+		t.Errorf("error should name the malformed metadata / JSON; got: %v", err)
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// TestPersistDependenciesMalformedMetadataDoesNotAbortValidEdges is the core
+// regression for beads-u47yy: a single malformed-metadata edge must NOT abort the
+// batch — subsequent VALID edges in the same call still get persisted. Before the
+// guard, the bad edge's INSERT raised Dolt Error 1105 and rolled back everything.
+// The bad edge (first) skips-with-reason; the good edge (second) runs the full
+// lookup + INSERT and marks the dependencies table changed.
+func TestPersistDependenciesMalformedMetadataDoesNotAbortValidEdges(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+	issue := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{
+			{
+				DependsOnID: "badtarget",
+				Type:        types.DepRelated,
+				Metadata:    `{not valid json`, // malformed: skipped, must not abort
+			},
+			{
+				DependsOnID: "goodtarget",
+				Type:        types.DepRelated,
+				Metadata:    `{"gate":"any-children"}`, // valid: must still land
+			},
+		},
+	}
+	var skipped []string
+
+	// Only the GOOD edge reaches the lookup + INSERT; the bad edge is guarded out.
+	mock.ExpectQuery("SELECT 1 FROM wisps WHERE id = \\? LIMIT 1").
+		WithArgs("goodtarget").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT 1 FROM issues WHERE id = \\?").
+		WithArgs("goodtarget").
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	mock.ExpectExec("INSERT INTO dependencies").
+		WithArgs(depid.New("source", "goodtarget"), "source", "goodtarget", types.DepRelated, "tester", sqlmock.AnyArg(), `{"gate":"any-children"}`, "").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	result, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{issue}, "tester", storage.BatchCreateOptions{
+		SkipDependencyValidationErrors: true,
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			skipped = append(skipped, issueID+" -> "+dependsOnID+": "+reason)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = %v, want nil", err)
+	}
+	if len(skipped) != 1 {
+		t.Fatalf("skipped = %#v, want exactly one skipped edge (the malformed one)", skipped)
+	}
+	if !strings.Contains(skipped[0], "badtarget") {
+		t.Errorf("the skipped edge should be the malformed badtarget one; got: %s", skipped[0])
+	}
+	if len(result.ChangedTables) == 0 {
+		t.Fatalf("ChangedTables = %#v, want the valid edge to have marked dependencies changed", result.ChangedTables)
+	}
+
+	mock.ExpectCommit()
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 // TestPersistDependenciesPersistsMetadataAndThreadID is the beads-gnopw teeth:
 // the batch create/import INSERT must write the edge's metadata and thread_id
 // columns (it historically listed neither, so an export->import round-trip
