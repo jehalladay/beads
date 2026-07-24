@@ -379,6 +379,21 @@ func runGateAddWaiterProxied(ctx context.Context, gateID, waiter string) error {
 		return nil
 	}
 
+	// beads-fs73t: fire on_update after the add-waiter commit, at parity with the
+	// DIRECT add-waiter (gate.go -> store.UpdateIssue -> HookFiringStore decorator
+	// fires on_update) and the gate CLOSE proxied legs (closeGateProxied /
+	// resolveGate, beads-5o5kp). The beads-5o5kp fix only covered the gate close
+	// paths; the two proxied gate UpdateIssue paths (this add-waiter leg and
+	// updateGateAwaitIDProxied) went uncovered, so a hub-connected (proxiedServerMode,
+	// store==nil) crew's on_update automation silently never ran for `bd gate
+	// add-waiter`. Same bespoke-UpdateIssue+Commit class as beads-elq6a (undefer).
+	// Fresh post-commit read + fireProxiedUpdateSnapshots (single-snapshot on_update),
+	// mirroring closeGateProxied's after-image resolve. The alreadyRegistered no-op
+	// path returns above without a write, so correctly does not fire.
+	if after := proxiedResolveForNoOp(ctx, gateID); after != nil {
+		fireProxiedUpdateSnapshots(ctx, after)
+	}
+
 	if jsonOutput {
 		return outputJSON(map[string]interface{}{
 			"gate":   gateID,
@@ -452,5 +467,16 @@ func updateGateAwaitIDProxied(gateID, runID string) error {
 	if err := uw.IssueUseCase().UpdateIssue(ctx, gateID, updates, actor); err != nil {
 		return err
 	}
-	return uw.Commit(ctx, fmt.Sprintf("bd: gate check discovered run %s", gateID))
+	if err := uw.Commit(ctx, fmt.Sprintf("bd: gate check discovered run %s", gateID)); err != nil {
+		return err
+	}
+	// beads-fs73t: fire on_update after the await_id commit, at parity with the
+	// DIRECT updateGateAwaitID (gate_discover.go -> store.UpdateIssue ->
+	// HookFiringStore decorator fires on_update). Same uncovered proxied gate
+	// UpdateIssue class as the add-waiter leg above. Fresh post-commit read +
+	// fireProxiedUpdateSnapshots (single-snapshot on_update).
+	if after := proxiedResolveForNoOp(ctx, gateID); after != nil {
+		fireProxiedUpdateSnapshots(ctx, after)
+	}
+	return nil
 }
