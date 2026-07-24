@@ -297,6 +297,50 @@ func ManageStartedAt(oldIssue *types.Issue, updates map[string]interface{}, setC
 	return setClauses, args
 }
 
+// ManageStaleDefer clears a stale FUTURE defer_until when the status flips to a
+// ready-visible status (open|in_progress). It is the shared-seam leg of the
+// beads-l2lb7 clear, which previously lived ONLY in the CLI regularUpdates block
+// (cmd/bd/update.go) — unlike its sibling status-transition side effects
+// (ManageClosedAt, ManageStartedAt), which are wired here into updateIssueInTx.
+// So callers that write straight through UpdateIssueInTx below the CLI guard
+// layer — notably `bd batch update <id> status=open` (batch.go:565 → tx.UpdateIssue)
+// — bypassed the clear and left a stale future defer_until, producing the same
+// self-contradictory status=open-but-invisible-to-`bd ready` row l2lb7 fixed for
+// the single-verb path (ready predicate: defer_until IS NULL OR
+// defer_until <= UTC_TIMESTAMP()).
+//
+// Placing it at this shared seam covers batch AND any other UpdateIssueInTx
+// caller (and stays byte-parity with the domain/proxied twin beads-9vy58). No
+// double-apply with the CLI l2lb7 clear: that path already writes
+// defer_until=nil into the updates map, so the !hasExplicitDefer guard skips it.
+// Only fires when the caller did NOT set defer_until (a concurrent --defer wins)
+// and only on a genuine FUTURE defer_until, mirroring l2lb7's After(now) guard.
+func ManageStaleDefer(oldIssue *types.Issue, updates map[string]interface{}, setClauses []string, args []interface{}) ([]string, []interface{}) {
+	statusVal, hasStatus := updates["status"]
+	_, hasExplicitDefer := updates["defer_until"]
+	if hasExplicitDefer || !hasStatus || oldIssue == nil {
+		return setClauses, args
+	}
+
+	var newStatus string
+	switch v := statusVal.(type) {
+	case string:
+		newStatus = v
+	case types.Status:
+		newStatus = string(v)
+	default:
+		return setClauses, args
+	}
+
+	if (newStatus == string(types.StatusOpen) || newStatus == string(types.StatusInProgress)) &&
+		oldIssue.DeferUntil != nil && oldIssue.DeferUntil.After(time.Now()) {
+		setClauses = append(setClauses, "defer_until = ?")
+		args = append(args, nil)
+	}
+
+	return setClauses, args
+}
+
 // DetermineEventType returns the appropriate event type for an update.
 func DetermineEventType(oldIssue *types.Issue, updates map[string]interface{}) types.EventType {
 	statusVal, hasStatus := updates["status"]
@@ -452,6 +496,11 @@ func updateIssueInTx(ctx context.Context, tx DBTX, id string, updates map[string
 
 	// Auto-manage started_at (set on transition to in_progress). (GH#2796)
 	setClauses, args = ManageStartedAt(oldIssue, updates, setClauses, args)
+
+	// Clear a stale future defer_until on a flip to a ready-visible status,
+	// the shared-seam leg of beads-l2lb7 (batch/graph-apply/programmatic bypass
+	// the CLI-layer clear). See ManageStaleDefer. (beads-0oixp)
+	setClauses, args = ManageStaleDefer(oldIssue, updates, setClauses, args)
 
 	args = append(args, id)
 
